@@ -1,12 +1,15 @@
+import { useState } from "react";
 import { Building2, MailPlus, Users } from "lucide-react";
 import { Form, redirect } from "react-router";
 
 import { requireSession, sessionLoader } from "~/auth/session.server";
+import { ensureProjectTeam } from "~/auth/teams.server";
 import {
   ensureWorkspace,
   requireBackOfHouse,
   resolveActiveWorkspace,
 } from "~/auth/workspace.server";
+import { listProjects } from "~/db/queries.server";
 import { AppShell, PageHeader, accentText } from "~/components/shell";
 import { LocalizedDate } from "~/components/localized-values";
 import { Badge } from "~/components/ui/badge";
@@ -29,6 +32,31 @@ import type { Route } from "./+types/org.members";
 type MemberRow = Awaited<
   ReturnType<typeof betterAuth.api.listMembers>
 >["members"][number];
+
+/**
+ * The access a workspace invitation grants (issue #220 §4, Option B). `admin` is back of house —
+ * build, deploy, settings. `member` is front of house only, and is meaningful ONLY when the
+ * invitation also carries the teams of the repos they may use: a member with no team lands in a
+ * workspace where every surface turns them away, so this route refuses to mint one.
+ */
+const INVITE_ROLES = ["admin", "member"] as const;
+type InviteRole = (typeof INVITE_ROLES)[number];
+
+function parseInviteRole(value: unknown): InviteRole | null {
+  return INVITE_ROLES.includes(value as InviteRole)
+    ? (value as InviteRole)
+    : null;
+}
+
+/** Better Auth stores multi-team invitations comma-separated. */
+function splitInvitationTeamIds(
+  invitationTeamId: string | null | undefined,
+): string[] {
+  return (invitationTeamId ?? "")
+    .split(",")
+    .map((part) => part.trim())
+    .filter(Boolean);
+}
 
 /** Page through Better Auth's member list so workspaces beyond one page don't truncate. */
 async function listAllMembers(
@@ -61,6 +89,7 @@ export const loader = (args: Route.LoaderArgs) =>
           org: null,
           members: [],
           pendingInvites: [],
+          repos: [],
           currentUserId: auth.user.id,
           canManage: false,
         };
@@ -80,12 +109,22 @@ export const loader = (args: Route.LoaderArgs) =>
         }),
       ]);
       const canManage = permission.success;
-      const invitations = canManage
-        ? await betterAuth.api.listInvitations({
-            query: { organizationId: active.org.id },
-            headers: auth.requestHeaders,
-          })
-        : [];
+      const [invitations, projectList] = await Promise.all([
+        canManage
+          ? betterAuth.api.listInvitations({
+              query: { organizationId: active.org.id },
+              headers: auth.requestHeaders,
+            })
+          : [],
+        listProjects(active.org.id),
+      ]);
+      // A pending invitation names its repos by team id; resolve them so the admin reviewing the
+      // list sees the access they actually granted rather than an opaque role.
+      const repoNameByTeamId = new Map(
+        projectList.flatMap((project) =>
+          project.teamId ? [[project.teamId, project.name] as const] : [],
+        ),
+      );
 
       return {
         org: active.org,
@@ -103,11 +142,21 @@ export const loader = (args: Route.LoaderArgs) =>
                   id: invitation.id,
                   email: invitation.email,
                   role: invitation.role || "member",
+                  repos: splitInvitationTeamIds(invitation.teamId).flatMap(
+                    (teamId) => {
+                      const name = repoNameByTeamId.get(teamId);
+                      return name ? [name] : [];
+                    },
+                  ),
                   expiresAt: invitation.expiresAt,
                 },
               ]
             : [],
         ),
+        repos: projectList.map((project) => ({
+          id: project.id,
+          name: project.name,
+        })),
         currentUserId: auth.user.id,
         canManage,
       };
@@ -130,9 +179,50 @@ export async function action(args: Route.ActionArgs) {
       .toLowerCase();
     if (!email || !email.includes("@"))
       return { error: "Enter a valid email address." };
+
+    const role = parseInviteRole(form.get("role"));
+    if (!role) return { error: "Choose what access this invitation grants." };
+
+    // A `member` invitation must carry the teams of the repos they may use, or accepting it
+    // leaves them in no-access limbo: not an admin (no back of house) and on no team (no front
+    // of house either). Admins need no repo selection — they see every repo.
+    let teamIds: string[] = [];
+    let projectIds: string[] = [];
+    if (role === "member") {
+      const requested = new Set(
+        form.getAll("repoIds").map((value) => String(value)),
+      );
+      // Resolve the ids against THIS workspace's projects: never trust a form-supplied id, and
+      // never mint a team for a repo the caller's workspace doesn't own.
+      const selected = (await listProjects(active.org.id)).filter((project) =>
+        requested.has(project.id),
+      );
+      if (selected.length === 0) {
+        return {
+          error: "Choose at least one repository this member can work with.",
+        };
+      }
+      if (selected.length !== requested.size) {
+        return { error: "That repository is not part of this workspace." };
+      }
+      try {
+        teamIds = await Promise.all(
+          selected.map((project) => ensureProjectTeam(active.org.id, project)),
+        );
+      } catch {
+        return { error: "Could not prepare the selected repositories." };
+      }
+      projectIds = selected.map((project) => project.id);
+    }
+
     try {
       await betterAuth.api.createInvitation({
-        body: { email, role: "member", organizationId: active.org.id },
+        body: {
+          email,
+          role,
+          organizationId: active.org.id,
+          ...(teamIds.length > 0 ? { teamId: teamIds } : {}),
+        },
         headers: session.requestHeaders,
       });
     } catch (error) {
@@ -145,6 +235,7 @@ export async function action(args: Route.ActionArgs) {
       actorUserId: session.user.id,
       action: "member_invited",
       target: email,
+      meta: { role, projectIds, teamIds },
     });
     throw redirect("/org/members");
   }
@@ -196,14 +287,32 @@ export async function action(args: Route.ActionArgs) {
     if (!email || !email.includes("@"))
       return { error: "Enter a valid email address." };
     try {
-      // No client-chosen role: when a pending invitation exists Better Auth re-sends it with its
-      // STORED role; when it lapsed, this mints a fresh invite that must follow the same "new
-      // invitees join with the member role" policy as the invite intent above.
+      // No client-chosen access: resend replays the STORED grant. Re-minting a bare `member`
+      // here (the old behaviour) would silently drop a pending invitation's repo teams and
+      // recreate exactly the no-access limbo the invite intent now refuses to produce.
+      const invitations = await betterAuth.api.listInvitations({
+        query: { organizationId: active.org.id },
+        headers: session.requestHeaders,
+      });
+      const pending = invitations.find(
+        (candidate) =>
+          candidate.status === "pending" &&
+          candidate.email.toLowerCase() === email,
+      );
+      if (!pending) {
+        return {
+          error:
+            "That invitation is no longer pending. Send a new invitation instead.",
+        };
+      }
+      const teamIds = splitInvitationTeamIds(pending.teamId);
       await betterAuth.api.createInvitation({
         body: {
           email,
-          role: "member",
+          // Replay the stored role verbatim — never downgrade an unexpected one.
+          role: (pending.role || "member") as InviteRole,
           organizationId: active.org.id,
+          ...(teamIds.length > 0 ? { teamId: teamIds } : {}),
           resend: true,
         },
         headers: session.requestHeaders,
@@ -254,12 +363,127 @@ export function meta() {
   return [{ title: "Members · eden" }, ...noindexMeta];
 }
 
+/**
+ * The invite form (issue #220 §4, Option B). One entry point, but the access it grants is
+ * explicit: an administrator gets everything, a member gets front-of-house chat for the repos
+ * picked here — and nothing can be sent without that choice being made.
+ */
+function InviteTeammate({ repos }: { repos: { id: string; name: string }[] }) {
+  const [role, setRole] = useState<"admin" | "member">("member");
+  const noRepos = repos.length === 0;
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <MailPlus className={`size-4 ${accentText.emerald}`} aria-hidden />
+          Invite a teammate
+        </CardTitle>
+        <CardDescription>
+          Eden emails a secure invitation link. Choose what it grants before you
+          send it.
+        </CardDescription>
+      </CardHeader>
+      <CardContent>
+        <Form method="post" className="max-w-xl space-y-5">
+          <input type="hidden" name="intent" value="invite" />
+          <div className="space-y-1.5">
+            <Label htmlFor="email">Email</Label>
+            <Input
+              id="email"
+              name="email"
+              type="email"
+              placeholder="teammate@company.com"
+              required
+            />
+          </div>
+
+          <fieldset className="space-y-2">
+            <legend className="text-sm font-medium">Access</legend>
+            <label className="flex cursor-pointer items-start gap-3 rounded-lg border p-4 has-[:checked]:border-primary has-[:checked]:bg-muted/40">
+              <input
+                type="radio"
+                name="role"
+                value="admin"
+                checked={role === "admin"}
+                onChange={() => setRole("admin")}
+                className="mt-1 accent-primary"
+              />
+              <span>
+                <span className="block text-sm font-medium">Administrator</span>
+                <span className="block text-xs text-muted-foreground">
+                  Full access to this workspace — build, deploy, and manage
+                  every repository, plus these settings.
+                </span>
+              </span>
+            </label>
+            <label className="flex cursor-pointer items-start gap-3 rounded-lg border p-4 has-[:checked]:border-primary has-[:checked]:bg-muted/40">
+              <input
+                type="radio"
+                name="role"
+                value="member"
+                checked={role === "member"}
+                onChange={() => setRole("member")}
+                className="mt-1 accent-primary"
+                disabled={noRepos}
+              />
+              <span>
+                <span className="block text-sm font-medium">Member</span>
+                <span className="block text-xs text-muted-foreground">
+                  {noRepos
+                    ? "Unavailable until this workspace has a connected repository."
+                    : "Works with agents in the repositories you choose. No access to the build surface."}
+                </span>
+              </span>
+            </label>
+          </fieldset>
+
+          {role === "member" && !noRepos && (
+            <fieldset className="space-y-2">
+              <legend className="text-sm font-medium">
+                Which repositories?
+              </legend>
+              <p className="text-xs text-muted-foreground">
+                A member can only reach the repositories you select here.
+              </p>
+              <ul className="divide-y rounded-lg border">
+                {repos.map((repo) => (
+                  <li key={repo.id}>
+                    <label className="flex cursor-pointer items-center gap-3 px-4 py-2.5 text-sm">
+                      <input
+                        type="checkbox"
+                        name="repoIds"
+                        value={repo.id}
+                        className="accent-primary"
+                      />
+                      <span className="min-w-0 truncate">{repo.name}</span>
+                    </label>
+                  </li>
+                ))}
+              </ul>
+            </fieldset>
+          )}
+
+          <Button type="submit">Send invite</Button>
+        </Form>
+      </CardContent>
+    </Card>
+  );
+}
+
 export default function Members({
   loaderData,
   actionData,
 }: Route.ComponentProps) {
-  const { user, org, members, pendingInvites, currentUserId, canManage } =
-    loaderData;
+  const {
+    user,
+    org,
+    members,
+    pendingInvites,
+    repos,
+    currentUserId,
+    canManage,
+  } = loaderData;
   const error = actionData?.error;
 
   if (!org) {
@@ -277,7 +501,7 @@ export default function Members({
     <AppShell userEmail={user.email}>
       <PageHeader
         title="Members"
-        description="Owners and admins manage the workspace; members have read-only access to organization settings."
+        description="Owners and admins build and manage the workspace; members chat with the agents in the repositories they've been given."
       />
 
       <div className="space-y-6">
@@ -324,39 +548,7 @@ export default function Members({
           </CardContent>
         </Card>
 
-        {canManage && (
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <MailPlus
-                  className={`size-4 ${accentText.emerald}`}
-                  aria-hidden
-                />
-                Invite a teammate
-              </CardTitle>
-              <CardDescription>
-                Eden emails a secure invitation link. New invitees join with the
-                member role.
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              <Form method="post" className="flex max-w-xl items-end gap-2">
-                <input type="hidden" name="intent" value="invite" />
-                <div className="flex-1 space-y-1.5">
-                  <Label htmlFor="email">Email</Label>
-                  <Input
-                    id="email"
-                    name="email"
-                    type="email"
-                    placeholder="teammate@company.com"
-                    required
-                  />
-                </div>
-                <Button type="submit">Send invite</Button>
-              </Form>
-            </CardContent>
-          </Card>
-        )}
+        {canManage && <InviteTeammate repos={repos} />}
 
         <Card>
           <CardHeader>
@@ -409,10 +601,17 @@ export default function Members({
                     key={invitation.id}
                     className="flex flex-wrap items-center justify-between gap-2 px-4 py-2"
                   >
-                    <span>
+                    <span className="min-w-0">
                       <span className="font-medium">{invitation.email}</span>
                       <span className="ml-2 text-muted-foreground">
                         expires <LocalizedDate value={invitation.expiresAt} />
+                      </span>
+                      <span className="mt-0.5 block text-xs text-muted-foreground">
+                        {invitation.role === "member"
+                          ? invitation.repos.length > 0
+                            ? `Member · ${invitation.repos.join(", ")}`
+                            : "Member · no repositories"
+                          : `${invitation.role.charAt(0).toUpperCase()}${invitation.role.slice(1)} · full workspace access`}
                       </span>
                     </span>
                     {canManage && (

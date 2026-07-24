@@ -1,10 +1,11 @@
 import { Form, Link, redirect } from "react-router";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 
 import { verifyInvitationToken } from "~/auth/invitation-token.server";
 import {
+  getSessionAuth,
   requireSession,
-  sessionLoader,
+  signupPath,
   type SessionAuth,
 } from "~/auth/session.server";
 import { db } from "~/db/client.server";
@@ -30,13 +31,30 @@ function errorMessage(error: unknown): string {
   );
 }
 
+function errorCode(error: unknown): string | undefined {
+  return (error as { body?: { code?: string } } | null)?.body?.code;
+}
+
 function verificationRequired(error: unknown): boolean {
-  const code = (error as { body?: { code?: string } } | null)?.body?.code;
+  const code = errorCode(error);
   return (
     code === "EMAIL_VERIFICATION_REQUIRED_FOR_INVITATION" ||
     code ===
       "EMAIL_VERIFICATION_REQUIRED_BEFORE_ACCEPTING_OR_REJECTING_INVITATION"
   );
+}
+
+/**
+ * Better Auth compares the invitation's email to the SESSION's email on get/accept/reject and
+ * rejects a mismatch outright, so a wrong signed-in account can never be bound to the invite —
+ * it just fails. Recognising the code turns that dead end into the account-switch screen.
+ */
+function wrongRecipient(error: unknown): boolean {
+  return errorCode(error) === "YOU_ARE_NOT_THE_RECIPIENT_OF_THE_INVITATION";
+}
+
+function sameEmail(a: string, b: string): boolean {
+  return a.trim().toLowerCase() === b.trim().toLowerCase();
 }
 
 function invitationCallbackUrl(request: Request, invitationId: string): string {
@@ -48,6 +66,35 @@ function invitationCallbackUrl(request: Request, invitationId: string): string {
     `/accept-invitation/${encodeURIComponent(invitationId)}`,
     origin,
   ).toString();
+}
+
+/** This screen's own path, token included so a round-trip through auth lands back intact. */
+function invitationPath(invitationId: string, token: string | null): string {
+  const path = `/accept-invitation/${encodeURIComponent(invitationId)}`;
+  return token ? `${path}?token=${encodeURIComponent(token)}` : path;
+}
+
+/** Sign-in for the invited account, returning to this invitation once signed in. */
+function signInForInvitation(
+  invitationId: string,
+  token: string | null,
+  invitedEmail: string | null,
+): string {
+  const returnTo = encodeURIComponent(invitationPath(invitationId, token));
+  const email = invitedEmail
+    ? `&email=${encodeURIComponent(invitedEmail)}`
+    : "";
+  return `/login?returnTo=${returnTo}${email}`;
+}
+
+/** Whether an Eden account already exists for an address (case-insensitive). */
+async function accountExists(email: string): Promise<boolean> {
+  const rows = await db
+    .select({ id: user.id })
+    .from(user)
+    .where(sql`lower(${user.email}) = ${email.trim().toLowerCase()}`)
+    .limit(1);
+  return rows.length > 0;
 }
 
 /**
@@ -66,12 +113,7 @@ async function redeemDeliveryToken(
   if (!token || sessionUser.emailVerified) return;
   const delivery = verifyInvitationToken(token, invitationId);
   if (!delivery) return;
-  if (
-    delivery.email.trim().toLowerCase() !==
-    sessionUser.email.trim().toLowerCase()
-  ) {
-    return;
-  }
+  if (!sameEmail(delivery.email, sessionUser.email)) return;
   await db
     .update(user)
     .set({ emailVerified: true })
@@ -102,56 +144,105 @@ async function requestVerificationEmail(
   );
 }
 
-export const loader = (args: Route.LoaderArgs) =>
-  sessionLoader(
-    args,
-    async ({ auth: session }) => {
-      const invitationId = args.params.invitationId;
-      // The delivery token from the emailed link; echoed to the accept form so the POST can
-      // redeem it too. It is already visible in the visitor's own URL, so returning it to the
-      // page discloses nothing new.
-      const token = new URL(args.request.url).searchParams.get("token");
-      if (!invitationId)
-        return {
-          invitation: null,
-          error: "Invitation not found.",
-          verificationRequired: false,
-          token,
-        };
-      await redeemDeliveryToken(session.user, invitationId, token);
-      try {
-        const invitation = await auth.api.getInvitation({
-          query: { id: invitationId },
-          headers: session.requestHeaders,
-        });
-        return { invitation, error: null, verificationRequired: false, token };
-      } catch (error) {
-        const needsVerification = verificationRequired(error);
-        return {
-          invitation: null,
-          error: needsVerification ? null : errorMessage(error),
-          verificationRequired: needsVerification,
-          token,
-        };
-      }
-    },
-    // Invitees usually have no account yet, so a signed-out click on the emailed link lands on
-    // sign-up (which cross-links to sign-in); returnTo keeps the invitation URL — token included.
-    { ensureSignedIn: true, signedOutRedirect: "signup" },
-  );
+/** End the current session, then continue to `to` (the sign-out cookies ride along). */
+async function signOutAndContinue(
+  request: Request,
+  to: string,
+): Promise<Response> {
+  const response = await auth.api.signOut({
+    headers: request.headers,
+    asResponse: true,
+  });
+  // betterAuthSessionMiddleware will not append a stale rolling cookie over a deletion for the
+  // same cookie name, so the redirect really does arrive signed out.
+  return redirect(to, { headers: response.headers });
+}
+
+export async function loader(args: Route.LoaderArgs) {
+  const invitationId = args.params.invitationId ?? "";
+  const url = new URL(args.request.url);
+  // The delivery token from the emailed link; echoed to the accept form so the POST can redeem
+  // it too. It is already visible in the visitor's own URL, so returning it discloses nothing new.
+  const token = url.searchParams.get("token");
+  // A verified token is mailbox proof for (invitationId, invited email) — the only thing that
+  // lets this route reason about WHO the invite is for before anyone signs in.
+  const delivery = token ? verifyInvitationToken(token, invitationId) : null;
+  const session = await getSessionAuth(args);
+
+  if (!session.user) {
+    // Issue #220.1: an invitee who already has an account used to be funnelled into "Create an
+    // account" and stranded when signup rejected the duplicate. Route by whether the invited
+    // address already exists. Only the bearer of a valid delivery token gets that answer, so
+    // this is not an enumeration oracle: without a token the destination stays sign-up, which
+    // cross-links to sign-in with returnTo preserved.
+    const returnTo = `${url.pathname}${url.search}`;
+    if (delivery) {
+      throw redirect(
+        (await accountExists(delivery.email))
+          ? signInForInvitation(invitationId, token, delivery.email)
+          : `${signupPath(args.request, returnTo)}&email=${encodeURIComponent(delivery.email)}`,
+      );
+    }
+    throw redirect(signupPath(args.request, returnTo));
+  }
+
+  const base = {
+    user: session.user,
+    token,
+    invitation: null,
+    error: null as string | null,
+    verificationRequired: false,
+    wrongAccount: false,
+    invitedEmail: null as string | null,
+  };
+
+  if (!invitationId) return { ...base, error: "Invitation not found." };
+
+  // Issue #220.2: a different account is signed in. The token names the invited address, so say
+  // so plainly and offer the switch instead of failing deep inside Better Auth.
+  if (delivery && !sameEmail(delivery.email, session.user.email)) {
+    return { ...base, wrongAccount: true, invitedEmail: delivery.email };
+  }
+
+  await redeemDeliveryToken(session.user, invitationId, token);
+  try {
+    const invitation = await auth.api.getInvitation({
+      query: { id: invitationId },
+      headers: session.requestHeaders,
+    });
+    return { ...base, invitation };
+  } catch (error) {
+    // Without a token the invited address is unknown, so Better Auth's own recipient check is
+    // what surfaces the mismatch — same screen, just no address to name.
+    if (wrongRecipient(error)) return { ...base, wrongAccount: true };
+    const needsVerification = verificationRequired(error);
+    return {
+      ...base,
+      error: needsVerification ? null : errorMessage(error),
+      verificationRequired: needsVerification,
+    };
+  }
+}
 
 export async function action(args: Route.ActionArgs) {
   const session = await requireSession(args);
   const form = await args.request.formData();
   const invitationId = String(form.get("invitationId") ?? "");
   const intent = String(form.get("intent") ?? "accept");
-  const token = form.get("token");
+  const formToken = form.get("token");
+  const token = typeof formToken === "string" && formToken ? formToken : null;
+  const delivery = token ? verifyInvitationToken(token, invitationId) : null;
 
-  await redeemDeliveryToken(
-    session.user,
-    invitationId,
-    typeof token === "string" && token ? token : null,
-  );
+  if (intent === "switch-account") {
+    // Issue #220.2: accepting must work regardless of who is signed in. End the wrong session
+    // and land on sign-in for the invited account, returning straight back to this invitation.
+    throw await signOutAndContinue(
+      args.request,
+      signInForInvitation(invitationId, token, delivery?.email ?? null),
+    );
+  }
+
+  await redeemDeliveryToken(session.user, invitationId, token);
 
   if (intent === "send-verification") {
     try {
@@ -159,9 +250,10 @@ export async function action(args: Route.ActionArgs) {
         query: { id: invitationId },
         headers: session.requestHeaders,
       });
-      throw redirect(`/accept-invitation/${encodeURIComponent(invitationId)}`);
+      throw redirect(invitationPath(invitationId, token));
     } catch (error) {
       if (error instanceof Response) throw error;
+      if (wrongRecipient(error)) return { wrongAccount: true as const };
       if (!verificationRequired(error)) return { error: errorMessage(error) };
     }
 
@@ -186,12 +278,22 @@ export async function action(args: Route.ActionArgs) {
     }
   }
 
+  // A token that names someone else proves this session is the wrong one before Better Auth is
+  // even asked: sign out and continue rather than returning an error the invitee can't act on.
+  if (delivery && !sameEmail(delivery.email, session.user.email)) {
+    throw await signOutAndContinue(
+      args.request,
+      signInForInvitation(invitationId, token, delivery.email),
+    );
+  }
+
   try {
     await auth.api.acceptInvitation({
       body: { invitationId },
       headers: session.requestHeaders,
     });
   } catch (error) {
+    if (wrongRecipient(error)) return { wrongAccount: true as const };
     return {
       error: errorMessage(error),
       verificationRequired: verificationRequired(error),
@@ -223,8 +325,14 @@ export default function AcceptInvitation({
     "verificationRequired" in actionData &&
     actionData.verificationRequired,
   );
+  const wrongAccount =
+    loaderData.wrongAccount ||
+    Boolean(
+      actionData && "wrongAccount" in actionData && actionData.wrongAccount,
+    );
   const needsVerification =
-    loaderData.verificationRequired || actionVerificationRequired;
+    !wrongAccount &&
+    (loaderData.verificationRequired || actionVerificationRequired);
   const error = actionError ?? loaderData.error;
   const invitation = loaderData.invitation;
   const invitationId = invitation?.id ?? params.invitationId;
@@ -234,13 +342,47 @@ export default function AcceptInvitation({
       <PageHeader
         title="Workspace invitation"
         description={
-          needsVerification
-            ? "Verify your email to continue."
-            : "Review and accept your invitation."
+          wrongAccount
+            ? "This invitation belongs to a different account."
+            : needsVerification
+              ? "Verify your email to continue."
+              : "Review and accept your invitation."
         }
       />
       <Card className="mx-auto max-w-lg">
-        {needsVerification ? (
+        {wrongAccount ? (
+          <>
+            <CardHeader>
+              <CardTitle>Switch accounts to continue</CardTitle>
+              <CardDescription>
+                {loaderData.invitedEmail
+                  ? `This invitation was sent to ${loaderData.invitedEmail}.`
+                  : "This invitation was sent to a different email address."}
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <p className="text-sm text-muted-foreground">
+                You're signed in as {loaderData.user.email}. Continue to sign
+                out and sign in
+                {loaderData.invitedEmail
+                  ? ` as ${loaderData.invitedEmail}`
+                  : " as the invited account"}{" "}
+                — you'll come straight back to this invitation.
+              </p>
+              <Form method="post" className="flex flex-wrap items-center gap-2">
+                <input type="hidden" name="intent" value="switch-account" />
+                <input type="hidden" name="invitationId" value={invitationId} />
+                {loaderData.token ? (
+                  <input type="hidden" name="token" value={loaderData.token} />
+                ) : null}
+                <Button type="submit">Sign out and continue</Button>
+                <Button asChild variant="outline">
+                  <Link to="/">Stay signed in</Link>
+                </Button>
+              </Form>
+            </CardContent>
+          </>
+        ) : needsVerification ? (
           <>
             <CardHeader>
               <CardTitle>Verify your email</CardTitle>
@@ -287,7 +429,7 @@ export default function AcceptInvitation({
               </CardTitle>
               <CardDescription>
                 {invitation
-                  ? `${invitation.inviterEmail} invited ${loaderData.user.email} to this workspace.`
+                  ? `${invitation.inviterEmail} invited ${invitation.email} to this workspace.`
                   : "The invitation could not be opened for this account."}
               </CardDescription>
             </CardHeader>

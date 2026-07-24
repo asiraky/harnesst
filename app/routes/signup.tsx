@@ -1,7 +1,7 @@
 import { useState, type FormEvent } from "react";
 import { Form, redirect } from "react-router";
 
-import { safeReturnTo } from "~/auth/return-to";
+import { safeEmailHint, safeReturnTo } from "~/auth/return-to";
 import { getSessionAuth } from "~/auth/session.server";
 import { AuthLink, AuthScreen } from "~/components/auth/auth-screen";
 import { Button } from "~/components/ui/button";
@@ -18,7 +18,11 @@ export async function loader(args: Route.LoaderArgs) {
   );
   const session = await getSessionAuth(args);
   if (session.user) throw redirect(returnTo);
-  return { returnTo };
+  // Prefilled when an invitation link routed a brand-new invitee here.
+  return {
+    returnTo,
+    email: safeEmailHint(new URL(request.url).searchParams.get("email")),
+  };
 }
 
 export function meta() {
@@ -63,7 +67,7 @@ export default function Signup({ loaderData }: Route.ComponentProps) {
         <>
           Already have an account?{" "}
           <AuthLink
-            to={`/login?returnTo=${encodeURIComponent(loaderData.returnTo)}`}
+            to={`/login?returnTo=${encodeURIComponent(loaderData.returnTo)}${loaderData.email ? `&email=${encodeURIComponent(loaderData.email)}` : ""}`}
           >
             Sign in
           </AuthLink>
@@ -88,6 +92,7 @@ export default function Signup({ loaderData }: Route.ComponentProps) {
             name="email"
             type="email"
             autoComplete="email"
+            defaultValue={loaderData.email ?? ""}
             className="h-10"
             required
           />

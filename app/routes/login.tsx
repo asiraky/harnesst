@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { Form, Link, redirect } from "react-router";
 
-import { safeReturnTo } from "~/auth/return-to";
+import { safeEmailHint, safeReturnTo } from "~/auth/return-to";
 import { getSessionAuth } from "~/auth/session.server";
 import { AuthLink, AuthScreen } from "~/components/auth/auth-screen";
 import { Button } from "~/components/ui/button";
@@ -18,7 +18,12 @@ export async function loader(args: Route.LoaderArgs) {
   );
   const session = await getSessionAuth(args);
   if (session.user) throw redirect(returnTo);
-  return { returnTo };
+  // An invitation link routes the invitee here with the invited address prefilled, so they
+  // never have to retype it (or sign in as the wrong account).
+  return {
+    returnTo,
+    email: safeEmailHint(new URL(request.url).searchParams.get("email")),
+  };
 }
 
 export function meta() {
@@ -28,8 +33,10 @@ export function meta() {
 export default function Login({ loaderData }: Route.ComponentProps) {
   // Two screens, one route: the email step never touches the server, so advancing
   // reveals nothing about whether an account exists.
-  const [step, setStep] = useState<"email" | "password">("email");
-  const [email, setEmail] = useState("");
+  const [step, setStep] = useState<"email" | "password">(
+    loaderData.email ? "password" : "email",
+  );
+  const [email, setEmail] = useState(loaderData.email ?? "");
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
   const emailRef = useRef<HTMLInputElement>(null);
@@ -92,7 +99,7 @@ export default function Login({ loaderData }: Route.ComponentProps) {
         <>
           New to Eden?{" "}
           <AuthLink
-            to={`/signup?returnTo=${encodeURIComponent(loaderData.returnTo)}`}
+            to={`/signup?returnTo=${encodeURIComponent(loaderData.returnTo)}${email ? `&email=${encodeURIComponent(email)}` : ""}`}
           >
             Create an account
           </AuthLink>
@@ -100,11 +107,7 @@ export default function Login({ loaderData }: Route.ComponentProps) {
       }
     >
       {step === "email" ? (
-        <Form
-          method="post"
-          onSubmit={continueToPassword}
-          className="space-y-5"
-        >
+        <Form method="post" onSubmit={continueToPassword} className="space-y-5">
           <div className="space-y-2">
             <Label htmlFor="email">Email</Label>
             <Input
