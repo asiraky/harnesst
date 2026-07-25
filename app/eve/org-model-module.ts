@@ -62,18 +62,18 @@ import { defineDynamic } from 'eve';
 `;
 
 const CONFIG_SECTION = `// ── Workspace model configuration (harnesst control plane) ────────────────────
-type harnesstReasoningEffort = 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh';
-interface harnesstModelConfig {
+type HarnesstReasoningEffort = 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh';
+interface HarnesstModelConfig {
   model: string;
-  effort: harnesstReasoningEffort | null;
+  effort: HarnesstReasoningEffort | null;
   contextWindowTokens: number | null;
 }
 // Cached briefly so a burst of steps doesn't hammer the control plane; a configuration change
 // in harnesst still lands on a running agent within the TTL.
 const HARNESST_MODEL_CONFIG_TTL_MS = 30_000;
-const harnesstModelConfigCache = new Map<string, { at: number; config: harnesstModelConfig }>();
+const harnesstModelConfigCache = new Map<string, { at: number; config: HarnesstModelConfig }>();
 
-async function harnesstConfiguredModel(agentName: string): Promise<harnesstModelConfig> {
+async function harnesstConfiguredModel(agentName: string): Promise<HarnesstModelConfig> {
   const cached = harnesstModelConfigCache.get(agentName);
   if (cached && Date.now() - cached.at < HARNESST_MODEL_CONFIG_TTL_MS) return cached.config;
   const base = process.env.HARNESST_MODEL_GATEWAY_URL;
@@ -96,7 +96,7 @@ async function harnesstConfiguredModel(agentName: string): Promise<harnesstModel
   }
   const body = (await response.json().catch(() => null)) as {
     model?: string;
-    effort?: harnesstReasoningEffort | null;
+    effort?: HarnesstReasoningEffort | null;
     contextWindowTokens?: number | null;
     error?: { message?: string };
   } | null;
@@ -105,7 +105,7 @@ async function harnesstConfiguredModel(agentName: string): Promise<harnesstModel
       body?.error?.message ?? 'harnesst model-config returned HTTP ' + response.status + '.',
     );
   }
-  const config: harnesstModelConfig = {
+  const config: HarnesstModelConfig = {
     model: body.model,
     effort: body.effort ?? null,
     contextWindowTokens: body.contextWindowTokens ?? null,
