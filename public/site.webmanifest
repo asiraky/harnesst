@@ -1,11 +1,11 @@
 {
-  "name": "Eden",
-  "short_name": "Eden",
+  "name": "harnesst",
+  "short_name": "harnesst",
   "description": "Turn the work you keep repeating into agents that do it for you.",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#faf8f4",
-  "theme_color": "#4B7DFF",
+  "theme_color": "#4A7DFF",
   "icons": [
     { "src": "/favicon.svg", "type": "image/svg+xml", "sizes": "any", "purpose": "any" },
     { "src": "/apple-touch-icon.png", "type": "image/png", "sizes": "180x180" },
