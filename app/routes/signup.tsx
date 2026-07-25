@@ -22,7 +22,7 @@ export async function loader(args: Route.LoaderArgs) {
 }
 
 export function meta() {
-  return [{ title: "Create an account · eden" }, ...noindexMeta];
+  return [{ title: "Create an account · harnesst" }, ...noindexMeta];
 }
 
 export default function Signup({ loaderData }: Route.ComponentProps) {

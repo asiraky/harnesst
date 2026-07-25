@@ -203,7 +203,7 @@ export async function action(args: Route.ActionArgs) {
 }
 
 export function meta() {
-  return [{ title: "Accept invitation · eden" }, ...noindexMeta];
+  return [{ title: "Accept invitation · harnesst" }, ...noindexMeta];
 }
 
 export default function AcceptInvitation({

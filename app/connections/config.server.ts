@@ -1,5 +1,5 @@
 /**
- * Operator config for Eden's shared OAuth clients (issues #30, #163). A self-host installation
+ * Operator config for harnesst's shared OAuth clients (issues #30, #163). A self-host installation
  * registers ONE OAuth 2.0 client per provider and sets its two credentials as control-plane env
  * (`EDEN_<PREFIX>_CLIENT_ID` / `EDEN_<PREFIX>_CLIENT_SECRET`, prefix from the provider registry).
  * The connect flow exchanges codes with it, and deploy injects the client creds (alongside the

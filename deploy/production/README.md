@@ -1,9 +1,9 @@
 # Maintainer production deployment
 
-> **This is maintainer infrastructure for the canonical hosted Eden instance.** It is not a
+> **This is maintainer infrastructure for the canonical hosted harnesst instance.** It is not a
 > requirement or replacement for the supported OSS self-host setup. Self-hosters should use the
 > [single-VPS Docker Compose runbook](../vps/README.md), which does not require Swarm, GHCR, or
-> access to Eden's deployment secrets.
+> access to harnesst's deployment secrets.
 
 The root [`docker-stack.production.yml`](../../docker-stack.production.yml) and
 [`deploy.yml`](../../.github/workflows/deploy.yml) implement continuous deployment for
@@ -26,10 +26,10 @@ Swarm manages only the services that the deployment workflow replaces:
 
 nginx and certbot remain ordinary Docker Compose containers from `deploy/vps`. Keeping them outside
 Swarm preserves the existing certificate volumes, ACME webroot flow, and renewal cron. nginx
-continues to reach Eden and the traffic splitter at `127.0.0.1:3000` and `127.0.0.1:8787`.
+continues to reach harnesst and the traffic splitter at `127.0.0.1:3000` and `127.0.0.1:8787`.
 
 The marketing site (landing page + case studies) is host-split: when `MARKETING_HOST` is set in
-the Eden env, those pages serve only on that host while `/` on the app host is Front of House.
+the harnesst env, those pages serve only on that host while `/` on the app host is Front of House.
 Enabling it on this box is a deploy-day step, not a deploy.sh change: DNS A record for the
 marketing host, the marketing `server` blocks from `deploy/vps/nginx-eden.conf` (same
 `127.0.0.1:3000` upstream and verbatim `proxy_set_header` lines — Better Auth rate-limits on the
@@ -41,16 +41,16 @@ the IP portion and publishes it on every interface. Postgres therefore joins the
 binds the two required addresses itself. Do not replace that with a Swarm `ports` entry; Docker's
 iptables rules can expose the database even when ufw appears to block it.
 
-Eden is intentionally single-process and owns fixed host ports, so its update policy uses one
+harnesst is intentionally single-process and owns fixed host ports, so its update policy uses one
 replica with `order: stop-first`. Expect a short control-plane interruption during each rollout.
 Health-check failure triggers Swarm rollback to the previous service specification, but there cannot
-be a start-first, zero-downtime handoff until Eden supports multiple control-plane replicas.
+be a start-first, zero-downtime handoff until harnesst supports multiple control-plane replicas.
 
 The deployment uses `docker stack deploy --resolve-image changed`, so the unchanged `postgres:17`
-service is not re-resolved on every Eden release. On the first bootstrap, the second stack apply is
+service is not re-resolved on every harnesst release. On the first bootstrap, the second stack apply is
 verified from the Postgres service and container health because Swarm may advance service metadata
 without starting a task update. Ordinary deploys still monitor any current Postgres update through
-completion and require its container to be healthy. The transaction also requires the Eden service
+completion and require its container to be healthy. The transaction also requires the harnesst service
 to converge on exactly one task for the requested SHA, that task's container health check to pass,
 and the localhost smoke check to succeed.
 
@@ -163,9 +163,9 @@ discover the real source from the container instead of guessing Compose's volume
    test -n "$POSTGRES_SOURCE"
    ```
 
-2. Stop only the old Eden and Postgres containers. Leave nginx running in front of them; it will
+2. Stop only the old harnesst and Postgres containers. Leave nginx running in front of them; it will
    return an error during the cutover and reconnect to the same loopback ports when Swarm starts
-   Eden.
+   harnesst.
 
    ```bash
    docker compose -f deploy/vps/docker-compose.yml stop eden postgres
@@ -196,7 +196,7 @@ discover the real source from the container instead of guessing Compose's volume
    update and pass their container health checks before succeeding.
 
 The existing certbot renewal command remains valid. The old Compose project still owns nginx,
-certbot, and their certificate volumes; only its Eden and Postgres services are retired.
+certbot, and their certificate volumes; only its harnesst and Postgres services are retired.
 
 ## Verification and operations
 
@@ -211,7 +211,7 @@ docker service logs --tail 200 eden_postgres
 docker logs --tail 200 eden-nginx
 ```
 
-Confirm Eden is serving nginx locally and Postgres is not listening on a wildcard address:
+Confirm harnesst is serving nginx locally and Postgres is not listening on a wildcard address:
 
 ```bash
 curl -sI http://127.0.0.1:3000 | head -1
@@ -219,11 +219,11 @@ sudo ss -ltnp | grep ':5442'
 ```
 
 Port `5442` should appear only on `127.0.0.1` and the Docker bridge address (normally
-`172.17.0.1`), never `0.0.0.0` or `[::]`. Finally, use Eden to ship an agent and talk to it in the
+`172.17.0.1`), never `0.0.0.0` or `[::]`. Finally, use harnesst to ship an agent and talk to it in the
 Playground. That verifies the host-networked control plane can still reach loopback agent instances
 and nginx can still reach the splitter.
 
-Swarm automatically attempts the stack's configured rollback when a new Eden task fails its health
+Swarm automatically attempts the stack's configured rollback when a new harnesst task fails its health
 check. To inspect or manually request the retained previous service specification:
 
 ```bash
@@ -232,7 +232,7 @@ docker service update --rollback eden_eden
 docker service ps eden_eden --no-trunc
 ```
 
-The deploy transaction applies database migrations before changing Eden. Swarm rolls back the
+The deploy transaction applies database migrations before changing harnesst. Swarm rolls back the
 service specification and image, not an already-applied database migration, so every production
 migration must remain compatible with the previous runtime image.
 

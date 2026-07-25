@@ -6,9 +6,9 @@ A template can also **include** other templates by reference (see [Composition](
 
 **Authoring an agent?** Its `instructions.md` system prompt must follow [`CONSTITUTION.md`](./CONSTITUTION.md) — how we ground agents without over-specifying them. It's also the checklist for reviewing one.
 
-**This directory's destiny is the eve OSS repo.** The owner decision (PRD §7.8, Distribution) is that the v1 catalog lives inside `github.com/vercel/eve` as `marketplace/`, not a separate repo. It's authored here in Eden and copied there. That's why `scripts/` imports **nothing** from Eden's `app/` — the whole directory must validate and index itself standing alone.
+**This directory's destiny is the eve OSS repo.** The owner decision (PRD §7.8, Distribution) is that the v1 catalog lives inside `github.com/vercel/eve` as `marketplace/`, not a separate repo. It's authored here in harnesst and copied there. That's why `scripts/` imports **nothing** from harnesst's `app/` — the whole directory must validate and index itself standing alone.
 
-(Inside Eden's repo it is named `catalog/` only because Vite's dev server would serve `marketplace/index.json` over the app's `/marketplace` route on a hard reload; the copy into eve renames it to `marketplace/`.)
+(Inside harnesst's repo it is named `catalog/` only because Vite's dev server would serve `marketplace/index.json` over the app's `/marketplace` route on a hard reload; the copy into eve renames it to `marketplace/`.)
 
 ## Layout
 
@@ -46,10 +46,10 @@ Note the plural: a template of `type: "tool"` lives under `templates/tools/`.
    | `eve`                 | yes      | semver _range_ the template targets, e.g. `">=0.1.0"`                                                                |
    | `files`               | yes      | list of install-relative paths — **no absolute paths, no `..`, no backslashes**; non-empty for every type except `bundle` (a bundle may be pure composition) |
    | `dependencies`        | no       | npm name → version range; JSON-merged into the target's `package.json`                                               |
-   | `secrets`             | no       | `[{ name: UPPER_SNAKE, description?, provisioned?, generated? }]` — the install wizard makes placeholders; `provisioned` (a guided Eden flow sets it) and `generated` (Eden mints it — see [Connection providers](#connection-providers)) are never prompted and mutually exclusive |
+   | `secrets`             | no       | `[{ name: UPPER_SNAKE, description?, provisioned?, generated? }]` — the install wizard makes placeholders; `provisioned` (a guided harnesst flow sets it) and `generated` (harnesst mints it — see [Connection providers](#connection-providers)) are never prompted and mutually exclusive |
    | `sandbox`             | no       | sandbox setup merged into the target agent, e.g. `bootstrap` shell commands, `env` defaults, and a `revalidationKey` |
    | `auth`                | no       | `{ provider, kind: "oauth2", scopes?, scopeGroups? }` — brokered OAuth descriptor, `connection` templates only; at least one of `scopes` (always-requested baseline) / `scopeGroups` (user-selectable permission levels) required (see [Connection providers](#connection-providers)) |
-   | `capability`          | no       | `{ groups }` — operation-group enablement for a brokered-capability provider (issue #166); only valid alongside `auth` on a `connection` template. Group ids must exist in Eden's capability registry (see [Brokered capabilities](#brokered-capabilities-issue-166)) |
+   | `capability`          | no       | `{ groups }` — operation-group enablement for a brokered-capability provider (issue #166); only valid alongside `auth` on a `connection` template. Group ids must exist in harnesst's capability registry (see [Brokered capabilities](#brokered-capabilities-issue-166)) |
    | `connections`         | no       | declared for future use                                                                                              |
    | `model`               | no       | suggested model (agent-type templates)                                                                               |
    | `setup`               | no       | Markdown, shown on the detail page before install — provider-side steps a secret description can't hold (create an app, point a webhook at the agent's endpoint, grant scopes). Mainly channels |
@@ -58,7 +58,7 @@ Note the plural: a template of `type: "tool"` lives under `templates/tools/`.
 3. Put the shipped files under `files/`, mirroring the install-relative paths — a tool at `files/tools/<id>.ts` installs to the target agent's `tools/<id>.ts`.
 4. Run `npm run catalog:index` (regenerates `index.json`) then `npm run catalog:validate`.
 
-The manifest format is also encoded as a Zod schema in Eden at `app/marketplace/manifest.ts`. The two are deliberate duplicates — one contract, two homes (this directory ships to eve; Eden keeps the schema its loaders parse against).
+The manifest format is also encoded as a Zod schema in harnesst at `app/marketplace/manifest.ts`. The two are deliberate duplicates — one contract, two homes (this directory ships to eve; harnesst keeps the schema its loaders parse against).
 
 ## How CI gates it
 
@@ -78,7 +78,7 @@ A template may bundle other templates by reference with `includes: [{ type, id }
 
 The `bundle` type is composition made first-class (issue #42): a named group of includable assets that installs **into an existing member** as one unit, with no (or few) files of its own. An `agent` is conceptually a bundle that also seeds a new member. Installing a composite onto a member that already has one of its includes installed standalone *absorbs* that install — the composite takes ownership of its files and lock entry instead of refusing on a path conflict.
 
-At install (and update) time Eden's resolver flattens each reference into the parent, so:
+At install (and update) time harnesst's resolver flattens each reference into the parent, so:
 
 - **installed repos get materialized files** — never a live reference. The included channel/tool lands as ordinary files under the target agent's root.
 - **the same catalog snapshot** the parent came from resolves its includes — there is no per-include version pin. The **parent's own version bump** is what delivers newer included artifacts to an existing install (update detection compares the parent's version, unchanged).
@@ -87,24 +87,24 @@ At install (and update) time Eden's resolver flattens each reference into the pa
 
 ## Connection providers
 
-A `connection` template with an `auth` block rides Eden's auth-brokered OAuth flow (issues
+A `connection` template with an `auth` block rides harnesst's auth-brokered OAuth flow (issues
 #30, #163): the Deployment tab's Connections card shows a Connect button (connecting is a
-deployment concern — the install wizard collects no credentials), Eden runs the consent flow
+deployment concern — the install wizard collects no credentials), harnesst runs the consent flow
 against its operator-registered OAuth app, stores the grant, and injects the credentials at
 deploy. The contract:
 
-- **`auth.provider` must name a registered provider.** The registry lives in Eden at
+- **`auth.provider` must name a registered provider.** The registry lives in harnesst at
   `app/connections/providers.server.ts` — one object per provider carrying its endpoints,
   PKCE flag, authorize params, and env prefix. A template naming an unregistered provider
-  renders on the Deployment tab as "not supported by this Eden installation"; supporting a
-  new provider is a registry addition in Eden, not a template concern.
+  renders on the Deployment tab as "not supported by this harnesst installation"; supporting a
+  new provider is a registry addition in harnesst, not a template concern.
 - **The template's `setup` text carries the operator instructions** (following the
   google-sheets template's pattern): create the OAuth app with the provider, set
-  `EDEN_<PREFIX>_CLIENT_ID` / `EDEN_<PREFIX>_CLIENT_SECRET` on the Eden control plane, and
+  `EDEN_<PREFIX>_CLIENT_ID` / `EDEN_<PREFIX>_CLIENT_SECRET` on the harnesst control plane, and
   register the redirect URI `<origin>/connections/<provider>/callback` (Google alone keeps
   the legacy `<origin>/google/callback`). Providers whose registry entry declares
   `clientRegistration` (below) need **no** operator OAuth app at all.
-- **At deploy Eden injects `<PREFIX>_OAUTH_CLIENT_ID` / `<PREFIX>_OAUTH_CLIENT_SECRET` /
+- **At deploy harnesst injects `<PREFIX>_OAUTH_CLIENT_ID` / `<PREFIX>_OAUTH_CLIENT_SECRET` /
   `<PREFIX>_OAUTH_REFRESH_TOKEN`** for every provider the agent holds an active grant for;
   the shipped connection file refreshes its own access tokens from those at runtime. It also
   injects **`<PREFIX>_OAUTH_SCOPES`** — the scopes the account actually *granted*,
@@ -123,9 +123,9 @@ the shipped credential code looks like):
   code-exchange proof, and only `EDEN_<PREFIX>_CLIENT_ID` is required operator config.
 - **Access-token-broker delivery** — `credentialDelivery: "access-token-broker"` for
   providers that **rotate the refresh token on every refresh** (and revoke the whole token
-  family on reuse). The refresh token never ships to the instance; Eden stays the grant's
+  family on reuse). The refresh token never ships to the instance; harnesst stays the grant's
   single writer, and the shipped credential file fetches short-lived access tokens from
-  Eden's token broker (`POST <EDEN_API_URL>/api/connections/token`, authenticated with the
+  harnesst's token broker (`POST <EDEN_API_URL>/api/connections/token`, authenticated with the
   deployment's injected `EDEN_TEAM_TOKEN`) instead of self-refreshing — see the mayi
   template's `credentials.server.ts` for the caching pattern (~one call per token lifetime).
   The default `"refresh-token"` delivery keeps the `<PREFIX>_OAUTH_*` trio exactly as before.
@@ -143,11 +143,11 @@ For high-risk systems (money, destructive writes) a broad connector is the wrong
 shipping the OAuth grant to the instance hands the model the whole vendor API. Providers whose
 registry entry declares `credentialDelivery: "capability"` (Xero is the first) invert that —
 **no credential material of any kind reaches the container**, and the deploy injects no
-`<PREFIX>_OAUTH_*` vars at all. Eden holds the grant and exposes a fixed, code-defined
-whitelist of operations (`app/capabilities/` in Eden), grouped into operation groups; the
+`<PREFIX>_OAUTH_*` vars at all. harnesst holds the grant and exposes a fixed, code-defined
+whitelist of operations (`app/capabilities/` in harnesst), grouped into operation groups; the
 agent's shipped tools are thin: each POSTs its typed input to
 `POST <EDEN_API_URL>/api/capabilities/<provider>/<operation>` with the deployment's injected
-`EDEN_TEAM_TOKEN`, and Eden validates the request server-side (e.g. "bills are always DRAFT")
+`EDEN_TEAM_TOKEN`, and harnesst validates the request server-side (e.g. "bills are always DRAFT")
 and performs the one blessed operation itself. Anything not in the whitelist does not exist —
 regardless of what the consented OAuth scopes would allow (the `auth.scopes` set is a fixed
 superset; the operation whitelist, not the token scope, is the enforcement plane). Every call
@@ -157,24 +157,24 @@ What a template author declares:
 
 - **`capability: { groups: [...] }`** — the operation-group ids this template offers the
   installer, only valid alongside `auth` on a `connection` template. The ids must exist in the
-  provider's capability definition in Eden's registry (labels, descriptions, risk, and the
-  validation logic are code there, not template data — Eden's unit tests cross-check the
+  provider's capability definition in harnesst's registry (labels, descriptions, risk, and the
+  validation logic are code there, not template data — harnesst's unit tests cross-check the
   catalog against the registry). The installer ticks groups on the install wizard's Operations
   card (`default`-flagged read groups pre-ticked; write groups are opt-in and render with a
-  "write" badge), and the selection stays editable on the agent's Deployment tab. Because Eden
+  "write" badge), and the selection stays editable on the agent's Deployment tab. Because harnesst
   enforces the selection **per call** — never baked into a token — edits take effect at the
   agent's very next call: no reconnect, no redeploy.
 - **One thin tool file per operation** (see `templates/connections/xero/files/tools/`): a zod
   schema mirroring the operation's input, one POST, return the response body. No credential
   handling, no vendor SDK.
-- **`setup` text carrying the operator app registration** as usual (Xero: an Eden-owned app at
+- **`setup` text carrying the operator app registration** as usual (Xero: a harnesst-owned app at
   developer.xero.com, `EDEN_XERO_CLIENT_ID` / `EDEN_XERO_CLIENT_SECRET`, redirect
   `<origin>/connections/xero/callback`).
 
 Providers whose capability declares a **resource binding** (Xero: the tenant/organisation)
 bind it at Connect time: exactly one resource binds silently; several send the user to a
 picker page before the connection is usable. A second capability provider is a capability
-definition + provider registry entry in Eden plus a catalog template here — no new routes,
+definition + provider registry entry in harnesst plus a catalog template here — no new routes,
 schema, or UI.
 
 ### Permission levels: `scopes` vs `scopeGroups`
@@ -214,7 +214,7 @@ the install wizard and the Deployment tab's Permissions editor.
 Two adjacent capabilities connection/channel templates can rely on:
 
 - **Generated secrets** — a secrets entry with `generated: true` is a value nobody types
-  (e.g. a random state-encryption key). It is never prompted in the install wizard; Eden
+  (e.g. a random state-encryption key). It is never prompted in the install wizard; harnesst
   mints a random value once per agent + environment at first deploy and keeps it stable
   across redeploys (mutually exclusive with `provisioned`).
 - **`EVE_PUBLIC_ORIGIN`** — when the operator configures `EDEN_PUBLIC_ORIGIN`, every deployed

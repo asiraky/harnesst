@@ -31,7 +31,7 @@ describe("repo scaffold", () => {
     const agentTs = files.find((file) =>
       file.path.endsWith("agent/agent.ts"),
     )?.content;
-    // The member resolves its model from Eden's workspace configuration by NAME — no model
+    // The member resolves its model from harnesst's workspace configuration by NAME — no model
     // string anywhere in the repo.
     expect(agentTs).toContain("edenAgentModel('assistant')");
     expect(agentTs).toContain("from './eden-model'");

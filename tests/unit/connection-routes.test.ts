@@ -521,7 +521,7 @@ describe("per-grant dynamic client registration (issue #167)", () => {
     expect(mocks.registerOAuthClient).toHaveBeenCalledWith(
       expect.objectContaining({
         provider: expect.objectContaining({ id: "regprov" }),
-        clientName: "Eden — projabcdefgh / agent",
+        clientName: "harnesst — projabcdefgh / agent",
         redirectUris: ["https://eden.example.com/connections/regprov/callback"],
         // Exact per-environment instance callback URLs, rooted at the OPERATOR's public origin
         // (EDEN_PUBLIC_ORIGIN — the same origin EVE_PUBLIC_ORIGIN injection uses).

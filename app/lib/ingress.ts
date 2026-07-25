@@ -1,7 +1,7 @@
 /**
  * Public-URL helpers shared by every surface that shows or registers an environment's
  * ingress (Deployment tab, GitHub App manifest flow). Extracted from the deployments route
- * so the webhook URL Eden renders and the one it writes into a GitHub App manifest can never
+ * so the webhook URL harnesst renders and the one it writes into a GitHub App manifest can never
  * drift apart.
  */
 

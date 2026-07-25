@@ -1,6 +1,6 @@
 /**
  * The generated `ask-teammate` tool (Team delegation — D2/§5). This exports the SOURCE TEXT of a
- * static eve tool that Eden bakes into a team member's image at build time (never the repo). The
+ * static eve tool that harnesst bakes into a team member's image at build time (never the repo). The
  * file is identical for every member and every roster — all variability arrives via env
  * (`EDEN_TEAMMATES`, `EDEN_TEAM_URL`, `EDEN_TEAM_TOKEN`) — so images stay reusable across
  * redeploys and roster changes.
@@ -19,7 +19,7 @@ export const ASK_TEAMMATE_TOOL_PATH = "agent/tools/ask-teammate.ts";
 export const ASK_TEAMMATE_TOOL_SOURCE = `import { defineTool } from "eve/tools";
 import { z } from "zod";
 
-// Eden bakes this file into a team member's image (see app/team/tool-template.ts). All
+// harnesst bakes this file into a team member's image (see app/team/tool-template.ts). All
 // variability arrives via env — do not edit; a repo file at this path overrides it.
 
 /** Parse EDEN_TEAMMATES defensively — any malformed value yields an empty roster. */

@@ -38,7 +38,7 @@ app.all(
 
 const onListen = () => {
   const host = process.env.HOST ?? "localhost";
-  console.info(`Eden listening on http://${host}:${port}`);
+  console.info(`harnesst listening on http://${host}:${port}`);
 };
 const server = process.env.HOST
   ? app.listen(port, process.env.HOST, onListen)

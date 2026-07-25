@@ -28,12 +28,12 @@ function createClient() {
   return drizzle(client, { schema });
 }
 
-const globalForDb = globalThis as unknown as { __edenDb?: DbClient };
+const globalForDb = globalThis as unknown as { __harnesstDb?: DbClient };
 
-export const db: DbClient = globalForDb.__edenDb ?? createClient();
+export const db: DbClient = globalForDb.__harnesstDb ?? createClient();
 
 if (process.env.NODE_ENV !== "production") {
-  globalForDb.__edenDb = db;
+  globalForDb.__harnesstDb = db;
 }
 
 export { schema };

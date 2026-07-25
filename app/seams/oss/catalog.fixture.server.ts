@@ -6,7 +6,7 @@
  * `marketplace/` — the copy step renames it.
  *
  * This is what runs when `EDEN_CATALOG_REPO` isn't set: no network, just node:fs against the
- * seed directory. It exists so Eden's browse experience works out of the box and so the unit
+ * seed directory. It exists so harnesst's browse experience works out of the box and so the unit
  * tests can exercise the real parse path against the real seed (tests/unit/marketplace.test.ts).
  *
  * Every manifest/index read goes through parseManifest/parseIndex — the fixture trusts the
@@ -23,7 +23,7 @@ import {
 } from "~/marketplace/manifest";
 import type { CatalogSource, CatalogTemplate } from "../types";
 
-/** Seed root, resolved from the process CWD (the repo root when Eden runs). */
+/** Seed root, resolved from the process CWD (the repo root when harnesst runs). */
 function catalogRoot(): string {
   return join(process.cwd(), "catalog");
 }

@@ -503,14 +503,14 @@ describe("publish gate (build check)", () => {
     });
   });
 
-  it("heals a stale Eden-authored Dockerfile when the lock deletion would break its COPY", async () => {
+  it("heals a stale harnesst-authored Dockerfile when the lock deletion would break its COPY", async () => {
     const repoPackage =
       JSON.stringify(
         { dependencies: { "@openrouter/ai-sdk-provider": "^2.10.0" } },
         null,
         2,
       ) + "\n";
-    // Older Eden scaffolds committed a copy of the reference image that COPYs the lock
+    // Older harnesst scaffolds committed a copy of the reference image that COPYs the lock
     // explicitly and runs a bare `npm ci` — deleting the lock breaks it at COPY.
     const staleDockerfile = `# Eden reference image for an eve agent (mirrors LocalDockerTarget.build()).
 FROM node:24-slim AS build
@@ -551,7 +551,7 @@ RUN npm ci
     expect(dockerfile?.content).toContain("npm install");
   });
 
-  it("never touches a user-authored Dockerfile (no Eden header)", async () => {
+  it("never touches a user-authored Dockerfile (no harnesst header)", async () => {
     const repoPackage =
       JSON.stringify(
         { dependencies: { "@openrouter/ai-sdk-provider": "^2.10.0" } },

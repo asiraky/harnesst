@@ -12,7 +12,7 @@
  *    (the real `upsertGrant`, faked Drizzle) invalidates the cache so the replaced account's
  *    token never serves another call.
  *  - `connectionGrantEnv`: a capability provider's deploy injects NO `<PREFIX>_OAUTH_*` vars —
- *    only the Eden-owned `EDEN_CAPABILITY_PROVIDERS` marker — but still liveness-validates the
+ *    only the harnesst-owned `EDEN_CAPABILITY_PROVIDERS` marker — but still liveness-validates the
  *    grant (dead → readable throw), requires the resource binding when the capability declares
  *    one, and fails honestly when the operator OAuth client was removed after an active grant
  *    was made.
@@ -269,13 +269,13 @@ function deployDeps(over: Partial<ConnectionDeployDeps>): ConnectionDeployDeps {
 }
 
 describe("connectionGrantEnv — capability delivery (issue #166)", () => {
-  it("injects NO XERO_OAUTH_* vars — only the Eden-owned capability marker", async () => {
+  it("injects NO XERO_OAUTH_* vars — only the harnesst-owned capability marker", async () => {
     const out = await connectionGrantEnv(deployScope, okFetch, deployDeps({}));
     expect(Object.keys(out).filter((k) => k.startsWith("XERO"))).toEqual([]);
     expect(out).toEqual({ EDEN_CAPABILITY_PROVIDERS: "xero" });
   });
 
-  it("still liveness-validates the grant with the rotation persisted (Eden stays the single writer)", async () => {
+  it("still liveness-validates the grant with the rotation persisted (harnesst stays the single writer)", async () => {
     const order: string[] = [];
     const rotateRefreshToken = vi.fn(async (_id: string, rt: string) => {
       order.push(`rotate:${rt}`);

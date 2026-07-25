@@ -42,7 +42,7 @@ const darkModeScript = `
 (function () {
   var mql = window.matchMedia("(prefers-color-scheme: dark)");
   var read = function () {
-    var m = document.cookie.match(/(?:^|; )eden-theme=([^;]+)/);
+    var m = document.cookie.match(/(?:^|; )harnesst-theme=([^;]+)/);
     return m ? decodeURIComponent(m[1]) : "system";
   };
   var apply = function () {
@@ -69,7 +69,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
         <link rel="icon" href="/favicon.ico" sizes="48x48" />
         <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
         <link rel="manifest" href="/site.webmanifest" />
-        <meta name="theme-color" content="#4B7DFF" />
+        <meta name="theme-color" content="#4A7DFF" />
         <script dangerouslySetInnerHTML={{ __html: darkModeScript }} />
         <Meta />
         <Links />

@@ -1,9 +1,9 @@
 /**
- * Eden control-plane schema (Drizzle + Postgres).
+ * harnesst control-plane schema (Drizzle + Postgres).
  *
  * Scope rules (see docs/PRD.md §9 cross-cutting concerns):
- *  - D2: a Better Auth Organization == an Eden tenant. Better Auth owns users,
- *    organizations, memberships, invitations, and sessions; Eden's operational tables
+ *  - D2: a Better Auth Organization == a harnesst tenant. Better Auth owns users,
+ *    organizations, memberships, invitations, and sessions; harnesst's operational tables
  *    reference those generated canonical tables directly.
  *  - D3: the eve repo is the single source of truth. We DO NOT store agent config here —
  *    only pointers (repo coordinates, git SHAs, image refs) and operational state.
@@ -92,8 +92,8 @@ export const githubInstallationStates = pgTable(
 );
 
 /**
- * Discord connections (issue #32). Eden owns ONE shared Discord app per installation; a user
- * authorizes it into their server and Eden registers a guild slash command named after the
+ * Discord connections (issue #32). harnesst owns ONE shared Discord app per installation; a user
+ * authorizes it into their server and harnesst registers a guild slash command named after the
  * agent. This row binds (guild, command) → the agent/environment it routes to, so the
  * interactions relay can look up the target deployment. The bot token is never stored here (or
  * anywhere per-agent) — it lives only in control-plane env.
@@ -118,7 +118,7 @@ export const discordConnections = pgTable(
     guildId: text("guild_id").notNull(),
     /** The guild's display name at connect time (best-effort, display-only). */
     guildName: text("guild_name"),
-    /** The registered slash command name (Eden derives it from the agent name). */
+    /** The registered slash command name (harnesst derives it from the agent name). */
     commandName: text("command_name").notNull(),
     /** Discord's id for the registered command, for dedup/cleanup on disconnect. */
     commandId: text("command_id"),
@@ -135,7 +135,7 @@ export const discordConnections = pgTable(
 
 /**
  * Auth-brokered connection grants (issue #30). When an agent installs a connector like Google
- * Sheets from the marketplace, the install wizard runs an Eden-brokered OAuth flow against the
+ * Sheets from the marketplace, the install wizard runs a harnesst-brokered OAuth flow against the
  * operator's OAuth client; the resulting refresh token lands here, sealed with the same
  * AES-256-GCM secretbox that protects `secret_values`. Deploy unseals it, validates it once, and
  * injects the operator client creds + refresh token as env so the shipped eve connection file can
@@ -349,7 +349,7 @@ export const agents = pgTable(
     pendingName: text("pending_name"),
     /**
      * Roster classification. `member` is a normal roster agent detected from the repo tree
-     * (the default — every synced row). `assistant` is Eden's built-in, project-level authoring
+     * (the default — every synced row). `assistant` is harnesst's built-in, project-level authoring
      * agent: one per project, created lazily, NEVER detected from the tree, so it must be
      * exempt from the roster prune in `syncRoster` and filtered out of every roster-facing
      * surface (team cards, switcher, teammate delegation, secrets scoping). It still keys
@@ -701,7 +701,7 @@ export const ingestTokens = pgTable(
 );
 
 /**
- * User-issued API credentials for hosted machine clients such as Eden's MCP server. The key is
+ * User-issued API credentials for hosted machine clients such as harnesst's MCP server. The key is
  * tenant- and user-scoped: verification requires the issuing user to still belong to the org.
  * Plaintext is returned only at creation; this table stores the shared `edn_` token digest.
  */
@@ -1022,7 +1022,7 @@ export const workspaceSettings = pgTable("workspace_settings", {
  * Per-agent model overrides — the workspace's explicit exceptions to the default model.
  *
  * An agent whose `agent.ts` resolves through the generated `eden-model.ts`
- * (`model: edenAgentModel('<agent-name>')`) asks Eden at runtime which model to run. The
+ * (`model: edenAgentModel('<agent-name>')`) asks harnesst at runtime which model to run. The
  * answer is this map's entry for the agent's name when one exists, else the workspace default
  * (`workspace_settings.assistant_model`). Subagents resolve with their PARENT's name, so they
  * always run the parent's model. Removing a row falls the agent back to the workspace default
@@ -1034,7 +1034,7 @@ export const agentModelOverrides = pgTable(
     orgId: text("org_id")
       .notNull()
       .references(() => organization.id, { onDelete: "cascade" }),
-    /** The eve agent name (`edenAgentModel('<name>')` argument), not an Eden row id. */
+    /** The eve agent name (`edenAgentModel('<name>')` argument), not a harnesst row id. */
     agentName: text("agent_name").notNull(),
     /** Connection-qualified model ref, e.g. `anthropic/<connectionId>/<model>`. */
     model: text("model").notNull(),
@@ -1099,7 +1099,7 @@ export const modelProviderConnections = pgTable(
 );
 
 /**
- * Eden's index of Eve playground sessions. The transcript itself lives in Eve's durable
+ * harnesst's index of Eve playground sessions. The transcript itself lives in Eve's durable
  * event stream; this table stores the app-owned thread/cursor needed to list and resume
  * sessions for a project/agent/user.
  */
@@ -1319,7 +1319,7 @@ export const agentLinks = pgTable(
 /**
  * One row per teammate ask — the cross-agent correlation record (Team delegation — D6). The
  * relay writes it `running` before it forwards the message and finalizes it (completed|failed)
- * once the peer's turn settles, recording the peer eve session, the peer's Eden run row, and
+ * once the peer's turn settles, recording the peer eve session, the peer's harnesst run row, and
  * timing. Concurrency caps count `running` rows younger than (timeout + slack), so a crashed
  * relay can never wedge the caps. Agent FKs `set null` on member removal — the correlation
  * record survives the roster change that outlived it.
@@ -1347,7 +1347,7 @@ export const delegations = pgTable(
     toEnvironmentId: varchar("to_environment_id", { length: 12 }),
     /** The peer eve session the relay opened for this ask. */
     externalSessionId: text("external_session_id"),
-    /** The peer's Eden run row (runs.id), for linked traces. */
+    /** The peer's harnesst run row (runs.id), for linked traces. */
     runId: varchar("run_id", { length: 12 }),
     // running | completed | failed
     status: text("status").notNull().default("running"),
@@ -1400,7 +1400,7 @@ export const inboxItems = pgTable(
       .references(() => playgroundSessions.id, { onDelete: "cascade" }),
     /** Soft ref (no FK): best-effort link to the delegation that parked. */
     delegationId: varchar("delegation_id", { length: 12 }),
-    /** Soft ref (no FK): best-effort link to the peer's Eden run. */
+    /** Soft ref (no FK): best-effort link to the peer's harnesst run. */
     runId: varchar("run_id", { length: 12 }),
     /** The agent asking (or finishing) — for "ivy needs an answer" copy. */
     agentId: varchar("agent_id", { length: 12 }).references(() => agents.id, {

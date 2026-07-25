@@ -25,11 +25,11 @@ import { localTelemetrySink } from "./oss/telemetry.local.server";
 import type {
   CatalogSource,
   DeployTarget,
-  EdenMode,
-  EdenRuntime,
+  HarnesstMode,
+  HarnesstRuntime,
 } from "./types";
 
-function resolveMode(): EdenMode {
+function resolveMode(): HarnesstMode {
   return process.env.EDEN_MODE === "managed" ? "managed" : "oss";
 }
 
@@ -52,7 +52,7 @@ function resolveCatalog(): CatalogSource {
   return process.env.EDEN_CATALOG_REPO ? githubCatalog : fixtureCatalog;
 }
 
-function buildRuntime(mode: EdenMode): EdenRuntime {
+function buildRuntime(mode: HarnesstMode): HarnesstRuntime {
   // Managed-only implementations (KMS secrets, gateway proxy, Stripe metering, Nomad target)
   // are introduced in M4 and swapped in here by mode. Until then both modes share the OSS
   // reference impls; the seam boundary means that swap is local to this file.
@@ -73,9 +73,9 @@ function buildRuntime(mode: EdenMode): EdenRuntime {
   };
 }
 
-let cached: EdenRuntime | undefined;
+let cached: HarnesstRuntime | undefined;
 
 /** The runtime implementations selected for this process. Cached after first resolution. */
-export function getRuntime(): EdenRuntime {
+export function getRuntime(): HarnesstRuntime {
   return (cached ??= buildRuntime(resolveMode()));
 }

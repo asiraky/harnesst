@@ -1,5 +1,5 @@
 /**
- * Discord interactions relay (issue #32). Eden's shared app has ONE Interactions Endpoint URL
+ * Discord interactions relay (issue #32). harnesst's shared app has ONE Interactions Endpoint URL
  * pointing at the control plane; this module verifies Discord's Ed25519 signature and resolves
  * which agent instance a given interaction routes to. The route (`api.discord.interactions.ts`)
  * then forwards the raw request to that instance's eve Discord channel untouched. Application

@@ -1,5 +1,5 @@
 /**
- * Discord interactions relay (issue #32) — the single Interactions Endpoint URL of Eden's
+ * Discord interactions relay (issue #32) — the single Interactions Endpoint URL of harnesst's
  * shared app. Discord POSTs every interaction here; the control plane verifies the Ed25519
  * signature, answers the endpoint-validation PING itself (no guild is connected at setup time),
  * and otherwise forwards the RAW request (body + signature headers untouched) to the bound

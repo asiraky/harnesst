@@ -1,12 +1,12 @@
 /**
  * Channel-run reconciler (issue #119) — the pull side of run observability.
  *
- * Only playground/assistant turns are recorded in-process (Eden drains their eve stream live).
+ * Only playground/assistant turns are recorded in-process (harnesst drains their eve stream live).
  * Cron (`schedule`), Discord, and other-channel turns fire INSIDE the managed instance and never
  * notify the control plane, so they leave no `runs`/`run_steps` — the observability gap. There is
  * no instance→control-plane step-reporting path and eve is never patched, so this is a PULL:
  * a periodic loop discovers non-`http` sessions on every live managed instance (via the world
- * DB's `workflow.workflow_runs` + eve's `$eve.*` attributes — the sanctioned Eden-side surface),
+ * DB's `workflow.workflow_runs` + eve's `$eve.*` attributes — the sanctioned harnesst-side surface),
  * drains eve's durable replay stream, folds it into per-turn results (session-turns.server.ts),
  * and ingests them through the same `recordTurnStart`/`recordTurnFinish` chokepoint the playground
  * uses. Hung cron turns become visible `status=running` rows — the desired #118 outcome, not a bug.

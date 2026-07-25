@@ -2,8 +2,8 @@
  * Instance token broker (issue #167) — the control-plane half of the "access-token-broker"
  * credential delivery. Providers with ROTATING refresh grants (mayi: a refresh mints a new
  * refresh token, and reusing an old one revokes the whole token family) can't ship
- * `<PREFIX>_OAUTH_REFRESH_TOKEN` to instances: Eden and the instance would race the rotation and
- * kill the grant. Instead Eden stays the SINGLE WRITER — the instance POSTs
+ * `<PREFIX>_OAUTH_REFRESH_TOKEN` to instances: harnesst and the instance would race the rotation
+ * and kill the grant. Instead harnesst stays the SINGLE WRITER — the instance POSTs
  * `/api/connections/token` (see routes/api.connections.token.ts) and gets back a fresh
  * short-lived access token; every refresh happens here, and the rotated refresh token is
  * persisted before the access token is released.
@@ -130,7 +130,7 @@ async function refreshGrantAccessToken(
     return {
       ok: false,
       status: 503,
-      error: `This Eden installation has no ${def.label} OAuth client configured for this grant.`,
+      error: `This harnesst installation has no ${def.label} OAuth client configured for this grant.`,
     };
   }
 
@@ -213,7 +213,7 @@ export async function brokerAccessToken(
     return {
       ok: false,
       status: 404,
-      error: `"${input.provider}" is not a connection provider this Eden installation supports.`,
+      error: `"${input.provider}" is not a connection provider this harnesst installation supports.`,
     };
   }
   // Only brokered-delivery providers are served: refresh-token providers ship their grant to the
@@ -269,7 +269,7 @@ export async function capabilityAccessToken(
     return {
       ok: false,
       status: 404,
-      error: `"${input.provider}" is not a connection provider this Eden installation supports.`,
+      error: `"${input.provider}" is not a connection provider this harnesst installation supports.`,
     };
   }
   if (def.credentialDelivery !== "capability") {

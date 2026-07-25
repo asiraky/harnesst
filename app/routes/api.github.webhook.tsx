@@ -1,12 +1,12 @@
 /**
- * GitHub App webhook receiver — keeps Eden's Release history in sync when a change is merged
- * on github.com instead of in-app (PRD §7.3: "merge in Eden or on GitHub").
+ * GitHub App webhook receiver — keeps harnesst's Release history in sync when a change is merged
+ * on github.com instead of in-app (PRD §7.3: "merge in harnesst or on GitHub").
  *
  * On a PR merged into the default branch, find-or-create the Release at the merge commit. It
  * does NOT auto-deploy: deploying a version is a separate, explicit act on the Deployments tab
  * (the human picks environment + traffic weight — the multi-version primitive, §7.7). The
  * release create is idempotent with the in-app Merge button via `ensureReleaseForCommit`, so a
- * change merged in Eden and echoed back by this webhook yields exactly one Release.
+ * change merged in harnesst and echoed back by this webhook yields exactly one Release.
  * Resource route (action only); signature-verified.
  */
 import { data, type ActionFunctionArgs } from "react-router";
@@ -66,7 +66,7 @@ export async function action({ request }: ActionFunctionArgs) {
         )
       : null;
 
-  // Cache keys use Eden's opaque grant id. The webhook's raw installation id is deliberately
+  // Cache keys use harnesst's opaque grant id. The webhook's raw installation id is deliberately
   // ignored at this browser/server boundary; resolve the repository to its project grant instead.
   if (
     event === "pull_request" &&

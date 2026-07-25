@@ -4,7 +4,7 @@
  * One of the four AgentMail billing-inbox tools (read + label only — nothing here can send,
  * delete, or provision mail). Labels are the write surface the bookkeeping flow gets: mark a
  * message processed by adding "read" and removing "unread", or tag it for a workflow
- * ("needs-review", "invoice-entered"). Set AGENTMAIL_API_KEY as an Eden secret; the value is
+ * ("needs-review", "invoice-entered"). Set AGENTMAIL_API_KEY as a harnesst secret; the value is
  * read from the tool process environment and is never accepted as model input.
  */
 import { defineTool } from "eve/tools";
@@ -74,7 +74,7 @@ export default defineTool({
       return {
         ok: false,
         error:
-          "Missing AGENTMAIL_API_KEY. Set it as an Eden secret on this agent before using the AgentMail tools.",
+          "Missing AGENTMAIL_API_KEY. Set it as a harnesst secret on this agent before using the AgentMail tools.",
       };
     }
 

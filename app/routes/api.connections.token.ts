@@ -53,7 +53,7 @@ export async function action({ request }: ActionFunctionArgs) {
   const agent = env ? await store.agents.findById(env.agentId) : null;
   if (!agent) {
     return data(
-      { ok: false, error: "Your deployment is no longer known to Eden." },
+      { ok: false, error: "Your deployment is no longer known to harnesst." },
       { status: 403 },
     );
   }

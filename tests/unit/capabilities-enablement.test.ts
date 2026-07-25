@@ -23,7 +23,7 @@ import { planInstall, type PlanContext } from "~/marketplace/install.server";
 import {
   emptyLock,
   findInstall,
-  type EdenLock,
+  type HarnesstLock,
   type InstallEntry,
 } from "~/marketplace/lock";
 import { templateManifestSchema } from "~/marketplace/manifest";
@@ -105,7 +105,7 @@ function xeroEntry(
   };
 }
 
-function lockOf(...installs: InstallEntry[]): EdenLock {
+function lockOf(...installs: InstallEntry[]): HarnesstLock {
   return { version: 1, installs };
 }
 
@@ -114,7 +114,7 @@ describe("install snapshot — capabilityGroups + selectedCapabilityGroups", () 
     const plan = planInstall(memberCtx());
     const lock = JSON.parse(
       plan.writes.find((s) => s.path === "eden-lock.json")!.content,
-    ) as EdenLock;
+    ) as HarnesstLock;
     const entry = findInstall(lock, "xero", "books")!;
     expect(entry.auth?.[0]).toMatchObject({
       provider: "xero",
@@ -134,7 +134,7 @@ describe("install snapshot — capabilityGroups + selectedCapabilityGroups", () 
     );
     const lock = JSON.parse(
       plan.writes.find((s) => s.path === "eden-lock.json")!.content,
-    ) as EdenLock;
+    ) as HarnesstLock;
     const entry = findInstall(lock, "xero", "books")!;
     // Snapshot declaration order, not the posted order; the forged id is gone.
     expect(entry.auth?.[0].selectedCapabilityGroups).toEqual([
@@ -147,7 +147,7 @@ describe("install snapshot — capabilityGroups + selectedCapabilityGroups", () 
     const plan = planInstall(memberCtx({ capabilitySelections: { xero: [] } }));
     const lock = JSON.parse(
       plan.writes.find((s) => s.path === "eden-lock.json")!.content,
-    ) as EdenLock;
+    ) as HarnesstLock;
     expect(
       findInstall(lock, "xero", "books")!.auth?.[0].selectedCapabilityGroups,
     ).toEqual([]);

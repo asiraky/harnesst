@@ -139,8 +139,8 @@ function normalizeReply(reply: string | null): {
 /* ── channel classification ── */
 
 /**
- * eve's `$eve.trigger` → Eden run channel. `http` is playground/assistant/teammate traffic that
- * Eden already records in-process, so it maps to null (the reconciler SKIPS it). `schedule` is
+ * eve's `$eve.trigger` → harnesst run channel. `http` is playground/assistant/teammate traffic that
+ * harnesst already records in-process, so it maps to null (the reconciler SKIPS it). `schedule` is
  * cron. Every other channel (discord, github, slack, …) passes through verbatim. An
  * empty/absent trigger can't be classified, so it is skipped too.
  */

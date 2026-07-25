@@ -2,7 +2,7 @@
   "id": "mayi",
   "type": "connection",
   "name": "May I?",
-  "description": "Human approvals for agent actions via May I? (mayi.sh). Install it, click Connect on the agent's Deployment tab (Eden registers the OAuth client automatically — no operator app to create), and gated tools park until a human approves in the May I? app, then resume with a signed receipt. Scheduled work that may need an approval must use the handler form of an eve schedule and hand the run to the channel with receive(mayi, ...) — task-mode schedules can't park for a human.",
+  "description": "Human approvals for agent actions via May I? (mayi.sh). Install it, click Connect on the agent's Deployment tab (harnesst registers the OAuth client automatically — no operator app to create), and gated tools park until a human approves in the May I? app, then resume with a signed receipt. Scheduled work that may need an approval must use the handler form of an eve schedule and hand the run to the channel with receive(mayi, ...) — task-mode schedules can't park for a human.",
   "version": "0.2.0",
   "eve": "0.24.2",
   "files": [
@@ -20,14 +20,14 @@
   "secrets": [
     {
       "name": "MAYI_CALLBACK_STATE_KEY",
-      "description": "Stable base64url 32-byte key the adapter encrypts callback state with — minted once by Eden at first deploy and kept identical across redeploys (rotating it would strand outstanding approvals).",
+      "description": "Stable base64url 32-byte key the adapter encrypts callback state with — minted once by harnesst at first deploy and kept identical across redeploys (rotating it would strand outstanding approvals).",
       "generated": true
     },
     {
       "name": "MAYI_CALLBACK_STATE_KEY_ID",
-      "description": "The current callback-state key's rotation identifier (a constant \"k1\") — provisioned automatically by Eden at deploy alongside the key.",
+      "description": "The current callback-state key's rotation identifier (a constant \"k1\") — provisioned automatically by harnesst at deploy alongside the key.",
       "provisioned": true
     }
   ],
-  "setup": "**Connect:** after installing, open the agent's **Deployment** tab and click **Connect May I?** on the Connections card. Eden registers a dedicated OAuth client with May I? automatically — covering the exact approval-callback URL of every environment the agent has — then walks you through one PKCE consent screen. Nothing to copy, no OAuth app to create.\n\n**Self-host note (operators):** set `EDEN_PUBLIC_ORIGIN` to Eden's **publicly reachable HTTPS origin** before connecting. May I? validates every callback URL as public HTTPS at registration time, and the instance's approval callbacks arrive at `<EDEN_PUBLIC_ORIGIN>/e/<environmentId>/eve/v1/mayi/approval-resolved` — a local-dev host can't receive them (Connect will surface a readable registration error on localhost).\n\n**Adding an environment later:** May I? OAuth clients are immutable with exact-match callback URLs, so an environment created after you connect can't receive approval callbacks until you **Reconnect** (the Connections card flips to \"reconnect needed\" and one reconnect registers a fresh client covering the new set).\n\n**How credentials flow:** May I? rotates the OAuth refresh token on every refresh, so the instance never holds it. Eden keeps the grant, refreshes centrally, and the shipped `credentials.server.ts` fetches short-lived access tokens from Eden's token broker (about one call per hour). Approval verification keys come from May I?'s public JWKS at runtime — never injected.\n\n**eve version:** `@mayiapp/eve` pins eve `0.24.2`; keep the agent on that version until the adapter advances its peer range."
+  "setup": "**Connect:** after installing, open the agent's **Deployment** tab and click **Connect May I?** on the Connections card. harnesst registers a dedicated OAuth client with May I? automatically — covering the exact approval-callback URL of every environment the agent has — then walks you through one PKCE consent screen. Nothing to copy, no OAuth app to create.\n\n**Self-host note (operators):** set `EDEN_PUBLIC_ORIGIN` to harnesst's **publicly reachable HTTPS origin** before connecting. May I? validates every callback URL as public HTTPS at registration time, and the instance's approval callbacks arrive at `<EDEN_PUBLIC_ORIGIN>/e/<environmentId>/eve/v1/mayi/approval-resolved` — a local-dev host can't receive them (Connect will surface a readable registration error on localhost).\n\n**Adding an environment later:** May I? OAuth clients are immutable with exact-match callback URLs, so an environment created after you connect can't receive approval callbacks until you **Reconnect** (the Connections card flips to \"reconnect needed\" and one reconnect registers a fresh client covering the new set).\n\n**How credentials flow:** May I? rotates the OAuth refresh token on every refresh, so the instance never holds it. harnesst keeps the grant, refreshes centrally, and the shipped `credentials.server.ts` fetches short-lived access tokens from harnesst's token broker (about one call per hour). Approval verification keys come from May I?'s public JWKS at runtime — never injected.\n\n**eve version:** `@mayiapp/eve` pins eve `0.24.2`; keep the agent on that version until the adapter advances its peer range."
 }

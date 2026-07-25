@@ -24,10 +24,10 @@ describe("transactional email templates", () => {
       invitationUrl: "https://eden.example.com/accept-invitation/invite-id",
       inviterEmail: "owner@example.com",
       inviterName: "Olivia Owner",
-      organizationName: "Eden Team",
+      organizationName: "harnesst Team",
     });
 
-    expect(html).toContain("Join Eden Team");
+    expect(html).toContain("Join harnesst Team");
     expect(html).toContain("Olivia Owner");
     expect(html).toContain("owner@example.com");
     expect(html).toContain("/accept-invitation/invite-id");

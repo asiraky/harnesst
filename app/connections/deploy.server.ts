@@ -8,24 +8,24 @@
  *    / `<PREFIX>_OAUTH_REFRESH_TOKEN` — no per-turn control-plane dependency: once these vars are
  *    in the container, eve's `getToken` exchanges the refresh token for access tokens on its own.
  *  - "access-token-broker" (issue #167): the refresh token NEVER ships — rotating-grant providers
- *    (mayi) revoke the whole token family if two writers race a rotation, so Eden stays the
+ *    (mayi) revoke the whole token family if two writers race a rotation, so harnesst stays the
  *    single writer and the instance fetches short-lived access tokens from the control-plane
  *    broker (`POST <EDEN_API_URL>/api/connections/token`, see broker.server.ts). Deploy injects
  *    only `<PREFIX>_OAUTH_SCOPES` plus the provider's static `deployEnv` constants; the broker
  *    coordinates (EDEN_API_URL / EDEN_TEAM_TOKEN) are deployment-scoped and injected by the
  *    controller.
  *  - "capability" (issue #166): the instance gets NO `<PREFIX>_OAUTH_*` vars at all — suppressing
- *    injection is precisely the point: Eden executes the provider's whitelisted operations itself
+ *    injection is precisely the point: harnesst executes the provider's whitelisted operations itself
  *    (`POST <EDEN_API_URL>/api/capabilities/...`). Deploy still VALIDATES the grant (one
  *    rotation-safe liveness refresh, plus the capability's resource binding when it declares one)
  *    so a dead Xero connection fails the deploy with the existing readable reconnect message
- *    rather than failing at first call. The provider id joins the Eden-owned
+ *    rather than failing at first call. The provider id joins the harnesst-owned
  *    `EDEN_CAPABILITY_PROVIDERS` marker (comma-joined), which tells the controller to inject the
  *    EDEN_API_URL / EDEN_TEAM_TOKEN coordinates the per-operation tools ride on.
  *
  * The first two deliveries also inject `<PREFIX>_OAUTH_SCOPES` — the grant's GRANTED scopes
  * (issue #165) so agent code can read its actual permission level. Capability providers don't:
- * the agent's permission surface is the operation-group enablement, checked per call in Eden.
+ * the agent's permission surface is the operation-group enablement, checked per call in harnesst.
  *
  * Each grant is VALIDATED once at deploy by attempting a refresh: a dead grant (invalid_grant) is
  * marked "expired" and the deploy fails honestly with a reconnect message, rather than shipping a
@@ -180,7 +180,7 @@ export async function connectionGrantEnv(
     // config only skips providers whose refresh would need the shared client.
     const operatorConfig = deps.getConfig(def);
     if (!operatorConfig && !def.clientRegistration) {
-      // A capability provider's grant is USELESS without the operator client — Eden itself makes
+      // A capability provider's grant is USELESS without the operator client — harnesst itself makes
       // every vendor call, so shipping the container anyway would leave each tool failing "not
       // configured" at runtime with no deploy-time signal. An ACTIVE grant therefore fails the
       // deploy honestly (the operator env was removed after the connection was made); refresh-
@@ -190,7 +190,7 @@ export async function connectionGrantEnv(
       );
       if (def.credentialDelivery === "capability" && hasActiveGrant) {
         throw new Error(
-          `The ${def.label} connection for this agent can't be used: this Eden installation has ` +
+          `The ${def.label} connection for this agent can't be used: this harnesst installation has ` +
             `no ${def.label} OAuth client configured. Set EDEN_${def.envPrefix}_CLIENT_ID and ` +
             `EDEN_${def.envPrefix}_CLIENT_SECRET on the control plane, then redeploy.`,
         );
@@ -302,7 +302,7 @@ export async function connectionGrantEnv(
       for (const [key, value] of Object.entries(def.deployEnv ?? {})) {
         env[key] = value;
       }
-      // Eden-owned marker: which capability providers this deploy brokered. The controller reads
+      // harnesst-owned marker: which capability providers this deploy brokered. The controller reads
       // it to inject the EDEN_API_URL / EDEN_TEAM_TOKEN coordinates; agent code can read it to
       // know which capability tool families are live.
       env.EDEN_CAPABILITY_PROVIDERS = [

@@ -1,7 +1,7 @@
-# Eden
+# harnesst
 
 A web app for building, managing, and deploying [eve](https://github.com/vercel/eve) agents
-without hand-writing code. Eden puts a guided web UI + an embedded coding assistant over an eve
+without hand-writing code. harnesst puts a guided web UI + an embedded coding assistant over an eve
 repo so **product managers** can author agents, then ships and operates the result. Open source +
 self-hostable, and also a commercial managed service.
 
@@ -50,12 +50,12 @@ cp .env.example .env.local
 - `BETTER_AUTH_SECRET` — generate at least 32 bytes of high-entropy secret material with
   `openssl rand -base64 32`.
 - `BETTER_AUTH_URL` — keep the example value, `http://localhost:5173`, unless you deliberately
-  run Eden on another origin.
+  run harnesst on another origin.
 - `POSTMARK_SERVER_TOKEN` and `FROM_EMAIL` — a Postmark server token and verified sender used for
   password resets and Better Auth organization invitations. For local email capture, set
   `SMTP_URL` instead; development SMTP takes precedence over Postmark.
 
-Authentication is self-hosted in the same Postgres database as Eden. Better Auth exposes its
+Authentication is self-hosted in the same Postgres database as harnesst. Better Auth exposes its
 same-origin handler under `/api/auth/*`; there is no external auth dashboard or callback to
 configure. Sign-in is email-first and password-second; sign-up asks only for name, email, and
 password. Email verification does not gate ordinary signup or sign-in. Password resets use Better
@@ -84,7 +84,7 @@ npm run dev
 The app is at `http://localhost:5173`. If you use another port or public origin, update
 `BETTER_AUTH_URL` to that exact origin.
 
-Visit `/signup` to create the first account. Eden creates a personal workspace through Better
+Visit `/signup` to create the first account. harnesst creates a personal workspace through Better
 Auth's organization plugin and lands you on the workspace-scoped dashboard.
 
 ### 6. (Optional) Connect a GitHub repo
@@ -101,7 +101,7 @@ install the App, pick an eve repo, and view its parsed agent surface at `/projec
 is configured, `/connect` shows an "unconfigured" notice.
 
 After upgrading an existing deployment, every GitHub installation must be reauthorized from
-**Connect**. Legacy projects are mapped to Eden's new opaque grant ids when possible, but all
+**Connect**. Legacy projects are mapped to harnesst's new opaque grant ids when possible, but all
 repository operations fail closed until the signed-in GitHub user completes the OAuth proof.
 
 ## Common scripts
@@ -143,9 +143,9 @@ eden/
 **Self-hosting on a VPS is the supported production path.** Everything needed to reproduce a
 working production install lives in [`deploy/vps/`](./deploy/vps/): a single runbook
 ([`deploy/vps/README.md`](./deploy/vps/README.md)) plus the compose, nginx, and env templates it
-references. It's a complete, ordered sequence — firewall → Docker → the compose stack (Eden +
+references. It's a complete, ordered sequence — firewall → Docker → the compose stack (harnesst +
 Postgres) → containerized nginx + Let's Encrypt → GitHub App / Postmark wiring → smoke test. One
-Linux box runs everything: Eden, Postgres, and the agent instances it deploys.
+Linux box runs everything: harnesst, Postgres, and the agent instances it deploys.
 
 **Two ways to run it:**
 
@@ -157,8 +157,8 @@ Linux box runs everything: Eden, Postgres, and the agent instances it deploys.
   requires an agent.
 
 **Before you start you'll need** a VPS (Ubuntu 24.04 LTS; 2 vCPU / 4 GB RAM / 40 GB disk minimum)
-and a **domain you control**, with an A record pointing at the VPS — Eden is served from that
-domain, and external GitHub/Discord callbacks require it. (Ours is `eden.zero8.ai`; yours is
+and a **domain you control**, with an A record pointing at the VPS — harnesst is served from that
+domain, and external GitHub/Discord callbacks require it. (Ours is `harnesst.dev`; yours is
 whatever domain you register and point at your box.) The runbook's first section lists the full
 prerequisites, including Postmark, a GitHub App, and an Anthropic API key.
 
@@ -168,6 +168,6 @@ prerequisites, including Postmark, a GitHub App, and an Anthropic API key.
 
 ## License & ownership
 
-Copyright © 2026 Aaron HS. Eden is created and owned by Aaron HS.
+Copyright © 2026 Aaron HS. harnesst is created and owned by Aaron HS.
 
 Licensed under the [GNU Affero General Public License v3.0](./LICENSE) (AGPL-3.0).

@@ -43,12 +43,12 @@ const defaultDeps: WorkspaceModelDeps = {
 
 const MODEL_CATALOG_TTL_MS = 60 * 60 * 1000;
 const globalForCatalogCache = globalThis as unknown as {
-  __edenProviderModelCatalogCache?: SwrCache;
+  __harnesstProviderModelCatalogCache?: SwrCache;
 };
 const providerModelCatalogCache =
-  globalForCatalogCache.__edenProviderModelCatalogCache ?? new SwrCache();
+  globalForCatalogCache.__harnesstProviderModelCatalogCache ?? new SwrCache();
 if (process.env.NODE_ENV !== "production") {
-  globalForCatalogCache.__edenProviderModelCatalogCache =
+  globalForCatalogCache.__harnesstProviderModelCatalogCache =
     providerModelCatalogCache;
 }
 

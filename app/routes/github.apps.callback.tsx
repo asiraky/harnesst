@@ -10,7 +10,7 @@
  * hands over the `pem`/`webhook_secret`), writes the four channel secrets onto THAT agent, and
  * sends the user to `github.com/apps/<slug>/installations/new` to pick the repositories.
  * The slug always comes from the conversion response — GitHub derives it from the final
- * (possibly user-edited) name, never from what Eden proposed.
+ * (possibly user-edited) name, never from what harnesst proposed.
  *
  * A slug/App-ID already held by ANOTHER agent in the project refuses the write (two agents
  * answering one @mention is ambiguous) — possible only via stale/manual credentials, since
@@ -87,7 +87,7 @@ export const loader = (args: LoaderFunctionArgs) => {
         state.sessionId !== auth.session.id
       ) {
         return fail(
-          "This GitHub App flow was started in a different Eden session. Start the flow again from the agent's Deployment tab.",
+          "This GitHub App flow was started in a different harnesst session. Start the flow again from the agent's Deployment tab.",
         );
       }
 
@@ -191,7 +191,7 @@ export const loader = (args: LoaderFunctionArgs) => {
 };
 
 export function meta() {
-  return [{ title: "GitHub App · eden" }, ...noindexMeta];
+  return [{ title: "GitHub App · harnesst" }, ...noindexMeta];
 }
 
 export default function GitHubAppCallback({

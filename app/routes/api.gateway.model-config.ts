@@ -35,7 +35,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
   const resolved = await resolveAgentModel(orgId, agent);
   if (!resolved) {
     return errorResponse(
-      `No model is configured for this workspace. Set a default model in Eden's Org settings ` +
+      `No model is configured for this workspace. Set a default model in harnesst's Org settings ` +
         `(or add a model override for the "${agent}" agent), then retry — no redeploy is needed.`,
       404,
     );

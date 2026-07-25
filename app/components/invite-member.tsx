@@ -87,9 +87,9 @@ function InviteMemberControl({ projectId }: { projectId: string }) {
         <DialogHeader>
           <DialogTitle>Invite to this repository</DialogTitle>
           <DialogDescription>
-            Eden emails a secure invitation link. Invitees join the workspace
-            as members and work with this repository&rsquo;s agents in front of
-            house.
+            harnesst emails a secure invitation link. Invitees join the
+            workspace as members and work with this repository&rsquo;s agents in
+            front of house.
           </DialogDescription>
         </DialogHeader>
 

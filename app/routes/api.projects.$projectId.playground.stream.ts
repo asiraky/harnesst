@@ -134,7 +134,7 @@ export async function action(args: ActionFunctionArgs) {
   // #71: continue a conversation whose owning eve session lives on a deployment that was replaced
   // (or was explicitly de-selected for a different live one). That eve session can't be migrated —
   // it died with the old container's runtime — so instead of 409ing, seed a FRESH eve session on
-  // this target transparently from Eden's durable transcript cache (the complete history), unbind
+  // this target transparently from harnesst's durable transcript cache (the complete history), unbind
   // the dead binding, and continue. This also covers the "owner still live but a different
   // deployment was selected" case: continuing on any non-owner target reseeds from the cache.
   let seedContext: string | null = null;

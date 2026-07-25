@@ -1,5 +1,5 @@
 /**
- * Operator config for Eden's ONE shared Discord app (issue #32). A self-host installation
+ * Operator config for harnesst's ONE shared Discord app (issue #32). A self-host installation
  * registers a single Discord application in the Developer Portal and sets its three
  * credentials as control-plane env. The connect flow, the interactions relay, and the send
  * proxy all read this — the bot token NEVER leaves the control plane (it can act in every

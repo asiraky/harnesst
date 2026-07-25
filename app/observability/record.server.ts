@@ -1,7 +1,7 @@
 /**
  * Record a Playground turn into the runs store so the Observe pillar (Runs tab) has something
  * to show for managed/local instances that don't push OTel telemetry. This is the only
- * telemetry PRODUCER in the app: Eden already consumes eve's event stream on every playground
+ * telemetry PRODUCER in the app: harnesst already consumes eve's event stream on every playground
  * turn (see agent/talk.server.ts), so we fold that same stream into `ingestRun` directly — no
  * HTTP, no ingest token (that path is for BYO instances).
  *

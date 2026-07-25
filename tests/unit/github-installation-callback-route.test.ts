@@ -109,7 +109,7 @@ describe("GitHub installation OAuth callback", () => {
       orgId: "org-1",
     });
     await expect(loader(args())).resolves.toMatchObject({
-      error: expect.stringMatching(/different Eden session/),
+      error: expect.stringMatching(/different harnesst session/),
     });
 
     mocks.consume.mockResolvedValueOnce(null);

@@ -21,7 +21,7 @@ import {
   requiredScopesByProvider,
   serializeLock,
   upsertInstall,
-  type EdenLock,
+  type HarnesstLock,
   type InstallEntry,
 } from "~/marketplace/lock";
 import type { ResolvedAuth } from "~/marketplace/compose.server";
@@ -426,7 +426,7 @@ describe("requiredScopesByProvider (issue #30)", () => {
   });
 
   it("unions and dedupes scopes across installs for the same member/provider, sorted", () => {
-    const lock: EdenLock = {
+    const lock: HarnesstLock = {
       version: 1,
       installs: [
         authEntry({
@@ -471,7 +471,7 @@ describe("requiredScopesByProvider (issue #30)", () => {
   });
 
   it("filters by member — a different member's scopes don't leak in", () => {
-    const lock: EdenLock = {
+    const lock: HarnesstLock = {
       version: 1,
       installs: [
         authEntry({
@@ -490,7 +490,7 @@ describe("requiredScopesByProvider (issue #30)", () => {
   });
 
   it("is empty when installs carry no auth snapshot (old locks)", () => {
-    const lock: EdenLock = {
+    const lock: HarnesstLock = {
       version: 1,
       installs: [authEntry({ member: "pm" })],
     };
@@ -806,7 +806,7 @@ describe("planInstall — conflicts", () => {
         keepExistingFiles: true,
       }),
     );
-    // The hand-authored module Eden never managed must not be clobbered…
+    // The hand-authored module harnesst never managed must not be clobbered…
     expect(plan.writes.some((w) => w.path === sandboxPath)).toBe(false);
     // …and the missing skill file still stages.
     expect(
@@ -1326,7 +1326,7 @@ describe("planUninstall", () => {
     ],
     dependencies: { wrangler: "^3.0.0" },
   };
-  const lock: EdenLock = upsertInstall(emptyLock(), entry);
+  const lock: HarnesstLock = upsertInstall(emptyLock(), entry);
 
   it("deletes the entry's files, drops it from the lock, lists deps left", () => {
     const plan = planUninstall({

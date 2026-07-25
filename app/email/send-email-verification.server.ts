@@ -16,7 +16,7 @@ export async function sendEmailVerification({
   });
   await sendEmail({
     to: userEmail,
-    subject: "Verify your email to join an Eden workspace",
+    subject: "Verify your email to join a harnesst workspace",
     html,
   });
 }

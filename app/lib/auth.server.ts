@@ -13,7 +13,7 @@ import { assertProductionAuthEnvironment } from "~/lib/auth-env.server";
 assertProductionAuthEnvironment();
 
 export const auth = betterAuth({
-  appName: "Eden",
+  appName: "harnesst",
   // Production request paths can carry one-time tokens. Better Auth's default error logger may
   // serialize endpoint params (its `args` can include token-bearing bodies), so production logs
   // the message line only — enough to observe provider failures (e.g. a swallowed invitation
@@ -36,7 +36,7 @@ export const auth = betterAuth({
     expiresIn: 60 * 60 * 24 * 30,
   },
   advanced: {
-    // The supported production topology puts Eden directly behind nginx, which overwrites
+    // The supported production topology puts harnesst directly behind nginx, which overwrites
     // X-Real-IP with the TCP peer address. Reading that single trusted value keeps Better Auth's
     // production rate limits per-client without accepting a spoofable forwarded chain.
     ipAddress: { ipAddressHeaders: ["x-real-ip"] },
@@ -92,10 +92,10 @@ export const auth = betterAuth({
   },
   plugins: [
     organization({
-      // Better Auth ships POST /api/auth/organization/delete enabled by default; Eden's tables
+      // Better Auth ships POST /api/auth/organization/delete enabled by default; harnesst's tables
       // cascade from organization.id, so one owner-session call would erase an entire tenant
       // (projects, deployments, secrets — and the audit log recording it) while leaving deployed
-      // containers orphaned. No Eden flow calls it; keep it off until an app-owned teardown
+      // containers orphaned. No harnesst flow calls it; keep it off until an app-owned teardown
       // exists.
       disableOrganizationDeletion: true,
       // CVE-2026-53514: invitation IDs can be listed by organization members. Require the
@@ -106,7 +106,7 @@ export const auth = betterAuth({
       // repo's teamId; accepting one auto-adds the invitee to that team.
       teams: {
         enabled: true,
-        // Eden mints teams 1:1 with repos (ensureProjectTeam); an auto-created default team
+        // harnesst mints teams 1:1 with repos (ensureProjectTeam); an auto-created default team
         // per organization would be an unmapped orphan in that model.
         defaultTeam: { enabled: false },
         // Deleting the last repo must delete its team; without this Better Auth refuses to

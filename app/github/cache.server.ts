@@ -91,10 +91,10 @@ export class SwrCache {
   }
 }
 
-const globalForCache = globalThis as unknown as { __edenGithubCache?: SwrCache };
+const globalForCache = globalThis as unknown as { __harnesstGithubCache?: SwrCache };
 
-export const githubCache: SwrCache = globalForCache.__edenGithubCache ?? new SwrCache();
+export const githubCache: SwrCache = globalForCache.__harnesstGithubCache ?? new SwrCache();
 
 if (process.env.NODE_ENV !== "production") {
-  globalForCache.__edenGithubCache = githubCache;
+  globalForCache.__harnesstGithubCache = githubCache;
 }

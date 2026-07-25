@@ -1,5 +1,5 @@
 /**
- * Model-gateway tokens (issue #28, Phase 1). A deployed agent set to a Codex model reaches Eden's
+ * Model-gateway tokens (issue #28, Phase 1). A deployed agent set to a Codex model reaches harnesst's
  * translating gateway (`/api/gateway/v1/chat/completions`) carrying an `EDEN_MODEL_GATEWAY_TOKEN`
  * that identifies its ORG; the gateway derives everything else (which connection, which upstream
  * account) from the request body + DB, so nothing but the org id is trusted from the client.

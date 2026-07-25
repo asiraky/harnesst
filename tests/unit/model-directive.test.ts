@@ -1,6 +1,6 @@
 /**
  * The playground model directive — the one-line transport between the model selector and the
- * deployed agent's dynamic-model resolver. Round-trips must be exact: the same line Eden builds
+ * deployed agent's dynamic-model resolver. Round-trips must be exact: the same line harnesst builds
  * is parsed back for attribution and stripped from every display surface.
  */
 import { describe, expect, it } from "vitest";

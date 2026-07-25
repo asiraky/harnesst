@@ -37,17 +37,17 @@
   "secrets": [
     {
       "name": "GOOGLE_OAUTH_CLIENT_ID",
-      "description": "OAuth client id of Eden's shared Google app — provisioned automatically at deploy from the agent's Google connection. Used to refresh access tokens.",
+      "description": "OAuth client id of harnesst's shared Google app — provisioned automatically at deploy from the agent's Google connection. Used to refresh access tokens.",
       "provisioned": true
     },
     {
       "name": "GOOGLE_OAUTH_CLIENT_SECRET",
-      "description": "OAuth client secret of Eden's shared Google app — provisioned automatically at deploy. Needed for the refresh-token grant.",
+      "description": "OAuth client secret of harnesst's shared Google app — provisioned automatically at deploy. Needed for the refresh-token grant.",
       "provisioned": true
     },
     {
       "name": "GOOGLE_OAUTH_REFRESH_TOKEN",
-      "description": "The agent's Google refresh token, captured when you connect Google on the Deployment tab — provisioned automatically at deploy (sealed in Eden's database until then).",
+      "description": "The agent's Google refresh token, captured when you connect Google on the Deployment tab — provisioned automatically at deploy (sealed in harnesst's database until then).",
       "provisioned": true
     },
     {
@@ -56,5 +56,5 @@
       "provisioned": true
     }
   ],
-  "setup": "**Pick permissions at install:** the install wizard shows three levels — **Read mail** (default), **Manage labels**, and **Send mail**. Tick what this agent needs; you can change the selection later on the agent's **Deployment** tab (adding a level asks for one reconnect).\n\n**Connect the right mailbox:** after installing, open the agent's **Deployment** tab and click **Connect Google** — signed in as the mailbox you want the agent to act on. A shared mailbox like `billing@your-domain.com` just consents itself (sign in as it, or have its owner click Connect) — no domain-wide delegation involved.\n\n**Self-host note (operators):** configure ONE Google OAuth client for this Eden installation before the Connect button works.\n\n1. In **Google Cloud Console → APIs & Services**, enable the **Gmail API**.\n2. Under **Credentials**, create an **OAuth client ID** of type **Web application** (or reuse the one from the Google Sheets connector — one client serves every Google connection).\n3. Add `<origin>/google/callback` to its **Authorized redirect URIs** (e.g. `https://eden.example.com/google/callback`, and `http://localhost:5173/google/callback` for local dev).\n4. Set `EDEN_GOOGLE_CLIENT_ID` and `EDEN_GOOGLE_CLIENT_SECRET` on the control plane.\n\n**Publishing status matters** — the `gmail.*` scopes are **restricted**, Google's strictest tier:\n- **Internal** (Google Workspace org only): no verification, refresh tokens do **not** expire. The right choice for a self-hosted Eden serving one organization.\n- **External + Testing**: up to 100 test users, no verification, but refresh tokens **expire after 7 days**, so agents must be reconnected weekly. Fine for evaluation.\n- **External + Production**: Google requires app verification for restricted scopes — a brand review **plus an annual third-party security assessment**. Plan for this only if you expose the connector to users outside your own Workspace.\n\nPick **Internal** if you self-host for one Workspace org."
+  "setup": "**Pick permissions at install:** the install wizard shows three levels — **Read mail** (default), **Manage labels**, and **Send mail**. Tick what this agent needs; you can change the selection later on the agent's **Deployment** tab (adding a level asks for one reconnect).\n\n**Connect the right mailbox:** after installing, open the agent's **Deployment** tab and click **Connect Google** — signed in as the mailbox you want the agent to act on. A shared mailbox like `billing@your-domain.com` just consents itself (sign in as it, or have its owner click Connect) — no domain-wide delegation involved.\n\n**Self-host note (operators):** configure ONE Google OAuth client for this harnesst installation before the Connect button works.\n\n1. In **Google Cloud Console → APIs & Services**, enable the **Gmail API**.\n2. Under **Credentials**, create an **OAuth client ID** of type **Web application** (or reuse the one from the Google Sheets connector — one client serves every Google connection).\n3. Add `<origin>/google/callback` to its **Authorized redirect URIs** (e.g. `https://eden.example.com/google/callback`, and `http://localhost:5173/google/callback` for local dev).\n4. Set `EDEN_GOOGLE_CLIENT_ID` and `EDEN_GOOGLE_CLIENT_SECRET` on the control plane.\n\n**Publishing status matters** — the `gmail.*` scopes are **restricted**, Google's strictest tier:\n- **Internal** (Google Workspace org only): no verification, refresh tokens do **not** expire. The right choice for a self-hosted harnesst serving one organization.\n- **External + Testing**: up to 100 test users, no verification, but refresh tokens **expire after 7 days**, so agents must be reconnected weekly. Fine for evaluation.\n- **External + Production**: Google requires app verification for restricted scopes — a brand review **plus an annual third-party security assessment**. Plan for this only if you expose the connector to users outside your own Workspace.\n\nPick **Internal** if you self-host for one Workspace org."
 }

@@ -1,6 +1,6 @@
 import { defaultBackend, defineSandbox } from "eve/sandbox";
 
-// Eden convention: EDEN_SANDBOX_ENV is a comma-separated allowlist of env var NAMES
+// harnesst convention: EDEN_SANDBOX_ENV is a comma-separated allowlist of env var NAMES
 // forwarded from the instance into the sandbox. Everything else stays sealed out.
 const names = (process.env.EDEN_SANDBOX_ENV ?? "").split(",").filter(Boolean);
 const env = Object.fromEntries(names.map((n) => [n, process.env[n] ?? ""]));

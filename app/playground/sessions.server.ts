@@ -638,7 +638,7 @@ export async function backfillPlaygroundEventsFromEve(input: {
 }
 
 /**
- * Rebuild a session's transcript from Eden's durable cache — no Eve replay. The cached rows are the
+ * Rebuild a session's transcript from harnesst's durable cache — no Eve replay. The cached rows are the
  * raw Eve events, so the same `projectEventsToEntries` used by the Eve-replay path reconstructs
  * identical `ChatEntry[]`.
  */
@@ -672,7 +672,7 @@ export async function markPlaygroundSessionStopped(input: {
     .update(playgroundSessions)
     .set({
       // A stopped session may outlive the deployment that owns its Eve session. In that case,
-      // settle Eden's row without assigning the replacement deployment as the owner: doing so
+      // settle harnesst's row without assigning the replacement deployment as the owner: doing so
       // would make a later continuation send the old external session id to the wrong Eve.
       environmentId: input.target?.environmentId,
       worldKey: input.target?.environmentId,
@@ -1284,7 +1284,7 @@ function projectEventsToEntries(
       const replayError =
         turn.error ??
         (session.status === "failed" && !normalized.reply
-          ? "The turn stopped before Eden recorded a final reply. Reloading may recover it if Eve finished after the last saved cursor."
+          ? "The turn stopped before harnesst recorded a final reply. Reloading may recover it if Eve finished after the last saved cursor."
           : null);
       const normalizedError = normalizeTurnError(replayError);
       entries.push({

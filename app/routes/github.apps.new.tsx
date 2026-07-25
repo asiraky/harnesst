@@ -127,7 +127,7 @@ export const loader = (args: LoaderFunctionArgs) =>
         webhookUrl,
         redirectUrl: `${origin}/github/apps/callback`,
         setupUrl: deploymentUrl,
-        description: `${agent.name} — an Eden agent. @mention it in issues and pull-request comments.`,
+        description: `${agent.name} — a harnesst agent. @mention it in issues and pull-request comments.`,
       };
       const manifest = buildAppManifest(manifestInput);
 
@@ -150,7 +150,7 @@ export const loader = (args: LoaderFunctionArgs) =>
   );
 
 export function meta() {
-  return [{ title: "Create GitHub App · eden" }, ...noindexMeta];
+  return [{ title: "Create GitHub App · harnesst" }, ...noindexMeta];
 }
 
 export default function GitHubAppNew({ loaderData }: Route.ComponentProps) {
@@ -201,9 +201,9 @@ export default function GitHubAppNew({ loaderData }: Route.ComponentProps) {
             </CardTitle>
             <CardDescription>
               GitHub shows a confirmation page — the app name is editable there
-              and must be unique across GitHub. Approve it, and Eden stores the
-              App&rsquo;s credentials as {agentName}&rsquo;s secrets and sends
-              you to pick the repositories it watches.
+              and must be unique across GitHub. Approve it, and harnesst stores
+              the App&rsquo;s credentials as {agentName}&rsquo;s secrets and
+              sends you to pick the repositories it watches.
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
@@ -234,7 +234,7 @@ export default function GitHubAppNew({ loaderData }: Route.ComponentProps) {
                 <AlertDescription>
                   The webhook URL points at localhost, which GitHub can&rsquo;t
                   reach. The App will still be created and its credentials
-                  stored — expose Eden through a tunnel and update the
+                  stored — expose harnesst through a tunnel and update the
                   App&rsquo;s webhook URL for live mentions.
                 </AlertDescription>
               </Alert>

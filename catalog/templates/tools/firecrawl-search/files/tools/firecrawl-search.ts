@@ -4,7 +4,7 @@
  * The agent's general-purpose search and research tool. It routes through Firecrawl's v2 Search
  * API, which fetches pages through infrastructure that bypasses the bot protection and blocks
  * that would stop a plain fetch/curl — so prefer it over fetching pages directly. Set
- * FIRECRAWL_API_KEY as an Eden secret; the value is read from the tool process environment and
+ * FIRECRAWL_API_KEY as a harnesst secret; the value is read from the tool process environment and
  * is never accepted as model input.
  */
 import { defineTool } from "eve/tools";
@@ -180,7 +180,7 @@ export default defineTool({
       return {
         ok: false,
         error:
-          "Missing FIRECRAWL_API_KEY. Set it as an Eden secret before searching.",
+          "Missing FIRECRAWL_API_KEY. Set it as a harnesst secret before searching.",
       };
     }
 

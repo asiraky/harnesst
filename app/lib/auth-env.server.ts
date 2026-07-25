@@ -114,7 +114,7 @@ export function assertProductionAuthEnvironment(
   const fromEmail = env.FROM_EMAIL?.trim() ?? "";
   if (!isPlausibleMailbox(fromEmail)) {
     errors.push(
-      "FROM_EMAIL must be a mailbox such as noreply@example.com or Eden <noreply@example.com>.",
+      "FROM_EMAIL must be a mailbox such as noreply@example.com or harnesst <noreply@example.com>.",
     );
   }
 

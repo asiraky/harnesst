@@ -1,20 +1,20 @@
-# Eden self-host stack for a single Linux VPS (deploy/vps/README.md is the runbook).
+# harnesst self-host stack for a single Linux VPS (deploy/vps/README.md is the runbook).
 #
 # Copy this to deploy/vps/docker-compose.yml (gitignored, so you can tweak it locally) — the
 # README's commands run against that copy:
 #   cp deploy/vps/docker-compose.example.yml deploy/vps/docker-compose.yml
 #
 # Topology (deliberate, matches the local-docker DeployTarget's design): ONE host runs the
-# whole system. Eden, Postgres, and nginx run in this stack; agent instances and their sandbox
-# containers are started by Eden as SIBLING containers on the same host daemon (via the
+# whole system. harnesst, Postgres, and nginx run in this stack; agent instances and their sandbox
+# containers are started by harnesst as SIBLING containers on the same host daemon (via the
 # mounted Docker socket). certbot runs as a one-off tool container for TLS certs. Nothing
 # TLS-related is installed on the host.
 #
 # Networking notes that make this work:
 #  - `eden` and `nginx` use host networking: instance URLs are loopback (http://127.0.0.1:<port>)
 #    by design, so the control plane must share the host's network namespace to reach them, and
-#    nginx fronts Eden (:3000) and the splitter (:8787) over the same loopback.
-#  - Postgres publishes on TWO explicit host addresses: 127.0.0.1 (for Eden) and 172.17.0.1
+#    nginx fronts harnesst (:3000) and the splitter (:8787) over the same loopback.
+#  - Postgres publishes on TWO explicit host addresses: 127.0.0.1 (for harnesst) and 172.17.0.1
 #    (docker0 — how agent containers reach it via host.docker.internal → host-gateway).
 #    Publishing to explicit IPs matters: Docker's iptables rules bypass ufw, so a bare
 #    "5442:5432" would expose Postgres to the internet regardless of your firewall.
@@ -48,14 +48,14 @@ services:
     network_mode: host # reach loopback instance URLs + serve 127.0.0.1:3000 to nginx
     env_file: .env
     volumes:
-      # Docker-outside-of-docker: Eden builds agent images and runs agent containers on the
+      # Docker-outside-of-docker: harnesst builds agent images and runs agent containers on the
       # host daemon. Root-equivalent on this host — see the README's security note.
       - /var/run/docker.sock:/var/run/docker.sock
     depends_on:
       postgres:
         condition: service_healthy
 
-  # TLS terminator + reverse proxy. Host networking so it can reach Eden and the splitter on
+  # TLS terminator + reverse proxy. Host networking so it can reach harnesst and the splitter on
   # loopback. Won't start until a cert exists at the path in nginx-eden.conf (README step 6).
   nginx:
     image: nginx:stable-alpine

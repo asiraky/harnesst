@@ -78,7 +78,7 @@ export async function action({ request }: ActionFunctionArgs) {
 }
 
 export function meta() {
-  return [{ title: "Repositories · eden" }, ...noindexMeta];
+  return [{ title: "Repositories · harnesst" }, ...noindexMeta];
 }
 
 export default function Dashboard({ loaderData }: Route.ComponentProps) {

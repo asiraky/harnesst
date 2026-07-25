@@ -430,7 +430,7 @@ describe("Google routes with Better Auth", () => {
       routeArgs("https://eden.example.com/google/callback", { cookie }),
     );
     expect(result).toMatchObject({
-      error: expect.stringContaining("different Eden session"),
+      error: expect.stringContaining("different harnesst session"),
       backUrl: "/dashboard",
       user: mocks.auth.user,
     });

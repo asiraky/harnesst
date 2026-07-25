@@ -33,7 +33,7 @@ describe("buildAppManifest", () => {
       webhookUrl: "https://eden.example/e/envabcdefghij/eve/v1/github",
       redirectUrl: "https://eden.example/github/apps/callback",
       setupUrl: "https://eden.example/repos/p1/deployment",
-      description: "triage — an Eden agent.",
+      description: "triage — a harnesst agent.",
     });
     expect(manifest).toEqual({
       name: "triage-acme",
@@ -44,7 +44,7 @@ describe("buildAppManifest", () => {
       },
       redirect_url: "https://eden.example/github/apps/callback",
       setup_url: "https://eden.example/repos/p1/deployment",
-      description: "triage — an Eden agent.",
+      description: "triage — a harnesst agent.",
       // Always public: one App installs across the owner's personal account and any org, each
       // installation still scoped to the repos its installer picks.
       public: true,

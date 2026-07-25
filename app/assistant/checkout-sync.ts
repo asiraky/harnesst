@@ -39,7 +39,7 @@ export interface TreeState {
 
 /**
  * Paths the assistant may edit in its sandbox but that must NEVER be committed to the branch:
- * its own model override (`assistant.json`) and the Eden-owned `.ts` tool/agent layer under
+ * its own model override (`assistant.json`) and the harnesst-owned `.ts` tool/agent layer under
  * `.eden/assistant/`. Review can't undo a merged change to these, so they're stripped pre-commit
  * (and the model is told, so it doesn't think its edit stuck). Everything else is allowed —
  * PR review is the backstop.
@@ -128,7 +128,7 @@ export function policyWarnings(plan: CommitPlan): string[] {
   const warnings: string[] = [];
   if (plan.blocked.length > 0) {
     warnings.push(
-      `Excluded from this change (Eden-owned, never committed from a conversation): ${plan.blocked.join(", ")}.`,
+      `Excluded from this change (harnesst-owned, never committed from a conversation): ${plan.blocked.join(", ")}.`,
     );
   }
   if (plan.skippedBodies.length > 0) {
@@ -171,7 +171,7 @@ export function checkoutEnsureError(ensured: {
   return (
     `Couldn't prepare this conversation's repo checkout (${reason}). ` +
     "Try again in a moment. If this keeps happening, check that the assistant instance can " +
-    "reach Eden's callback API (EDEN_API_URL) — for example, a host firewall blocking the " +
+    "reach harnesst's callback API (EDEN_API_URL) — for example, a host firewall blocking the " +
     "docker bridge."
   );
 }

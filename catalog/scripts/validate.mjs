@@ -5,8 +5,8 @@
  *
  * The format rules below deliberately DUPLICATE app/marketplace/manifest.ts (the Zod schema).
  * That's intentional: this directory is destined to live in the eve OSS repo as `marketplace/`
- * and must validate itself with zero dependency on Eden's app code (README.md). manifest.ts and
- * this script are two encodings of one contract — change one, change the other; the Eden unit
+ * and must validate itself with zero dependency on harnesst's app code (README.md). manifest.ts and
+ * this script are two encodings of one contract — change one, change the other; the harnesst unit
  * tests (tests/unit/marketplace.test.ts) cover the schema side.
  *
  * Beyond the per-manifest rules it checks the structural invariants a schema can't see:
@@ -14,7 +14,7 @@
  *   - every id is unique and equals its directory name
  *   - index.json exists, lists every template exactly once, and every hash matches recomputation
  *   - composition (`includes`): every reference exists, there are no cycles, and the RESOLVED
- *     (flattened) file set of every template has no duplicate final paths — mirroring the Eden
+ *     (flattened) file set of every template has no duplicate final paths — mirroring the harnesst
  *     resolver's union rule (app/marketplace/compose.server.ts), so a violation fails BEFORE
  *     publish rather than at install time.
  *
@@ -95,7 +95,7 @@ function validateManifest(where, m) {
         if (!UPPER_SNAKE.test(s?.name ?? "")) {
           fail(where, `secret name "${s?.name}" is not UPPER_SNAKE_CASE`);
         }
-        // A secret is either flow-set (provisioned) or Eden-minted (generated) — never both.
+        // A secret is either flow-set (provisioned) or harnesst-minted (generated) — never both.
         if (s?.provisioned && s?.generated) {
           fail(where, `secret "${s.name}" can't be both provisioned and generated`);
         }
@@ -164,9 +164,9 @@ function validateManifest(where, m) {
     }
   }
   // capability (issue #166): operation-group enablement riding a connection's auth block. Group
-  // ids must exist in Eden's capability registry — that cross-check lives in Eden's unit tests
+  // ids must exist in harnesst's capability registry — that cross-check lives in harnesst's unit tests
   // (tests/unit/capabilities-catalog.test.ts), because this script deliberately has no dependency
-  // on Eden app code; the SHAPE is enforced here.
+  // on harnesst app code; the SHAPE is enforced here.
   if (m.capability !== undefined) {
     if (
       !m.capability ||

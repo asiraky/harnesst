@@ -1,7 +1,7 @@
 /**
  * Durable transcript cache against a REAL Postgres (issue #48): the reconnect fix persists raw Eve
  * events to `playground_events` as the turn-stream drain reads them, then reconstructs the
- * transcript from Eden's DB on reconnect — no replay of Eve's whole log from index 0.
+ * transcript from harnesst's DB on reconnect — no replay of Eve's whole log from index 0.
  *
  * This proves the two properties the unit fakes can't: (1) the same raw events that the Eve-replay
  * path projects (see tests/unit/playground-replay.test.ts) project IDENTICALLY when sourced from

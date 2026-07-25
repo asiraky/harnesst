@@ -9,7 +9,7 @@
  *   <!-- eden:model anthropic/claude-sonnet-5 ctx=200000 -->
  *
  * The deployed agent's `step.started` resolver (emitted by `~/eve/agentModule`) parses the same
- * line to pick the model, and Eden strips it from every display surface. Because the directive
+ * line to pick the model, and harnesst strips it from every display surface. Because the directive
  * is part of the durable `message.received` event, it doubles as the per-turn model record when
  * a transcript is replayed.
  *
@@ -56,7 +56,7 @@ function normalizedDirective(directive: ModelDirective): {
   return { id, contextWindowTokens, effort: directive.effort };
 }
 
-/** Canonical bytes signed by Eden and independently reconstructed in generated agent code. */
+/** Canonical bytes signed by harnesst and independently reconstructed in generated agent code. */
 export function modelDirectiveSignaturePayload(
   directive: ModelDirective,
   body: string,
@@ -102,7 +102,7 @@ export function stripModelDirective(text: string): string {
 }
 
 /**
- * Eve reports a dynamic fallback as `<runtime provider>/<upstream model>`. Eden names direct
+ * Eve reports a dynamic fallback as `<runtime provider>/<upstream model>`. harnesst names direct
  * provider instances with their connection id, preserving the qualified reference. OpenAI's
  * SDK appends its API flavor (`.responses`) to that provider name, so normalize it away. The
  * older OpenRouter scaffold and the Codex gateway add one wrapper segment which is also removed.

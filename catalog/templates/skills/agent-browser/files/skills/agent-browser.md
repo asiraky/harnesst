@@ -58,7 +58,7 @@ agent-browser get text @e1 --json
 - Prefer refs from snapshots for precise interaction.
 - Use semantic fallbacks when refs are unavailable: `agent-browser find role button click --name "Submit"`.
 - Keep screenshots and saved state under `/workspace/home/agent-browser/` so they survive the agent's durable sessions.
-- Do not use `--headed`; Eden sandboxes are headless.
+- Do not use `--headed`; harnesst sandboxes are headless.
 - Close browser sessions when finished unless you need state for the next step.
 
 For the installed CLI's current guidance, run:

@@ -192,7 +192,7 @@ export function resourcePickerLoader(
       if (listed.resources.length === 0) {
         return {
           ...empty,
-          error: `The connected ${ctx.provider.label} account has no ${ctx.resource.label} Eden can use — connect an account that does.`,
+          error: `The connected ${ctx.provider.label} account has no ${ctx.resource.label} harnesst can use — connect an account that does.`,
           backUrl: ctx.backUrl,
           providerLabel: ctx.provider.label,
           resourceLabel: ctx.resource.label,

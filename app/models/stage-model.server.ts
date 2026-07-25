@@ -3,7 +3,7 @@
  *
  *  - **Workspace-resolver modules** (`model: edenAgentModel('<name>')` from the generated
  *    `eden-model.ts`): the file carries no model at all — it resolves the org's configured
- *    model at runtime. A model save writes the org's per-agent override map (Eden DB) and
+ *    model at runtime. A model save writes the org's per-agent override map (harnesst DB) and
  *    touches NOTHING in the repo: no drafts, no publish, no redeploy.
  *  - **Legacy dynamic-wrapper modules**: rewrite the member's `agent.ts` through `setModel`
  *    (the chosen model becomes the `defineDynamic` fallback, so the agent honors the

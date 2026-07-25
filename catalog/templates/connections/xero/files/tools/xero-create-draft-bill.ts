@@ -1,9 +1,9 @@
 import { defineTool } from "eve/tools";
 import { z } from "zod";
 
-// Runs via Eden's brokered-capability route (issue #166) instead of talking to Xero directly:
+// Runs via harnesst's brokered-capability route (issue #166) instead of talking to Xero directly:
 // no Xero credential ever reaches this container. EDEN_API_URL and EDEN_TEAM_TOKEN are injected
-// at deploy; Eden validates the call server-side — the bill is ALWAYS created as a DRAFT ACCPAY
+// at deploy; harnesst validates the call server-side — the bill is ALWAYS created as a DRAFT ACCPAY
 // invoice (a human approves it in Xero), account codes and currency must exist in the
 // organisation, and line amounts must sum to the stated total.
 export default defineTool({

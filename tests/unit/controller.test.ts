@@ -331,7 +331,7 @@ describe("deployRelease", () => {
     );
     expect(deployedEnvs[0]).not.toHaveProperty("EDEN_SANDBOX_ENV");
 
-    // The variable is Eden-owned: a user secret named EDEN_SANDBOX_ENV must never smuggle
+    // The variable is harnesst-owned: a user secret named EDEN_SANDBOX_ENV must never smuggle
     // its own allowlist into the sandbox.
     await deployRelease(
       { environmentId: ENV, releaseId: release.id },
@@ -366,7 +366,7 @@ describe("deployRelease", () => {
     const deployedEnvs: Record<string, string>[] = [];
 
     // A project-level shared secret named EDEN_SANDBOX_ENV, attached to the agent, resolves
-    // through the real provider merge — and must still be deleted before Eden sets its own.
+    // through the real provider merge — and must still be deleted before harnesst sets its own.
     const kv = makeFakeSecretKV();
     const boxKey = crypto.randomBytes(32);
     const secrets = makeLocalSecretsProvider(kv, () => boxKey);
@@ -402,7 +402,7 @@ describe("deployRelease", () => {
         sandboxExposedNames: async () => ["GH_TOKEN"],
       },
     );
-    expect(deployedEnvs[0].EDEN_SANDBOX_ENV).toBe("GH_TOKEN"); // Eden-owned, never "SMUGGLED"
+    expect(deployedEnvs[0].EDEN_SANDBOX_ENV).toBe("GH_TOKEN"); // harnesst-owned, never "SMUGGLED"
     expect(deployedEnvs[0].GH_TOKEN).toBe("gho_x");
   });
 
@@ -1192,7 +1192,7 @@ describe("Codex model-gateway env injection (issue #28)", () => {
           health: { status: "live" },
           deployedEnvs,
         }),
-        // A user secret trying to smuggle its own gateway token — Eden must strip it.
+        // A user secret trying to smuggle its own gateway token — harnesst must strip it.
         secrets: fakeSecrets({
           OPENROUTER_API_KEY: "k",
           EDEN_MODEL_GATEWAY_TOKEN: "smuggled",
@@ -1367,7 +1367,7 @@ describe("shared Discord app env injection (issue #32)", () => {
           health: { status: "live" },
           deployedEnvs,
         }),
-        // A user secret trying to smuggle a bot token — Eden must strip it.
+        // A user secret trying to smuggle a bot token — harnesst must strip it.
         secrets: fakeSecrets({
           OPENROUTER_API_KEY: "k",
           DISCORD_BOT_TOKEN: "user_bot",
@@ -1519,7 +1519,7 @@ describe("Google connection env injection (issue #30)", () => {
     expect(env.GOOGLE_OAUTH_REFRESH_TOKEN).toBe("my_token");
   });
 
-  it("replaces user-set GOOGLE_OAUTH_* with Eden's brokered creds when a grant is injected", async () => {
+  it("replaces user-set GOOGLE_OAUTH_* with harnesst's brokered creds when a grant is injected", async () => {
     const deployedEnvs: Record<string, string>[] = [];
     const release = await createRelease(
       { projectId: PROJECT, agentId: AGENT, gitSha: "d2".repeat(20) },
@@ -1533,7 +1533,7 @@ describe("Google connection env injection (issue #30)", () => {
           health: { status: "live" },
           deployedEnvs,
         }),
-        // A user secret trying to shadow the brokered token — Eden owns these keys when it brokers.
+        // A user secret trying to shadow the brokered token — harnesst owns these keys when it brokers.
         secrets: fakeSecrets({
           OPENROUTER_API_KEY: "k",
           GOOGLE_OAUTH_REFRESH_TOKEN: "user_token",
@@ -1608,7 +1608,7 @@ describe("Google connection env injection (issue #30)", () => {
           health: { status: "live" },
           deployedEnvs,
         }),
-        // User secrets trying to shadow the Eden-owned broker coordinates and the provider's
+        // User secrets trying to shadow the harnesst-owned broker coordinates and the provider's
         // static deploy constant.
         secrets: fakeSecrets({
           OPENROUTER_API_KEY: "k",
@@ -1628,7 +1628,7 @@ describe("Google connection env injection (issue #30)", () => {
     // The refresh token NEVER ships for brokered providers.
     expect(env).not.toHaveProperty("MAYI_OAUTH_REFRESH_TOKEN");
     expect(env).not.toHaveProperty("MAYI_OAUTH_CLIENT_ID");
-    // Broker coordinates are Eden-owned: the user-set EDEN_API_URL is replaced, and the
+    // Broker coordinates are harnesst-owned: the user-set EDEN_API_URL is replaced, and the
     // delegation token identifies THIS deployment (same auth story as the Discord send proxy).
     expect(env.EDEN_API_URL).toMatch(/^http:\/\/host\.docker\.internal:/);
     expect(verifyDelegationToken(env.EDEN_TEAM_TOKEN)).toBe(dep.id);
@@ -1658,7 +1658,7 @@ describe("Google connection env injection (issue #30)", () => {
           XERO_OAUTH_SCOPES: "user_scopes",
           EDEN_CAPABILITY_PROVIDERS: "user_marker",
         }),
-        // Capability delivery (real xero entry): ONLY the Eden-owned marker, no OAuth vars.
+        // Capability delivery (real xero entry): ONLY the harnesst-owned marker, no OAuth vars.
         connectionGrantEnv: async () => ({ EDEN_CAPABILITY_PROVIDERS: "xero" }),
       },
     );
@@ -1787,7 +1787,7 @@ describe("deploy-time scope-coverage validation (issue #69)", () => {
 });
 
 describe("generated-secret mint-once (issue #163)", () => {
-  // A lock-declared `generated` secret: nobody types it — Eden mints it at first deploy.
+  // A lock-declared `generated` secret: nobody types it — harnesst mints it at first deploy.
   const LOCK = JSON.stringify({
     version: 1,
     installs: [
@@ -1912,7 +1912,7 @@ describe("generated-secret mint-once (issue #163)", () => {
     );
     const deployedEnvs: Record<string, string>[] = [];
     // A user/shared/agent-scoped MAYI_STATE_KEY resolves from the cascade, but no exact
-    // (agent, env, name) row exists — Eden must still mint, and the mint must win.
+    // (agent, env, name) row exists — harnesst must still mint, and the mint must win.
     const { provider, setCalls } = mintingSecrets({
       OPENROUTER_API_KEY: "k",
       MAYI_STATE_KEY: "user-shadow-attempt",
@@ -1995,7 +1995,7 @@ describe("EVE_PUBLIC_ORIGIN injection (issue #163)", () => {
           health: { status: "live" },
           deployedEnvs,
         }),
-        // A user secret must not shadow the derived origin when Eden injects it.
+        // A user secret must not shadow the derived origin when harnesst injects it.
         secrets: fakeSecrets({
           OPENROUTER_API_KEY: "k",
           EVE_PUBLIC_ORIGIN: "https://user.example",

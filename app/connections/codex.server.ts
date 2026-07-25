@@ -3,7 +3,7 @@
  * sign-in flow plus the token exchange/refresh network calls and the JWT identity decode.
  *
  * Unlike the Google broker (a redirect-based authorization-code flow), a web control plane can't
- * use the Codex CLI's hardcoded `http://localhost:1455/auth/callback` redirect. So Eden connects
+ * use the Codex CLI's hardcoded `http://localhost:1455/auth/callback` redirect. So harnesst connects
  * a Codex account through OpenAI's DEVICE-CODE flow, an official Codex sign-in method:
  *
  *   1. usercode  — POST {auth}/api/accounts/deviceauth/usercode {client_id} → device_auth_id + code

@@ -1,6 +1,6 @@
 /**
  * Catalog ↔ capability-registry cross-check (issue #166). catalog/scripts/validate.mjs enforces
- * the capability block's SHAPE with zero Eden-app dependency; this test is the other half it
+ * the capability block's SHAPE with zero harnesst-app dependency; this test is the other half it
  * defers to: every `capability.groups` id a shipped template references must exist in the
  * provider's capability definition, and the provider itself must be a registered
  * `credentialDelivery: "capability"` entry. It also pins the Xero template's contract: one thin

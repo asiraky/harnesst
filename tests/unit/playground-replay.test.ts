@@ -402,7 +402,7 @@ describe("loadPlaygroundEntriesFromEve", () => {
     expect(entries[1]).toMatchObject({
       role: "assistant",
       text: "",
-      error: expect.stringContaining("stopped before Eden recorded"),
+      error: expect.stringContaining("stopped before harnesst recorded"),
     });
   });
 

@@ -2,7 +2,7 @@
  * The assistant's control-plane knowledge service — the business logic behind the read-only
  * `api/assistant/*` callback endpoints.
  *
- * Under the coding-agent model the assistant no longer edits files through Eden: it works in a real
+ * Under the coding-agent model the assistant no longer edits files through harnesst: it works in a real
  * per-conversation git checkout with native bash, and the control plane mirrors that checkout to a
  * PR (see `checkout-sync.server.ts`). So the old file read/write/dependency/scaffold/run-checks
  * callbacks are gone. What remains here is pure control-plane KNOWLEDGE the model can't get from its

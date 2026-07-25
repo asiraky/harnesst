@@ -29,7 +29,7 @@ export async function loader({ request }: Route.LoaderArgs) {
 }
 
 export function meta() {
-  return [{ title: "Reset password · eden" }, ...noindexMeta];
+  return [{ title: "Reset password · harnesst" }, ...noindexMeta];
 }
 
 export default function ResetPassword({ loaderData }: Route.ComponentProps) {

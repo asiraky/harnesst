@@ -3,7 +3,7 @@
  *
  * BYO/self-host instances POST normalized run events here with a per-project ingest token
  * (`Authorization: Bearer edn_...`). Managed instances are co-located but use the same path.
- * Body is Eden's normalized JSON (session + run + steps) — the instance's OTel/event-log
+ * Body is harnesst's normalized JSON (session + run + steps) — the instance's OTel/event-log
  * exporter maps spans into this shape. Resource route (action only).
  */
 import { data, type ActionFunctionArgs } from "react-router";

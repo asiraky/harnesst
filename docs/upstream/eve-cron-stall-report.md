@@ -1,7 +1,7 @@
 # Upstream report draft — Scheduled (cron) turns hang before their first step and leak one idle sandbox container per fire
 
-> **Status: DRAFT for vercel/eve — not yet filed.** This is Eden's evidence package for an upstream
-> bug report. Eden never patches or forks eve (project policy); the Eden-side mitigation for the
+> **Status: DRAFT for vercel/eve — not yet filed.** This is harnesst's evidence package for an upstream
+> bug report. harnesst never patches or forks eve (project policy); the harnesst-side mitigation for the
 > resulting container leak lives in `app/deploy/sandbox-reaper.server.ts` (issue #118). File this
 > against `vercel/eve` once a maintainer channel is chosen.
 
@@ -90,7 +90,7 @@ $ docker inspect … --format '{{json .Config.Labels}}'
 The owning instance container logs nothing after boot (4 lines total for an `eden-inst-*` instance),
 so a stalled cron turn leaves no log trace at all.
 
-### Prod evidence (from the originating report, Eden issue #118)
+### Prod evidence (from the originating report, harnesst issue #118)
 
 - An agent's hourly schedule (`0 * * * *`) fired on time; a sandbox was created at the top of every
   hour, but **no cron run ever completed**. All 11 hourly sandboxes since a redeploy were still `Up`

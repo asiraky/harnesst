@@ -26,7 +26,7 @@ import { AccountMenu } from "~/components/foh/account-menu";
 import { InboxIndicator } from "~/components/foh/inbox";
 import { PresenceDot } from "~/components/foh/presence-dot";
 import { MarketingLanding } from "~/components/marketing/landing";
-import { EdenWordmark } from "~/components/marketing/logo";
+import { BrandWordmark } from "~/components/marketing/logo";
 import { loadFohSidebar } from "~/foh/sidebar.server";
 import { appOrigin, isMarketingHost } from "~/lib/marketing-host.server";
 import { useLiveRevalidate } from "~/lib/use-live-revalidate";
@@ -67,13 +67,13 @@ export async function loader(args: LoaderFunctionArgs) {
 export function meta({ loaderData }: Route.MetaArgs) {
   if (loaderData && "marketing" in loaderData) {
     return pageMeta({
-      title: "eden — agents for the work you keep repeating",
+      title: "harnesst — agents for the work you keep repeating",
       description:
         "Turn the work you keep repeating into agents that do it for you. No engineer, no backlog, no code required.",
       path: "/",
     });
   }
-  return [{ title: "eden" }, ...noindexMeta];
+  return [{ title: "harnesst" }, ...noindexMeta];
 }
 
 /** The FOH loader payload once the marketing branch is excluded. */
@@ -99,8 +99,8 @@ function FohShell({ data }: { data: ShellData }) {
             workspaces yet, and the label never sat aligned with the wordmark — it now
             lives in the account menu below instead. */}
         <div className="flex h-14 items-center border-b px-3">
-          <Link to="/" className="flex items-center" aria-label="eden home">
-            <EdenWordmark className="h-5" />
+          <Link to="/" className="flex items-center" aria-label="harnesst home">
+            <BrandWordmark className="h-5" />
           </Link>
           <div className="ml-auto">
             <InboxIndicator />

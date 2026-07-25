@@ -63,13 +63,13 @@ export const COPY = {
   sectionNote:
     "Values are encrypted write-only — they can be replaced but never viewed, even by you.",
   whyPopover:
-    "eden never exposes secret values after save, so a compromised browser session or screen-share can't leak them. To rotate a secret, replace its value.",
+    "harnesst never exposes secret values after save, so a compromised browser session or screen-share can't leak them. To rotate a secret, replace its value.",
   fingerprintTooltip:
     "A one-way fingerprint of the value. Compare it against a value you hold to check they match. The value itself is never shown.",
   copyNameToast:
-    "Name copied. Values can't be copied — eden stores them write-only.",
+    "Name copied. Values can't be copied — harnesst stores them write-only.",
   sandboxTooltip:
-    "Adds this variable to the agent's terminal environment at deploy. Leave off for secrets only eden's tools should use.",
+    "Adds this variable to the agent's terminal environment at deploy. Leave off for secrets only harnesst's tools should use.",
   requiredBadge: "Required — not set",
   replaceConfirm:
     "Replacing overwrites the stored value immediately. The old value can't be recovered.",

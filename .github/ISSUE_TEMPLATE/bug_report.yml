@@ -1,5 +1,5 @@
 name: "\U0001F41E Bug report"
-description: Report an issue with Eden
+description: Report an issue with harnesst
 labels: [bug, pending triage]
 body:
   - type: markdown
