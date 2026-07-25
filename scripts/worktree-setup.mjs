@@ -16,13 +16,17 @@
  *   - branch        : feature/tanga-integration
  *   - worktree dir  : .worktrees/feature-tanga-integration
  *   - session name  : tanga-integration
- *   - postgres db   : eden_feature_tanga_integration
+ *   - postgres db   : harnesst_feature_tanga_integration
  *
  * Pass `--skip-validate` to bypass the prefix convention (e.g. for one-off
  * non-conforming names). Derivation still works:
  *   - branch/dir    : regen
  *   - session name  : regen
- *   - postgres db   : eden_regen
+ *   - postgres db   : harnesst_regen
+ *
+ * The db prefix is not hardcoded: it is whatever database the main checkout's
+ * `.env.local` DATABASE_URL points at, suffixed with the worktree slug. Rename
+ * that database and every subsequent worktree clone follows it automatically.
  *
  * What it does:
  *   1. Allocates a unique (dev, splitter, instance) port triple for the
