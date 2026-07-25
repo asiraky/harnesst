@@ -7,7 +7,7 @@
 
 The root [`docker-stack.production.yml`](../../docker-stack.production.yml) and
 [`deploy.yml`](../../.github/workflows/deploy.yml) implement continuous deployment for
-`zero8ai/eden`. A push to `main` runs the same typecheck and tests as CI, builds immutable runtime and
+`asiraky/harnesst`. A push to `main` runs the same typecheck and tests as CI, builds immutable runtime and
 migration images, pushes them to GHCR, applies migrations, and updates the `eden` Swarm stack on the
 maintained VPS. A manual workflow dispatch must select `main` to do the same. Dispatching another
 branch runs the checks only; only `refs/heads/main` in the canonical repository may publish images

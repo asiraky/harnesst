@@ -7,7 +7,7 @@ public issue.** Public disclosure before a fix is available puts users at risk.
 
 Instead, report it privately using one of:
 
-- **GitHub Security Advisories** — [report a vulnerability](https://github.com/zero8ai/eden/security/advisories/new)
+- **GitHub Security Advisories** — [report a vulnerability](https://github.com/asiraky/harnesst/security/advisories/new)
   (preferred; keeps the report private and lets us coordinate a fix).
 - **Email** — asiraky@gmail.com.
 

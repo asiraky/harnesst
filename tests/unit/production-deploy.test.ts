@@ -29,7 +29,7 @@ describe("production deployment workflow", () => {
   it("keeps image publication and deployment canonical-main only", () => {
     expect(
       workflow.match(
-        /if: github\.repository == 'zero8ai\/eden' && github\.ref == 'refs\/heads\/main'/g,
+        /if: github\.repository == 'asiraky\/harnesst' && github\.ref == 'refs\/heads\/main'/g,
       ),
     ).toHaveLength(2);
     expect(workflow).toContain("packages: write");
@@ -41,7 +41,7 @@ describe("production deployment workflow", () => {
     expect(workflow).toContain("type=raw,value=latest");
     expect(workflow).toContain("target: build-env");
     expect(workflow).toContain(
-      "ghcr.io/zero8ai/eden:${{ steps.image.outputs.tag }}-migrate",
+      "ghcr.io/asiraky/harnesst:${{ steps.image.outputs.tag }}-migrate",
     );
     expect(dockerignore).toMatch(/^\.git$/m);
     expect(dockerignore).toMatch(/^\.env\.\*$/m);
@@ -82,7 +82,7 @@ describe("production deployment workflow", () => {
 describe("production Swarm stack", () => {
   it("deploys one immutable harnesst replica with stop-first rollback", () => {
     expect(stack).toContain(
-      "image: ghcr.io/zero8ai/eden:${IMAGE_TAG:?set IMAGE_TAG}",
+      "image: ghcr.io/asiraky/harnesst:${IMAGE_TAG:?set IMAGE_TAG}",
     );
     expect(stack).toContain("replicas: ${EDEN_REPLICAS:-1}");
     expect(stack.match(/order: stop-first/g)).toHaveLength(4);
