@@ -8,7 +8,7 @@
  *  - **Legacy dynamic-wrapper modules**: rewrite the member's `agent.ts` through `setModel`
  *    (the chosen model becomes the `defineDynamic` fallback, so the agent honors the
  *    playground's per-conversation directive) and keep its `package.json` provider/eve
- *    dependencies compatible — both staged as drafts on the normal change-set rails.
+ *    dependencies compatible — both saved as drafts the header Publish control takes live.
  */
 import type { DataStore } from "~/data/ports";
 import {

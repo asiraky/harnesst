@@ -22,8 +22,7 @@
  * the TASK's outcome — fail the task, do not rethrow, let the job complete (`maxAttempts: 1`).
  * Only failures loading the project/task themselves rethrow as genuine queue errors.
  *
- * GitHub/docker/runtime dependencies are injectable so unit tests run with zero I/O, in the
- * publishDrafts deps style.
+ * GitHub/docker/runtime dependencies are injectable so unit tests run with zero I/O.
  */
 import { discardConversationCheckoutsForProject } from "~/assistant/checkout-sync.server";
 import type { DataStore, PipelineStep, Project } from "~/data/ports";
@@ -181,6 +180,71 @@ export async function startPublish(
   return { taskId: task.id, alreadyRunning: false };
 }
 
+/**
+ * What one pipeline run did — the workspace task's steps are the user-facing record; this is
+ * the programmatic summary for callers that await the run (the MCP publish tool audits the
+ * commit sha, release ids, and deployment ids from it).
+ */
+export interface PublishOutcome {
+  taskId: string;
+  status: "succeeded" | "failed";
+  /** Which step failed, when failed. */
+  failedStep?: PipelineStep["key"];
+  /** The failed step's error, when failed. */
+  error?: string;
+  /** The published commit — set once the commit step lands, even if a later step fails. */
+  commitSha: string | null;
+  releaseIds: string[];
+  deploymentIds: string[];
+}
+
+/**
+ * Run a publish synchronously (the MCP `publish_changes` path): same dedupe and task record as
+ * startPublish, but the pipeline runs in-request and the caller gets the full outcome. Throws
+ * for a publish already in flight or nothing saved; pipeline failures come back as a `failed`
+ * outcome, exactly as the UI sees them.
+ */
+export async function publishNow(
+  input: {
+    projectId: string;
+    originUrl: string;
+    createdBy?: string | null;
+    envName?: string | null;
+  },
+  deps: PublishPipelineDeps = defaultDeps(),
+  store: DataStore = getRuntime().data,
+): Promise<PublishOutcome> {
+  const running = await findRunningTask(input.projectId, "publish", store);
+  if (running) {
+    throw new Error("A publish is already running for this project.");
+  }
+  const drafts = await store.drafts.listByProject(input.projectId);
+  if (drafts.length === 0) throw new Error("Nothing to publish — no saved changes.");
+
+  const task = await createTask(
+    {
+      projectId: input.projectId,
+      kind: "publish",
+      subjectKey: "publish",
+      label: `Publishing ${drafts.length} change${drafts.length === 1 ? "" : "s"}`,
+      originUrl: input.originUrl,
+      steps: initialPublishSteps(),
+      createdBy: input.createdBy,
+    },
+    store,
+  );
+  return runPublish(
+    {
+      projectId: input.projectId,
+      taskId: task.id,
+      createdBy: input.createdBy ?? null,
+      envName: input.envName ?? null,
+    },
+    deps,
+    store,
+  );
+}
+
 /** A project narrowed to the connected-repo fields the pipeline needs. */
 type ConnectedProject = Project & {
   repoInstallationId: string;
@@ -238,7 +302,7 @@ export async function runPublish(
   payload: PublishPayload,
   deps: PublishPipelineDeps = defaultDeps(),
   store: DataStore = getRuntime().data,
-): Promise<void> {
+): Promise<PublishOutcome> {
   const { taskId, createdBy } = payload;
 
   // Infrastructure reads — a failure here is a real queue error (rethrow).
@@ -254,6 +318,16 @@ export async function runPublish(
   const installationId = connected.repoInstallationId;
   const drafts = await store.drafts.listByProject(connected.id);
   const agents = await store.agents.listByProject(connected.id);
+
+  // The programmatic summary returned to callers that await the run. Mutated in place as the
+  // pipeline progresses so every early return carries whatever had already happened.
+  const outcome: PublishOutcome = {
+    taskId,
+    status: "failed",
+    commitSha: null,
+    releaseIds: [],
+    deploymentIds: [],
+  };
 
   // ── Step bookkeeping: ONE array, updated in place and re-persisted after every transition. ──
   const steps = initialPublishSteps();
@@ -274,11 +348,14 @@ export async function runPublish(
     delete s.detail;
     await save();
     await failTask(taskId, error, store);
+    outcome.status = "failed";
+    outcome.failedStep = key;
+    outcome.error = error;
   };
 
   if (drafts.length === 0) {
     await failAt("check", "Nothing to publish — no saved changes.");
-    return;
+    return outcome;
   }
 
   // Assistant-config-only change-sets (§3.3): nothing to compile, version, or deploy — the
@@ -381,7 +458,7 @@ export async function runPublish(
       const orphaned = findOrphanedDrafts(agents, repoPaths, drafts);
       if (orphaned.length > 0) {
         await failAt("check", orphanedDraftsMessage(orphaned));
-        return;
+        return outcome;
       }
       // Coherence pass (§2.4): Eden never publishes an incoherent change-set.
       files = await deps.normalizeDrafts({
@@ -400,12 +477,12 @@ export async function runPublish(
       }
     } catch (error) {
       await failAt("check", error instanceof Error ? error.message : String(error));
-      return;
+      return outcome;
     }
     await succeed("check");
 
     // ── build ─────────────────────────────────────────────────────────────────────────────
-    if (!assistantConfigOnly && !(await runBuildStep(files))) return;
+    if (!assistantConfigOnly && !(await runBuildStep(files))) return outcome;
 
     // ── commit ────────────────────────────────────────────────────────────────────────────
     step("commit").status = "running";
@@ -427,7 +504,7 @@ export async function runPublish(
         // exactly once — the ref is a branch name, so the rerun naturally sees the new base.
         step("commit").detail = "The repository changed — rebuilding and retrying";
         await save();
-        if (!assistantConfigOnly && !(await runBuildStep(files))) return;
+        if (!assistantConfigOnly && !(await runBuildStep(files))) return outcome;
         step("commit").status = "running";
         await save();
         try {
@@ -435,15 +512,16 @@ export async function runPublish(
         } catch (retryError) {
           if (retryError instanceof NonFastForwardError) {
             await failAt("commit", CAS_FAILED_MESSAGE);
-            return;
+            return outcome;
           }
           throw retryError;
         }
       }
     } catch (error) {
       await failAt("commit", error instanceof Error ? error.message : String(error));
-      return;
+      return outcome;
     }
+    outcome.commitSha = sha;
 
     // Only after the commit succeeds: the published drafts now live on the default branch.
     await store.drafts.deleteByPaths(
@@ -472,7 +550,8 @@ export async function runPublish(
 
     if (assistantConfigOnly) {
       await completeTask(taskId, { resultUrl: task.originUrl }, store);
-      return;
+      outcome.status = "succeeded";
+      return outcome;
     }
 
     // ── version ───────────────────────────────────────────────────────────────────────────
@@ -530,8 +609,9 @@ export async function runPublish(
       }
     } catch (error) {
       await failAt("version", error instanceof Error ? error.message : String(error));
-      return;
+      return outcome;
     }
+    outcome.releaseIds = releases.map((r) => r.release.id);
     // Succeed with the team version label as the step's detail — the success panel's
     // "Live · vN" headline reads it off the steps (one source of truth). Labels can differ
     // per member; use the first, as the version history does.
@@ -568,10 +648,11 @@ export async function runPublish(
         continue;
       }
       try {
-        await deps.queueDeploy(
+        const dep = await deps.queueDeploy(
           { environmentId: env.id, releaseId: release.id, rebuild: false, createdBy },
           store,
         );
+        outcome.deploymentIds.push(dep.id);
         sub.status = "succeeded";
         queued++;
       } catch (error) {
@@ -584,7 +665,7 @@ export async function runPublish(
     const failedMembers = deploySubs.filter((s) => s.status === "failed");
     if (queued === 0) {
       await failAt("deploy", `No "${envName}" environment found to deploy into.`);
-      return;
+      return outcome;
     }
     if (failedMembers.length > 0) {
       await failAt(
@@ -594,17 +675,20 @@ export async function runPublish(
           .filter(Boolean)
           .join("\n")}`,
       );
-      return;
+      return outcome;
     }
     deployStep.status = "succeeded";
     await save();
     await completeTask(taskId, { resultUrl: task.originUrl }, store);
+    outcome.status = "succeeded";
+    return outcome;
   } catch (error) {
     // Unexpected failure outside the per-step handlers: still the task's outcome, never a
     // stranded running task or a queue retry.
     const message = error instanceof Error ? error.message : String(error);
     const running = steps.find((s) => s.status === "running");
     await failAt(running?.key ?? "check", message);
+    return outcome;
   } finally {
     // Provisional tags never outlive the publish (§7): promoted images keep their real tags.
     if (cleanupTags.length > 0) {

@@ -19,8 +19,6 @@ function serviceMock(): McpToolService {
     clearFailed: vi.fn(result),
     stageChanges: vi.fn(result),
     publishChanges: vi.fn(result),
-    listOpenChanges: vi.fn(result),
-    mergeChange: vi.fn(result),
     discardChanges: vi.fn(result),
   };
 }

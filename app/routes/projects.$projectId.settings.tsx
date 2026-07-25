@@ -804,7 +804,10 @@ export async function action(args: ActionFunctionArgs) {
       return { ok: true as const };
     }
 
-    // ── Member danger zone: remove agent (change-set PR deleting its directory) ──
+    // ── Member danger zone: remove agent (saves the deletion of its directory) ──
+    // The deletion is SAVED as drafts (§2.4: structural operations save their full file set in
+    // one action); the header Publish control takes it live, and the roster row goes when the
+    // publish's roster sync sees the directory gone.
     if (intent === "remove-member") {
       const name = String(form.get("name") ?? "");
       const { roster } = await resolveAgentContext(project.id, null);
@@ -814,38 +817,35 @@ export async function action(args: ActionFunctionArgs) {
       }
       const source = await fetchAgentSource(project.repoInstallationId, repo);
       const memberDir = `agents/${name}/`;
-      const files: FileChange[] = source.paths.flatMap((p) =>
-        p.startsWith(memberDir) ? [{ path: p, content: null }] : [],
-      );
-      if (files.length === 0)
+      const paths = source.paths.filter((p) => p.startsWith(memberDir));
+      if (paths.length === 0)
         return { error: `No files found under ${memberDir}.` };
+      await stageDeletions({
+        projectId: project.id,
+        paths,
+        createdBy: auth.user.id,
+      });
+      // Keep the team layout detectable when the last member goes: the marker README says
+      // "this repo is a team" even with zero agents/ directories.
       if (!source.paths.includes(EMPTY_TEAM_MARKER)) {
-        files.push({
+        await stageDraft({
+          projectId: project.id,
           path: EMPTY_TEAM_MARKER,
           content:
             "# Agents\n\nAdd each agent under `agents/<name>/` as a complete eve project.\n",
+          createdBy: auth.user.id,
         });
       }
-      const change = await proposeChange(project.repoInstallationId, repo, {
-        base: project.defaultBranch,
-        branch: `eden/remove-member-${name}`,
-        files,
-        title: `Remove agent: ${name}`,
-        body:
-          `Deletes \`agents/${name}/\` (${files.length} files). Merging removes the agent; ` +
-          `its releases and run history remain until then.`,
-      });
-      return {
-        ok: true as const,
-        changeUrl: change.pullRequestUrl,
-        member: name,
-      };
+      return { ok: true as const, removalSaved: name };
     }
 
     // ── Member: rename agent ──
     // Root single-agent: the name is decoupled from the directory, so the rename is INSTANT (a
-    // DB update, no PR). Team member: the name IS the `agents/<name>/` directory, so it lands as
-    // a change-set that moves the directory; the row is renamed in place on merge (pendingName).
+    // DB update, no PR). Team member: the name IS the `agents/<name>/` directory, so it lands
+    // as a pull request on GitHub that moves the directory; the row is renamed in place when
+    // it lands (pendingName; the webhook keeps this path alive — the ONE surviving
+    // Eden-authored-PR flow, because a directory move deserves review and the pendingName
+    // lifecycle is keyed to the PR).
     if (intent === "rename-member") {
       const newName = slugifyResourceName(String(form.get("name") ?? ""));
       if (!newName) return { error: "New name is required." };
@@ -873,7 +873,7 @@ export async function action(args: ActionFunctionArgs) {
       }
       if (active.pendingName) {
         return {
-          error: `A rename to "${active.pendingName}" is already in flight — merge or close it first.`,
+          error: `A rename to "${active.pendingName}" is already in flight — complete or close its pull request on GitHub first.`,
         };
       }
 
@@ -913,7 +913,7 @@ export async function action(args: ActionFunctionArgs) {
             pkg.name = newName;
             destContent = JSON.stringify(pkg, null, 2) + "\n";
           } catch {
-            // Leave a malformed package.json as-is; the reviewer sees it in the change-set.
+            // Leave a malformed package.json as-is; the reviewer sees it in the pull request.
           }
         }
         files.push({ path: destPath, content: destContent });
@@ -1031,6 +1031,10 @@ export default function Settings({
     actionData && "changeUrl" in actionData
       ? (actionData.changeUrl as string)
       : null;
+  const removalSaved =
+    actionData && "removalSaved" in actionData
+      ? (actionData.removalSaved as string)
+      : null;
   const renamed =
     actionData && "renamed" in actionData
       ? (actionData.renamed as string)
@@ -1096,10 +1100,33 @@ export default function Settings({
       )}
       {changeUrl && !renamed && (
         <Alert className="mb-6">
-          <AlertTitle>Change request opened</AlertTitle>
+          <AlertTitle>Rename opened on GitHub</AlertTitle>
           <AlertDescription>
-            Review and merge it on the Deployment tab — nothing changes until it
-            does.
+            The rename is a pull request on GitHub — nothing changes until it
+            lands there.{" "}
+            <a
+              href={changeUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="font-medium underline underline-offset-4"
+            >
+              View it on GitHub →
+            </a>
+          </AlertDescription>
+        </Alert>
+      )}
+      {removalSaved && (
+        <Alert className="mb-6">
+          <AlertTitle>Removal of {removalSaved} saved</AlertTitle>
+          <AlertDescription>
+            The deletion is saved with your other changes — nothing is removed
+            until you publish.{" "}
+            <Link
+              to="?publish=1"
+              className="font-medium underline underline-offset-4"
+            >
+              Review &amp; publish →
+            </Link>
           </AlertDescription>
         </Alert>
       )}
@@ -1107,13 +1134,13 @@ export default function Settings({
         <Alert className="mb-6">
           <AlertTitle>
             {justUpdated
-              ? `${justUpdated} update staged`
+              ? `${justUpdated} update saved`
               : justRepaired
-                ? `${justRepaired} repair staged`
-                : `${justUninstalled} uninstall staged`}
+                ? `${justRepaired} repair saved`
+                : `${justUninstalled} uninstall saved`}
           </AlertTitle>
           <AlertDescription>
-            Review and publish it from the Deployment tab.
+            Review and publish it with the Publish button in the header.
           </AlertDescription>
         </Alert>
       )}
@@ -1261,7 +1288,7 @@ function ModelSection({
         <p className="mt-2 text-sm text-muted-foreground">
           {fetcher.data.mode === "applied"
             ? "Saved — the agent picks this up on its next step, no redeploy needed."
-            : "Staged — ship or publish it from the Deployment tab."}
+            : "Saved — publish it with the Publish button in the header."}
         </p>
       )}
     </section>
@@ -1269,8 +1296,8 @@ function ModelSection({
 }
 
 /**
- * Marketplace provenance from eden-lock.json. Updates and uninstalls stage normal repo changes;
- * Deployment remains the review/publish surface for those staged files.
+ * Marketplace provenance from eden-lock.json. Updates and uninstalls save normal repo changes;
+ * the header Publish control is the review/publish surface for those saved files.
  */
 function MarketplaceInstallsSection({
   loaderData,
@@ -1516,8 +1543,9 @@ function IngestSection({
 
 /**
  * Rename this agent. Root single-agent repos rename instantly (the name is decoupled from the
- * directory); team members open a change-set that moves `agents/<name>/`, and the row is renamed
- * in place on merge — so environments, versions, secrets and history are preserved either way.
+ * directory); team members open a pull request on GitHub that moves `agents/<name>/`, and the
+ * row is renamed in place when it lands — so environments, versions, secrets and history are
+ * preserved either way.
  */
 function RenameSection({
   activeAgent,
@@ -1540,8 +1568,9 @@ function RenameSection({
           <CardContent className="py-4 text-sm">
             <p className="font-medium">Rename to {pendingName} pending</p>
             <p className="text-muted-foreground">
-              A change request that renames this agent is open. Merge or close
-              it from the Deployment tab; the rename applies on merge.
+              A pull request that renames this agent is open on GitHub. The
+              rename applies when it lands there; closing it without landing
+              cancels the rename.
             </p>
           </CardContent>
         </Card>
@@ -1565,7 +1594,7 @@ function RenameSection({
             </Form>
             <p className="text-sm text-muted-foreground">
               {isTeam
-                ? `Opens a change request that moves agents/${activeAgent}/ to the new name. Environments, versions, secrets and history are preserved on merge. Mentions of "${activeAgent}" in other agents' instructions or tools are not rewritten automatically.`
+                ? `Opens a pull request on GitHub that moves agents/${activeAgent}/ to the new name. Environments, versions, secrets and history are preserved when it lands. Mentions of "${activeAgent}" in other agents' instructions or tools are not rewritten automatically.`
                 : "Applies immediately across eden. The agent's repository directory is unaffected."}
             </p>
           </CardContent>
@@ -1607,10 +1636,10 @@ function DangerSection({
                   Remove {activeAgent} from the team
                 </p>
                 <p className="text-sm text-muted-foreground">
-                  Opens a change request deleting{" "}
-                  <span className="font-mono">agents/{activeAgent}/</span>.
-                  Nothing is removed until it merges, and git can restore it
-                  after.
+                  Saves the deletion of{" "}
+                  <span className="font-mono">agents/{activeAgent}/</span> with
+                  your other changes. Nothing is removed until you publish, and
+                  git can restore it after.
                 </p>
               </div>
               <ConfirmDialog
@@ -1620,8 +1649,8 @@ function DangerSection({
                   </Button>
                 }
                 title={`Remove ${activeAgent} from the team?`}
-                description={`Opens a change request deleting agents/${activeAgent}/. Nothing is removed until it merges, and git can restore it after.`}
-                confirmLabel="Open change request"
+                description={`Saves the deletion of agents/${activeAgent}/. Nothing is removed until you publish, and git can restore it after.`}
+                confirmLabel="Save removal"
                 onConfirm={() =>
                   submit(
                     { intent: "remove-member", name: activeAgent },

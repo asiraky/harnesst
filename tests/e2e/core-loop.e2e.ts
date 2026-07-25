@@ -17,6 +17,7 @@ import {
   cleanupWorkspace,
   createWorkspace,
   LIVE,
+  loaderArgs,
   openNdjson,
   seedTeamStack,
   signUp,
@@ -151,6 +152,216 @@ describe.runIf(LIVE)("FOH core loop (real routes + drain + fake eve)", () => {
     } finally {
       if (ndjson) await ndjson.abandon();
       await eve.close();
+      await cleanupWorkspace(orgId, users);
+    }
+  });
+});
+
+/**
+ * Save → Publish, end to end (issue #225 §5): a real user saves an edit through the REAL
+ * editor action, the REAL publish resource route reports "Publish 1 change" with its diff,
+ * and the pipeline runs all five steps against the live database. There is no browser, so
+ * the control/panel assertions are loader-payload assertions; and there is no GitHub or
+ * docker, so the pipeline runs through its injected-deps seam (fake commit/build, real
+ * store, real releases) — exactly the seam the unit suite uses, but over the live DB and
+ * real route modules.
+ */
+describe.runIf(LIVE)("Save & Publish core loop (real routes + pipeline)", () => {
+  it("saves one change, shows it on the publish control with a diff, and publishes through all five steps", async () => {
+    const { db } = await import("~/db/client.server");
+    const { eq } = await import("drizzle-orm");
+    const { jobs, projects } = await import("~/db/schema");
+    const { drizzleDataStore } = await import("~/data/drizzle.server");
+    const { action: saveAction } = await import(
+      "~/routes/projects.$projectId.edit.instructions"
+    );
+    const { loader: publishLoader } = await import("~/routes/api.publish");
+    const { createTask } = await import("~/tasks/tasks.server");
+    const { initialPublishSteps, runPublish } = await import(
+      "~/publish/pipeline.server"
+    );
+    const { listTeamEnvNames } = await import("~/deploy/environments.server");
+    const { ensureReleasesForCommit } = await import(
+      "~/deploy/controller.server"
+    );
+    const { detectAgentRoots } = await import("~/eve/parse");
+    const { syncProjectAgents } = await import("~/db/queries.server");
+
+    const suffix = uniqueSuffix("pub");
+    const COMMIT_SHA = "d".repeat(40);
+    let orgId: string | undefined;
+    const users: TestUser[] = [];
+    const jobIds: string[] = [];
+    try {
+      const owner = await signUp("Pub Owner", `pub-e2e-${suffix}@smoke.test`);
+      users.push(owner);
+      orgId = await createWorkspace(owner, "Pub E2E", `pub-e2e-${suffix}`);
+      const { project, agent } = await seedTeamStack({ orgId, suffix });
+      // Connect a repo (identifiers only — no GitHub call succeeds against them; every surface
+      // under test degrades or runs through the injected seam).
+      await db
+        .update(projects)
+        .set({
+          repoInstallationId: `inst-${suffix}`,
+          repoOwner: "acme",
+          repoName: "agents",
+          layout: "team",
+        })
+        .where(eq(projects.id, project.id));
+      const [environment] = await db
+        .insert((await import("~/db/schema")).environments)
+        .values({ projectId: project.id, agentId: agent.id, name: "production" })
+        .returning();
+
+      // 1. Save in an editor — the REAL instructions editor action stages exactly one draft.
+      const saved = await saveAction(
+        actionArgs({
+          path: `/repos/${project.id}/agents/${agent.name}/edit/instructions`,
+          cookie: owner.cookie,
+          params: { projectId: project.id, agentName: agent.name },
+          form: { content: "# Ivy\nBe helpful.", agent: agent.name },
+        }),
+      );
+      expect(saved).toEqual({ ok: true });
+
+      // 2. The publish control shows "Publish 1 change": the GET payload carries the saved
+      //    change, grouped under its owning member.
+      const state = (await publishLoader(
+        loaderArgs({
+          path: `/repos/${project.id}/publish`,
+          cookie: owner.cookie,
+          params: { projectId: project.id },
+        }),
+      )) as {
+        connected: boolean;
+        changeCount: number;
+        groups: { member: string | null; files: { path: string }[] }[];
+      };
+      expect(state.connected).toBe(true);
+      expect(state.changeCount).toBe(1);
+      expect(state.groups).toMatchObject([
+        {
+          member: agent.name,
+          files: [{ path: `${agent.root}/instructions.md` }],
+        },
+      ]);
+
+      // 3. The panel row expands to a diff (the repo side is unreachable, so it renders the
+      //    whole saved file as an addition — the degrade the panel ships with).
+      const diff = (await publishLoader(
+        loaderArgs({
+          path: `/repos/${project.id}/publish?diff=${encodeURIComponent(`${agent.root}/instructions.md`)}`,
+          cookie: owner.cookie,
+          params: { projectId: project.id },
+        }),
+      )) as { patch: string | null };
+      expect(diff.patch).toContain("+Be helpful.");
+
+      // 4. Publish: run the pipeline over the live DB through its injected seam (fake GitHub
+      //    commit + docker build, real store, real releases, deploy recorded as a row).
+      const task = await createTask(
+        {
+          projectId: project.id,
+          kind: "publish",
+          subjectKey: "publish",
+          label: "Publishing 1 change",
+          originUrl: `/repos/${project.id}`,
+          steps: initialPublishSteps(),
+          createdBy: owner.userId,
+        },
+        drizzleDataStore,
+      );
+      const outcome = await runPublish(
+        { projectId: project.id, taskId: task.id, createdBy: owner.userId },
+        {
+          checkBuild: async () => ({ ok: true, skipped: true }),
+          listRepoPaths: async () => [`${agent.root}/agent.ts`],
+          normalizeDrafts: async (input) => input.files,
+          commitToDefaultBranch: async () => ({ sha: COMMIT_SHA }),
+          fetchAgentSource: async () =>
+            ({ paths: [`${agent.root}/agent.ts`], files: {}, ref: "main" }) as never,
+          detectAgentRoots,
+          syncProjectAgents,
+          invalidateRepoSource: () => {},
+          warmAgentSource: () => {},
+          ensureReleasesForCommit,
+          queueDeploy: async (input, store = drizzleDataStore) =>
+            // A row instead of a job: the deploy step's DB effect without leaving a queued
+            // docker build behind for the dev worker to trip over.
+            store.deployments.insert({
+              environmentId: input.environmentId,
+              releaseId: input.releaseId,
+              status: "pending",
+              trafficWeight: 100,
+              createdBy: input.createdBy,
+            }),
+          listTeamEnvNames: (projectId, store) =>
+            listTeamEnvNames(projectId, { store }),
+          promoteImage: async () => {
+            throw new Error("nothing to promote — no provisional tags in this run");
+          },
+          removeProvisionalImages: async () => {},
+          discardConversationCheckouts: async () => {},
+          enqueueJob: async (kind, payload, opts?, store?) => {
+            const id = await (await import("~/jobs/queue.server")).enqueue(
+              kind,
+              payload,
+              opts,
+              store,
+            );
+            jobIds.push(id);
+            return id;
+          },
+        },
+        drizzleDataStore,
+      );
+
+      // All five steps completed and the outcome names what landed.
+      expect(outcome.status).toBe("succeeded");
+      expect(outcome.commitSha).toBe(COMMIT_SHA);
+      expect(outcome.releaseIds).toHaveLength(1);
+      expect(outcome.deploymentIds).toHaveLength(1);
+      const done = await drizzleDataStore.workspaceTasks.findById(task.id);
+      expect(done?.status).toBe("succeeded");
+      expect(done?.steps?.map((s) => [s.key, s.status])).toEqual([
+        ["check", "succeeded"],
+        ["build", "succeeded"],
+        ["commit", "succeeded"],
+        ["version", "succeeded"],
+        ["deploy", "succeeded"],
+      ]);
+
+      // The agent has a version at the published commit, queued into its live environment.
+      const release = await drizzleDataStore.releases.findByCommit(
+        agent.id,
+        COMMIT_SHA,
+      );
+      expect(release).not.toBeNull();
+      const deploys = await drizzleDataStore.deployments.listByEnvironment(
+        environment.id,
+      );
+      expect(deploys.map((d) => d.releaseId)).toContain(release!.id);
+      // §2.8: the single env name was resolved and persisted without asking.
+      const [projectRow] = await db
+        .select({ live: projects.liveEnvironmentName })
+        .from(projects)
+        .where(eq(projects.id, project.id));
+      expect(projectRow.live).toBe("production");
+
+      // Nothing left to publish: the drafts were consumed and the control reads all-clear.
+      const after = (await publishLoader(
+        loaderArgs({
+          path: `/repos/${project.id}/publish`,
+          cookie: owner.cookie,
+          params: { projectId: project.id },
+        }),
+      )) as { changeCount: number; succeeded: { taskId: string } | null };
+      expect(after.changeCount).toBe(0);
+      expect(after.succeeded?.taskId).toBe(task.id);
+    } finally {
+      // Jobs have no FK to the project — remove any this run enqueued so the dev worker
+      // never picks up a stray row after the workspace cascade.
+      for (const id of jobIds) await db.delete(jobs).where(eq(jobs.id, id));
       await cleanupWorkspace(orgId, users);
     }
   });

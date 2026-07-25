@@ -127,11 +127,9 @@ describe("deployRelease", () => {
     expect((await store.releases.findById(release.id))?.imageRef).toBe(
       "img:fake",
     );
-    expect(store.auditEntries).toContainEqual({
-      action: "deploy",
-      target: "v1",
-      orgId: ORG,
-    });
+    expect(store.auditEntries).toContainEqual(
+      expect.objectContaining({ action: "deploy", target: "v1", orgId: ORG }),
+    );
   });
 
   it("protects exact connection credentials while preserving standard-alias overrides", async () => {

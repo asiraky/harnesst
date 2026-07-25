@@ -118,7 +118,7 @@
       "name": "Authoring eve agents with Eden MCP",
       "version": "0.1.0",
       "description": "End-to-end guidance for authoring eve agents through Eden's MCP server: stage complete files, publish one reviewable PR, merge after review, deploy the exact merge, and poll every deployment until live.",
-      "hash": "792339803526a7d8e38658592708a656965310e1"
+      "hash": "ad79365d8b96ec752b36d1b0a6ff410a9a25daee"
     },
     {
       "id": "github-app-auth",

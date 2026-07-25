@@ -1,6 +1,6 @@
 ---
 name: eden-mcp-authoring
-description: Author, review, merge, and deploy eve agents through Eden's MCP tools. Use when creating or changing agent instructions, skills, tools, schedules, connections, channels, subagents, sandboxes, or agent.ts through a connected Eden project, including taking the change through one pull request and confirming the deployment is live.
+description: Author, publish, and deploy eve agents through Eden's MCP tools. Use when creating or changing agent instructions, skills, tools, schedules, connections, channels, subagents, sandboxes, or agent.ts through a connected Eden project, including taking the change live through Eden's publish pipeline and confirming the deployment.
 ---
 
 # Authoring eve agents with Eden MCP
@@ -8,31 +8,26 @@ description: Author, review, merge, and deploy eve agents through Eden's MCP too
 Use Eden's MCP server for the complete delivery path:
 
 1. discover the project and its agent layout;
-2. author and stage complete file contents;
-3. publish the staged paths as one pull request;
-4. review and merge that pull request;
-5. deploy the exact reviewed merge; and
-6. poll every deployment until it is live or has failed.
+2. author and stage complete file contents as saved drafts;
+3. publish — one call runs Eden's whole pipeline (check, build, commit, version, deploy); and
+4. poll every deployment until it is live or has failed.
 
-Do not commit or push directly to the repository's default branch. Eden deliberately exposes no
-direct-commit MCP tool. `stage_changes`, `publish_changes`, and `merge_change` are the supported
-write path. MCP clients may display a server prefix on these names; the server-side names below are
-the contract.
+Do not commit or push directly to the repository yourself. `stage_changes` and `publish_changes`
+are the supported write path: staging saves drafts in Eden, and publishing commits them to the
+default branch only after Eden's build passes. MCP clients may display a server prefix on these
+names; the server-side names below are the contract.
 
 ## Preconditions and tool contract
 
 The Eden API key needs `read`, `author`, and `deploy` scopes. The project needs a connected GitHub
-repository and the target environment must already exist. Never print the API key or put it in an
-authored file.
+repository. Never print the API key or put it in an authored file.
 
 - `list_projects()`
 - `list_agents({ projectId })`
 - `list_releases({ projectId, agentId? })`
 - `list_environments({ projectId, agentId? })`
 - `stage_changes({ projectId, edits: [{ path, content, baseSha? }] })`
-- `publish_changes({ projectId, paths, title? })`
-- `list_open_changes({ projectId, limit? })`
-- `merge_change({ projectId, pullRequestNumber })`
+- `publish_changes({ projectId, environment? })`
 - `discard_changes({ projectId, paths })`
 - `deploy_team_version({ projectId, gitSha, environment, rebuild? })`
 - `deploy_head({ projectId, environment })`
@@ -71,7 +66,7 @@ authoring unfamiliar surfaces:
 - `agent.ts`: https://eve.dev/docs/agent-config; TypeScript API:
   https://eve.dev/docs/reference/typescript-api
 
-Keep one working checklist for the requested behavior, exact paths, validation, review, and deploy.
+Keep one working checklist for the requested behavior, exact paths, validation, and deploy.
 Resolve material ambiguity before writing; otherwise make the smallest change consistent with the
 request and nearby patterns.
 
@@ -97,93 +92,63 @@ Follow the existing project and installed eve version. In particular:
 Before publishing, validate in a checkout when one is available: install with the repository's
 package manager, run its typecheck and lint scripts, run `npx eve build`, and exercise relevant
 evals or a local eve instance. Static compilation is not behavioral proof. If no checkout exists,
-state that local checks were unavailable; `publish_changes` still runs Eden's server-side build gate
-for affected agent roots.
+state that local checks were unavailable; `publish_changes` still runs Eden's server-side build for
+every affected agent root, and a failed build lands nothing.
 
 ## Stage one coherent change set
 
-Call `stage_changes` with all complete edits that belong together. Use the exact normalized paths
-you intend to publish and retain that path list. Multiple staging calls are allowed when correcting
-an unpublished draft, but they should still form one coherent change set.
+Call `stage_changes` with all complete edits that belong together. The staging area is shared per
+project: `publish_changes` takes EVERYTHING saved live in one action, so anything you stage rides
+with whatever else is already saved. Multiple staging calls are allowed when correcting an
+unpublished draft, but they should still form one coherent change set.
 
 Inspect the returned `drafts`: confirm every expected path and its `write` or `delete` operation.
 The response intentionally does not echo file contents. If the request is abandoned before publish,
-call `discard_changes` with every staged path. `discard_changes` removes unpublished drafts only; it
-does not close or alter a pull request.
+call `discard_changes` with every staged path. `discard_changes` removes unpublished drafts only.
 
-## Publish exactly one pull request
+## Publish — one call, the whole pipeline
 
-When the full change set is ready, call `publish_changes` once with `paths` containing every staged
-path and a concise title. Publishing selected drafts creates one fresh `eden/publish-*` branch, one
-commit, and one pull request targeting the project's configured default branch. It never writes
-directly to that branch.
+When the change set is ready, call `publish_changes({ projectId })`. It runs Eden's full pipeline
+synchronously: check the drafts, build every affected agent root, commit the whole saved set to the
+project's default branch, cut a version per roster member, and queue a deploy of the WHOLE team
+into the project's live environment. Pass `environment` only when the project has several
+environments and Eden has no live environment recorded yet — the answer is remembered.
 
-If Eden's build gate rejects the change, no branch or pull request is created and the drafts remain
-staged. Correct the complete file contents with `stage_changes`, revalidate, and call
-`publish_changes` again with the same full path set. Do not split one requested delivery into several
-pull requests merely to work around a validation failure.
+If the build fails, nothing lands: no commit, no version, no deploy, and every draft stays saved.
+The error carries the compiler's own output. Correct the complete file contents with
+`stage_changes`, revalidate, and call `publish_changes` again.
 
-Record the returned `change.pullRequestNumber`, `change.pullRequestUrl`, `change.branch`, and
-`change.base`. Do not call `publish_changes` again after it succeeds: the MCP surface intentionally
-does not amend or close an already-open pull request.
+Record the returned `commitSha`, `releaseIds`, and `deploymentIds`. The commit sha is the version
+identity that landed; the deployment ids are the queued team deploys to poll.
 
-## Review, then merge
+## Confirm the deployment
 
-Call `list_open_changes` and select the exact pull request number returned by `publish_changes`.
-Review its title, body, base, branch, draft state, mergeability, and every `files` entry. Read each
-available `patch`; if GitHub omitted a patch for a binary or oversized file, use the returned PR URL
-and another authorized review surface rather than treating absence as approval.
+The team is the deployment unit. A publish deploys every roster member; never simulate a partial
+team deploy.
 
-Confirm all of the following before merge:
+1. For every entry in `deploymentIds`, call `get_deploy_status` until the status reaches `live` or
+   `failed`. Deploys are asynchronous; `pending` and `building` are normal states. Poll at a
+   moderate interval rather than queueing another deploy.
+2. Treat the workflow as complete only when every deployment is `live`, its
+   `deployment.release.gitSha` equals the returned commit sha, and the live URL is reported. Also
+   surface `hasUnreleasedChanges` and `hasUndeployedRelease`; these drift flags are useful context
+   but do not replace checking the requested deployment's status and SHA.
 
-- the base is the project's default branch and the branch is the returned Eden branch;
-- the changed paths and patches implement the request without unrelated or secret content;
-- validation evidence is adequate for the risk;
-- the PR is not a draft, is mergeable, and required human or policy approval is complete.
-
-Do not equate the ability to call `merge_change` with approval to merge. When review is complete and
-the caller is authorized to merge, call `merge_change({ projectId, pullRequestNumber })`. Eden
-resolves the branch server-side and refuses a PR that is not an open Eden change targeting that
-project's default branch. Save `merge.mergeSha`; it is the reviewed version to deploy.
-
-If a human merges outside the MCP client, wait for the PR to disappear from `list_open_changes` and
-obtain the merged commit SHA from the reviewed PR surface. Do not deploy an unverified guess.
-
-## Deploy the reviewed merge
-
-The team is the deployment unit. A deploy targets every roster member that has the named
-environment; never simulate a partial team deploy.
-
-1. Call `list_environments` and choose the environment name deliberately. Do not infer production
-   intent from a project name.
-2. Poll `list_releases` until the releases for the affected roster members contain the saved merge
-   SHA. Release creation after merge may be asynchronous.
-3. Call `deploy_team_version({ projectId, gitSha: mergeSha, environment })`. This pins the deploy to
-   the reviewed commit. Reserve `rebuild: true` for an intentional rebuild of that existing release.
-4. Check the returned `skipped` list. It should be empty; report every skipped member as an
-   incomplete team deploy.
-5. For every entry in `deployed`, save its `deploymentId` and call `get_deploy_status` until the
-   status reaches `live` or `failed`. Deploy calls return immediately; `pending` and `building` are
-   normal asynchronous states. Poll at a moderate interval rather than queueing another deploy.
-6. Treat the workflow as complete only when every deployment is `live`, its
-   `deployment.release.gitSha` equals the saved merge SHA, and the live URL is reported. Also surface
-   `hasUnreleasedChanges` and `hasUndeployedRelease`; these drift flags are useful context but do not
-   replace checking the requested deployment's status and SHA.
-
-`deploy_head` cuts and queues a release from whatever commit is currently at the connected default
-branch. Use it only for an explicit HEAD deploy when the user accepts that the branch may have moved;
-for a just-reviewed PR, `deploy_team_version` with the saved merge SHA is the safer default.
+`deploy_team_version({ projectId, gitSha, environment })` moves the whole team to an EXISTING
+version — the rollback/redeploy path. Reserve `rebuild: true` for an intentional rebuild of that
+existing release. `deploy_head` cuts and queues a release from whatever commit is currently at the
+connected default branch; use it only for an explicit HEAD deploy with nothing saved.
 
 On `failed`, report `errorDetail`. If retry is appropriate, call `retry_deployment` with the failed
 deployment ID, save the new returned deployment ID, and poll that new row. Use `clear_failed` with
-the environment ID only when the user wants the failed state cleared without a retry. If Eden reports
-`already_deploying`, do not submit another deploy; continue polling the deployment IDs already known
-to the conversation, or report that an operator must identify the in-flight deployment when its ID
-is unavailable.
+the environment ID only when the user wants the failed state cleared without a retry. If Eden
+reports `already_deploying`, do not submit another deploy; continue polling the deployment IDs
+already known to the conversation, or report that an operator must identify the in-flight
+deployment when its ID is unavailable.
 
 ## Finish with evidence
 
-Report the pull request URL and number, review/merge outcome and merge SHA, deployed environment,
-every deployment ID and final status/URL, validation performed, required secret names, skipped team
-members, drift flags, and any live checks that were not possible. Never claim the agent is live from
-a successful publish, merge, or queued deploy alone.
+Report the published commit sha, release ids, deployed environment, every deployment ID and final
+status/URL, validation performed, required secret names, and any live checks that were not
+possible. Never claim the agent is live from a successful publish call alone — poll the
+deployments.

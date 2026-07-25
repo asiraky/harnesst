@@ -6,7 +6,7 @@
  * live member deployment; each redeploy re-mints `EDEN_TEAMMATES` from the current roster.
  *
  * Trigger discipline (D7): called ONLY from the merge webhook — the merge-driven sync point that
- * also covers in-app ship (which merges via GitHub). NEVER from the loader self-heal path
+ * also covers the publish pipeline's roster sync. NEVER from the loader self-heal path
  * (`resolveSyncedAgentContext` also syncs the roster, and a page load must not deploy anything).
  */
 import type { DataStore } from "~/data/ports";
@@ -44,10 +44,10 @@ export async function refreshTeammatesForRosterChange(
     const envs = await store.environments.listByAgent(member.id);
     for (const env of envs) {
       const deployments = await store.deployments.listByEnvironment(env.id);
-      // An env with a deploy already in flight is skipped ENTIRELY: on the in-app ship path the
-      // ship queues the member's new-release deploy BEFORE this refresh runs, so the env's
+      // An env with a deploy already in flight is skipped ENTIRELY: on the publish path the
+      // pipeline queues the member's new-release deploy BEFORE this refresh runs, so the env's
       // current live row still points at the pre-merge release — queueing that release here
-      // would land AFTER the ship's job (FIFO worker) and silently revert the member. The
+      // would land AFTER the publish's deploy job (FIFO worker) and silently revert the member. The
       // in-flight deploy re-mints EDEN_TEAMMATES from the current roster anyway.
       if (deployments.some((d) => d.status === "pending" || d.status === "building")) {
         continue;

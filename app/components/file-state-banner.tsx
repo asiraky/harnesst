@@ -1,11 +1,12 @@
 /**
- * Editor banner for a file's change-lifecycle state (shared by all editors).
+ * Editor banner for a file's save state (shared by all editors).
  *
- * Editors always show the user's LATEST intended value — a staged draft, or the pending value
- * from an open change request, or the merged repo content. This banner says WHICH of those the
- * form is showing, so "why does this show X?" is always answerable on the page itself.
+ * Editors always show the user's LATEST intended value — a saved draft when one exists, else
+ * the repository content. This banner says WHICH of those the form is showing, so "why does
+ * this show X?" is always answerable on the page itself. The link opens the publish panel
+ * (the header Publish control reads `?publish=1`).
  */
-import { GitPullRequest, PencilLine, Trash2 } from "lucide-react";
+import { PencilLine, Trash2 } from "lucide-react";
 import { Link } from "react-router";
 
 import { Alert, AlertDescription, AlertTitle } from "~/components/ui/alert";
@@ -14,17 +15,12 @@ import type { FileView } from "~/drafts/drafts.server";
 export function FileStateBanner({
   saved,
   source,
-  change,
-  base,
   stagedDeletion = false,
 }: {
-  /** The just-submitted save succeeded (actionData.ok) — show the staged state. */
+  /** The just-submitted save succeeded (actionData.ok) — show the saved state. */
   saved: boolean;
   source: FileView["source"];
-  change: FileView["change"];
-  /** Repository base path, e.g. /repos/:id */
-  base: string;
-  /** A deletion is staged for this file (the form shows the repo content). */
+  /** A deletion is saved for this file (the form shows the repo content). */
   stagedDeletion?: boolean;
 }) {
   if (stagedDeletion && !saved) {
@@ -32,18 +28,18 @@ export function FileStateBanner({
       <Alert className="mb-6 border-amber-500/40">
         <AlertTitle className="flex items-center gap-1.5 text-amber-700 dark:text-amber-400">
           <Trash2 className="size-4" aria-hidden />
-          Staged for deletion
+          Will be deleted when you publish
         </AlertTitle>
         <AlertDescription className="flex flex-wrap items-center gap-x-3 gap-y-1">
           <span>
-            This file is marked for deletion in your staged changes; the form shows the
-            repository content. Saving here replaces the deletion with an edit.
+            This file is saved for deletion; the form shows the repository
+            content. Saving here replaces the deletion with an edit.
           </span>
           <Link
-            to={`${base}/deployment`}
+            to="?publish=1"
             className="font-medium underline underline-offset-4"
           >
-            Review staged changes on the Deployment tab →
+            Review &amp; publish →
           </Link>
         </AlertDescription>
       </Alert>
@@ -55,38 +51,15 @@ export function FileStateBanner({
       <Alert className="mb-6 border-amber-500/40">
         <AlertTitle className="flex items-center gap-1.5 text-amber-700 dark:text-amber-400">
           <PencilLine className="size-4" aria-hidden />
-          Staged — not published yet
+          Saved — not published yet
         </AlertTitle>
         <AlertDescription className="flex flex-wrap items-center gap-x-3 gap-y-1">
-          <span>This file has an unpublished draft; the form shows it.</span>
+          <span>This file has an unpublished save; the form shows it.</span>
           <Link
-            to={`${base}/deployment`}
+            to="?publish=1"
             className="font-medium underline underline-offset-4"
           >
-            Review &amp; publish on the Deployment tab →
-          </Link>
-        </AlertDescription>
-      </Alert>
-    );
-  }
-
-  if (source === "change-request" && change) {
-    return (
-      <Alert className="mb-6 border-amber-500/40">
-        <AlertTitle className="flex items-center gap-1.5 text-amber-700 dark:text-amber-400">
-          <GitPullRequest className="size-4" aria-hidden />
-          Pending — in change request #{change.number}
-        </AlertTitle>
-        <AlertDescription className="flex flex-wrap items-center gap-x-3 gap-y-1">
-          <span>
-            Showing the unmerged value from &ldquo;{change.title}&rdquo;. Saving here stages
-            a new draft on top of it.
-          </span>
-          <Link
-            to={`${base}/deployment`}
-            className="font-medium underline underline-offset-4"
-          >
-            Merge or delete it on the Deployment tab →
+            Review &amp; publish →
           </Link>
         </AlertDescription>
       </Alert>

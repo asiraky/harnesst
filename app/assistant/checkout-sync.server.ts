@@ -6,7 +6,7 @@
  *                                 conversation's checkout and report whether the base branch moved.
  *   syncConversationCheckout    — after a turn: pull the checkout's full tree state from the
  *                                 sidecar, apply the path policy, stage every change as a draft
- *                                 in the shared staging area (what the Publish button ships), and
+ *                                 in the shared staging area (what the Publish button takes live), and
  *                                 mirror the tree onto `eden/conv-<id>` as one snapshot commit
  *                                 (force-updated ref) — an internal durability branch only.
  *                                 Skips when the tree is unchanged.
@@ -273,7 +273,7 @@ function defaultSyncDeps(): SyncEngineDeps {
 /**
  * Pull the conversation checkout's tree state from the instance sidecar, stage every planned
  * change as a draft (§2.7 — the assistant feeds the same staging area the editors do; the user's
- * Publish button ships them), and mirror the tree onto its working branch (the durability
+ * Publish button takes them live), and mirror the tree onto its working branch (the durability
  * mechanism `ensureConversationCheckout` recovers from). A no-op (tree unchanged since the last
  * sync, or nothing committable) returns `{ synced: false }` without touching GitHub.
  */
@@ -368,7 +368,7 @@ export async function syncConversationCheckout(
   }
 
   // Stage the plan as drafts (§2.7): every write and deletion (a content:null draft) lands in
-  // the same staging area the editors feed, and the same Publish button ships them. `createdBy`
+  // the same staging area the editors feed, and the same Publish button takes them live. `createdBy`
   // is deliberately absent — human saves always carry a user id, so a null author is what marks
   // a draft assistant-staged in the publish panel. A failure here is a sync failure: the hash is
   // NOT advanced, so the next turn retries both the mirror (an idempotent force-update) and the

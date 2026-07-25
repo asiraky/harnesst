@@ -17,7 +17,6 @@ import {
   fetchLastCommitForPaths,
   type LastCommitInfo,
 } from "./repo.server";
-import { listOpenChanges, type OpenChange } from "./write.server";
 
 /** The shape fetchAgentSource resolves to (raw signature left untouched). */
 type AgentSourceResult = Awaited<ReturnType<typeof fetchAgentSource>>;
@@ -29,7 +28,6 @@ interface RepoRef {
 }
 
 const SRC_TTL_MS = 60_000; // 60s — repo source rarely changes between navigations.
-const PRS_TTL_MS = 30_000; // 30s — change requests move faster; keep it tighter.
 const META_TTL_MS = 5 * 60_000; // 5min — commit metadata staleness is harmless.
 
 function refPart(ref?: string): string {
@@ -44,17 +42,6 @@ export function getAgentSource(
   const key = `src:${installationId}:${owner}/${repo}:${refPart(ref)}`;
   return githubCache.get(key, SRC_TTL_MS, () =>
     fetchAgentSource(installationId, { owner, repo, ref }),
-  );
-}
-
-/** Cached open change requests for a loader. Key: prs:<inst>:<repo>. */
-export function getOpenChanges(
-  installationId: string | number,
-  { owner, repo }: { owner: string; repo: string },
-): Promise<OpenChange[]> {
-  const key = `prs:${installationId}:${owner}/${repo}`;
-  return githubCache.get(key, PRS_TTL_MS, () =>
-    listOpenChanges(installationId, { owner, repo }),
   );
 }
 
@@ -82,14 +69,6 @@ export function invalidateRepoSource(
 ): void {
   githubCache.invalidate(`src:${installationId}:${owner}/${repo}:`);
   githubCache.invalidate(`meta:${installationId}:${owner}/${repo}:`);
-}
-
-/** Drop a repo's open-change-requests entry — a write opened/closed/merged a PR. */
-export function invalidateRepoChanges(
-  installationId: string | number,
-  { owner, repo }: { owner: string; repo: string },
-): void {
-  githubCache.invalidate(`prs:${installationId}:${owner}/${repo}`);
 }
 
 /** Warm the default-branch source key so the first page load after a connect/push is instant. */

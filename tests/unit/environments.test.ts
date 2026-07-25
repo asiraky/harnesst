@@ -153,6 +153,29 @@ describe("createTeamEnvironment / renameTeamEnvironment", () => {
     expect(await memberEnvNames(projectId, "beta")).toEqual(["production"]);
   });
 
+  it("rename follows the persisted live environment (§2.8 — Publish never asks again)", async () => {
+    await store.projects.setLiveEnvironmentName(projectId, "default");
+    await renameTeamEnvironment(
+      { projectId, from: "default", to: "production", orgId: ORG },
+      deps(),
+    );
+    expect((await store.projects.findById(projectId))?.liveEnvironmentName).toBe(
+      "production",
+    );
+  });
+
+  it("rename of another env leaves the persisted live environment alone", async () => {
+    await createTeamEnvironment({ projectId, name: "staging", orgId: ORG }, deps());
+    await store.projects.setLiveEnvironmentName(projectId, "default");
+    await renameTeamEnvironment(
+      { projectId, from: "staging", to: "preview", orgId: ORG },
+      deps(),
+    );
+    expect((await store.projects.findById(projectId))?.liveEnvironmentName).toBe(
+      "default",
+    );
+  });
+
   it("rename to an existing sibling name is rejected readably", async () => {
     await createTeamEnvironment({ projectId, name: "staging", orgId: ORG }, deps());
     await expect(
@@ -359,7 +382,7 @@ describe("member removal (roster prune) tears down infra", () => {
       { store, deployTarget: target, secrets: fakeSecrets() },
     );
 
-    // beta's directory vanished from the tree (merged remove-member change request).
+    // beta's directory vanished from the tree (a published remove-member deletion).
     const destroyed: string[] = [];
     const destroyedWorlds: string[] = [];
     const roster = await syncProjectAgents(

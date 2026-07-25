@@ -1,7 +1,7 @@
 /**
  * Recruit — the install wizard (PRD §7.8, Milestone 6 phase 2). "Install = a change-set": this
  * page turns a catalog template into staged drafts on the target's working set, then hands off
- * to the existing Deployment-tab publish/ship pipeline (it does NOT open a PR itself).
+ * to the publish pipeline behind the header Publish control (it does NOT touch git itself).
  *
  * SSR, searchParams-driven — the URL IS the wizard state (`?project&member&newMember`), so every
  * choice is a plain GET navigation with no client state machine and the loader re-derives the
@@ -1326,7 +1326,7 @@ export default function InstallWizard({
                   </CardTitle>
                   <CardDescription>
                     {newMemberTemplate
-                      ? `This agent needs ${userSecrets.length} secret${userSecrets.length === 1 ? "" : "s"}. Enter them now — they'll be attached when the agent ships. Values are encrypted write-only.`
+                      ? `This agent needs ${userSecrets.length} secret${userSecrets.length === 1 ? "" : "s"}. Enter them now — they'll be attached when the agent goes live. Values are encrypted write-only.`
                       : "Stored per-agent, agent-wide. Values are encrypted write-only. Leave blank to set later in Settings."}
                   </CardDescription>
                 </CardHeader>
@@ -1371,13 +1371,13 @@ export default function InstallWizard({
                 </Button>
               ) : (
                 <Button type="submit" disabled={!canSubmit}>
-                  Stage install
+                  Save install
                 </Button>
               )}
               <span className="text-sm text-muted-foreground">
                 {preview.canKeepExistingFiles
-                  ? "Preserves your code and stages the lock, missing files, and dependencies. Preserved files stay unmanaged."
-                  : "Stages a change-set — review and publish it on the Deployment tab."}
+                  ? "Preserves your code and saves the lock, missing files, and dependencies. Preserved files stay unmanaged."
+                  : "Saves the install with your other changes — publish from the header to take it live."}
               </span>
             </div>
           </Form>

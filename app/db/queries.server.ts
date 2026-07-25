@@ -264,8 +264,8 @@ export async function syncProjectAgents(
     existingNames.add(r.newName);
   }
 
-  // Members about to be PRUNED — their directory vanished from the detected tree (a merged
-  // remove-member change request, or a deletion pushed straight to the repo). syncRoster's row
+  // Members about to be PRUNED — their directory vanished from the detected tree (a published
+  // remove-member deletion, or one pushed straight to the repo). syncRoster's row
   // cascade takes their environments, deployments and secrets, but rows can't stop docker
   // containers or drop world DBs — and after the cascade those ids are the ONLY handle on that
   // infra. Tear it down FIRST, best-effort, exactly like deleteTeamEnvironment. Renamed rows

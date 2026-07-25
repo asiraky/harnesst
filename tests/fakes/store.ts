@@ -70,8 +70,13 @@ export interface FakeStore extends DataStore {
   getConversationRead(sessionId: string, userId: string): ConversationRead | null;
   /** Force the next N release inserts to raise a version-collision (exercises retry). */
   forceReleaseCollisions(n: number): void;
-  /** Inspect recorded audit entries. */
-  readonly auditEntries: { action: string; target?: string | null; orgId: string }[];
+  /** Inspect recorded audit entries (meta included — pipeline audits assert on it). */
+  readonly auditEntries: {
+    action: string;
+    target?: string | null;
+    orgId: string;
+    meta?: Record<string, unknown> | null;
+  }[];
 }
 
 export function makeFakeStore(): FakeStore {
@@ -91,7 +96,12 @@ export function makeFakeStore(): FakeStore {
   const runs = new Map<string, Run>();
   const inboxItems = new Map<string, InboxItem>();
   const conversationReads = new Map<string, ConversationRead>(); // key: sessionId|userId
-  const auditEntries: { action: string; target?: string | null; orgId: string }[] = [];
+  const auditEntries: {
+    action: string;
+    target?: string | null;
+    orgId: string;
+    meta?: Record<string, unknown> | null;
+  }[] = [];
   let forcedCollisions = 0;
 
   const cascadeAgent = (agentId: string) => {
@@ -719,7 +729,12 @@ export function makeFakeStore(): FakeStore {
 
     audit: {
       async record(input) {
-        auditEntries.push({ action: input.action, target: input.target, orgId: input.orgId });
+        auditEntries.push({
+          action: input.action,
+          target: input.target,
+          orgId: input.orgId,
+          meta: input.meta,
+        });
       },
     },
 

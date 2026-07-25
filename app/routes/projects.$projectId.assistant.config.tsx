@@ -1,8 +1,8 @@
 /**
  * Assistant configuration — the user layer over `.eden/assistant/**`.
- * Editing here STAGES drafts through the normal Changes flow; the fixed Eden-owned layer
- * (instructions + tools) is shown read-only so the assistant is inspectable. Config takes effect
- * after the change is published + merged, which restarts the instance (refresh-on-merge).
+ * Editing here SAVES drafts like every other edit; the fixed Eden-owned layer (instructions +
+ * tools) is shown read-only so the assistant is inspectable. Config takes effect when you
+ * publish, which restarts the instance.
  */
 import { getSessionAuth, sessionLoader } from "~/auth/session.server";
 import { Lock, Sparkles } from "lucide-react";
@@ -280,7 +280,7 @@ export default function AssistantConfig({ loaderData }: Route.ComponentProps) {
           icon={Sparkles}
           accent="brand"
           title="Configure the assistant"
-          description="Tailor the assistant to this repo. Changes stage as drafts — they take effect after you publish + merge them on the Deployment tab, which restarts the assistant."
+          description="Tailor the assistant to this repo. Changes are saved as drafts — they take effect when you publish (the Publish button in the header), which restarts the assistant."
           actions={
             <Button asChild variant="outline" size="sm">
               <Link to={`/repos/${project.id}/assistant`}>Back to chat</Link>
@@ -359,7 +359,7 @@ export default function AssistantConfig({ loaderData }: Route.ComponentProps) {
                 className="font-mono text-sm"
               />
               <Button type="submit" size="sm">
-                Stage instructions
+                Save instructions
               </Button>
             </form>
           </CardContent>
@@ -533,8 +533,8 @@ export default function AssistantConfig({ loaderData }: Route.ComponentProps) {
 
         <Alert>
           <AlertDescription>
-            Staged config appears on the Deployment tab. Publish + merge it to
-            apply — that restarts the assistant with your changes.
+            Saved config rides with your other changes. Publish to apply it —
+            that restarts the assistant with your changes.
           </AlertDescription>
         </Alert>
       </div>
@@ -630,7 +630,7 @@ function ModelField({
       )}
       {fetcher.data?.ok && (
         <p className="text-sm text-muted-foreground">
-          Staged — publish it on the Deployment tab to apply.
+          Saved — publish with the Publish button in the header to apply.
         </p>
       )}
     </div>

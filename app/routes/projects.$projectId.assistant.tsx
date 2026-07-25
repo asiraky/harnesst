@@ -652,7 +652,7 @@ export default function Assistant({ loaderData }: Route.ComponentProps) {
           icon={Sparkles}
           accent="brand"
           title="Assistant"
-          description="Tell it what your agents should do. It writes the code, verifies the build, and stages everything for review on the Deployment tab — you never touch git."
+          description="Tell it what your agents should do. It writes the code, verifies the build, and saves everything for you to review and publish from the header — you never touch git."
           actions={headerActions}
         />
         {statusStrip}
@@ -1119,7 +1119,7 @@ function SyncNote({ sync }: { sync: NonNullable<LiveTurn["sync"]> }) {
         aria-hidden
       />
       <span>
-        Staged {n} change{n === 1 ? "" : "s"} —{" "}
+        Saved {n} change{n === 1 ? "" : "s"} —{" "}
         {/* `?publish=1` opens the publish panel from the workspace-header Publish control. */}
         <Link to="?publish=1" className="font-medium underline underline-offset-4">
           review and publish them

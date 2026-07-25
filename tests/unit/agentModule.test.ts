@@ -368,7 +368,7 @@ export default defineAgent({
     expect(readReasoningEffort(low)).toBe("low");
     expect(low.match(/function edenReasoningModel/g)).toHaveLength(1);
     // `ai`'s LanguageModel union includes bare id strings, which eve's model slot rejects — the
-    // generated signature must exclude them or `tsc --noEmit` fails in the publish gate.
+    // generated signature must exclude them or `tsc --noEmit` fails in the publish build.
     expect(low).toContain(
       "function edenReasoningModel(model: Exclude<LanguageModel, string>",
     );
@@ -522,7 +522,7 @@ describe("ensureModelProviderDependencies", () => {
     // "latest" resolves at npm-install time, but agent builds reuse the cached install layer
     // as long as package.json's bytes are unchanged, so "latest" silently stays whatever
     // version the first build got (a prod repo was stuck on eve 0.20.0 — no defineDynamic,
-    // failed publish gate). The rewrite is the cache-buster.
+    // failed publish build). The rewrite is the cache-buster.
     for (const eve of ["latest", "*", "next", ">=0.20.0", "^0.18.1"]) {
       const pkg =
         JSON.stringify(

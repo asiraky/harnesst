@@ -81,14 +81,15 @@ export const loader = (args: LoaderFunctionArgs) =>
       const diffPath = new URL(args.request.url).searchParams.get("diff");
       if (diffPath) {
         // One saved change's diff, fetched lazily when its row expands. The draft holds the
-        // whole new content; the repo's default branch holds the old side.
+        // whole new content; the repo's default branch holds the old side. An unreadable repo
+        // side degrades to a whole-file view rather than failing the row.
         const draft = await getDraft(connected.id, diffPath);
         if (!draft) return { path: diffPath, action: "edited", patch: null };
         const repoContent = await readAgentFile(
           connected.repoInstallationId,
           { owner: connected.repoOwner, repo: connected.repoName },
           diffPath,
-        );
+        ).catch(() => null);
         return {
           path: diffPath,
           action: changeAction(draft.content, repoContent !== null),

@@ -266,7 +266,15 @@ describe("runPublish — failures leave nothing landed", () => {
         .mockResolvedValue({ ok: false, output: "TS2304: Cannot find name 'foo'." }),
     });
 
-    await expect(runPublish(payload(task.id), deps, store)).resolves.toBeUndefined();
+    // The failure is the TASK's outcome — runPublish resolves (never rethrows) with the
+    // programmatic summary showing nothing landed.
+    await expect(runPublish(payload(task.id), deps, store)).resolves.toMatchObject({
+      status: "failed",
+      failedStep: "build",
+      commitSha: null,
+      releaseIds: [],
+      deploymentIds: [],
+    });
 
     const row = await store.workspaceTasks.findById(task.id);
     expect(row?.status).toBe("failed");

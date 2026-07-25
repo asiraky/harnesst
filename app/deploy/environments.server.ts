@@ -78,7 +78,7 @@ async function memberEnvRows(projectId: string, store: DataStore) {
 
 /**
  * The team env set S: the distinct env names across the project's member agents, ordered by
- * first creation (oldest first — the FIRST name is the de-facto primary: default ship target,
+ * first creation (oldest first — the FIRST name is the de-facto primary: default publish target,
  * hero card). Built from the per-agent rows but deduplicated to the team-level view.
  */
 export async function listTeamEnvNames(
@@ -158,6 +158,12 @@ export async function renameTeamEnvironment(
       }
       throw err;
     }
+  }
+  // The rename follows the persisted live-environment answer (§2.8) — otherwise a rename
+  // would strand `liveEnvironmentName` on a dead name and Publish would ask again.
+  const project = await deps.store.projects.findById(input.projectId);
+  if (project?.liveEnvironmentName === input.from) {
+    await deps.store.projects.setLiveEnvironmentName(input.projectId, to);
   }
   await deps.store.audit.record({
     orgId: input.orgId,

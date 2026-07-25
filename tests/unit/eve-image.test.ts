@@ -428,7 +428,7 @@ describe("EDEN_EVE_DOCKERFILE", () => {
     expect(EDEN_EVE_DOCKERFILE).toMatch(/^FROM build$/m);
     // Exactly one base-image stage: the old lean runtime stage duplicated nothing it needed.
     expect(EDEN_EVE_DOCKERFILE.match(/^FROM node:24-slim/gm)).toHaveLength(1);
-    // The publish gate + world migrations build `--target build` — the stage name is API.
+    // The publish build + world migrations build `--target build` — the stage name is API.
     expect(EDEN_EVE_DOCKERFILE).toContain("FROM node:24-slim AS build");
   });
 

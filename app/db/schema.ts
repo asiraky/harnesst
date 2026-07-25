@@ -480,9 +480,9 @@ export const draftChanges = pgTable(
     /** Repo-relative path under the agent's root (e.g. "agent/instructions.md"). */
     path: text("path").notNull(),
     /**
-     * Full new file contents (drafts are whole-file, like the editors). NULL stages a
-     * DELETION of the path — deletes ride the same stage → publish/ship rails as edits
-     * instead of opening their own change request on the spot.
+     * Full new file contents (drafts are whole-file, like the editors). NULL saves a
+     * DELETION of the path — deletes ride the same save → publish rails as edits instead
+     * of landing on the spot.
      */
     content: text("content"),
     /** Blob sha of the file when the edit was made (null = new file); future conflict hints. */

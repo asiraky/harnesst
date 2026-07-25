@@ -1,32 +1,25 @@
 /**
- * Ship — the one-click deploy pipeline (quick path over the existing rails, PRD §7.3/§7.7).
+ * HEAD deploys and version moves — the two deploy paths that don't go through the publish
+ * pipeline (that lives in app/publish/pipeline.server.ts).
  *
- * The TEAM is the deployment unit: a ship always moves the WHOLE roster into one environment,
+ * The TEAM is the deployment unit: a deploy always moves the WHOLE roster into one environment,
  * never a subset. Cross-agent coupling makes partial deploys unsafe — the ask-a-teammate tool
  * references sibling names/coordinates, renames ripple across members, and shared files rebuild
  * everyone — so "which agent" is never a question a user answers; only "which environment" is.
  *
- * shipStagedChanges chains what the Changes + Deployments pages do manually: publish ALL staged
- * drafts as one change request, merge it immediately, cut Releases at the merge commit (one per
- * roster member, via the same idempotent path the GitHub webhook uses), and queue a deploy into
- * every member's env of the chosen name. The publish build-gate still applies: a change-set that
- * doesn't compile creates nothing and the drafts stay staged.
- *
- * shipRepoHead is the no-change-set counterpart: an already-ready repo must deploy in one click
- * without first staging an edit. It reads the connected default branch's HEAD, cuts Releases at
- * that commit (same idempotent per-member path), and deploys the WHOLE team — no publish, no
- * merge, no build-gate, because nothing is being merged. The deploy-time image build surfaces any
- * failure on the deployment rows, exactly like the staged path.
+ * shipRepoHead is the nothing-saved counterpart to Publish: an already-ready repo must deploy in
+ * one click without first saving an edit. It reads the connected default branch's HEAD, cuts
+ * Releases at that commit (the same idempotent per-member path the pipeline and the GitHub
+ * webhook use), and deploys the WHOLE team. The deploy-time image build surfaces any failure on
+ * the deployment rows, exactly like any deploy.
  *
  * deployTeamVersion is the version-history counterpart: move the whole team to an existing
  * version (by git sha) in an environment — the rollback/redeploy path, direction-neutral.
  *
- * Everything is deps-injectable in the publishDrafts style so unit tests run with zero I/O.
+ * Everything is deps-injectable so unit tests run with zero I/O.
  */
 import type { Agent, DataStore, Release } from "~/data/ports";
-import { publishDrafts, type CheckBuildFn, type ProposeFn } from "~/drafts/drafts.server";
 import { getBranchHead } from "~/github/repo.server";
-import { mergePullRequest } from "~/github/write.server";
 import { getRuntime } from "~/seams/index.server";
 import { ensureReleasesForCommit, queueDeploy } from "./controller.server";
 
@@ -39,9 +32,9 @@ export interface ShipProject {
 }
 
 export interface ShipResult {
-  /** Version label of the shipped release (first member's — labels can differ per member). */
+  /** Version label of the deployed release (first member's — labels can differ per member). */
   version: string;
-  /** The shipped commit — the version identity shared by every member's release (D9). */
+  /** The deployed commit — the version identity shared by every member's release (D9). */
   gitSha: string;
   envName: string;
   /** One entry per member whose environment got a queued deploy. */
@@ -54,84 +47,18 @@ export interface ShipResult {
   skipped: { agentName: string }[];
 }
 
-export type MergeFn = typeof mergePullRequest;
 export type BranchHeadFn = typeof getBranchHead;
 
 export interface ShipDeps {
   store?: DataStore;
-  propose?: ProposeFn;
-  checkBuild?: CheckBuildFn;
-  merge?: MergeFn;
-  /** Reads the connected branch's HEAD sha for the no-change-set ship (shipRepoHead). */
+  /** Reads the connected branch's HEAD sha for the nothing-saved deploy (shipRepoHead). */
   branchHead?: BranchHeadFn;
 }
 
 /**
- * Ship every staged draft to `envName`: publish → merge → release → queue deploys. Throws
- * before creating anything when there is nothing staged or the build-gate fails; throws after
- * the merge only if release-cutting fails (deploy failures are async, on the deployment rows).
- */
-export async function shipStagedChanges(
-  input: {
-    project: ShipProject;
-    envName: string;
-    createdBy?: string | null;
-  },
-  deps: ShipDeps = {},
-): Promise<ShipResult> {
-  const store = deps.store ?? getRuntime().data;
-  const merge = deps.merge ?? mergePullRequest;
-  const { project, envName } = input;
-
-  const drafts = await store.drafts.listByProject(project.id);
-  if (drafts.length === 0) throw new Error("Nothing staged to ship.");
-
-  const title =
-    drafts.length === 1
-      ? `Ship ${drafts[0].path}`
-      : `Ship ${drafts.length} staged changes`;
-  const change = await publishDrafts(
-    { project, paths: drafts.map((d) => d.path), title, createdBy: input.createdBy },
-    store,
-    deps.propose,
-    deps.checkBuild,
-  );
-  const { mergeSha } = await merge(
-    project.repoInstallationId,
-    { owner: project.repoOwner, repo: project.repoName },
-    change.pullRequestNumber,
-    change.branch,
-  );
-  const releases = await ensureReleasesForCommit(
-    {
-      projectId: project.id,
-      gitSha: mergeSha,
-      changelog: `#${change.pullRequestNumber} ${title}`,
-      createdBy: input.createdBy,
-    },
-    store,
-  );
-
-  // Targets = the WHOLE member roster, always (the team is the deployment unit). The assistant
-  // (kind !== 'member') is never a ship target.
-  const roster = (await store.agents.listByProject(project.id)).filter(
-    (a) => a.kind === "member",
-  );
-  return deployToMembers({
-    store,
-    targets: roster,
-    releases: releases.map((r) => r.release),
-    gitSha: mergeSha,
-    envName,
-    createdBy: input.createdBy,
-  });
-}
-
-/**
- * Ship the connected repo's HEAD to `envName` with no staged change-set: read the default
- * branch's HEAD → cut Releases at that commit (one per member) → queue deploys for the WHOLE
- * team. No publish, no merge, no build-gate — nothing is being merged, so the only failure
- * surface is the async image build on the deployment rows (same as any deploy).
+ * Deploy the connected repo's HEAD to `envName` with nothing saved: read the default branch's
+ * HEAD → cut Releases at that commit (one per member) → queue deploys for the WHOLE team. The
+ * only failure surface is the async image build on the deployment rows (same as any deploy).
  *
  * `ensureReleasesForCommit` is idempotent per (agent, gitSha), so publishing HEAD twice at the
  * same commit reuses the existing releases and just redeploys them — the intended behavior.
