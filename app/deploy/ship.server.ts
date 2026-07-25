@@ -133,8 +133,8 @@ export async function shipStagedChanges(
  * team. No publish, no merge, no build-gate — nothing is being merged, so the only failure
  * surface is the async image build on the deployment rows (same as any deploy).
  *
- * `ensureReleasesForCommit` is idempotent per (agent, gitSha), so clicking Quick deploy twice at
- * the same HEAD reuses the existing releases and just redeploys them — the intended behavior.
+ * `ensureReleasesForCommit` is idempotent per (agent, gitSha), so publishing HEAD twice at the
+ * same commit reuses the existing releases and just redeploys them — the intended behavior.
  */
 export async function shipRepoHead(
   input: {

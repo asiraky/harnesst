@@ -285,8 +285,8 @@ export const loader = (args: LoaderFunctionArgs) =>
         // Deploy status: what's running per environment (member header line) and — after a
         // Ship — per-member deploy progress for the shipped commit, so the banner survives
         // refreshes (state lives in the DB). The "running" line is member-scoped; the ?shipped
-        // banner runs at BOTH levels, because Quick deploy ships from the team landing too and
-        // redirects back to whichever Overview it fired from.
+        // banner runs at BOTH levels so it works from the team landing and a member Overview
+        // alike.
         let running: ProjectView["running"] = [];
         let ship: ProjectView["ship"] = null;
         // Cache the active member's envs so the member-scope shipped-row lookup reuses them.
@@ -325,7 +325,7 @@ export const loader = (args: LoaderFunctionArgs) =>
         const shippedSha = url.searchParams.get("shipped");
         if (shippedSha) {
           // At team view there's no single active member to default the env from, so fall back
-          // to the ?env param (Quick deploy always sets it) or "default".
+          // to the ?env param or "default".
           const shipEnv =
             url.searchParams.get("env") ?? activeEnvs[0]?.name ?? "default";
           const shipSkipped = (url.searchParams.get("skipped") ?? "")
@@ -414,9 +414,9 @@ export async function action(args: ActionFunctionArgs) {
   const repo = { owner: project.repoOwner, repo: project.repoName };
 
   try {
-    // Ship now lives in the Quick deploy button (tab row) — the repos/<id>/quick-deploy
-    // resource route owns publish → merge → release → deploy. This route keeps retry-deploy
-    // and roster CRUD, plus the ?shipped banner its loader builds.
+    // Publishing lives in the header Publish control — the repos/<id>/publish resource route
+    // owns the pipeline. This route keeps retry-deploy and roster CRUD, plus the ?shipped
+    // banner its loader builds.
 
     // ── Retry a failed shipped deploy (same release, same environment) ──
     if (intent === "retry-deploy") {
@@ -693,17 +693,12 @@ export default function ProjectDetail({
       {view === "member" && draftPaths.length > 0 && (
         <Alert className="mb-6">
           <AlertTitle>
-            {draftPaths.length} staged change
-            {draftPaths.length === 1 ? "" : "s"} not shipped yet
+            {draftPaths.length} saved change
+            {draftPaths.length === 1 ? "" : "s"} not published yet
           </AlertTitle>
           <AlertDescription>
-            Ship them with the Quick deploy button in the tab row, or{" "}
-            <Link
-              to={`${ctx}/deployment`}
-              className="font-medium underline underline-offset-4"
-            >
-              review &amp; publish on the Deployment tab →
-            </Link>
+            Publish {draftPaths.length === 1 ? "it" : "them"} with the Publish button in the
+            header when you're ready.
           </AlertDescription>
         </Alert>
       )}

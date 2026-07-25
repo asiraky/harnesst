@@ -29,7 +29,7 @@ import {
 } from "react-router";
 
 import { InviteMember } from "~/components/invite-member";
-import { QuickDeploy } from "~/components/quick-deploy";
+import { PublishControl } from "~/components/publish";
 import { WorkspaceTasksIndicator } from "~/components/workspace-tasks";
 import { EdenWordmark } from "~/components/marketing/logo";
 import { ThemeToggle } from "~/components/theme-toggle";
@@ -116,8 +116,14 @@ export function AppShell({
           {breadcrumbs && breadcrumbs.length > 0 && (
             <Breadcrumbs crumbs={breadcrumbs} />
           )}
+          {/* The Publish control (issue #225 §4.1): project-scoped, on every back-of-house
+              page. Renders nothing off /repos/* — the ml-auto wrapper still pushes the nav
+              right when it's empty. */}
+          <div className="ml-auto flex min-w-0 shrink items-center">
+            <PublishControl />
+          </div>
           {/* Desktop: inline primary nav. Mobile: folds into the menu button below. */}
-          <nav className="ml-auto hidden items-center gap-1 text-sm md:flex">
+          <nav className="hidden items-center gap-1 text-sm md:flex">
             {/* House switcher (FOH D18): back into the operate surface at the app root. */}
             <HeaderLink to="/">Front of house</HeaderLink>
             <HeaderLink to="/dashboard">Repositories</HeaderLink>
@@ -125,7 +131,7 @@ export function AppShell({
             <HeaderLink to="/org/members">Members</HeaderLink>
             <HeaderLink to="/org/settings">Settings</HeaderLink>
           </nav>
-          <div className="ml-auto flex shrink-0 items-center gap-1 md:ml-0">
+          <div className="flex shrink-0 items-center gap-1">
             {userEmail && <WorkspaceMenu />}
             <ThemeToggle />
             <AccountMenu userEmail={userEmail} />
@@ -278,7 +284,7 @@ function AccountMenu({ userEmail }: { userEmail?: string | null }) {
 
 /**
  * Workspace switcher in the header (issue #56). Self-fetches the user's workspaces from
- * `/api/workspaces` (same pattern as StagedChangesPill) so it appears on every authed page
+ * `/api/workspaces` (same pattern as the Publish control) so it appears on every authed page
  * without threading data through each loader. Hard requirement: a user in ≤1 workspace sees
  * NOTHING — the switcher only exists for people who actually belong to several. Each item is a
  * real `<Form>` POST to `/workspaces` (not a fetcher) so switching does a full document
@@ -564,8 +570,6 @@ export function AgentNav({
           <div className="pointer-events-none absolute inset-y-0 right-0 w-8 bg-gradient-to-l from-background to-transparent sm:hidden" />
         </div>
         <div className="order-1 flex shrink-0 flex-wrap items-center gap-3 sm:order-2">
-          <QuickDeploy base={base} />
-          <StagedChangesPill base={base} />
           {/* Invite-to-repo (FOH): repo-scoped, so it sits at the repo/single level only. */}
           {(level === "single" || level === "repo") && (
             <InviteMember base={base} />
@@ -577,38 +581,6 @@ export function AgentNav({
       </div>
       <Separator className="mt-2" />
     </div>
-  );
-}
-
-/**
- * Always-visible staged-work indicator (sits in the tab row, so it survives tab switches):
- * "N staged changes" for the CURRENT scope — a member's own drafts (+ shared) at the member
- * level, the whole repo at the repo/single level — linking to that scope's Deployment tab.
- * Self-fetching from the staged-count resource route so every page gets it without
- * threading a count through each loader; fetcher data revalidates after actions, which is
- * what keeps it live as changes stage and publish.
- */
-function StagedChangesPill({ base }: { base: string }) {
-  const fetcher = useFetcher<{ count: number }>();
-  const match = base.match(/^\/repos\/([^/]+)(?:\/agents\/([^/]+))?$/);
-  const url = match
-    ? `/repos/${match[1]}/staged-count${match[2] ? `?agent=${match[2]}` : ""}`
-    : null;
-  const { load } = fetcher;
-  useEffect(() => {
-    if (url) load(url);
-  }, [url, load]);
-  const count = fetcher.data?.count ?? 0;
-  if (count === 0) return null;
-  return (
-    <Link
-      to={`${base}/deployment`}
-      prefetch="intent"
-      className="flex items-center gap-1.5 whitespace-nowrap rounded-full border border-amber-500/40 bg-amber-500/10 px-3 py-1 text-xs font-medium text-amber-700 transition-colors hover:bg-amber-500/20 dark:text-amber-400"
-    >
-      <span className="h-1.5 w-1.5 rounded-full bg-amber-500" aria-hidden />
-      {count} staged {count === 1 ? "change" : "changes"}
-    </Link>
   );
 }
 

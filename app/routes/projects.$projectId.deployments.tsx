@@ -2484,8 +2484,8 @@ function TeamVersionHistory({
         )}
         {teamVersions.length === 0 ? (
           <p className="text-sm text-muted-foreground">
-            No versions yet. Use Quick deploy in the tab row to deploy the
-            repository, or merge a change request above.
+            No versions yet. Use the Publish button in the header to deploy the
+            repository.
           </p>
         ) : (
           <ul className="divide-y rounded-lg border text-sm">
@@ -2822,8 +2822,8 @@ function EnvironmentsCard({
                     </>
                   ) : (
                     <span className="text-muted-foreground">
-                      Nothing deployed — use Quick deploy in the tab row, or
-                      Deploy a version below.
+                      Nothing deployed — use the Publish button in the header,
+                      or Deploy a version below.
                     </span>
                   )}
                   {canAct && (
@@ -3269,8 +3269,8 @@ function VersionHistory({
         )}
         {releases.length === 0 ? (
           <p className="text-sm text-muted-foreground">
-            No versions yet. Use Quick deploy in the tab row to deploy the
-            repository, or merge a change request above.
+            No versions yet. Use the Publish button in the header to deploy the
+            repository.
           </p>
         ) : (
           <ul className="divide-y rounded-lg border text-sm">

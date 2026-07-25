@@ -21,7 +21,7 @@ interface LiveRevalidateOptions {
  * browser refresh.
  *
  * Crucially the baseline poll is NOT gated on the initial in-flight state: a
- * deploy that STARTS after the page has loaded — a quick deploy, a teammate's
+ * deploy that STARTS after the page has loaded — a publish, a teammate's
  * deploy, a Discord/GitHub-triggered one — is still picked up, and the in-flight
  * state clearing at the tail end can't be missed either (issue #41). Pass
  * `active` to speed the cadence up while a deploy is known to be in progress.

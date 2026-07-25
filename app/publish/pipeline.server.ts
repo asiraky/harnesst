@@ -49,6 +49,7 @@ import { fetchAgentSource } from "~/github/repo.server";
 import { commitToDefaultBranch, NonFastForwardError } from "~/github/write.server";
 import { enqueue } from "~/jobs/queue.server";
 import { isAssistantConfigPath } from "~/project/guard.server";
+import { initialPublishSteps } from "~/publish/publish-panel";
 import { getRuntime } from "~/seams/index.server";
 import {
   completeTask,
@@ -121,16 +122,10 @@ function defaultDeps(): PublishPipelineDeps {
   };
 }
 
-/** The five steps, in order, with their user-facing labels (§4.3). */
-export function initialPublishSteps(): PipelineStep[] {
-  return [
-    { key: "check", label: "Checking your changes", status: "pending" },
-    { key: "build", label: "Building your agents", status: "pending" },
-    { key: "commit", label: "Saving to your repository", status: "pending" },
-    { key: "version", label: "Creating version", status: "pending" },
-    { key: "deploy", label: "Starting your agents", status: "pending" },
-  ];
-}
+// The step shape lives in the pure panel module (one source of truth: the panel renders the
+// same five steps as a pending stepper before the first poll returns). Re-exported so pipeline
+// callers/tests keep importing it from here.
+export { initialPublishSteps };
 
 const ASSISTANT_ONLY_REASON = "This change only affects the assistant's configuration";
 
