@@ -66,7 +66,7 @@ export async function resolveAgentContext(
 
 /**
  * Resolve context after reconciling the stored roster with a freshly-read repo tree, so external
- * pushes/webhook misses do not leave Eden classifying a team-layout repo as a single-agent repo.
+ * pushes/webhook misses do not leave harnesst classifying a team-layout repo as a single-agent repo.
  */
 export async function resolveSyncedAgentContext(
   projectId: string,

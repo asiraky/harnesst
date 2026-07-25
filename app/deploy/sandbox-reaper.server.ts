@@ -3,24 +3,24 @@
  *
  * In prod, eve's hourly schedule fires and creates a session sandbox container each time — but the
  * cron turn stalls BEFORE its first model/tool step: no command is ever exec'd in the sandbox
- * (`docker top` shows only the keeper `sleep 2147483647`), no run row ever reaches Eden, and the
- * idle `Up` sandbox containers accumulate forever. eve owns the stall (Eden policy: never patch or
- * fork eve — see docs/upstream/eve-cron-stall-report.md); Eden's job is to (a) stop the containers
+ * (`docker top` shows only the keeper `sleep 2147483647`), no run row ever reaches harnesst, and the
+ * idle `Up` sandbox containers accumulate forever. eve owns the stall (harnesst policy: never patch or
+ * fork eve — see docs/upstream/eve-cron-stall-report.md); harnesst's job is to (a) stop the containers
  * leaking and (b) make the failure class visible without docker archaeology.
  *
  * Scope — deliberately narrow. This reaps ONLY containers carrying BOTH
  *   eve.sandbox.role=session  AND  eve.sandbox.tag.channel=schedule
- * that also mount an Eden-owned home volume (a Mount whose Name starts `eden-home-`). Schedule
+ * that also mount a harnesst-owned home volume (a Mount whose Name starts `eden-home-`). Schedule
  * sessions are one-shot fire-and-forget — nothing ever resumes them, so a stalled/finished one is
  * always safe to remove. Every OTHER channel (playground / discord / assistant) can be resumed and
  * is never touched, and template-build containers (a different role) are out of scope too.
  *
- * TRIPWIRE (same shape as the eve-docker shim's): the label names are eve's, not Eden's. If a future
+ * TRIPWIRE (same shape as the eve-docker shim's): the label names are eve's, not harnesst's. If a future
  * eve upgrade renames `eve.sandbox.role` / `eve.sandbox.tag.channel`, the `ps` filter simply matches
  * nothing and the sweep becomes a no-op — leaks would return, but nothing breaks. Graceful
  * degradation over a hard dependency on private label strings.
  *
- * Signals (all docker-observable + Eden's own DB — the Workflow world DBs are empty on this host, so
+ * Signals (all docker-observable + harnesst's own DB — the Workflow world DBs are empty on this host, so
  * a "session has no steps" query is not viable):
  *   - RUNNING candidate, older than the ceiling, with EMPTY ExecIDs → the stall signature. An
  *     in-flight `docker exec` (ExecIDs non-empty) is real work and spares the container. Reaping one
@@ -186,7 +186,7 @@ export async function sweepLeakedSandboxes(
   for (const c of inspected) {
     const volume = homeVolumeOf(c);
     if (!volume) {
-      // Not an Eden-owned sandbox (another checkout's, or an unmounted one) — leave it alone.
+      // Not a harnesst-owned sandbox (another checkout's, or an unmounted one) — leave it alone.
       spared++;
       continue;
     }
@@ -296,7 +296,7 @@ const globalForReaper = globalThis as unknown as {
 
 /**
  * Start the sandbox reaper once per process. Gated OFF unless the deploy target is local-docker
- * (only that target spawns host sandbox containers Eden can see) and not explicitly disabled. Safe
+ * (only that target spawns host sandbox containers harnesst can see) and not explicitly disabled. Safe
  * to call from any server module; called from ensureWorkerStarted so every start site gets it.
  */
 export function ensureSandboxReaperStarted(): void {

@@ -376,7 +376,7 @@ async function waitForHealth(
 /**
  * Tail of a container's logs, for health-failure errors: when `eve start`'s prewarm (or the
  * server) dies, the REAL cause — a failed bootstrap, a bad image, a missing env — is in the
- * logs, and "container did not become healthy" alone is undebuggable from Eden's UI.
+ * logs, and "container did not become healthy" alone is undebuggable from harnesst's UI.
  */
 async function containerLogsTail(name: string, lines = 40): Promise<string> {
   try {

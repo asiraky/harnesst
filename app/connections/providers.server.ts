@@ -1,5 +1,5 @@
 /**
- * Connector provider registry (issues #30, #163) — everything Eden needs to broker OAuth against
+ * Connector provider registry (issues #30, #163) — everything harnesst needs to broker OAuth against
  * a provider, keyed by provider id. Registering a new provider is a data addition here plus the
  * operator's `EDEN_<PREFIX>_CLIENT_ID`/`_CLIENT_SECRET` env vars — no new routes, flows, or schema.
  * Unknown provider → null.
@@ -30,7 +30,7 @@ export interface ProviderDefinition {
   /** Extra remediation appended to the "no refresh token" exchange error (Google's myaccount hint). */
   noRefreshTokenHint?: string;
   /**
-   * How the token endpoint authenticates Eden's client (issue #167). `"client_secret_post"`
+   * How the token endpoint authenticates harnesst's client (issue #167). `"client_secret_post"`
    * (default) posts the operator secret; `"none"` is a PUBLIC client (RFC 8414
    * `token_endpoint_auth_methods_supported: ["none"]`) — no secret exists, PKCE is the
    * code-exchange proof, and only `EDEN_<PREFIX>_CLIENT_ID` is required operator config.
@@ -40,11 +40,11 @@ export interface ProviderDefinition {
    * How a validated grant reaches the agent's instance (issue #167; shared axis with #166).
    * `"refresh-token"` (default) ships the `<PREFIX>_OAUTH_*` trio so the instance self-refreshes.
    * `"access-token-broker"` never ships the refresh token — providers that ROTATE it per refresh
-   * (and revoke the whole family on reuse) can only have ONE writer, so Eden refreshes centrally
+   * (and revoke the whole family on reuse) can only have ONE writer, so harnesst refreshes centrally
    * and the instance fetches short-lived access tokens from `POST <EDEN_API_URL>/api/connections/token`
    * (authenticated by its `EDEN_TEAM_TOKEN` delegation token).
    * `"capability"` (issue #166) ships NOTHING — the instance never sees any credential material.
-   * Eden holds the grant and executes only the provider's whitelisted operations itself
+   * harnesst holds the grant and executes only the provider's whitelisted operations itself
    * (`POST <EDEN_API_URL>/api/capabilities/:provider/:operation`, same delegation-token auth);
    * the provider must have a capability definition registered in `app/capabilities/`.
    */
@@ -74,7 +74,7 @@ const PROVIDERS: Record<string, ProviderDefinition> = {
     tokenUrl: "https://oauth2.googleapis.com/token",
     userinfoUrl: "https://openidconnect.googleapis.com/v1/userinfo",
     // access_type=offline + prompt=consent guarantee a refresh token even on re-consent (Google
-    // only returns one when explicitly asked). Deliberately NO include_granted_scopes: Eden
+    // only returns one when explicitly asked). Deliberately NO include_granted_scopes: harnesst
     // always requests the full effective required set (never a delta), so incremental auth buys
     // nothing — and with it set, Google folds previously granted scopes back into every new
     // token, which would make narrowing a scope-group selection + reconnect (issue #165) unable
@@ -87,7 +87,7 @@ const PROVIDERS: Record<string, ProviderDefinition> = {
     envPrefix: "GOOGLE",
     redirectPath: "/google/callback",
     noRefreshTokenHint:
-      "Remove Eden's access at myaccount.google.com/permissions and connect again so Google re-issues one.",
+      "Remove harnesst's access at myaccount.google.com/permissions and connect again so Google re-issues one.",
   },
   // May I? (issue #167) — human-approval channel. Verified against asiraky/mayi: PUBLIC client
   // (token_endpoint_auth_methods_supported: ["none"], PKCE S256 required), refresh tokens ROTATE
@@ -121,10 +121,10 @@ const PROVIDERS: Record<string, ProviderDefinition> = {
   // Xero (issue #166) — the first CAPABILITY provider: money-adjacent, so the OAuth grant never
   // leaves the control plane and the instance can only reach the whitelisted operations in
   // app/capabilities/xero.server.ts. Xero ROTATES refresh tokens (single-use, family revocation
-  // on reuse, 60-day expiry), so every Eden-side refresh rides #167's rotation-safe serialized
+  // on reuse, 60-day expiry), so every harnesst-side refresh rides #167's rotation-safe serialized
   // path. The scope set requested at consent is a fixed superset (see the catalog template) —
   // the operation whitelist, not the token scope, is the enforcement plane. Operator env:
-  // EDEN_XERO_CLIENT_ID / EDEN_XERO_CLIENT_SECRET (an Eden-owned app at developer.xero.com with
+  // EDEN_XERO_CLIENT_ID / EDEN_XERO_CLIENT_SECRET (a harnesst-owned app at developer.xero.com with
   // redirect `<origin>/connections/xero/callback`).
   xero: {
     id: "xero",
@@ -147,7 +147,7 @@ export function listProviders(): ProviderDefinition[] {
   return Object.values(PROVIDERS);
 }
 
-/** The redirect path the provider's OAuth app expects Eden to use. */
+/** The redirect path the provider's OAuth app expects harnesst to use. */
 export function providerRedirectPath(provider: ProviderDefinition): string {
   return provider.redirectPath ?? `/connections/${provider.id}/callback`;
 }

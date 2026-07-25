@@ -470,7 +470,7 @@ async function mirrorSnapshot(
   const commit = await octokit.rest.git.createCommit({
     owner,
     repo,
-    message: `eden: sync conversation ${conversationId}`,
+    message: `harnesst: sync conversation ${conversationId}`,
     tree: tree.data.sha,
     parents: [baseSha],
   });
@@ -510,7 +510,7 @@ function prTitle(
 
 function prBody(title: string | null | undefined, warnings: string[]): string {
   const lines = [
-    "Changes proposed by the Eden assistant while working on this conversation.",
+    "Changes proposed by the harnesst assistant while working on this conversation.",
     "",
     "This PR auto-updates after each assistant turn; review and merge it on the Changes tab when you're happy.",
   ];

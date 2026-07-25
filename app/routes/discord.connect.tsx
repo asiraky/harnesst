@@ -2,7 +2,7 @@
  * "Connect Discord" — step 1 of the one-click Discord flow (issue #32).
  *
  * Signs a (project, agent, environment) state and redirects the user to Discord's OAuth
- * authorize screen for Eden's shared app (`bot applications.commands`). After they pick a
+ * authorize screen for harnesst's shared app (`bot applications.commands`). After they pick a
  * server and approve, Discord returns to /discord/callback, which registers the agent's slash
  * command. Mirrors the GitHub App manifest flow's start route.
  */
@@ -60,7 +60,7 @@ export const loader = (args: LoaderFunctionArgs) =>
       if (!config) {
         return {
           error:
-            "This Eden installation has no Discord app configured. An operator must set " +
+            "This harnesst installation has no Discord app configured. An operator must set " +
             "EDEN_DISCORD_APPLICATION_ID, EDEN_DISCORD_BOT_TOKEN, and EDEN_DISCORD_PUBLIC_KEY " +
             "on the control plane (see the self-host docs) before Discord can be connected.",
           backUrl,
@@ -132,7 +132,7 @@ export const loader = (args: LoaderFunctionArgs) =>
   );
 
 export function meta() {
-  return [{ title: "Connect Discord · eden" }, ...noindexMeta];
+  return [{ title: "Connect Discord · harnesst" }, ...noindexMeta];
 }
 
 export default function DiscordConnect({ loaderData }: Route.ComponentProps) {

@@ -1,6 +1,6 @@
 ---
 name: dev
-description: Starts the Eden dev server and tails the logs. Use whenever a running dev server is needed — starting, restarting, or recovering one whose port is blocked.
+description: Starts the harnesst dev server and tails the logs. Use whenever a running dev server is needed — starting, restarting, or recovering one whose port is blocked.
 ---
 
 # Dev

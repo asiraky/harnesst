@@ -1,7 +1,7 @@
 /**
  * OpenRouter model catalog — the source of truth for the agent model picker.
  *
- * Eden supports OpenRouter as the primary model path for deployed agents. The picker lists
+ * harnesst supports OpenRouter as the primary model path for deployed agents. The picker lists
  * OpenRouter model ids, and the settings route writes those ids into `openrouter.chatModel("...")`
  * provider wiring in `agent.ts`. The endpoint is public; every non-id field is optional so
  * parsing stays loose and OpenRouter can add fields without breaking the picker.
@@ -42,7 +42,7 @@ export interface ModelCatalogEntry {
   providerName?: string;
   connectionId?: string;
   connectionLabel?: string;
-  /** Provider-native id sent upstream after Eden removes the connection qualification. */
+  /** Provider-native id sent upstream after harnesst removes the connection qualification. */
   upstreamModelId?: string;
 }
 
@@ -144,14 +144,14 @@ export function normalizeCatalog(payload: unknown): ModelCatalogEntry[] {
 }
 
 const globalForCache = globalThis as unknown as {
-  __edenModelCatalogCache?: SwrCache;
+  __harnesstModelCatalogCache?: SwrCache;
 };
 
 const catalogCache: SwrCache =
-  globalForCache.__edenModelCatalogCache ?? new SwrCache();
+  globalForCache.__harnesstModelCatalogCache ?? new SwrCache();
 
 if (process.env.NODE_ENV !== "production") {
-  globalForCache.__edenModelCatalogCache = catalogCache;
+  globalForCache.__harnesstModelCatalogCache = catalogCache;
 }
 
 async function fetchJson(url: string): Promise<unknown> {

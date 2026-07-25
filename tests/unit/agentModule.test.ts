@@ -1,5 +1,5 @@
 /**
- * agent.ts model read/write — pins the authored forms in the wild. Eden writes a connection-aware
+ * agent.ts model read/write — pins the authored forms in the wild. harnesst writes a connection-aware
  * provider router and wraps the model in `defineDynamic` so the playground's per-conversation
  * model directive works (the chosen model is the fallback).
  */
@@ -47,7 +47,7 @@ export default defineAgent({
 });
 `;
 
-// Eden's generated agent.ts before PR #112: it has the directive selector and dynamic wrapper,
+// harnesst's generated agent.ts before PR #112: it has the directive selector and dynamic wrapper,
 // but no edenModel router or gateway factory, and the resolver always chooses OpenRouter.
 const PRE_112 = `import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
 import { defineAgent, defineDynamic } from 'eve';
@@ -96,7 +96,7 @@ describe("readModel", () => {
   it("reads a plain string literal", () => {
     expect(readModel(PLAIN)).toBe("anthropic/claude-sonnet-5");
   });
-  it("reads the defineDynamic fallback of an Eden-written module", () => {
+  it("reads the defineDynamic fallback of a harnesst-written module", () => {
     expect(readModel(scaffoldAgentModule("anthropic/claude-sonnet-5"))).toBe(
       "anthropic/claude-sonnet-5",
     );
@@ -108,7 +108,7 @@ describe("readModel", () => {
 });
 
 describe("hasDynamicModel", () => {
-  it("detects the dynamic wrapper Eden writes", () => {
+  it("detects the dynamic wrapper harnesst writes", () => {
     expect(
       hasDynamicModel(scaffoldAgentModule("anthropic/claude-sonnet-5")),
     ).toBe(true);
@@ -139,10 +139,10 @@ describe("readModelContextWindow", () => {
   });
 });
 
-/** Structural invariants of the dynamic model wrapper Eden writes. */
+/** Structural invariants of the dynamic model wrapper harnesst writes. */
 function expectDynamicShape(source: string, model: string) {
   // The fallback (and the directive resolver) route through the edenModel(...) helper so a codex/*
-  // id reaches Eden's gateway while everything else stays OpenRouter (issue #28).
+  // id reaches harnesst's gateway while everything else stays OpenRouter (issue #28).
   expect(source).toContain(`fallback: edenModel('${model}')`);
   expect(source.match(/model\s*:\s*defineDynamic\s*\(/g)).toHaveLength(1);
   expect(source.match(/function edenSelectedModel/g)).toHaveLength(1);
@@ -329,7 +329,7 @@ export default defineAgent({
     expectDynamicShape(next, "openai/gpt-5.1");
   });
 
-  it("preserves user code next to Eden's generated helper while upgrading it", () => {
+  it("preserves user code next to harnesst's generated helper while upgrading it", () => {
     const current = scaffoldAgentModule("anthropic/claude-sonnet-5").replace(
       "\nexport default defineAgent",
       "\nconst userOwned = 'keep me';\n\nexport default defineAgent",
@@ -547,7 +547,7 @@ describe("ensureModelProviderDependencies", () => {
 
 /**
  * The generated router must never throw while the MODULE evaluates: `eve build` runs inside
- * `docker build`, where Eden deliberately injects no EDEN_PROVIDER_* credentials (they reach only
+ * `docker build`, where harnesst deliberately injects no EDEN_PROVIDER_* credentials (they reach only
  * the running container). A module-scope throw failed every publish-gate and deploy image build
  * for qualified anthropic/openai/openrouter references. The "No credential was deployed" error is
  * deferred into a request-time middleware instead.

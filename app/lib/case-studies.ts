@@ -98,7 +98,7 @@ export const caseStudies: CaseStudy[] = [
       "Account managers knew exactly what they needed but couldn't build it, so they wrote a brief and waited. By the time a small automation shipped, the campaign had usually moved on.",
     ],
     approach: [
-      "The account managers now describe the routine work in plain words and Eden builds the agent. The developer stopped writing one-off scripts and started reviewing and looking after a shelf of them instead.",
+      "The account managers now describe the routine work in plain words and harnesst builds the agent. The developer stopped writing one-off scripts and started reviewing and looking after a shelf of them instead.",
       "When something needs real code — a fiddly API, an odd file format — the assistant drafts it and the developer signs off. He's the reviewer now, not the entire assembly line.",
     ],
     agents: [
@@ -178,7 +178,7 @@ export const caseStudies: CaseStudy[] = [
       "Hiring temps for the busy months never really worked. By the time they were trained, the rush was over, and quality dipped in the meantime.",
     ],
     approach: [
-      "The support lead, who doesn't code, described the triage rules and refund policy the team already followed. Eden built agents that look up the order, draft the reply, and process refunds up to a set limit — handing anything unusual straight to a person.",
+      "The support lead, who doesn't code, described the triage rules and refund policy the team already followed. harnesst built agents that look up the order, draft the reply, and process refunds up to a set limit — handing anything unusual straight to a person.",
       "The rules are hers to change. When the return policy shifts, she edits the agent that afternoon instead of filing a request and waiting.",
     ],
     agents: [

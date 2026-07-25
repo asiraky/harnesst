@@ -1,7 +1,7 @@
 /**
  * Create a new eve repo and scaffold it (Connect pillar — the "create new" path, PRD §7.1).
  *
- * This is Eden's headless equivalent of `eve init`: create the repo via the GitHub App, then
+ * This is harnesst's headless equivalent of `eve init`: create the repo via the GitHub App, then
  * commit an eve skeleton directly to the default branch. Two layouts (PRD §7.9):
  *  - **single** — one agent at the repo root (`agent/`), today's default.
  *  - **team**   — an initially empty monorepo marked by `agents/README.md`.
@@ -90,7 +90,7 @@ function agentDirFiles(root: string, displayName: string): FileChange[] {
       content: scaffoldOrgModelAgentModule(displayName),
     },
     { path: orgModelModulePath(root), content: orgModelModuleSource() },
-    // The Eden default sandbox: identical to eve's framework default until a secret is
+    // The harnesst default sandbox: identical to eve's framework default until a secret is
     // exposed (the EDEN_SANDBOX_ENV convention — see ~/eve/templates), but present from day
     // one so "make X available in my sandbox" is an edit, not a new concept.
     { path: sandboxPath(root), content: DEFAULT_SANDBOX_MODULE },
@@ -117,7 +117,7 @@ function singleAgentFiles(name: string, agentName: string): FileChange[] {
     },
     {
       path: "README.md",
-      content: `# ${name}\n\nAn [eve](https://github.com/vercel/eve) agent scaffolded by Eden. The agent\nlives under \`agent/\`. Edit it here or in Eden.\n`,
+      content: `# ${name}\n\nAn [eve](https://github.com/vercel/eve) agent scaffolded by harnesst. The agent\nlives under \`agent/\`. Edit it here or in harnesst.\n`,
     },
     { path: ".gitignore", content: GITIGNORE },
   ];
@@ -170,7 +170,7 @@ export function teamFiles(name: string): FileChange[] {
     },
     {
       path: "README.md",
-      content: `# ${name}\n\nA team of [eve](https://github.com/vercel/eve) agents scaffolded by Eden.\nEach member is a complete eve project under \`agents/<member>/\` — add a member by\nadding a directory with its own \`agent/\` and \`package.json\`. Eden detects the roster\nby convention; \`eden.json\` holds team metadata only.\n`,
+      content: `# ${name}\n\nA team of [eve](https://github.com/vercel/eve) agents scaffolded by harnesst.\nEach member is a complete eve project under \`agents/<member>/\` — add a member by\nadding a directory with its own \`agent/\` and \`package.json\`. harnesst detects the roster\nby convention; \`eden.json\` holds team metadata only.\n`,
     },
     { path: ".gitignore", content: GITIGNORE },
   ];
@@ -229,8 +229,8 @@ export async function createEveRepo(
       description:
         input.description ??
         (layout === "team"
-          ? "A team of eve agents, built with Eden."
-          : "An eve agent, built with Eden."),
+          ? "A team of eve agents, built with harnesst."
+          : "An eve agent, built with harnesst."),
     });
   } catch (error) {
     const status = statusOf(error);

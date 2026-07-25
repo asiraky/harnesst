@@ -61,9 +61,9 @@ const installEntrySchema = z.object({
         name: z.string().min(1),
         description: z.string().optional(),
         sandbox: z.boolean().optional(),
-        /** Set by a guided Eden flow (e.g. the GitHub App manifest flow), not collected at install. */
+        /** Set by a guided harnesst flow (e.g. the GitHub App manifest flow), not collected at install. */
         provisioned: z.boolean().optional(),
-        /** Minted once by Eden at first deploy (issue #163), never typed or collected. */
+        /** Minted once by harnesst at first deploy (issue #163), never typed or collected. */
         generated: z.boolean().optional(),
       }),
     )
@@ -133,14 +133,14 @@ const installEntrySchema = z.object({
         /**
          * Operation-group ids this install OFFERS for the provider's capability (issue #166) —
          * the template's `capability.groups`, snapshotted at install. Ids only: the labels/
-         * descriptions/risk live in Eden's capability registry (they're code, not data), unlike
+         * descriptions/risk live in harnesst's capability registry (they're code, not data), unlike
          * `scopeGroups` whose definitions are template-authored.
          */
         capabilityGroups: z.array(z.string().min(1)).min(1).optional(),
         /**
          * The installer's CURRENT capability-group choice (issue #166) — subset of
          * `capabilityGroups`, written at install and mutable from the Deployment tab. Enforcement
-         * is PER CALL in Eden (`/api/capabilities/...`), so edits apply at the agent's next call —
+         * is PER CALL in harnesst (`/api/capabilities/...`), so edits apply at the agent's next call —
          * no reconnect, no redeploy. Absent (never written) reads as NOTHING enabled: fail closed.
          */
         selectedCapabilityGroups: z.array(z.string().min(1)).optional(),
@@ -156,10 +156,10 @@ export const lockSchema = z.object({
   installs: z.array(installEntrySchema),
 });
 
-export type EdenLock = z.infer<typeof lockSchema>;
+export type HarnesstLock = z.infer<typeof lockSchema>;
 
 /** A fresh, empty lock — what callers use when `eden-lock.json` is absent. */
-export function emptyLock(): EdenLock {
+export function emptyLock(): HarnesstLock {
   return { version: LOCK_VERSION, installs: [] };
 }
 
@@ -168,7 +168,7 @@ export function emptyLock(): EdenLock {
  * real problem the reviewer must see, not a silent reset). Callers handle the *missing*-file
  * case themselves with `emptyLock()`.
  */
-export function parseLock(json: unknown): EdenLock {
+export function parseLock(json: unknown): HarnesstLock {
   return lockSchema.parse(json);
 }
 
@@ -181,7 +181,7 @@ export function parseLock(json: unknown): EdenLock {
 export function overlayLock(
   repoContent: string | null,
   drafts: Array<{ path: string; content: string | null }>,
-): EdenLock {
+): HarnesstLock {
   const draft = drafts.find((d) => d.path === LOCK_PATH);
   const raw = draft !== undefined ? draft.content : repoContent;
   if (!raw) return emptyLock();
@@ -194,7 +194,7 @@ export function overlayLock(
 
 /** An install is identified by (id, member) — the same template can live under two members. */
 export function findInstall(
-  lock: EdenLock,
+  lock: HarnesstLock,
   id: string,
   member: string | null,
 ): InstallEntry | undefined {
@@ -207,7 +207,7 @@ export function installKey(type: TemplateType, id: string): string {
 }
 
 /** All (type/id) keys installed in a lock — the marketplace "Installed" facet reads this. */
-export function installedKeys(lock: EdenLock): string[] {
+export function installedKeys(lock: HarnesstLock): string[] {
   return lock.installs.map((e) => installKey(e.type, e.id));
 }
 
@@ -254,7 +254,7 @@ export function effectiveAuthScopes(auth: InstallAuth): string[] {
  * Client-safe: pure, no server imports.
  */
 export function requiredScopesByProvider(
-  lock: EdenLock,
+  lock: HarnesstLock,
   member: string | null,
 ): Map<string, string[]> {
   const byProvider = new Map<string, Set<string>>();
@@ -293,7 +293,7 @@ export interface ScopeGroupChoice {
  * Client-safe: pure, no server imports.
  */
 export function scopeGroupsByProvider(
-  lock: EdenLock,
+  lock: HarnesstLock,
   member: string | null,
 ): Map<string, ScopeGroupChoice[]> {
   const byProvider = new Map<string, ScopeGroupChoice[]>();
@@ -333,11 +333,11 @@ export function scopeGroupsByProvider(
  * through untouched. Pure; returns a new lock and whether anything changed.
  */
 export function setSelectedGroups(
-  lock: EdenLock,
+  lock: HarnesstLock,
   member: string | null,
   provider: string,
   selected: string[],
-): { lock: EdenLock; changed: boolean } {
+): { lock: HarnesstLock; changed: boolean } {
   let changed = false;
   const installs = lock.installs.map((entry) => {
     if (entry.member !== member || !entry.auth) return entry;
@@ -368,7 +368,7 @@ export function setSelectedGroups(
 }
 
 /** Upsert an entry by (id, member): replaces the matching install, else appends. Pure. */
-export function upsertInstall(lock: EdenLock, entry: InstallEntry): EdenLock {
+export function upsertInstall(lock: HarnesstLock, entry: InstallEntry): HarnesstLock {
   const rest = lock.installs.filter(
     (e) => !(e.id === entry.id && e.member === entry.member),
   );
@@ -377,10 +377,10 @@ export function upsertInstall(lock: EdenLock, entry: InstallEntry): EdenLock {
 
 /** Remove the (id, member) entry, returning a new lock. Pure. */
 export function removeInstall(
-  lock: EdenLock,
+  lock: HarnesstLock,
   id: string,
   member: string | null,
-): EdenLock {
+): HarnesstLock {
   return {
     ...lock,
     installs: lock.installs.filter(
@@ -397,10 +397,10 @@ export function removeInstall(
  * a new lock and a flag for whether anything changed (so callers can skip an empty rewrite).
  */
 export function renameMember(
-  lock: EdenLock,
+  lock: HarnesstLock,
   oldName: string,
   newName: string,
-): { lock: EdenLock; changed: boolean } {
+): { lock: HarnesstLock; changed: boolean } {
   let changed = false;
   const oldPrefix = `agents/${oldName}/`;
   const newPrefix = `agents/${newName}/`;
@@ -423,7 +423,7 @@ export function renameMember(
  * driven by content not insertion order, 2-space indent, trailing newline (the repo's file
  * convention — everything else in a change-set looks like this).
  */
-export function serializeLock(lock: EdenLock): string {
+export function serializeLock(lock: HarnesstLock): string {
   const installs = [...lock.installs].sort((a, b) => {
     if (a.id !== b.id) return a.id < b.id ? -1 : 1;
     // Root agent (null member) sorts before named members; then lexical.

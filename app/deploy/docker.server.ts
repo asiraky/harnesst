@@ -78,7 +78,7 @@ export function normalizeDockerCliError(error: unknown, action: string): Error {
     : raw;
   return new DockerUnavailableError(
     [
-      `Docker is not responding, so Eden cannot ${action}.`,
+      `Docker is not responding, so harnesst cannot ${action}.`,
       "Install or restart Docker Desktop, Colima, or OrbStack, wait until `docker version` or `docker info` completes, then redeploy.",
       timeoutNote ? `Original Docker error: ${timeoutNote}` : null,
     ]

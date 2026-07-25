@@ -1,5 +1,5 @@
 /**
- * Eden model gateway — `POST /api/gateway/v1/chat/completions` (issue #28, Phase 1).
+ * harnesst model gateway — `POST /api/gateway/v1/chat/completions` (issue #28, Phase 1).
  *
  * A deployed agent (or the built-in assistant) set to a `codex/<connectionId>/<slug>` model points
  * its `@ai-sdk/openai-compatible` provider at THIS route, authenticated by an `EDEN_MODEL_GATEWAY_TOKEN`

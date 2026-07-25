@@ -1,7 +1,7 @@
 /**
  * Operational audit log (ARCH §3.8). Records deploys, rollbacks, secret changes, and
  * spend-limit edits, keyed by tenant. Better Auth owns authentication state; this is the
- * operations audit Eden owns.
+ * operations audit harnesst owns.
  */
 import { desc, eq } from "drizzle-orm";
 

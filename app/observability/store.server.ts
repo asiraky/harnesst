@@ -390,7 +390,7 @@ export async function listRunChannels(
     .sort();
 }
 
-/** The Eden run id for a `(project, externalRunId)` pair, or null (delegation linking). */
+/** The harnesst run id for a `(project, externalRunId)` pair, or null (delegation linking). */
 export async function getRunIdByExternal(
   projectId: string,
   externalRunId: string,

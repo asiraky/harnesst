@@ -566,7 +566,7 @@ describe("MCP PR-enforced authoring tools", () => {
     ]);
   });
 
-  it("merges only the server-resolved Eden branch targeting the default branch", async () => {
+  it("merges only the server-resolved harnesst branch targeting the default branch", async () => {
     const listOpenChanges = vi.fn(async () => [openChange()]);
     const mergePullRequest = vi.fn(async () => ({
       mergeSha: "merge_sha",

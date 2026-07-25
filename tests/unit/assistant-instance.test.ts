@@ -235,7 +235,7 @@ describe("assistant instance: peek reports resumable, not first-run setup", () =
     return dep;
   }
 
-  it("reports resumable for a live deployment on a stale template sha (post-Eden-upgrade)", async () => {
+  it("reports resumable for a live deployment on a stale template sha (post-harnesst-upgrade)", async () => {
     const store = makeFakeStore();
     await seedDeployment(store, {
       gitSha: "tmpl-0000000000000000",

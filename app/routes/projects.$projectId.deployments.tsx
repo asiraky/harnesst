@@ -253,7 +253,7 @@ interface DeploymentData {
   /** Member/single view: Discord connect state when the agent has the marketplace Discord channel. */
   discordSetup: {
     enabled: boolean;
-    /** Whether the operator has configured Eden's shared Discord app (EDEN_DISCORD_*). */
+    /** Whether the operator has configured harnesst's shared Discord app (EDEN_DISCORD_*). */
     configured: boolean;
     /** Member view: the agent's connected servers; null in the team view (setup is per member). */
     connections: Array<{
@@ -276,7 +276,7 @@ interface DeploymentData {
     provider: string;
     /** Display name from the provider registry (capitalized id when unregistered). */
     label: string;
-    /** Whether this Eden installation's registry knows the provider — false → inert row. */
+    /** Whether this harnesst installation's registry knows the provider — false → inert row. */
     registered: boolean;
     /** Whether the operator configured this provider's OAuth client — gates the connect action. */
     configured: boolean;
@@ -1100,7 +1100,7 @@ export async function action(args: ActionFunctionArgs) {
 }
 
 export function meta() {
-  return [{ title: "Deployment · eden" }];
+  return [{ title: "Deployment · harnesst" }];
 }
 
 type LoaderData = Route.ComponentProps["loaderData"];
@@ -1143,7 +1143,7 @@ function PublishStatus({ active }: { active: boolean }) {
       request. Progress shows in the task bar at the top of the page; you can
       keep working.
       <div className="mt-2 h-1 overflow-hidden rounded-full bg-border">
-        <div className="eden-loading-line bg-primary/60" />
+        <div className="harnesst-loading-line bg-primary/60" />
       </div>
     </div>
   );
@@ -1206,7 +1206,7 @@ export default function Deployment({
         ?.label ?? permissionsEdited)
     : null;
   // Capability-operations edit outcome (issue #166): the capability-permissions action redirects
-  // back here with the provider. No "narrowed" variant — enforcement is per call in Eden, so both
+  // back here with the provider. No "narrowed" variant — enforcement is per call in harnesst, so both
   // directions apply at the agent's next call.
   const operationsEdited = params.get("operations");
   const operationsLabel = operationsEdited
@@ -1356,7 +1356,7 @@ export default function Deployment({
         <Alert className="mb-6">
           <AlertTitle>{operationsLabel} operations updated</AlertTitle>
           <AlertDescription>
-            The selection is staged to eden-lock.json and Eden enforces it on
+            The selection is staged to eden-lock.json and harnesst enforces it on
             every call, so it already applies — the agent&rsquo;s next call
             sees the new list. Publish the staged change with your other edits
             to make it permanent.
@@ -1552,7 +1552,7 @@ function ConnectionsCard({
                 </div>
                 {!c.registered ? (
                   <span className="text-xs text-muted-foreground">
-                    not supported by this Eden installation
+                    not supported by this harnesst installation
                   </span>
                 ) : c.needsResource ? (
                   // An unbound capability grant is unusable — finishing the binding is the
@@ -1652,7 +1652,7 @@ function ConnectionsCard({
                   </Form>
                 </details>
               )}
-              {/* Capability operations (issue #166): what Eden will EXECUTE for this agent.
+              {/* Capability operations (issue #166): what harnesst will EXECUTE for this agent.
                   Enforced per call by the capability route (never baked into a token), so an
                   edit applies at the agent's very next call — no reconnect, no redeploy. */}
               {c.capabilityGroups && c.capabilityGroups.length > 0 && (
@@ -1706,7 +1706,7 @@ function ConnectionsCard({
                         Update operations
                       </Button>
                       <span className="text-xs text-muted-foreground">
-                        Eden enforces this list on every call — changes apply
+                        harnesst enforces this list on every call — changes apply
                         at the agent&rsquo;s next call, no reconnect needed.
                       </span>
                     </div>
@@ -2955,7 +2955,7 @@ function EnvironmentsCard({
 /**
  * Channels — where this agent listens and answers, one card with one row per channel, sharing the
  * Connections card's visual language (name + state badge, a muted detail line, the one action that
- * matters in the right slot). Discord (issue #32) connects through Eden's shared app; GitHub
+ * matters in the right slot). Discord (issue #32) connects through harnesst's shared app; GitHub
  * (issue #26) through the agent's OWN GitHub App via the Manifest flow. A Discord row without the
  * operator's shared app (EDEN_DISCORD_*) is hidden — a row whose only content is "this isn't
  * available" is noise.
@@ -3011,8 +3011,8 @@ function ChannelsCard({
 }
 
 /**
- * The Discord channel row (issue #32): one-click connect through Eden's shared Discord app — one
- * authorization screen, then Eden registers a `/<agent-name>` slash command and routes
+ * The Discord channel row (issue #32): one-click connect through harnesst's shared Discord app — one
+ * authorization screen, then harnesst registers a `/<agent-name>` slash command and routes
  * interactions automatically; no portal, no secrets. Connected servers list under the row.
  */
 function DiscordChannelRow({
@@ -3082,7 +3082,7 @@ function DiscordChannelRow({
 
 /**
  * The GitHub channel row (issue #26): the agent listens through its OWN GitHub App. Connect runs
- * the Manifest flow — Eden registers the App, stores its secrets (including the webhook URL), and
+ * the Manifest flow — harnesst registers the App, stores its secrets (including the webhook URL), and
  * sends the user to GitHub to pick the repositories it watches. Installations list under the row.
  */
 function GitHubChannelRow({

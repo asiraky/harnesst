@@ -79,7 +79,7 @@ describe("production deployment workflow", () => {
 });
 
 describe("production Swarm stack", () => {
-  it("deploys one immutable Eden replica with stop-first rollback", () => {
+  it("deploys one immutable harnesst replica with stop-first rollback", () => {
     expect(stack).toContain(
       "image: ghcr.io/zero8ai/eden:${IMAGE_TAG:?set IMAGE_TAG}",
     );
@@ -89,7 +89,7 @@ describe("production Swarm stack", () => {
     expect(stack).toContain("node.role == manager");
   });
 
-  it("fails Eden health on non-2xx responses within the update monitor", () => {
+  it("fails harnesst health on non-2xx responses within the update monitor", () => {
     const eden = stack.slice(stack.indexOf("  eden:\n"));
 
     expect(eden).toContain("process.exit(response.ok ? 0 : 1)");
@@ -123,7 +123,7 @@ describe("production Swarm stack", () => {
     expect(stack).not.toContain("0.0.0.0");
   });
 
-  it("contains only the Eden and Postgres services", () => {
+  it("contains only the harnesst and Postgres services", () => {
     const services = stack.slice(
       stack.indexOf("services:\n"),
       stack.indexOf("\nnetworks:\n"),
@@ -269,7 +269,7 @@ describe("remote deployment transaction", () => {
     expect(rollout).toContain('[[ "$update_state" == "completed" ]]');
   });
 
-  it("requires the requested Eden task container to be Docker-healthy", () => {
+  it("requires the requested harnesst task container to be Docker-healthy", () => {
     const helper = script.slice(
       script.indexOf("service_has_one_healthy_container() {"),
       script.indexOf("wait_for_postgres() {"),

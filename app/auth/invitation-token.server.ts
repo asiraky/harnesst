@@ -2,7 +2,7 @@
  * Invitation delivery tokens. The invitation email link carries `?token=` — an HMAC-signed
  * (invitationId, email) pair minted when the invitation email is sent. Invitation ids alone are
  * enumerable by organization members (CVE-2026-53514), so possessing the id proves nothing;
- * possessing this token proves the bearer received the email Eden sent to the invited address.
+ * possessing this token proves the bearer received the email harnesst sent to the invited address.
  *
  * That proof-of-delivery is what lets the accept screen treat a signed-in invitee whose account
  * email matches the invited address as email-verified, without a second manual verification

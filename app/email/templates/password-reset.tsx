@@ -25,11 +25,11 @@ export default function PasswordResetEmail({
   return (
     <Html lang="en">
       <Head />
-      <Preview>Reset your Eden password</Preview>
+      <Preview>Reset your harnesst password</Preview>
       <Body style={styles.main}>
         <Container style={styles.container}>
           <Text style={styles.brand}>
-            <span style={styles.brandAccent}>e</span>den
+            <span style={styles.brandAccent}>h</span>arnesst
           </Text>
           <Heading style={styles.heading}>Reset your password</Heading>
           <Text style={styles.text}>

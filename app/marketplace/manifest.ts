@@ -3,7 +3,7 @@
  *
  * A template is *files + a manifest*. This module defines that manifest (`template.json`) and
  * the catalog index (`index.json`) as Zod schemas, and it is the SINGLE source of truth for the
- * format: the catalog CI (`marketplace/scripts/validate.mjs`) and Eden's own catalog readers
+ * format: the catalog CI (`marketplace/scripts/validate.mjs`) and harnesst's own catalog readers
  * (`app/seams/oss/catalog.*`) both validate against these rules. (The CI script re-implements
  * them in plain Node so `marketplace/` can travel to the eve OSS repo self-contained — that
  * duplication is deliberate and flagged there.)
@@ -122,13 +122,13 @@ export const templateManifestSchema = z
         description: z.string().optional(),
         sandbox: z.boolean().optional(),
         /**
-         * Marks a secret that a guided Eden flow sets (e.g. the GitHub App manifest flow on the
+         * Marks a secret that a guided harnesst flow sets (e.g. the GitHub App manifest flow on the
          * Deployment tab) rather than one collected at install — the wizard renders no input
          * for it.
          */
         provisioned: z.boolean().optional(),
         /**
-         * A secret nobody types (issue #163) — Eden mints a random value at first deploy and
+         * A secret nobody types (issue #163) — harnesst mints a random value at first deploy and
          * keeps it stable across redeploys. Never prompted; mutually exclusive with provisioned.
          */
         generated: z.boolean().optional(),
@@ -137,7 +137,7 @@ export const templateManifestSchema = z
     .optional(),
   /**
    * Auth-brokered connection descriptor (issue #30) — ONLY valid on a `connection` template
-   * (enforced in the superRefine below). It drives the install wizard's Connect step: Eden runs
+   * (enforced in the superRefine below). It drives the install wizard's Connect step: harnesst runs
    * an operator-brokered OAuth flow for `provider`, requesting `scopes`, and stores the resulting
    * grant so deploy can inject it. `kind` is `"oauth2"` for now (the only brokered flow).
    *
@@ -176,10 +176,10 @@ export const templateManifestSchema = z
   /**
    * Brokered-capability enablement (issue #166) — ONLY valid alongside `auth` on a `connection`
    * template (superRefine below). Where `auth.scopeGroups` selects what the PROVIDER's token can
-   * do, `capability.groups` names the operation groups (defined in Eden's capability registry,
+   * do, `capability.groups` names the operation groups (defined in harnesst's capability registry,
    * `app/capabilities/`) this template offers the installer; the selection is enforced PER CALL
-   * by Eden's capability route, so changing it later needs no reconnect. Group ids must exist in
-   * the provider's capability definition (validated by catalog CI + Eden's registry cross-check).
+   * by harnesst's capability route, so changing it later needs no reconnect. Group ids must exist in
+   * the provider's capability definition (validated by catalog CI + harnesst's registry cross-check).
    */
   capability: z
     .object({
@@ -187,7 +187,7 @@ export const templateManifestSchema = z
       groups: z.array(slug).min(1),
     })
     .optional(),
-  /** Sandbox setup installed alongside this template, merged by Eden into the agent sandbox. */
+  /** Sandbox setup installed alongside this template, merged by harnesst into the agent sandbox. */
   sandbox: sandboxSetupSchema.optional(),
   /** Suggested model, for agent-type templates. */
   model: z.string().optional(),
@@ -237,7 +237,7 @@ export const templateManifestSchema = z
         message: "a bundle with no files must include at least one template",
       });
     }
-    // A secret is either operator/flow-set (provisioned) or Eden-minted (generated) — never both.
+    // A secret is either operator/flow-set (provisioned) or harnesst-minted (generated) — never both.
     (m.secrets ?? []).forEach((s, i) => {
       if (s.provisioned && s.generated) {
         ctx.addIssue({

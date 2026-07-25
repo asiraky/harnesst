@@ -1,5 +1,5 @@
 /** Built-in assistant model-provider env: exact connection credentials for direct providers and
- * Eden's gateway only for active Codex OAuth connections. */
+ * harnesst's gateway only for active Codex OAuth connections. */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const getWorkspaceAssistantModel = vi.fn<() => Promise<string | null>>();

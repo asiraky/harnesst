@@ -12,7 +12,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
 
 import { planPendingRenames, syncProjectAgents } from "~/db/queries.server";
-import { emptyLock, renameMember, type EdenLock } from "~/marketplace/lock";
+import { emptyLock, renameMember, type HarnesstLock } from "~/marketplace/lock";
 import { makeFakeStore, type FakeStore } from "../fakes/store";
 
 const PROJECT = "proj_1";
@@ -205,7 +205,7 @@ describe("syncProjectAgents — pending rename mapping", () => {
 });
 
 describe("renameMember (eden-lock.json)", () => {
-  const lock: EdenLock = {
+  const lock: HarnesstLock = {
     version: 1,
     installs: [
       {

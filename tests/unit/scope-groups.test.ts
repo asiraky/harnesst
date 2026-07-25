@@ -23,7 +23,7 @@ import {
   selectedGroupIds,
   serializeLock,
   setSelectedGroups,
-  type EdenLock,
+  type HarnesstLock,
   type InstallEntry,
 } from "~/marketplace/lock";
 import type { CatalogTemplate } from "~/seams/types";
@@ -129,7 +129,7 @@ function gmailEntry(selectedGroups?: string[]): InstallEntry {
   });
 }
 
-function lockOf(...installs: InstallEntry[]): EdenLock {
+function lockOf(...installs: InstallEntry[]): HarnesstLock {
   return { version: 1, installs };
 }
 
@@ -300,7 +300,7 @@ describe("selection edit → coverage state transitions (issue #165)", () => {
   // The grant covers read-only (plus Google's identity scopes) — the state after connecting
   // with the default selection.
   const grantScopes = `${READ} openid email`;
-  const stateFor = (lock: EdenLock) => {
+  const stateFor = (lock: HarnesstLock) => {
     // Mirrors the deployments loader: undefined = no snapshot (fall back to covered), empty =
     // every group explicitly deselected (issue #173 — the row renders "disabled").
     const required = requiredScopesByProvider(lock, "pm").get("google");

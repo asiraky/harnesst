@@ -40,10 +40,10 @@ const MODEL_LITERAL = /(\bmodel\s*:\s*)(['"`])([^'"`]*)\2/;
 const MODEL_CALL =
   /(\bmodel\s*:\s*)([A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)?)\(\s*(['"`])([^'"`]*)\3/;
 // The same provider call, matched to its closing paren — used when the whole value is replaced
-// (upgrading a static model to the Eden dynamic wrapper below).
+// (upgrading a static model to the harnesst dynamic wrapper below).
 const MODEL_CALL_FULL =
   /(\bmodel\s*:\s*)[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)?\(\s*(['"`])[^'"`]*\2\s*\)/;
-// Eden's dynamic wrapper: `model: defineDynamic({ fallback: openrouter.chatModel('id'), … })`.
+// harnesst's dynamic wrapper: `model: defineDynamic({ fallback: openrouter.chatModel('id'), … })`.
 // The deploy-default id lives in the fallback; the resolver honors the playground's
 // per-conversation directive (see ~/models/model-directive).
 const MODEL_DYNAMIC = /\bmodel\s*:\s*defineDynamic\s*\(/;
@@ -71,8 +71,8 @@ const TIMING_SAFE_EQUAL_IMPORT =
   "import { timingSafeEqual } from 'node:crypto';\n";
 export const OPENROUTER_FACTORY =
   "const openrouter = createOpenAICompatible({ name: 'openrouter', baseURL: 'https://openrouter.ai/api/v1', apiKey: process.env.OPENROUTER_API_KEY ?? '' });\n";
-// Eden's model gateway (issue #28): a `codex/<connectionId>/<slug>` model runs on the org's
-// connected Codex subscription through Eden's translating gateway. The base URL + token are
+// harnesst's model gateway (issue #28): a `codex/<connectionId>/<slug>` model runs on the org's
+// connected Codex subscription through harnesst's translating gateway. The base URL + token are
 // injected at deploy only when the org has a Codex connection; OpenRouter ids never touch it.
 export const EDEN_GATEWAY_FACTORY =
   "const edenGateway = createOpenAICompatible({ name: 'eden', baseURL: process.env.EDEN_MODEL_GATEWAY_URL ?? '', apiKey: process.env.EDEN_MODEL_GATEWAY_TOKEN ?? '' });\n";
@@ -93,7 +93,7 @@ function edenModelCallStart(model: string, effort?: string | null): string {
 
 /**
  * The message-directive parser injected into `agent.ts` alongside the dynamic model wrapper.
- * Its regex must stay in sync with `~/models/model-directive` (the Eden-side builder/stripper).
+ * Its regex must stay in sync with `~/models/model-directive` (the harnesst-side builder/stripper).
  * Kept dependency-free (structural message type) so it compiles in any agent repo.
  */
 export const EDEN_MODEL_HELPER = `// Eden playground model override: the playground pins a model per conversation by
@@ -190,7 +190,7 @@ function edenReasoningModel(model: Exclude<LanguageModel, string>, effort?: 'non
 }
 `;
 
-// Eden owns the marked helper region. Match the generated selector plus its optional router, but
+// harnesst owns the marked helper region. Match the generated selector plus its optional router, but
 // stop before any neighboring user code between that wiring and the agent export.
 const EDEN_MODEL_HELPER_BLOCK =
   /\/\/ Eden playground model override:[\s\S]*?\n}\n(?:(?:(?:[ \t]*|\/\/[^\n]*)\n)*function edenModel\s*\([\s\S]*?\n}\n)?(?:(?:(?:[ \t]*|\/\/[^\n]*)\n)*function edenReasoningModel\s*\([\s\S]*?\n}\n)?/;
@@ -199,7 +199,7 @@ const LEGACY_EDEN_MODEL_RESOLVER =
 const CURRENT_EDEN_MODEL_RESOLVER =
   "return { model: edenModel(selected.id), modelContextWindowTokens: selected.contextWindowTokens };";
 
-/** The `model:` value Eden writes — deploy default as the fallback, directive override per step. */
+/** The `model:` value harnesst writes — deploy default as the fallback, directive override per step. */
 function dynamicModelValue(model: string, effort?: string | null): string {
   return `defineDynamic({
     fallback: ${edenModelCall(model, effort)},
@@ -214,7 +214,7 @@ function dynamicModelValue(model: string, effort?: string | null): string {
 }
 
 /**
- * True when the module's `model:` is the Eden dynamic wrapper — i.e. a build of this source
+ * True when the module's `model:` is the harnesst dynamic wrapper — i.e. a build of this source
  * honors the playground's per-conversation model directive. A static module (plain provider
  * call or bare string) ignores the directive and always runs its baked-in model.
  */
@@ -230,7 +230,7 @@ export function hasDynamicModel(source: string | null | undefined): boolean {
 
 /** Read the model string from an agent module, or null if not found. */
 export function readModel(source: string): string | null {
-  // A workspace-resolver module has no baked-in model: the id lives in Eden's org
+  // A workspace-resolver module has no baked-in model: the id lives in harnesst's org
   // configuration, and the resolver argument is an agent NAME, not a model.
   if (usesOrgModelResolver(source)) return null;
   if (MODEL_DYNAMIC.test(source)) {
@@ -245,15 +245,15 @@ export function readModel(source: string): string | null {
   return m ? m[3] : null;
 }
 
-// The workspace-config resolver call Eden scaffolds (`model: edenAgentModel('<agent-name>')`,
+// The workspace-config resolver call harnesst scaffolds (`model: edenAgentModel('<agent-name>')`,
 // exported by the repo's generated `eden-model.ts`). The module resolves the model at runtime
-// from Eden's org configuration, so the agent file itself never carries a model string.
+// from harnesst's org configuration, so the agent file itself never carries a model string.
 const ORG_MODEL_RESOLVER = /\bmodel\s*:\s*edenAgentModel\s*\(\s*(['"`])([^'"`]*)\1/;
 
 /**
  * True when the module's model is resolved through the workspace configuration
  * (`edenAgentModel(...)` from the generated `eden-model.ts`). Such a module has no baked-in
- * model: Eden's Settings save writes the org override map instead of rewriting this file.
+ * model: harnesst's Settings save writes the org override map instead of rewriting this file.
  */
 export function usesOrgModelResolver(source: string | null | undefined): boolean {
   return typeof source === "string" && ORG_MODEL_RESOLVER.test(source);
@@ -265,7 +265,7 @@ export function orgResolverAgentName(source: string): string | null {
   return match ? match[2] : null;
 }
 
-/** Read Eden's explicit fallback reasoning effort, or null for provider default. */
+/** Read harnesst's explicit fallback reasoning effort, or null for provider default. */
 export function readReasoningEffort(
   source: string,
 ): "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | null {
@@ -385,11 +385,11 @@ function withModelProviderWiring(source: string): string {
 
 /**
  * Ensure the `edenGateway` factory const exists (issue #28) so a `codex/*` fallback/directive can
- * route through Eden's model gateway. Runs after `withModelProviderWiring` (which guarantees the
+ * route through harnesst's model gateway. Runs after `withModelProviderWiring` (which guarantees the
  * openrouter factory), inserting the gateway factory right after it; the `edenModel` router itself
- * ships in EDEN_MODEL_HELPER via `withEdenDynamicWiring`.
+ * ships in EDEN_MODEL_HELPER via `withHarnesstDynamicWiring`.
  */
-function withEdenGatewayWiring(source: string): string {
+function withHarnesstGatewayWiring(source: string): string {
   if (/\bedenGateway\s*=/.test(source)) return source;
   const factory = source.match(/const\s+openrouter\s*=[^\n]*\n/);
   if (factory && factory.index !== undefined) {
@@ -419,7 +419,7 @@ function withContextWindow(source: string, tokens: number): string {
 }
 
 /** Ensure the `defineDynamic` import (value import from 'eve') and the directive helper exist. */
-function withEdenDynamicWiring(source: string): string {
+function withHarnesstDynamicWiring(source: string): string {
   let next = source;
   const hasDynamicImport =
     /import\s*(?!type\b)[^;]*\bdefineDynamic\b[^;]*from\s*['"]eve['"]/.test(
@@ -443,10 +443,10 @@ function withEdenDynamicWiring(source: string): string {
 }
 
 /**
- * Return `source` with the model set to `model`. Eden always writes the dynamic wrapper
+ * Return `source` with the model set to `model`. harnesst always writes the dynamic wrapper
  * (`defineDynamic` with the chosen model as the fallback + the playground-directive resolver),
  * so every save makes the agent playground-switchable. Strategy, in order:
- *  1. Retarget the fallback of an existing Eden dynamic wrapper in place.
+ *  1. Retarget the fallback of an existing harnesst dynamic wrapper in place.
  *  2. Upgrade a static provider call or plain string literal to the dynamic wrapper.
  *  3. Inject a dynamic `model:` prop into an existing `defineAgent({ ... })`.
  *  4. Scaffold a fresh module.
@@ -456,7 +456,7 @@ export function setModel(
   model: string,
   options?: { contextWindowTokens?: number | null; effort?: string | null },
 ): string {
-  // The fallback effort lives on Eden's model wrapper so a playground directive can replace it
+  // The fallback effort lives on harnesst's model wrapper so a playground directive can replace it
   // per turn. Remove a static property first; otherwise clearing effort would leave it active.
   source = source.replace(STATIC_REASONING_PROP, "");
   const safe = model.replace(/['"`\\]/g, "");
@@ -488,8 +488,8 @@ export function setModel(
           DEFINE_AGENT_OPEN,
           (match) => `${match}\n  modelContextWindowTokens: ${tokens},`,
         );
-    return withEdenDynamicWiring(
-      withEdenGatewayWiring(withModelProviderWiring(next)),
+    return withHarnesstDynamicWiring(
+      withHarnesstGatewayWiring(withModelProviderWiring(next)),
     );
   }
   if (MODEL_CALL.test(source) || MODEL_LITERAL.test(source)) {
@@ -507,8 +507,8 @@ export function setModel(
           (_match, prefix) =>
             `${prefix}${dynamicModelValue(safe, options?.effort)}`,
         );
-    return withEdenDynamicWiring(
-      withEdenGatewayWiring(withModelProviderWiring(next)),
+    return withHarnesstDynamicWiring(
+      withHarnesstGatewayWiring(withModelProviderWiring(next)),
     );
   }
   if (DEFINE_AGENT_OPEN.test(source)) {
@@ -517,8 +517,8 @@ export function setModel(
       (match) =>
         `${match}\n  model: ${dynamicModelValue(safe, options?.effort)},\n  modelContextWindowTokens: ${tokens},`,
     );
-    return withEdenDynamicWiring(
-      withEdenGatewayWiring(withModelProviderWiring(next)),
+    return withHarnesstDynamicWiring(
+      withHarnesstGatewayWiring(withModelProviderWiring(next)),
     );
   }
   return scaffoldAgentModule(safe, {
@@ -541,7 +541,7 @@ export function scaffoldAgentModule(
  * True when a declared eve range GUARANTEES >= 0.22.0 (`defineDynamic`'s first release).
  * Absent specs pass — a team member's package.json may inherit eve from the repo root, and a
  * repo without eve anywhere was never going to build. URL-ish specs (git/file/github forks)
- * pass — they're deliberate user overrides Eden must not clobber (D3). Floating specs
+ * pass — they're deliberate user overrides harnesst must not clobber (D3). Floating specs
  * ("latest", "*", dist-tags, floorless ranges) FAIL even though npm would resolve them to a
  * modern eve today: agent images build behind a Docker layer cache keyed on package.json
  * bytes, so a floating spec stays frozen at whatever version the first build installed
@@ -579,7 +579,7 @@ export function ensureModelProviderDependencies(
     current[OPENROUTER_PROVIDER_PACKAGE] === OPENROUTER_PROVIDER_VERSION;
   const legacyProviderPresent =
     current[LEGACY_OPENROUTER_PROVIDER_PACKAGE] !== undefined;
-  // The OpenAI-compatible provider tracks AI SDK v7's provider interfaces. Existing Eden
+  // The OpenAI-compatible provider tracks AI SDK v7's provider interfaces. Existing harnesst
   // scaffolds used zod ^3, so a model save must upgrade it or npm publish checks fail.
   const zodOk =
     typeof current[ZOD_PACKAGE] === "string" &&

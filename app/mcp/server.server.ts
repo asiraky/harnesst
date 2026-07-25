@@ -4,11 +4,11 @@ import { z } from "zod/v4";
 import type { McpToolService } from "~/mcp/tools.server";
 
 const projectInput = {
-  projectId: z.string().min(1).describe("Eden project ID"),
+  projectId: z.string().min(1).describe("harnesst project ID"),
 };
 
 const deploymentInput = {
-  deploymentId: z.string().min(1).describe("Eden deployment row ID"),
+  deploymentId: z.string().min(1).describe("harnesst deployment row ID"),
 };
 
 function toolResult(value: Record<string, unknown>) {
@@ -23,16 +23,16 @@ function toolResult(value: Record<string, unknown>) {
  *
  * Authentication and organization/user scoping live in the injected service. Keeping those
  * concerns outside the protocol adapter also lets the HTTP route bind one service to one MCP
- * session without sending the caller back through Eden's resource routes.
+ * session without sending the caller back through harnesst's resource routes.
  */
-export function createEdenMcpServer(service: McpToolService): McpServer {
+export function createHarnesstMcpServer(service: McpToolService): McpServer {
   const server = new McpServer({ name: "eden", version: "0.1.0" });
 
   server.registerTool(
     "list_projects",
     {
       description:
-        "List the Eden projects visible to the authenticated caller.",
+        "List the harnesst projects visible to the authenticated caller.",
       inputSchema: {},
       annotations: { readOnlyHint: true, openWorldHint: false },
     },
@@ -42,7 +42,7 @@ export function createEdenMcpServer(service: McpToolService): McpServer {
   server.registerTool(
     "list_agents",
     {
-      description: "List the agents in an Eden project.",
+      description: "List the agents in a harnesst project.",
       inputSchema: projectInput,
       annotations: { readOnlyHint: true, openWorldHint: false },
     },
@@ -60,7 +60,7 @@ export function createEdenMcpServer(service: McpToolService): McpServer {
           .string()
           .min(1)
           .optional()
-          .describe("Optional Eden agent ID"),
+          .describe("Optional harnesst agent ID"),
       },
       annotations: { readOnlyHint: true, openWorldHint: false },
     },
@@ -78,7 +78,7 @@ export function createEdenMcpServer(service: McpToolService): McpServer {
           .string()
           .min(1)
           .optional()
-          .describe("Optional Eden agent ID"),
+          .describe("Optional harnesst agent ID"),
       },
       annotations: { readOnlyHint: true, openWorldHint: false },
     },
@@ -157,7 +157,7 @@ export function createEdenMcpServer(service: McpToolService): McpServer {
     {
       description: "Clear the failed deployment state for an environment.",
       inputSchema: {
-        environmentId: z.string().min(1).describe("Eden environment ID"),
+        environmentId: z.string().min(1).describe("harnesst environment ID"),
       },
       annotations: {
         destructiveHint: true,
@@ -172,7 +172,7 @@ export function createEdenMcpServer(service: McpToolService): McpServer {
     "stage_changes",
     {
       description:
-        "Stage one or more agent edits in Eden's draft area. This is the first step of the authoring flow: stage changes, publish them as one branch and one pull request, then optionally merge that reviewed Eden PR. This tool never writes to the default branch.",
+        "Stage one or more agent edits in harnesst's draft area. This is the first step of the authoring flow: stage changes, publish them as one branch and one pull request, then optionally merge that reviewed harnesst PR. This tool never writes to the default branch.",
       inputSchema: {
         ...projectInput,
         edits: z
@@ -212,7 +212,7 @@ export function createEdenMcpServer(service: McpToolService): McpServer {
     "publish_changes",
     {
       description:
-        "Publish selected staged drafts through Eden's enforced review path: exactly one fresh eden/publish-* branch, one commit, and one pull request targeting the project's default branch. It never commits directly to the default branch; use merge_change later only if review is complete.",
+        "Publish selected staged drafts through harnesst's enforced review path: exactly one fresh eden/publish-* branch, one commit, and one pull request targeting the project's default branch. It never commits directly to the default branch; use merge_change later only if review is complete.",
       inputSchema: {
         ...projectInput,
         paths: z
@@ -237,7 +237,7 @@ export function createEdenMcpServer(service: McpToolService): McpServer {
     "list_open_changes",
     {
       description:
-        "List open Eden-authored pull requests for a project's connected repository. Use this after publish_changes to review the one-PR change set before optionally calling merge_change; no direct default-branch write tool exists.",
+        "List open harnesst-authored pull requests for a project's connected repository. Use this after publish_changes to review the one-PR change set before optionally calling merge_change; no direct default-branch write tool exists.",
       inputSchema: {
         ...projectInput,
         limit: z
@@ -246,7 +246,7 @@ export function createEdenMcpServer(service: McpToolService): McpServer {
           .min(1)
           .max(50)
           .optional()
-          .describe("Maximum open Eden pull requests to return (default 20)"),
+          .describe("Maximum open harnesst pull requests to return (default 20)"),
       },
       annotations: { readOnlyHint: true, openWorldHint: true },
     },
@@ -257,14 +257,14 @@ export function createEdenMcpServer(service: McpToolService): McpServer {
     "merge_change",
     {
       description:
-        "Merge an already-open Eden pull request only after Eden resolves its server-side branch and confirms it targets this project's default branch. This optional review step is the only authoring tool that can land changes on the default branch; there is no direct-commit surface.",
+        "Merge an already-open harnesst pull request only after harnesst resolves its server-side branch and confirms it targets this project's default branch. This optional review step is the only authoring tool that can land changes on the default branch; there is no direct-commit surface.",
       inputSchema: {
         ...projectInput,
         pullRequestNumber: z
           .number()
           .int()
           .positive()
-          .describe("Open Eden pull request number to merge"),
+          .describe("Open harnesst pull request number to merge"),
       },
       annotations: {
         destructiveHint: true,
@@ -279,7 +279,7 @@ export function createEdenMcpServer(service: McpToolService): McpServer {
     "discard_changes",
     {
       description:
-        "Discard selected staged drafts from Eden without publishing or touching GitHub. This removes only unpublished staging-area edits and never closes a pull request or writes to the default branch.",
+        "Discard selected staged drafts from harnesst without publishing or touching GitHub. This removes only unpublished staging-area edits and never closes a pull request or writes to the default branch.",
       inputSchema: {
         ...projectInput,
         paths: z

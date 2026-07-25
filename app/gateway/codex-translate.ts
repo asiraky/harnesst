@@ -1,6 +1,6 @@
 /**
  * OpenAI chat-completions ⇄ Codex Responses API translation (issue #28, Phase 1) — the pure,
- * I/O-free core of Eden's model gateway.
+ * I/O-free core of harnesst's model gateway.
  *
  * Deployed agents and the assistant speak the OpenAI /chat/completions dialect (via
  * `@ai-sdk/openai-compatible`). The Codex ChatGPT backend speaks the /responses (Responses API)

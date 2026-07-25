@@ -21,7 +21,7 @@ export const emailStyles = {
     maxWidth: "480px",
     padding: "40px",
   } satisfies CSSProperties,
-  // The "eden" wordmark, drawn in text: blue leading `e`, ink for the rest —
+  // The "harnesst" wordmark, drawn in text: blue leading `h`, ink for the rest —
   // mirrors the in-app logo without shipping an image attachment.
   brand: {
     color: "#171717",

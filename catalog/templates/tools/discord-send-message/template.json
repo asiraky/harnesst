@@ -2,7 +2,7 @@
   "id": "discord-send-message",
   "type": "tool",
   "name": "Discord Send Message",
-  "description": "Send a message to a Discord channel by channel id via Eden's control plane, using the installation's shared Discord app — scoped to servers this agent is connected to.",
+  "description": "Send a message to a Discord channel by channel id via harnesst's control plane, using the installation's shared Discord app — scoped to servers this agent is connected to.",
   "version": "0.2.0",
   "eve": ">=0.20.0",
   "files": ["tools/discord-send-message.ts"],

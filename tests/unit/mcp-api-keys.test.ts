@@ -43,7 +43,7 @@ function verifierDeps(
   };
 }
 
-describe("shared opaque Eden tokens", () => {
+describe("shared opaque harnesst tokens", () => {
   it("mints the existing edn_ format with 192 bits of random payload", () => {
     const token = mintEdnToken();
     expect(token).toMatch(/^edn_[A-Za-z0-9_-]{32}$/);
@@ -101,7 +101,7 @@ describe("MCP API key verification", () => {
     ).resolves.toMatchObject({ keyId: "key_1" });
   });
 
-  it("rejects malformed and non-Eden credentials before database lookup", async () => {
+  it("rejects malformed and non-harnesst credentials before database lookup", async () => {
     await expect(verifyApiKey(null, "read", deps)).resolves.toBeNull();
     await expect(verifyApiKey(TOKEN, "read", deps)).resolves.toBeNull();
     await expect(

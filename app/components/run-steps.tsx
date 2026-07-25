@@ -246,7 +246,7 @@ function GenericRenderer({ data }: { data: ToolData }) {
 }
 
 /**
- * Detect Eden's generated delegation tool. eve derives a tool's name from its kebab filename
+ * Detect harnesst's generated delegation tool. eve derives a tool's name from its kebab filename
  * (`ask-teammate.ts` → `ask-teammate`); match the underscore form defensively too.
  */
 function isDelegationTool(toolName: string | null): boolean {

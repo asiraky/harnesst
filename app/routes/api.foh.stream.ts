@@ -246,7 +246,7 @@ export async function action(args: ActionFunctionArgs) {
   }
 
   // Atomic turn claim (issue #221 finding 5): compare-and-swap the session to `running` with
-  // this request's fencing token — two tabs (or two members, or two Eden replicas) posting to
+  // this request's fencing token — two tabs (or two members, or two harnesst replicas) posting to
   // one session race here, and exactly one wins. Runs after target resolution/reseed (the
   // claim writes the target fields) and BEFORE `beginFohTurn`: a losing request must not
   // clear the pending park or resolve inbox items. A stale `running` row (drain dead for the

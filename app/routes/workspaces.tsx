@@ -83,7 +83,7 @@ export async function action(args: ActionFunctionArgs) {
 }
 
 export function meta() {
-  return [{ title: "Choose a workspace · eden" }, ...noindexMeta];
+  return [{ title: "Choose a workspace · harnesst" }, ...noindexMeta];
 }
 
 export default function Workspaces({

@@ -16,7 +16,7 @@ export const loader = (args: Route.LoaderArgs) =>
   });
 
 export function meta() {
-  return [{ title: "Connect · eden" }, ...noindexMeta];
+  return [{ title: "Connect · harnesst" }, ...noindexMeta];
 }
 
 export default function ConnectionConnect({

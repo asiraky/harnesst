@@ -1,9 +1,9 @@
 import { defineTool } from "eve/tools";
 import { z } from "zod";
 
-// Runs via Eden's brokered-capability route (issue #166) instead of talking to Xero directly:
+// Runs via harnesst's brokered-capability route (issue #166) instead of talking to Xero directly:
 // no Xero credential ever reaches this container. EDEN_API_URL and EDEN_TEAM_TOKEN are injected
-// at deploy; Eden validates the call server-side and performs the one whitelisted operation.
+// at deploy; harnesst validates the call server-side and performs the one whitelisted operation.
 export default defineTool({
   description:
     "List the Xero organisation's tax rates (name, tax type code, effective rate). Use the tax type codes on draft bill lines.",

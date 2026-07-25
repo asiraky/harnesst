@@ -1,5 +1,5 @@
 /**
- * ID generation — the one way to mint an identifier in Eden.
+ * ID generation — the one way to mint an identifier in harnesst.
  *
  * 12 chars from [a-z] via nanoid: URL-safe, no casing ambiguity in logs, and — crucially —
  * safe to drop verbatim into contexts that reject uppercase, chiefly Docker repository names

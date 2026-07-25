@@ -1,6 +1,6 @@
 /**
  * The generated `eden-model.ts` workspace module + the resolver-style `agent.ts` scaffold.
- * Pins the shape both Eden and the migration prompt rely on: one exported
+ * Pins the shape both harnesst and the migration prompt rely on: one exported
  * `edenAgentModel(agentName)` used verbatim by agents and subagents (subagents pass the
  * PARENT's name), runtime resolution against `<EDEN_MODEL_GATEWAY_URL>/model-config`, the
  * playground directive taking precedence, and the read-side helpers recognizing the shape
@@ -24,7 +24,7 @@ import {
 describe("orgModelModuleSource", () => {
   const source = orgModelModuleSource();
 
-  it("exports edenAgentModel and resolves through the Eden model-config endpoint", () => {
+  it("exports edenAgentModel and resolves through the harnesst model-config endpoint", () => {
     expect(source).toContain("export function edenAgentModel(agentName: string)");
     expect(source).toContain("/model-config?agent=");
     expect(source).toContain("EDEN_MODEL_GATEWAY_URL");

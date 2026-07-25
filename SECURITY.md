@@ -2,7 +2,7 @@
 
 ## Reporting a vulnerability
 
-If you believe you've found a security vulnerability in Eden, **please do not open a
+If you believe you've found a security vulnerability in harnesst, **please do not open a
 public issue.** Public disclosure before a fix is available puts users at risk.
 
 Instead, report it privately using one of:
@@ -21,4 +21,4 @@ impact you observed.
 - We're happy to credit you in the release notes once the issue is resolved, unless you
   prefer to remain anonymous.
 
-Thanks for helping keep Eden and its users safe.
+Thanks for helping keep harnesst and its users safe.

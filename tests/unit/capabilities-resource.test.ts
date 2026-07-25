@@ -323,7 +323,7 @@ describe("connect callback — capability resource binding", () => {
     mocks.listResources.mockResolvedValue([]);
     const { data } = await runCallback();
     expect(data).toMatchObject({
-      error: expect.stringMatching(/has no organisation Eden can use/),
+      error: expect.stringMatching(/has no organisation harnesst can use/),
     });
     expect(mocks.upsertGrant).not.toHaveBeenCalled();
   });

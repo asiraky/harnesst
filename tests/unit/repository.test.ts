@@ -1,5 +1,5 @@
 /**
- * Repository deletion (M5.8) — the full Eden-side teardown against in-memory fakes.
+ * Repository deletion (M5.8) — the full harnesst-side teardown against in-memory fakes.
  * Verifies the ordering the feature hangs on: instance infra is destroyed BEFORE the row
  * delete (afterwards nothing could find the containers), the audit entry lands, the cascade
  * removes dependent rows, and a missing destroy() falls back to stop().

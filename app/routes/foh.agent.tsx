@@ -96,7 +96,7 @@ export async function action(args: ActionFunctionArgs) {
 }
 
 export function meta({ loaderData }: Route.MetaArgs) {
-  return [{ title: `${loaderData?.agentName ?? "agent"} · eden` }];
+  return [{ title: `${loaderData?.agentName ?? "agent"} · harnesst` }];
 }
 
 export default function FohAgent({ loaderData }: Route.ComponentProps) {

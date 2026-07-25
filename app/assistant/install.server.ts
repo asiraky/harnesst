@@ -2,7 +2,7 @@
  * Marketplace installation for the embedded assistant.
  *
  * The assistant edits its conversation checkout directly for ordinary authoring, but catalog
- * templates must go through Eden: `planInstall` owns composition, lock provenance, dependency
+ * templates must go through harnesst: `planInstall` owns composition, lock provenance, dependency
  * merges, sandbox setup, and conflict detection, while the control plane owns secret storage.
  * This module is the token-authenticated counterpart to the install wizard's action and uses the
  * same planner, draft staging, and secret primitives.
@@ -43,10 +43,10 @@ import { decodeKey, fingerprint, seal } from "~/seams/oss/secretbox";
 import type { CatalogSource, SecretsProvider } from "~/seams/types";
 
 interface SecretChangeSet {
-  /** Secrets the human must still supply (excludes Eden-handled ones). */
+  /** Secrets the human must still supply (excludes harnesst-handled ones). */
   required: string[];
   /**
-   * Secrets Eden sets or mints itself (manifest `provisioned`/`generated`) — never requested from
+   * Secrets harnesst sets or mints itself (manifest `provisioned`/`generated`) — never requested from
    * the user. Reported separately from `required` so the assistant doesn't ask for them.
    */
   provisioned: string[];
@@ -430,8 +430,8 @@ export async function installMarketplaceTemplate(
       authSelections,
       capabilitySelections,
     });
-    // Issue #47/#163: provisioned secrets are set by a guided Eden flow and generated ones are
-    // minted by Eden at first deploy — the user never supplies either, so they are reported apart
+    // Issue #47/#163: provisioned secrets are set by a guided harnesst flow and generated ones are
+    // minted by harnesst at first deploy — the user never supplies either, so they are reported apart
     // from `required` (the wizard filters them out of its user-facing list the same way).
     const requiredSecrets = plan.secrets
       .filter((secret) => !secret.provisioned && !secret.generated)

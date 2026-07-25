@@ -1,13 +1,13 @@
-# Deploying Eden to a VPS
+# Deploying harnesst to a VPS
 
 > **Self-hosters:** this Docker Compose runbook remains the supported OSS deployment path. You do
-> not need Docker Swarm, GHCR, or Eden's GitHub Actions secrets. The repository's
+> not need Docker Swarm, GHCR, or harnesst's GitHub Actions secrets. The repository's
 > [`docker-stack.production.yml`](../../docker-stack.production.yml) and
 > [maintainer deployment workflow](../../.github/workflows/deploy.yml) run the canonical hosted
-> Eden instance and are provided only as a reference for operators who want a similar CD setup.
+> harnesst instance and are provided only as a reference for operators who want a similar CD setup.
 
-This is the supported production topology for self-hosted Eden today: **one Linux VPS runs
-everything** — the Eden dashboard, Postgres, every deployed agent instance, and their sandbox
+This is the supported production topology for self-hosted harnesst today: **one Linux VPS runs
+everything** — the harnesst dashboard, Postgres, every deployed agent instance, and their sandbox
 containers. That co-residency is by design (the `local-docker` deploy target addresses agent
 instances over loopback), so don't split these across machines; scale the box instead.
 
@@ -16,7 +16,7 @@ instances over loopback), so don't split these across machines; scale the box in
  https://eden.example.com                                                                 │
    │                    │  nginx (container, TLS via Let's Encrypt)                       │
    ├── /e/… ────────────┼──► splitter :8787 ──► agent instance containers (127.0.0.1:*)   │
-   └── everything else ─┼──► Eden :3000 ─────► Docker socket (builds images, runs agents) │
+   └── everything else ─┼──► harnesst :3000 ─► Docker socket (builds images, runs agents) │
                         │                └────► Postgres :5442 (control plane + worlds)   │
                         └─────────────────────────────────────────────────────────────────┘
 ```
@@ -52,7 +52,7 @@ sudo ufw enable
 ```
 
 Containers call back to the host over the docker bridge (`host.docker.internal` →
-`172.17.0.1`): agent and assistant instances dial Eden's callback API on `3000` (run
+`172.17.0.1`): agent and assistant instances dial harnesst's callback API on `3000` (run
 ingestion, the team relay and Discord send proxy, the connection token broker for
 brokered OAuth providers like May I? — issue #167 — and the brokered-capability route for
 capability providers like Xero — issue #166) and Postgres
@@ -91,7 +91,7 @@ sudo usermod -aG docker $USER   # then log out and back in
 docker run --rm hello-world     # verify
 ```
 
-## 3. Clone Eden
+## 3. Clone harnesst
 
 ```bash
 mkdir -p ~/apps
@@ -110,15 +110,15 @@ Fill in every value (`deploy/vps/.env` is gitignored). Notes per section:
 - **Postgres** — invent a strong `EDEN_PG_PASSWORD` and write the same password into
   `DATABASE_URL` (env-file values are literal; no variable expansion).
 - **`EDEN_SECRETS_KEY`** — `openssl rand -hex 32`. This encrypts every secret your users store
-  in Eden; **back it up** somewhere that isn't this VPS.
+  in harnesst; **back it up** somewhere that isn't this VPS.
 - **Better Auth** — set `BETTER_AUTH_URL` to the exact public origin
   (`https://eden.example.com`) and generate `BETTER_AUTH_SECRET` with
   `openssl rand -base64 32`. Keep that secret backed up; rotating it invalidates authentication
-  state. Better Auth runs inside Eden and stores users, sessions, organizations, members, and
+  state. Better Auth runs inside harnesst and stores users, sessions, organizations, members, and
   invitations in Postgres, so there is no external auth dashboard or callback registration. Keep
   port 3000 private behind the supplied nginx: it overwrites `X-Real-IP`, which Better Auth trusts
   for per-client production rate limiting.
-- **`MARKETING_HOST` (optional)** — leave unset for a normal install: `/` serves Eden's
+- **`MARKETING_HOST` (optional)** — leave unset for a normal install: `/` serves harnesst's
   Front of House (sign-in when logged out). Set it (bare host, e.g. `www.eden.example.com`)
   only to serve the marketing landing page + case studies from their own subdomain: add a DNS
   A record for that host, fill in the marketing `server` blocks at the bottom of
@@ -139,21 +139,21 @@ Fill in every value (`deploy/vps/.env` is gitignored). Notes per section:
   - Generate a **private key** (PEM) and a **client secret**; copy the App ID, slug, client ID,
     client secret, and key into the env file. The PEM can be pasted as one line with `\n`
     escapes.
-  - After upgrading an existing Eden deployment, reauthorize every installation from **Connect**.
+  - After upgrading an existing harnesst deployment, reauthorize every installation from **Connect**.
     Legacy project references are preserved when they map cleanly, but GitHub-backed reads, writes,
     builds, assistant checkouts, and deploys fail closed until the OAuth proof succeeds.
 - **Discord app (optional)** — for the one-click Discord channel (issue #32), register **one**
   Discord application for this installation at
   [discord.com/developers/applications](https://discord.com/developers/applications):
   - **OAuth2 → Redirects**: add `https://eden.example.com/discord/callback`.
-  - The **Interactions Endpoint URL** needs no portal setup: Eden sets it to
+  - The **Interactions Endpoint URL** needs no portal setup: harnesst sets it to
     `https://eden.example.com/api/discord/interactions` via Discord's API the first time a user
     runs Connect Discord (and re-asserts it on every connect, so a portal edit heals itself).
   - Copy the **Application ID** → `EDEN_DISCORD_APPLICATION_ID`, the **Public Key** →
     `EDEN_DISCORD_PUBLIC_KEY`, and a **Bot** token → `EDEN_DISCORD_BOT_TOKEN`. The bot token
     stays on the control plane and is never shipped to agent instances. Users then connect
     servers from each agent's Deployment tab — nothing else to configure per agent.
-- **`EDEN_PUBLIC_ORIGIN` (optional)** — set it to Eden's public origin
+- **`EDEN_PUBLIC_ORIGIN` (optional)** — set it to harnesst's public origin
   (`https://eden.example.com`) so every deployed instance receives `EVE_PUBLIC_ORIGIN` — its
   per-environment public ingress URL — letting channels/connections that take inbound webhooks
   build callback URLs.
@@ -171,10 +171,10 @@ docker compose -f deploy/vps/docker-compose.yml run --rm --build migrate  # appl
 docker compose -f deploy/vps/docker-compose.yml logs -f eden        # watch it boot
 ```
 
-(This starts Postgres and Eden but not nginx — nginx needs a TLS cert first, which step 6
+(This starts Postgres and harnesst but not nginx — nginx needs a TLS cert first, which step 6
 sets up.)
 
-Eden now serves plain HTTP on port `3000`. Because it uses host networking, it binds all
+harnesst now serves plain HTTP on port `3000`. Because it uses host networking, it binds all
 interfaces (`0.0.0.0:3000`), not just loopback — so it's the **firewall** (step 1, which never
 opens 3000) that keeps it off the internet, not the bind address. nginx terminates TLS and
 proxies to it locally. Verify from the VPS:
@@ -187,8 +187,8 @@ curl -sI http://127.0.0.1:3000 | head -1   # expect HTTP/1.1 200 or a 30x to /lo
 
 nginx and certbot run as containers in this same compose stack (the `nginx` service and the
 `certbot` tool service) — nothing TLS-related is installed on the host. nginx terminates TLS and
-proxies `/e/…` (agent channel traffic) to the splitter on `:8787` and everything else to Eden on
-`:3000`, with buffering off — Eden streams (assistant, playground), and buffered SSE looks like a
+proxies `/e/…` (agent channel traffic) to the splitter on `:8787` and everything else to harnesst on
+`:3000`, with buffering off — harnesst streams (assistant, playground), and buffered SSE looks like a
 hang.
 
 Point the site config at your domain:
@@ -247,12 +247,12 @@ it's containerized. Add it with `crontab -e`:
 
 ## 7. First login & smoke test
 
-1. Open `https://<your-domain>/signup` — you should see Eden's email/password sign-up form.
-2. Create the first account. Better Auth creates the session, and Eden provisions the account's
+1. Open `https://<your-domain>/signup` — you should see harnesst's email/password sign-up form.
+2. Create the first account. Better Auth creates the session, and harnesst provisions the account's
    first organization-backed workspace.
 3. Sign out, use **Forgot password** on the email-first login, and confirm the Postmark reset link
    lets you set a new password without an email-verification step.
-4. Invite a second address from **Members**. Confirm the recipient must use Eden's Postmark
+4. Invite a second address from **Members**. Confirm the recipient must use harnesst's Postmark
    verification link before Better Auth reveals and accepts the organization invitation.
 5. In **Settings**, set the workspace **model key** — this is what deployed agents use to call
    models; without it, deploys come up but every turn fails.
@@ -262,7 +262,7 @@ it's containerized. Add it with `crontab -e`:
    builds a full agent image (several minutes). The deploy itself is usually seconds — but an
    agent with skills or a sandbox `bootstrap()` prewarms its sandbox template on first boot
    (pulls `ghcr.io/vercel/eve`, runs bootstrap, snapshots an `eve-sbx-tpl-*` image), which can
-   add several more minutes the first time. Eden waits up to 10 minutes before calling a
+   add several more minutes the first time. harnesst waits up to 10 minutes before calling a
    deploy failed; later deploys and wakes reuse the cached template and are fast.
 
 If Ship fails at the build step, `docker compose … logs eden` has the real error. A deploy-step
@@ -271,7 +271,7 @@ sandbox `bootstrap()` shows up there).
 
 ## 8. Operations
 
-**Updating Eden**
+**Updating harnesst**
 
 ```bash
 cd ~/apps/eden && git pull
@@ -294,7 +294,7 @@ docker exec eden-postgres psql -U eden eden -tAc \
 grep -c '"idx"' drizzle/meta/_journal.json                            # journal entries
 ```
 
-Agent instances keep running through an Eden update (they're independent containers); an
+Agent instances keep running through a harnesst update (they're independent containers); an
 update never rebuilds or restarts them.
 
 **Backups** — two things matter: Postgres (all control-plane + agent session state) and
@@ -323,8 +323,8 @@ whenever the agent isn't running, and pruning them destroys rollbacks and agent 
 
 ## Security notes
 
-- Eden's container mounts the **Docker socket** — that is root-equivalent on this host. It's
-  what lets Eden build and run agent containers (and lets agents get real Docker sandboxes),
+- harnesst's container mounts the **Docker socket** — that is root-equivalent on this host. It's
+  what lets harnesst build and run agent containers (and lets agents get real Docker sandboxes),
   and it's the standard trade-off of the single-box topology. Don't co-host unrelated services.
 - Agent sandbox containers run with the images and network policy eve requests; they are for
   the agents' _own_ code and shell use. Treat the whole box as the trust boundary.
@@ -336,7 +336,7 @@ whenever the agent isn't running, and pruning them destroys rollbacks and agent 
 - **Single host only.** The control plane, instances, and worlds must co-reside — the deploy
   target stores loopback instance URLs. Multi-host (and Cloudflare/Vercel targets) live behind
   the same `DeployTarget` seam, later.
-- **No horizontal scaling of Eden itself** — in-process job worker, splitter, and caches assume
-  one process. One box, one Eden.
+- **No horizontal scaling of harnesst itself** — in-process job worker, splitter, and caches assume
+  one process. One box, one harnesst.
 - Run-ingest from agents deployed _elsewhere_ (BYO instances posting back to
   `/api/ingest/runs`) needs your public URL configured on that side; nothing on the VPS blocks it.

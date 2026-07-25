@@ -139,7 +139,7 @@ describe("eve-docker shim", () => {
     ];
     const res = runShimFull(argv, { EDEN_HOME_VOLUME: "eden-home-x" });
     expect(res.stderr).toContain(
-      "[eden] session sandbox starting: channel=schedule session=wrun_ABC123",
+      "[harnesst] session sandbox starting: channel=schedule session=wrun_ABC123",
     );
     // STDOUT must stay clean — eve reads `run -d`'s stdout for the container id.
     expect(res.stdout).toBe("");
@@ -166,12 +166,12 @@ describe("eve-docker shim", () => {
       ["run", "--label", "eve.sandbox.role=template-build", "ghcr.io/vercel/eve:latest"],
       { EDEN_HOME_VOLUME: "eden-home-x" },
     );
-    expect(tmplRun.stderr).not.toContain("[eden] session sandbox starting");
+    expect(tmplRun.stderr).not.toContain("[harnesst] session sandbox starting");
 
     const nonRun = runShimFull(["exec", "sess1", "/bin/sh", "-c", "echo hi"], {
       EDEN_HOME_VOLUME: "eden-home-x",
     });
-    expect(nonRun.stderr).not.toContain("[eden] session sandbox starting");
+    expect(nonRun.stderr).not.toContain("[harnesst] session sandbox starting");
   });
 
   it("streams the real client's exit code through (exec, not fork)", () => {

@@ -1,5 +1,5 @@
 /**
- * The eve agent config surface Eden reads out of a repo.
+ * The eve agent config surface harnesst reads out of a repo.
  *
  * An eve agent lives under `agent/` in the repo (D3 — the repo is the source of truth):
  * `instructions.md`, `agent.ts`, and directories `tools/`, `skills/`, `subagents/`,

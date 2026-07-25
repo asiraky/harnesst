@@ -48,7 +48,7 @@ export function assistantTemplateDir(): string {
   );
 }
 
-/** The fixed, Eden-owned layer — rendered read-only on the config page so it's inspectable. */
+/** The fixed, harnesst-owned layer — rendered read-only on the config page so it's inspectable. */
 export interface AssistantFixedLayer {
   instructions: string;
   tools: string[];
@@ -194,7 +194,7 @@ function edenApiUrl(): string {
   return `http://host.docker.internal:${port}`;
 }
 
-/** Exported for tests: the Eden-owned env an assistant instance is deployed with (no user secrets). */
+/** Exported for tests: the harnesst-owned env an assistant instance is deployed with (no user secrets). */
 export async function assistantEnv(input: {
   orgId: string;
   deploymentId: string;
@@ -242,7 +242,7 @@ export async function assistantEnv(input: {
         "Org settings → Model providers, then select an available assistant model.",
     );
   }
-  // Built fresh (no user secrets to shadow); only the Eden-owned keys are set.
+  // Built fresh (no user secrets to shadow); only the harnesst-owned keys are set.
   const env: Record<string, string> = {
     ...providerEnv,
     EDEN_ASSISTANT_MODEL: model,
@@ -529,7 +529,7 @@ export async function ensureAssistantInstance(
     };
   }
 
-  // Nothing usable (never deployed, image changed after an Eden upgrade, or previous failure):
+  // Nothing usable (never deployed, image changed after a harnesst upgrade, or previous failure):
   // create the `pending` deployment row synchronously, THEN queue the build+deploy. The worker's
   // runAssistantDeploy only *takes over* a pending/building row — it doesn't create one — so
   // without this, a loader re-read right after the provision click still saw "idle" until the
@@ -621,7 +621,7 @@ export interface AssistantSnapshot {
  * Report the assistant instance's current status without provisioning or waking it (loader-safe).
  * `idle` means the assistant was never set up — the UI offers first-run setup. `resumable` means
  * a previous instance exists but isn't currently usable as-is (stopped container, live row whose
- * release marker predates an Eden upgrade or a workspace model change, or a live row missing its
+ * release marker predates a harnesst upgrade or a workspace model change, or a live row missing its
  * url) — the UI treats this as ready, and the next turn wakes or re-provisions it via
  * `ensureAssistantInstance`.
  */
@@ -694,7 +694,7 @@ export async function peekAssistantInstance(
   // Anything ensureAssistantInstance can wake or transparently replace on the next turn — a
   // stopped container, a live row on a pre-upgrade template sha, or a live row missing its url —
   // must NOT read as "never set up": that regressed long-standing projects into the first-run
-  // setup flow whenever an Eden release changed the assistant template hash.
+  // setup flow whenever a harnesst release changed the assistant template hash.
   const resumable = deployments.find(
     (d) => d.status === "live" || d.status === "stopped",
   );

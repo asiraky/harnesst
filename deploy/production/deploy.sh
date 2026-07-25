@@ -97,7 +97,7 @@ configure_postgres_firewall() {
 
 deploy_stack() {
   local replicas="$1"
-  log "deploying stack ${STACK_NAME} with Eden replicas=${replicas}"
+  log "deploying stack ${STACK_NAME} with harnesst replicas=${replicas}"
   (
     cd "$DEPLOY_ROOT"
     export IMAGE_TAG EDEN_PG_PASSWORD
@@ -298,7 +298,7 @@ wait_for_eden() {
         [[ -z "$update_state" || "$update_state" == "completed" ]] &&
         requested_image_is_running "$spec_image" &&
         service_has_one_healthy_container "$EDEN_SERVICE" "$RUNTIME_IMAGE"; then
-        log "Eden rollout completed with one healthy container"
+        log "harnesst rollout completed with one healthy container"
         return 0
       fi
     fi
@@ -370,7 +370,7 @@ else
 fi
 wait_for_eden
 
-log "smoke-checking Eden on localhost:3000"
+log "smoke-checking harnesst on localhost:3000"
 curl --fail --silent --show-error --max-time 10 \
   http://127.0.0.1:3000/ >/dev/null
 

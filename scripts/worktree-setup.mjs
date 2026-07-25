@@ -2,7 +2,7 @@
 /**
  * worktree-setup.mjs
  *
- * Per-worktree environment wiring for eden.
+ * Per-worktree environment wiring for harnesst.
  *
  * Usage (from main repo root):
  *   node scripts/worktree-setup.mjs [--skip-validate] <prefix>/<kebab-name>

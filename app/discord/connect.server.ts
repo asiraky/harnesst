@@ -1,8 +1,8 @@
 /**
  * Discord one-click connect (issue #32) — the pure shapes plus the bot-token network calls.
  *
- * Eden owns ONE Discord app per installation. A user authorizes it into their server
- * (`bot applications.commands` scopes); Eden then registers a guild slash command named after
+ * harnesst owns ONE Discord app per installation. A user authorizes it into their server
+ * (`bot applications.commands` scopes); harnesst then registers a guild slash command named after
  * the agent (`/agent-name message:…`, eve's prompt-extraction convention) and binds the
  * (guild, command) to the agent. There is NO OAuth token exchange — the connect proof is that
  * the bot-token command registration succeeds (a forged callback fails at Discord with 403),
@@ -134,7 +134,7 @@ export interface AuthorizeUrlInput {
 /**
  * The Discord OAuth authorize URL. `bot applications.commands` scopes install the shared app
  * into the picked server; `response_type=code` + a redirect brings the user back to the
- * callback (Eden never exchanges the code — the command registration is the connect proof).
+ * callback (harnesst never exchanges the code — the command registration is the connect proof).
  */
 export function discordAuthorizeUrl(input: AuthorizeUrlInput): string {
   const params = new URLSearchParams({

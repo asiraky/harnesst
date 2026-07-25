@@ -415,7 +415,7 @@ describe("EDEN_EVE_DOCKERFILE", () => {
     expect(EDEN_EVE_DOCKERFILE).not.toContain(
       'CMD ["node", ".output/server/index.mjs"]',
     );
-    // Not via npm exec/npm run either — unreliable SIGTERM forwarding as PID 1, and Eden's
+    // Not via npm exec/npm run either — unreliable SIGTERM forwarding as PID 1, and harnesst's
     // scale-to-zero is a docker stop.
     expect(EDEN_EVE_DOCKERFILE).not.toMatch(/CMD.*npm (exec|run)/);
   });

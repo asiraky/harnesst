@@ -15,7 +15,7 @@ const configuredMarketingHost =
     : undefined;
 export const SITE_URL = configuredMarketingHost
   ? `https://${configuredMarketingHost}`
-  : "https://eden.zero8.ai";
+  : "https://harnesst.dev";
 
 /** Absolute URL of the social share image (1200×630). Served from /public. */
 export const OG_IMAGE = `${SITE_URL}/og.png`;
@@ -40,7 +40,7 @@ export function pageMeta(opts: {
     { name: "description", content: description },
     { tagName: "link", rel: "canonical", href: url },
     { property: "og:type", content: "website" },
-    { property: "og:site_name", content: "eden" },
+    { property: "og:site_name", content: "harnesst" },
     { property: "og:title", content: title },
     { property: "og:description", content: description },
     { property: "og:url", content: url },

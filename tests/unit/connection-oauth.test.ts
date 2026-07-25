@@ -245,7 +245,7 @@ describe("Google-unchanged regression (issue #163 acceptance criterion 2)", () =
 
   it("produces the Google-only broker's authorize URL byte-for-byte", () => {
     // The pre-#163 construction — insertion order and all — MINUS include_granted_scopes: issue
-    // #165 removed it deliberately (Eden always requests the full effective set, and with the
+    // #165 removed it deliberately (harnesst always requests the full effective set, and with the
     // param set Google folds previously granted scopes into every new token, so a narrowed
     // scope-group selection could never re-issue a narrower grant on reconnect).
     const expected = `https://accounts.google.com/o/oauth2/v2/auth?${new URLSearchParams(
@@ -409,7 +409,7 @@ describe("registerOAuthClient (RFC 7591, issue #167)", () => {
     const out = await registerOAuthClient(
       {
         provider: REG,
-        clientName: "Eden — proj / agent",
+        clientName: "harnesst — proj / agent",
         redirectUris: ["https://eden.example/connections/mayi/callback"],
         approvalCallbackUris: [
           "https://eden.example/e/env_1/eve/v1/mayi/approval-resolved",
@@ -420,7 +420,7 @@ describe("registerOAuthClient (RFC 7591, issue #167)", () => {
     expect(out).toEqual({ clientId: "reg_client_1" });
     expect(calls[0].url).toBe(REG.clientRegistration!.endpoint);
     expect(calls[0].body).toEqual({
-      client_name: "Eden — proj / agent",
+      client_name: "harnesst — proj / agent",
       redirect_uris: ["https://eden.example/connections/mayi/callback"],
       approval_callback_uris: [
         "https://eden.example/e/env_1/eve/v1/mayi/approval-resolved",
@@ -437,7 +437,7 @@ describe("registerOAuthClient (RFC 7591, issue #167)", () => {
       });
     }) as typeof fetch;
     await registerOAuthClient(
-      { provider: REG, clientName: "Eden — p / a", redirectUris: ["https://e/cb"] },
+      { provider: REG, clientName: "harnesst — p / a", redirectUris: ["https://e/cb"] },
       fetchImpl,
     );
     expect("approval_callback_uris" in calls[0].body).toBe(false);

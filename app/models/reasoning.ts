@@ -1,6 +1,6 @@
 import type { ModelProviderId } from "~/models/provider-reference";
 
-/** Superset of the named reasoning levels exposed by Eden's supported providers. */
+/** Superset of the named reasoning levels exposed by harnesst's supported providers. */
 export const REASONING_EFFORTS = [
   "none",
   "minimal",

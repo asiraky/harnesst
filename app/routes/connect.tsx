@@ -124,7 +124,7 @@ export const loader = (args: LoaderFunctionArgs) =>
             state.sessionId !== auth.session.id
           ) {
             throw new Error(
-              "This GitHub installation was started in a different Eden session. Start again from Connect.",
+              "This GitHub installation was started in a different harnesst session. Start again from Connect.",
             );
           }
           if (state.orgId !== org.id || auth.organizationId !== org.id) {
@@ -340,7 +340,7 @@ export async function action(args: ActionFunctionArgs) {
 }
 
 export function meta() {
-  return [{ title: "New repository · eden" }, ...noindexMeta];
+  return [{ title: "New repository · harnesst" }, ...noindexMeta];
 }
 
 export default function Connect({
@@ -400,10 +400,10 @@ export default function Connect({
               Install the GitHub App
             </CardTitle>
             <CardDescription>
-              Install eden on the account that owns your eve repository, then
-              pick the repo to connect. You control which repositories it can
-              access — selecting none is fine too, if you only want eden to
-              create new repos for you.
+              Install harnesst on the account that owns your eve repository,
+              then pick the repo to connect. You control which repositories it
+              can access — selecting none is fine too, if you only want harnesst
+              to create new repos for you.
             </CardDescription>
           </CardHeader>
           <CardContent>
@@ -426,16 +426,16 @@ export default function Connect({
                 Connect an existing repository
               </CardTitle>
               <CardDescription>
-                Repositories the GitHub App can access. eden validates that the
-                repo is an eve project before connecting.
+                Repositories the GitHub App can access. harnesst validates that
+                the repo is an eve project before connecting.
               </CardDescription>
             </CardHeader>
             <CardContent>
               {github.repos.length === 0 ? (
                 <p className="text-sm text-muted-foreground">
                   No repositories are shared with the app yet — that&rsquo;s
-                  fine if you only want eden to create repos for you. Create a
-                  new repository below, or{" "}
+                  fine if you only want harnesst to create repos for you. Create
+                  a new repository below, or{" "}
                   <a
                     href={github.installUrl}
                     className="font-medium underline underline-offset-4"

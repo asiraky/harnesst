@@ -1,5 +1,5 @@
 /**
- * Shared streaming-turn machinery for Eden's durable chat surfaces (playground + assistant).
+ * Shared streaming-turn machinery for harnesst's durable chat surfaces (playground + assistant).
  *
  * Both surfaces drive an eve turn over `streamTurn`, re-emit it to the browser as NDJSON, and —
  * critically — keep draining Eve to the terminal `done` even if the client disconnects, then
@@ -57,7 +57,7 @@ export function cancelActiveTurn(playgroundSessionId: string): boolean {
 /**
  * Whether a turn for this session is actively streaming in THIS process (its drain is alive and
  * persisting progress). Reconnect uses this to tell a genuinely-live session apart from one stuck
- * `running` because its drain died with the Eden process (restart/redeploy mid-turn) — only the
+ * `running` because its drain died with the harnesst process (restart/redeploy mid-turn) — only the
  * latter needs a status reconcile from Eve.
  */
 export function hasActiveTurn(playgroundSessionId: string): boolean {
@@ -163,7 +163,7 @@ export function streamTurnResponse(input: {
         let lastProgressSavedAt = 0;
         let progressSave: Promise<void> = Promise.resolve();
         // Durable transcript cache: buffer raw events and flush in batches on the same ~1s cadence
-        // as the cursor save, so reconnect reads the transcript from Eden's DB instead of replaying
+        // as the cursor save, so reconnect reads the transcript from harnesst's DB instead of replaying
         // Eve from index 0 (and a crash mid-turn still leaves a durable partial transcript).
         //
         // Invariant: the persisted cursor must never advance past events that aren't durably in

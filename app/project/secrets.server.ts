@@ -8,7 +8,7 @@
  * reloads. Values are write-only: no result ever carries a plaintext value — the set echo is
  * name + fingerprint + audit metadata only.
  */
-import type { EdenLock } from "~/marketplace/lock";
+import type { HarnesstLock } from "~/marketplace/lock";
 import type { SecretsProvider } from "~/seams/types";
 import {
   deletePendingSecrets,
@@ -194,7 +194,7 @@ export async function handleSecretIntent(
  * the deploy guard before the guided flow has run. It DELIBERATELY stays in `all` — the
  * Deployment tab detects which channel-setup cards to show (GitHub/Discord guided flows) by
  * looking for those names in `all`, so dropping them there would hide the very flow that sets them.
- * Issue #163: a `generated` secret (minted by Eden at first deploy) gets the same treatment —
+ * Issue #163: a `generated` secret (minted by harnesst at first deploy) gets the same treatment —
  * never missing/dismissed, kept in `all`.
  */
 export interface RequiredSecretComputed {
@@ -250,10 +250,10 @@ export function computeRequiredSecrets(input: {
   const all = [...byName.values()].sort((a, b) => (a.name < b.name ? -1 : 1));
   return {
     all,
-    // Issue #47: provisioned secrets are Eden's to set, never the user's — they can't be
+    // Issue #47: provisioned secrets are harnesst's to set, never the user's — they can't be
     // "missing" or "dismissed" from the user's perspective, so exclude them from both lists.
     // They remain in `all` for Deployment-tab channel-setup detection (see the doc comment).
-    // Issue #163: generated secrets are Eden-minted at deploy — same exclusion.
+    // Issue #163: generated secrets are harnesst-minted at deploy — same exclusion.
     missing: all.filter(
       (r) =>
         !r.provisioned && !r.generated && !satisfied.has(r.name) && !dismissedSet.has(r.name),
@@ -267,10 +267,10 @@ export function computeRequiredSecrets(input: {
 
 /** The lock entries whose secrets a member must satisfy (member-owned installs only). */
 export function lockSecretsForMember(
-  lock: EdenLock,
+  lock: HarnesstLock,
   memberName: string,
   isTeam: boolean,
-): Array<{ templateId: string; secrets: NonNullable<EdenLock["installs"][number]["secrets"]> }> {
+): Array<{ templateId: string; secrets: NonNullable<HarnesstLock["installs"][number]["secrets"]> }> {
   return lock.installs
     .filter(
       (e) =>
@@ -290,7 +290,7 @@ export async function agentRequiredSecretState(input: {
   agentId: string;
   memberName: string;
   isTeam: boolean;
-  lock: EdenLock;
+  lock: HarnesstLock;
 }): Promise<ReturnType<typeof computeRequiredSecrets>> {
   const lockSecrets = lockSecretsForMember(input.lock, input.memberName, input.isTeam);
   if (lockSecrets.length === 0) return { all: [], missing: [], dismissed: [] };
@@ -324,10 +324,10 @@ export type InstallSecretOp =
  *    that name exists — prevents token sprawl; else value).
  *  - `secret:<name>` = the value (blank value ⇒ skip; Continue is never gated).
  *  - `secretsandbox:<name>` = "1"/"0" — pre-checked from the manifest, user-editable.
- * A `provisioned` secret (set by a guided Eden flow, never collected by the wizard) is always
+ * A `provisioned` secret (set by a guided harnesst flow, never collected by the wizard) is always
  * a skip, no matter what the form carries — the wizard renders no input for it, and this is
  * the defense in depth if a value is somehow submitted anyway. A `generated` secret (minted by
- * Eden at first deploy, issue #163) is a skip for the same reason.
+ * harnesst at first deploy, issue #163) is a skip for the same reason.
  * Values pass through here transiently; they are never returned to a client or logged.
  */
 export function planInstallSecretOps(input: {

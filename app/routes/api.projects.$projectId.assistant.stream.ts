@@ -118,7 +118,7 @@ export async function action(args: ActionFunctionArgs) {
     }),
     getCheckoutRow(session.id).catch(() => null),
   ]);
-  // A sidecar that exists but couldn't prepare the checkout (instance can't reach Eden's API,
+  // A sidecar that exists but couldn't prepare the checkout (instance can't reach harnesst's API,
   // clone failed…) must fail the turn: the model would otherwise run against a workspace it was
   // promised and doesn't have, and report a confusing missing-checkout error as its answer.
   const ensureError = checkoutEnsureError(ensured);
@@ -132,15 +132,15 @@ export async function action(args: ActionFunctionArgs) {
   // of the real (untouched) checkout silently no-ops — edits exist on disk but never reach a PR.
   if (!ensured.unsupported) {
     prefixParts.push(
-      `[Eden] Your working checkout for this conversation is at ${conversationCheckoutPath(session.id)} on branch ${conversationBranch(session.id)}. Do ALL repo edits inside that directory with bash — never in any other checkout or clone — Eden auto-syncs changes from that directory (only) to a pull request after each turn.`,
+      `[harnesst] Your working checkout for this conversation is at ${conversationCheckoutPath(session.id)} on branch ${conversationBranch(session.id)}. Do ALL repo edits inside that directory with bash — never in any other checkout or clone — harnesst auto-syncs changes from that directory (only) to a pull request after each turn.`,
     );
   }
-  if (ensured.note) prefixParts.push(`[Eden] ${ensured.note}`);
-  // Last sync's policy notes: edits Eden stripped or skipped (assistant.json, .ts under
+  if (ensured.note) prefixParts.push(`[harnesst] ${ensured.note}`);
+  // Last sync's policy notes: edits harnesst stripped or skipped (assistant.json, .ts under
   // .eden/assistant, binary/oversize files, symlinks). Without this the model would believe a
   // stripped edit landed.
   for (const warning of checkoutRow?.warnings ?? []) {
-    prefixParts.push(`[Eden] From your last sync: ${warning}`);
+    prefixParts.push(`[harnesst] From your last sync: ${warning}`);
   }
   const messagePrefix = prefixParts.length > 0 ? prefixParts.join("\n") : null;
 

@@ -28,12 +28,12 @@ export function AuthScreen({
   footer?: ReactNode;
 }) {
   return (
-    <main className="flex min-h-screen items-center justify-center bg-eden-bg px-6 py-12 text-eden-fg">
+    <main className="flex min-h-screen items-center justify-center bg-harnesst-bg px-6 py-12 text-harnesst-fg">
       <div className="w-full max-w-sm">
         <Link
           to="/"
           className="mx-auto mb-8 block w-fit"
-          aria-label="eden home"
+          aria-label="harnesst home"
         >
           <Logo className="h-7" />
         </Link>

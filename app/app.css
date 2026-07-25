@@ -63,17 +63,17 @@
   --font-suisse: 'Suisse Intl', ui-sans-serif, system-ui, sans-serif;
   /* Landing-page palette. Values live in :root/.dark below so the same token
      names resolve to the cream/ink scheme in light and a warm charcoal in dark. */
-  --color-eden-bg: var(--eden-bg);
-  --color-eden-fg: var(--eden-fg);
-  --color-eden-muted: var(--eden-muted);
-  --color-eden-faint: var(--eden-faint);
-  --color-eden-line: var(--eden-line);
-  --color-eden-numeral: var(--eden-numeral);
-  --color-eden-band-bg: var(--eden-band-bg);
-  --color-eden-band-fg: var(--eden-band-fg);
-  --color-eden-band-muted: var(--eden-band-muted);
-  --color-eden-panel-bg: var(--eden-panel-bg);
-  --color-eden-panel-line: var(--eden-panel-line);
+  --color-harnesst-bg: var(--harnesst-bg);
+  --color-harnesst-fg: var(--harnesst-fg);
+  --color-harnesst-muted: var(--harnesst-muted);
+  --color-harnesst-faint: var(--harnesst-faint);
+  --color-harnesst-line: var(--harnesst-line);
+  --color-harnesst-numeral: var(--harnesst-numeral);
+  --color-harnesst-band-bg: var(--harnesst-band-bg);
+  --color-harnesst-band-fg: var(--harnesst-band-fg);
+  --color-harnesst-band-muted: var(--harnesst-band-muted);
+  --color-harnesst-panel-bg: var(--harnesst-panel-bg);
+  --color-harnesst-panel-line: var(--harnesst-panel-line);
   --color-sidebar-ring: var(--sidebar-ring);
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
@@ -115,9 +115,9 @@
 }
 
 /*
- * Eden theme — a calm, soft-blue identity over the shadcn token contract (M-spruce).
+ * harnesst theme — a calm, soft-blue identity over the shadcn token contract (M-spruce).
  *
- * The brand is a cornflower blue (#4B7DFF ≈ ~265° hue) carried by primary/accent/ring/
+ * The brand is a cornflower blue (#4A7DFF ≈ ~265° hue) carried by primary/accent/ring/
  * sidebar-primary/chart-1. Neutrals are NOT pure
  * gray: the ramp is warm (cream in light, charcoal in dark), so the cool blue sits against a warm
  * ground rather than a clinical one. Because the whole app consumes these tokens (bg-primary,
@@ -167,17 +167,17 @@
 
   /* Landing (light) — cream paper, warm ink. Exact hex the editorial page used
      before it was tokenized, so light mode is byte-for-byte unchanged. */
-  --eden-bg: #faf8f4;
-  --eden-fg: #1a1a18;
-  --eden-muted: #57534a;
-  --eden-faint: #8a8578;
-  --eden-line: #dcd7cb;
-  --eden-numeral: #b0a998;
-  --eden-band-bg: #1a1a18;
-  --eden-band-fg: #faf8f4;
-  --eden-band-muted: #a8a396;
-  --eden-panel-bg: #211f1c;
-  --eden-panel-line: #3a3a36;
+  --harnesst-bg: #faf8f4;
+  --harnesst-fg: #1a1a18;
+  --harnesst-muted: #57534a;
+  --harnesst-faint: #8a8578;
+  --harnesst-line: #dcd7cb;
+  --harnesst-numeral: #b0a998;
+  --harnesst-band-bg: #1a1a18;
+  --harnesst-band-fg: #faf8f4;
+  --harnesst-band-muted: #a8a396;
+  --harnesst-panel-bg: #211f1c;
+  --harnesst-panel-line: #3a3a36;
 }
 
 /*
@@ -223,17 +223,17 @@
 
   /* Landing (dark) — warm charcoal, not the app's neutral black, so the paper
      scheme keeps its warmth. Bands sit one step lighter than the page. */
-  --eden-bg: #141312;
-  --eden-fg: #ece9e2;
-  --eden-muted: #a29c8f;
-  --eden-faint: #7c766a;
-  --eden-line: #2c2a26;
-  --eden-numeral: #5f594d;
-  --eden-band-bg: #201e1b;
-  --eden-band-fg: #ece9e2;
-  --eden-band-muted: #8f8a7d;
-  --eden-panel-bg: #100f0e;
-  --eden-panel-line: #34312b;
+  --harnesst-bg: #141312;
+  --harnesst-fg: #ece9e2;
+  --harnesst-muted: #a29c8f;
+  --harnesst-faint: #7c766a;
+  --harnesst-line: #2c2a26;
+  --harnesst-numeral: #5f594d;
+  --harnesst-band-bg: #201e1b;
+  --harnesst-band-fg: #ece9e2;
+  --harnesst-band-muted: #8f8a7d;
+  --harnesst-panel-bg: #100f0e;
+  --harnesst-panel-line: #34312b;
 }
 
 @layer base {
@@ -289,12 +289,12 @@
  * sub-150ms navigations mount and unmount before the bar ever becomes visible (no flash).
  * Colored with `bg-primary` at the call site so it reads in both themes.
  */
-@keyframes eden-nav-appear {
+@keyframes harnesst-nav-appear {
   to {
     opacity: 1;
   }
 }
-@keyframes eden-nav-indeterminate {
+@keyframes harnesst-nav-indeterminate {
   0% {
     transform: translateX(-60%);
   }
@@ -305,7 +305,7 @@
     transform: translateX(130%);
   }
 }
-.eden-nav-progress {
+.harnesst-nav-progress {
   position: fixed;
   top: 0;
   left: 0;
@@ -315,17 +315,17 @@
   overflow: hidden;
   opacity: 0;
   pointer-events: none;
-  animation: eden-nav-appear 120ms linear 150ms forwards;
+  animation: harnesst-nav-appear 120ms linear 150ms forwards;
 }
-.eden-nav-progress-bar {
+.harnesst-nav-progress-bar {
   height: 100%;
   width: 45%;
   transform-origin: left center;
   opacity: 0.5;
-  animation: eden-nav-indeterminate 1.8s ease-in-out infinite;
+  animation: harnesst-nav-indeterminate 1.8s ease-in-out infinite;
 }
 
-@keyframes eden-loading-line {
+@keyframes harnesst-loading-line {
   0% {
     transform: translateX(-65%);
   }
@@ -333,9 +333,9 @@
     transform: translateX(180%);
   }
 }
-.eden-loading-line {
+.harnesst-loading-line {
   height: 100%;
   width: 42%;
   border-radius: 9999px;
-  animation: eden-loading-line 1.8s ease-in-out infinite;
+  animation: harnesst-loading-line 1.8s ease-in-out infinite;
 }

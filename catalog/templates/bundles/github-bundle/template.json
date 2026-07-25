@@ -6,7 +6,7 @@
   "version": "0.1.0",
   "eve": ">=0.20.0",
   "files": [],
-  "setup": "This bundle installs the **GitHub channel** and the **GitHub App auth** skill together, so the agent can both hear @mentions and actually work repositories with `gh` and `git`.\n\nAfter installing, open the agent's **Deployment** tab and click **Create GitHub App** — Eden registers the App on GitHub, stores its secrets on the agent, and sends you to pick the repositories it watches. For the manual path, see the GitHub channel template's setup.",
+  "setup": "This bundle installs the **GitHub channel** and the **GitHub App auth** skill together, so the agent can both hear @mentions and actually work repositories with `gh` and `git`.\n\nAfter installing, open the agent's **Deployment** tab and click **Create GitHub App** — harnesst registers the App on GitHub, stores its secrets on the agent, and sends you to pick the repositories it watches. For the manual path, see the GitHub channel template's setup.",
   "includes": [
     { "type": "channel", "id": "github" },
     { "type": "skill", "id": "github-app-auth" }

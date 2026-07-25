@@ -57,7 +57,7 @@ export async function action({ request }: ActionFunctionArgs) {
   if (!agent) {
     return data({
       ok: false,
-      error: "Your deployment is no longer known to Eden.",
+      error: "Your deployment is no longer known to harnesst.",
     });
   }
 

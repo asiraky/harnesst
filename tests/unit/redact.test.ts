@@ -45,7 +45,7 @@ describe("redactSecrets", () => {
     expect(out).toContain("[redacted]");
   });
 
-  it("masks eden ingest tokens", () => {
+  it("masks harnesst ingest tokens", () => {
     expect(redactSecrets("edn_abcdefghijklmnopqrstuvwx")).toBe("[redacted]");
   });
 

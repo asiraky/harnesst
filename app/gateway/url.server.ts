@@ -1,5 +1,5 @@
 /**
- * The base URL a deployed agent / the assistant uses to reach Eden's model gateway (issue #28).
+ * The base URL a deployed agent / the assistant uses to reach harnesst's model gateway (issue #28).
  *
  * A container talks back to the control plane over `host.docker.internal`; the port mirrors the
  * EDEN_TEAM_URL / EDEN_API_URL derivation (PORT, else 3000 in production and 5173 in dev). An

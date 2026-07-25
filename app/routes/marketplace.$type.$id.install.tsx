@@ -74,7 +74,7 @@ import {
   findInstall,
   overlayLock,
   selectedGroupIds,
-  type EdenLock,
+  type HarnesstLock,
 } from "~/marketplace/lock";
 import {
   resolveTemplate,
@@ -177,7 +177,7 @@ interface PreviewData {
   authGroups: Array<{ provider: string; scopeGroups: AuthScopeGroup[] }>;
   /**
    * Selectable capability operation groups per provider (issue #166) — the Operations card.
-   * Labels/descriptions/risk joined from Eden's capability registry; the selection lands in the
+   * Labels/descriptions/risk joined from harnesst's capability registry; the selection lands in the
    * lock's `selectedCapabilityGroups` and is enforced per call (changeable later, instantly).
    */
   capabilityGroups: Array<{
@@ -203,7 +203,7 @@ function templateAuthGroups(
     manifest: TemplateManifest;
     auths: Array<{ provider: string; scopeGroups?: AuthScopeGroup[] }>;
   },
-  lock: EdenLock,
+  lock: HarnesstLock,
   member: string | null,
 ): PreviewData["authGroups"] {
   const existing = findInstall(lock, template.manifest.id, member);
@@ -237,7 +237,7 @@ function templateCapabilityGroups(
     manifest: TemplateManifest;
     auths: Array<{ provider: string; capabilityGroups?: string[] }>;
   },
-  lock: EdenLock,
+  lock: HarnesstLock,
   member: string | null,
 ): PreviewData["capabilityGroups"] {
   const existing = findInstall(lock, template.manifest.id, member);
@@ -782,7 +782,7 @@ export async function action(args: ActionFunctionArgs) {
 }
 
 export function meta() {
-  return [{ title: "Install · Marketplace · eden" }];
+  return [{ title: "Install · Marketplace · harnesst" }];
 }
 
 export default function InstallWizard({
@@ -810,10 +810,10 @@ export default function InstallWizard({
 
   const backTo = `/marketplace/${type}/${manifest.id}`;
   const hasConflicts = (preview?.conflicts.length ?? 0) > 0;
-  // Issue #47: provisioned secrets are set by a guided Eden flow (e.g. Create GitHub App on the
+  // Issue #47: provisioned secrets are set by a guided harnesst flow (e.g. Create GitHub App on the
   // Deployment tab) — the wizard never collects them. Only the user-supplied ones get inputs; the
   // provisioned ones get a single muted note so the user isn't led to think they must provide them.
-  // Issue #163: generated secrets are minted by Eden at first deploy — never collected either.
+  // Issue #163: generated secrets are minted by harnesst at first deploy — never collected either.
   const userSecrets = (preview?.secrets ?? []).filter(
     (s) => !s.provisioned && !s.generated,
   );
@@ -1244,7 +1244,7 @@ export default function InstallWizard({
             )}
 
             {/* Issue #166: capability operation groups — what the control plane will EXECUTE for
-                this agent. Enforced per call by Eden (not baked into a token), so the selection
+                this agent. Enforced per call by harnesst (not baked into a token), so the selection
                 can be changed later from the Deployment tab with instant effect. */}
             {preview.capabilityGroups.length > 0 && (
               <Card className="mb-6">
@@ -1257,10 +1257,10 @@ export default function InstallWizard({
                     Operations
                   </CardTitle>
                   <CardDescription>
-                    Choose which operations Eden may perform for this agent.
-                    Eden holds the credential and enforces this list on every
-                    call — you can change it any time from the agent&rsquo;s
-                    Deployment tab, with instant effect.
+                    Choose which operations harnesst may perform for this agent.
+                    harnesst holds the credential and enforces this list on
+                    every call — you can change it any time from the
+                    agent&rsquo;s Deployment tab, with instant effect.
                   </CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-5">

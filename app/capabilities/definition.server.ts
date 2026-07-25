@@ -1,7 +1,7 @@
 /**
  * Capability definitions (issue #166) — the brokered-capability framework's contract.
  *
- * A capability generalizes the Discord send proxy (issue #32): Eden holds the vendor credential
+ * A capability generalizes the Discord send proxy (issue #32): harnesst holds the vendor credential
  * (an ordinary brokered OAuth grant, issue #163) and exposes a FIXED registry of whitelisted
  * operations per provider. The credential is NEVER injected into an agent's instance
  * (`credentialDelivery: "capability"` on the provider entry); the agent's thin tools POST to

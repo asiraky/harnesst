@@ -251,7 +251,7 @@ export async function action(args: Route.ActionArgs) {
 }
 
 export function meta() {
-  return [{ title: "Members · eden" }, ...noindexMeta];
+  return [{ title: "Members · harnesst" }, ...noindexMeta];
 }
 
 export default function Members({
@@ -335,8 +335,8 @@ export default function Members({
                 Invite a teammate
               </CardTitle>
               <CardDescription>
-                Eden emails a secure invitation link. New invitees join with the
-                member role.
+                harnesst emails a secure invitation link. New invitees join with
+                the member role.
               </CardDescription>
             </CardHeader>
             <CardContent>

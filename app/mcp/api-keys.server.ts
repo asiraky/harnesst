@@ -1,4 +1,4 @@
-/** Database-backed credentials for Eden's hosted MCP endpoint. */
+/** Database-backed credentials for harnesst's hosted MCP endpoint. */
 import { and, desc, eq, isNull } from "drizzle-orm";
 
 import {

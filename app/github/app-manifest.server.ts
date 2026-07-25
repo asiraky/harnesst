@@ -2,13 +2,13 @@
  * Per-agent GitHub App Manifest flow (issue #26).
  *
  * The GitHub channel is a per-agent GitHub App — the agent's @mention identity AND its
- * working credential on the repos the App is installed on. Eden submits a
+ * working credential on the repos the App is installed on. harnesst submits a
  * [manifest](https://docs.github.com/en/apps/sharing-github-apps/registering-a-github-app-from-a-manifest)
  * to GitHub, GitHub redirects back with a one-hour single-use `code`, and one
  * `POST /app-manifests/{code}/conversions` returns everything the channel needs
  * (`id`, `slug`, `pem`, `webhook_secret`) — which we write straight into that agent's secrets.
  *
- * This mints the AGENT'S App. It is strictly separate from Eden's own Connect App
+ * This mints the AGENT'S App. It is strictly separate from harnesst's own Connect App
  * (`client.server.ts`), which is the control plane's credential for the eve CONFIG repo and
  * is never reused for agents.
  *
@@ -46,7 +46,7 @@ export const GITHUB_APP_NAME_MAX = 34;
 export interface AppManifestInput {
   /** Pre-filled app name — the user can edit it on GitHub's confirmation screen. */
   name: string;
-  /** Homepage shown on the App's page — the agent's page in Eden. */
+  /** Homepage shown on the App's page — the agent's page in harnesst. */
   homepageUrl: string;
   /** Where GitHub delivers channel events: `<origin>/e/<environmentId>/eve/v1/github`. */
   webhookUrl: string;
@@ -200,7 +200,7 @@ export function manifestStateKey(): Buffer {
 
 export interface ManifestConversion {
   appId: string;
-  /** GitHub derives the slug from the FINAL name — authoritative, never Eden's proposal. */
+  /** GitHub derives the slug from the FINAL name — authoritative, never harnesst's proposal. */
   slug: string;
   pem: string;
   webhookSecret: string;
@@ -231,7 +231,7 @@ export async function convertManifestCode(
   if (!res.ok) {
     throw new Error(
       `GitHub did not accept the App creation code (HTTP ${res.status}). ` +
-        "The code is single-use and expires after an hour — restart the flow from Eden.",
+        "The code is single-use and expires after an hour — restart the flow from harnesst.",
     );
   }
   const body = (await res.json()) as {
@@ -299,9 +299,9 @@ export function createAppJwt(
 
 /**
  * Every account the agent's App is installed on — the Deployment card renders this so the
- * user sees real state ("installed on org1, all repos") and adds accounts from Eden instead
+ * user sees real state ("installed on org1, all repos") and adds accounts from harnesst instead
  * of having to know GitHub's install-page URL. Uses the AGENT'S App credentials (the ones
- * the manifest callback stored), never Eden's own Connect App.
+ * the manifest callback stored), never harnesst's own Connect App.
  */
 export async function listAppInstallations(
   creds: { appId: string; privateKey: string },
@@ -338,7 +338,7 @@ export async function listAppInstallations(
  * Two agents in one project answering to the same GitHub App is ambiguous — an App has one
  * webhook URL, so at best one agent silently never hears its mentions. The manifest flow
  * can't produce this (GitHub enforces global App uniqueness), but the manual fallback lets a
- * user paste the same credentials twice — so Eden checks at install time.
+ * user paste the same credentials twice — so harnesst checks at install time.
  *
  * Detection needs no decryption: `secrets_metadata` stores an unkeyed SHA-256 fingerprint of
  * each plaintext, so equal values ⇒ equal fingerprints.

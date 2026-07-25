@@ -7,7 +7,7 @@ const validProductionEnvironment: NodeJS.ProcessEnv = {
   BETTER_AUTH_SECRET: "0123456789abcdefghijklmnopqrstuv",
   BETTER_AUTH_URL: "https://eden.example.com",
   POSTMARK_SERVER_TOKEN: "postmark-token",
-  FROM_EMAIL: "Eden <noreply@example.com>",
+  FROM_EMAIL: "harnesst <noreply@example.com>",
 };
 
 describe("production auth and email environment", () => {
@@ -76,11 +76,11 @@ describe("production auth and email environment", () => {
     "noreply",
     "noreply@",
     "@example.com",
-    "Eden <noreply>",
-    "Eden <no..reply@example.com>",
-    "Eden <noreply@example..com>",
-    "Eden <noreply@-example.com>",
-    "Eden <noreply@example.com>, Other <other@example.com>",
+    "harnesst <noreply>",
+    "harnesst <no..reply@example.com>",
+    "harnesst <noreply@example..com>",
+    "harnesst <noreply@-example.com>",
+    "harnesst <noreply@example.com>, Other <other@example.com>",
   ])("rejects an implausible FROM_EMAIL: %s", (fromEmail) => {
     expect(() =>
       assertProductionAuthEnvironment({

@@ -2,7 +2,7 @@
  * Git write layer (Author pillar, M1) — the one primitive every editor and the Pi assistant
  * use to ship a change.
  *
- * D3 is git-native: Eden never mutates the default branch directly. A change becomes a working
+ * D3 is git-native: harnesst never mutates the default branch directly. A change becomes a working
  * branch off the default branch, one or more file commits, and a pull request. Merging the PR
  * is the ship signal (later wired to deploy). The eve repo stays the single source of truth —
  * we persist nothing about the change locally; its state lives in GitHub.
@@ -187,7 +187,7 @@ export interface ChangedFile {
 export interface OpenChange {
   number: number;
   title: string;
-  /** PR body — the plain-language changelog Eden wrote. */
+  /** PR body — the plain-language changelog harnesst wrote. */
   body: string;
   url: string;
   branch: string;
@@ -203,7 +203,7 @@ export interface OpenChange {
 }
 
 /**
- * List open pull requests Eden opened for this repo (head branches under `eden/`), newest
+ * List open pull requests harnesst opened for this repo (head branches under `eden/`), newest
  * first, each enriched with mergeability and its changed-file summary. This is the Changes
  * review inbox — the in-app surface that replaces bouncing to github.com to see/merge a PR.
  */
@@ -221,13 +221,13 @@ export async function listOpenChanges(
     direction: "desc",
     per_page: 50,
   });
-  // Only Eden-authored change-sets (our editors/assistant all branch under `eden/`).
-  const edenPrs = list.data
+  // Only harnesst-authored change-sets (our editors/assistant all branch under `eden/`).
+  const authoredPrs = list.data
     .filter((pr) => pr.head.ref.startsWith("eden/"))
     .slice(0, limit);
 
   return Promise.all(
-    edenPrs.map(async (pr) => {
+    authoredPrs.map(async (pr) => {
       // pulls.get returns the computed `mergeable`/`mergeable_state` the list omits.
       const [detail, files] = await Promise.all([
         octokit.rest.pulls.get({ owner, repo, pull_number: pr.number }),
@@ -276,7 +276,7 @@ export async function listPullRequestFilePaths(
   return files.map((f) => f.filename);
 }
 
-/** The newest open Eden change request touching a given file. */
+/** The newest open harnesst change request touching a given file. */
 export interface PendingFileChange {
   number: number;
   title: string;
@@ -285,7 +285,7 @@ export interface PendingFileChange {
 }
 
 /**
- * Find the newest open Eden change request that touches `path`. Editors use this to surface a
+ * Find the newest open harnesst change request that touches `path`. Editors use this to surface a
  * published-but-unmerged value — without it, a file "loses" its latest edit the moment the
  * staged draft is published, until the change request merges.
  */
@@ -334,7 +334,7 @@ export async function closePullRequest(
     owner,
     repo,
     issue_number: pullNumber,
-    body: "Change request deleted from Eden — closed without merging.",
+    body: "Change request deleted from harnesst — closed without merging.",
   });
   await octokit.rest.pulls.update({ owner, repo, pull_number: pullNumber, state: "closed" });
 
@@ -358,7 +358,7 @@ export interface MergeResult {
 }
 
 /**
- * Merge a change-set in-app (PRD §7.3: "merge in Eden or on GitHub"). Squash by default so
+ * Merge a change-set in-app (PRD §7.3: "merge in harnesst or on GitHub"). Squash by default so
  * each change-set becomes exactly one commit on the default branch == one Release; falls back
  * to a merge commit if the repo disallows squash. Deletes the working branch on success.
  *

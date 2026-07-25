@@ -180,14 +180,14 @@ export default [
   // GitHub redirects back to the callback with a single-use code to convert.
   route("github/apps/new", "routes/github.apps.new.tsx"),
   route("github/apps/callback", "routes/github.apps.callback.tsx"),
-  // One-click Discord channel (issue #32): Eden's shared app. The relay is the app's single
+  // One-click Discord channel (issue #32): harnesst's shared app. The relay is the app's single
   // Interactions Endpoint URL; connect/callback run the OAuth authorize + guild-command
   // registration; send is the control-plane proxy the discord-send-message tool calls.
   route("api/discord/interactions", "routes/api.discord.interactions.ts"),
   route("discord/connect", "routes/discord.connect.tsx"),
   route("discord/callback", "routes/discord.callback.tsx"),
   route("api/discord/send", "routes/api.discord.send.ts"),
-  // Install-time auth-brokered connections (issue #30): Eden brokers Google OAuth against the
+  // Install-time auth-brokered connections (issue #30): harnesst brokers Google OAuth against the
   // operator's shared client. connect signs state + redirects to consent; callback exchanges the
   // code and seals the grant. The grant is injected as env at deploy so eve self-refreshes tokens.
   route("google/connect", "routes/google.connect.tsx"),
@@ -200,7 +200,7 @@ export default [
   // refresh grants — mayi) fetch fresh access tokens here with their EDEN_TEAM_TOKEN.
   route("api/connections/token", "routes/api.connections.token.ts"),
   // Brokered capabilities (issue #166): capability providers' whitelisted operations. Instances
-  // POST typed inputs with their EDEN_TEAM_TOKEN; Eden validates and executes with the
+  // POST typed inputs with their EDEN_TEAM_TOKEN; harnesst validates and executes with the
   // control-plane-held credential — the grant never reaches the container.
   route(
     "api/capabilities/:provider/:operation",
@@ -221,7 +221,7 @@ export default [
   // tools + boot entrypoint call GET|POST /api/assistant/<action> with a Bearer assistant token.
   route("api/assistant/:action", "routes/api.assistant.$action.ts"),
   route("api/models", "routes/api.models.tsx"),
-  // Eden model gateway (issue #28): a deployed agent / the assistant set to a codex/<conn>/<slug>
+  // harnesst model gateway (issue #28): a deployed agent / the assistant set to a codex/<conn>/<slug>
   // model reaches this route (Bearer edng_ token) to run on the org's connected Codex subscription.
   route("api/gateway/v1/chat/completions", "routes/api.gateway.chat.ts"),
   // Runtime model resolution: a deployed agent's generated eden-model.ts asks (same Bearer
