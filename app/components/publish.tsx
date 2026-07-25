@@ -8,14 +8,16 @@
  * hidden. It renders one of five states: quiet "Live · v12", "Not deployed yet" + a Publish
  * button (deploys HEAD), "Publish N changes", a live running status, or "Publish failed".
  *
- * PublishPanel is the control's dialog, in two modes. Review mode shows every saved change
- * before anything goes live: grouped by owning member (+ shared), per-file action badge
- * (Edited/New/Deleted), who saved it and when (the assistant is visually distinct from
- * teammates), an expandable diff per file, discard per file / discard all, and the environment
- * question ONLY when §2.8 resolution has to ask (answered once, then persisted). Pipeline mode
- * renders the task's `steps` as a vertical list — the full §4.3 stepper treatment (auto-expand
- * animation, assistant handoff, success auto-dismiss) lands with the pipeline-UI stage; this
- * renders every step, substep, skip reason, and failure output so nothing is ever invisible.
+ * PublishPanel is the control's dialog. Review mode shows every saved change before anything
+ * goes live: grouped by owning member (+ shared), per-file action badge (Edited/New/Deleted),
+ * who saved it and when (the assistant is visually distinct from teammates), an expandable
+ * diff per file, discard per file / discard all, and the environment question ONLY when §2.8
+ * resolution has to ask (answered once, then persisted). Pipeline mode renders the task's
+ * `steps` as the full §4.3 vertical stepper: on failure the failed step auto-expands its
+ * output with the two recovery actions ("Ask the assistant to fix this" hands the error to
+ * the assistant as pre-filled context; "Back to changes" returns to review mode). When the
+ * watched publish completes, the panel shows "Live · vN" with a link to the running agents
+ * and auto-dismisses after a short delay.
  *
  * The assistant page links here with `?publish=1` — the control opens its panel when that param
  * is present and clears it on close.
@@ -23,16 +25,18 @@
 import {
   Bot,
   Check,
+  CheckCircle2,
   ChevronRight,
   Circle,
   CircleSlash,
   Loader2,
   Rocket,
+  Sparkles,
   X,
   XCircle,
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
-import { useFetcher, useLocation, useSearchParams } from "react-router";
+import { Link, useFetcher, useLocation, useSearchParams } from "react-router";
 
 import { ConfirmDialog } from "~/components/confirm-dialog";
 import { DiffView } from "~/components/diff-view";
@@ -59,6 +63,7 @@ import {
   initialPublishSteps,
   publishControlState,
   publishDisabledReason,
+  publishedVersion,
   type ChangeAction,
   type PublishChangeRow,
   type PublishControlState,
@@ -69,6 +74,8 @@ import {
 
 const ACTIVE_POLL_MS = 3000;
 const IDLE_POLL_MS = 10000;
+/** How long the §4.3 success state lingers before the panel auto-dismisses. */
+const SUCCESS_DISMISS_MS = 4000;
 
 /** Extract the current workspace's projectId from the path, or null off a workspace page. */
 function projectIdFromPath(pathname: string): string | null {
@@ -230,6 +237,42 @@ export function PublishPanel({
     }
   };
 
+  // §4.3 success: when the publish this panel WATCHED completes, show "Live · vN" with the
+  // final all-green steps, then auto-dismiss. Watched = the running task we polled (or the one
+  // our POST returned) — a succeeded task lingering in the 24h window never re-celebrates.
+  const watchedTaskId = useRef<string | null>(null);
+  useEffect(() => {
+    if (data.running) watchedTaskId.current = data.running.taskId;
+  }, [data.running]);
+  useEffect(() => {
+    if (publish.data?.taskId) watchedTaskId.current = publish.data.taskId;
+  }, [publish.data]);
+  const [success, setSuccess] = useState<{
+    steps: PipelineStep[];
+    version: string | null;
+  } | null>(null);
+  useEffect(() => {
+    if (!open || data.running) return;
+    const done = data.succeeded;
+    if (done && watchedTaskId.current === done.taskId) {
+      watchedTaskId.current = null;
+      setAwaitingStart(false);
+      setSuccess({ steps: done.steps ?? [], version: publishedVersion(done.steps) });
+    }
+  }, [open, data.running, data.succeeded]);
+  useEffect(() => {
+    if (!success || !open) return;
+    const timer = setTimeout(() => onOpenChange(false), SUCCESS_DISMISS_MS);
+    return () => clearTimeout(timer);
+  }, [success, open, onOpenChange]);
+  // Reset the celebration on the next open (not on close — the dialog's exit animation would
+  // flash review mode) so a reopened panel starts from the live state.
+  const prevOpen = useRef(open);
+  useEffect(() => {
+    if (open && !prevOpen.current) setSuccess(null);
+    prevOpen.current = open;
+  }, [open]);
+
   // Never-deployed repos with nothing saved publish the branch HEAD instead (§4.1). A HEAD
   // publish has no pipeline task — close the panel when the POST redirects home clean.
   const headMode = data.changeCount === 0 && !data.deployed;
@@ -257,8 +300,11 @@ export function PublishPanel({
     );
   };
 
-  const mode: "pipeline" | "review" =
-    data.running || failed || (awaitingStart && !headMode) ? "pipeline" : "review";
+  const mode: "success" | "pipeline" | "review" = success
+    ? "success"
+    : data.running || failed || (awaitingStart && !headMode)
+      ? "pipeline"
+      : "review";
   const steps = data.running?.steps ?? failed?.steps ?? initialPublishSteps();
   const disabledReason = headMode
     ? data.needsEnvironmentChoice && !env
@@ -274,7 +320,35 @@ export function PublishPanel({
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogContent className="sm:max-w-xl">
-        {mode === "pipeline" ? (
+        {mode === "success" && success ? (
+          <>
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2">
+                <CheckCircle2
+                  className="size-5 text-emerald-600 dark:text-emerald-400"
+                  aria-hidden
+                />
+                Live{success.version ? ` · ${success.version}` : ""}
+              </DialogTitle>
+              <DialogDescription>
+                Your changes are live.{" "}
+                <Link
+                  to={`/repos/${projectId}`}
+                  className="underline underline-offset-4 hover:text-foreground"
+                  onClick={() => onOpenChange(false)}
+                >
+                  See your running agents →
+                </Link>
+              </DialogDescription>
+            </DialogHeader>
+            <PipelineStepList steps={success.steps} />
+            <DialogFooter>
+              <Button variant="outline" onClick={() => handleOpenChange(false)}>
+                Close
+              </Button>
+            </DialogFooter>
+          </>
+        ) : mode === "pipeline" ? (
           <>
             <DialogHeader>
               <DialogTitle>{failed ? "Publish failed" : "Publishing"}</DialogTitle>
@@ -284,13 +358,15 @@ export function PublishPanel({
                   : "Your changes are going live. You can close this — progress stays in the header."}
               </DialogDescription>
             </DialogHeader>
-            <PipelineStepList steps={steps} />
+            <PipelineStepList
+              steps={steps}
+              assistantFixHref={
+                failed ? `/repos/${projectId}/assistant?fix=${failed.taskId}` : undefined
+              }
+              onAskAssistant={failed ? () => onOpenChange(false) : undefined}
+              onBackToChanges={failed ? backToChanges : undefined}
+            />
             <DialogFooter>
-              {failed && (
-                <Button variant="ghost" onClick={backToChanges}>
-                  Back to changes
-                </Button>
-              )}
               <Button variant="outline" onClick={() => handleOpenChange(false)}>
                 Close
               </Button>
@@ -564,17 +640,36 @@ const STEP_ICON: Record<PipelineStepStatus, React.ReactNode> = {
 };
 
 /**
- * Pipeline mode's vertical step list: every step visible from the start, the running step's
- * label + detail live-announced, substeps inline, skipped reasons shown, and a failure's full
- * output in a monospace block. Exported for unit tests. (The full §4.3 stepper — auto-expand
- * animation, "Ask the assistant to fix this", success auto-dismiss — lands with the
- * pipeline-UI stage; this shape is what it refines.)
+ * §4.3's vertical stepper — the pipeline UI at full density (the header control and task strip
+ * derive their one-liners from the same steps). Every step is visible from the start (pending
+ * greyed) so the whole shape is legible before anything happens; the running step shows a
+ * spinner and its live detail; build/deploy substeps render inline, one per member; skipped
+ * steps stay visible, greyed, with their reason (an absent step reads as a bug). On failure
+ * the failed step turns red and auto-expands: the full output renders in a monospace block
+ * preserving newlines, with the two recovery actions beneath it — "Ask the assistant to fix
+ * this" (hands the error to the assistant as pre-filled context) and "Back to changes"
+ * (returns to review mode; nothing was lost). Steps after a failure stay pending — only one
+ * step ever fails. role="list" with aria-live="polite" on the running step's row announces
+ * transitions without spamming. Exported for unit tests.
  */
-export function PipelineStepList({ steps }: { steps: PipelineStep[] }) {
+export function PipelineStepList({
+  steps,
+  assistantFixHref,
+  onAskAssistant,
+  onBackToChanges,
+}: {
+  steps: PipelineStep[];
+  /** On failure: link that opens the assistant with the failure pre-filled as context. */
+  assistantFixHref?: string;
+  /** Called when the assistant handoff link is followed (the panel closes itself). */
+  onAskAssistant?: () => void;
+  /** On failure: returns the panel to review mode — nothing was lost. */
+  onBackToChanges?: () => void;
+}) {
   return (
     <ol role="list" className="min-w-0 space-y-2 text-sm">
       {steps.map((step) => (
-        <li key={step.key} className="min-w-0">
+        <li key={step.key} data-step={step.key} data-status={step.status} className="min-w-0">
           <div
             className="flex items-center gap-2"
             aria-live={step.status === "running" ? "polite" : undefined}
@@ -591,7 +686,7 @@ export function PipelineStepList({ steps }: { steps: PipelineStep[] }) {
             >
               {step.label}
             </span>
-            {step.status === "running" && step.detail && (
+            {step.detail && (step.status === "running" || step.status === "succeeded") && (
               <span className="shrink-0 truncate text-xs text-muted-foreground">
                 {step.detail}
               </span>
@@ -614,10 +709,31 @@ export function PipelineStepList({ steps }: { steps: PipelineStep[] }) {
               ))}
             </ul>
           )}
-          {step.status === "failed" && step.error && (
-            <pre className="mt-1.5 max-h-64 overflow-auto whitespace-pre-wrap break-words rounded-md border border-destructive/30 bg-destructive/5 p-2 font-mono text-xs text-destructive">
-              {step.error}
-            </pre>
+          {step.status === "failed" && (
+            <div className="mt-1.5 space-y-2">
+              {step.error && (
+                <pre className="max-h-64 overflow-auto whitespace-pre-wrap break-words rounded-md border border-destructive/30 bg-destructive/5 p-2 font-mono text-xs text-destructive">
+                  {step.error}
+                </pre>
+              )}
+              {(assistantFixHref || onBackToChanges) && (
+                <div className="flex flex-wrap items-center gap-2">
+                  {assistantFixHref && (
+                    <Button asChild size="sm" variant="outline">
+                      <Link to={assistantFixHref} onClick={onAskAssistant}>
+                        <Sparkles className="h-3.5 w-3.5" aria-hidden />
+                        Ask the assistant to fix this
+                      </Link>
+                    </Button>
+                  )}
+                  {onBackToChanges && (
+                    <Button size="sm" variant="ghost" onClick={onBackToChanges}>
+                      Back to changes
+                    </Button>
+                  )}
+                </div>
+              )}
+            </div>
           )}
         </li>
       ))}

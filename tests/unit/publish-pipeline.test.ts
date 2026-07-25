@@ -186,6 +186,9 @@ describe("runPublish — happy path", () => {
       { status: "running", detail: "ivy (1 of 2)" },
       { status: "running", detail: "otto (2 of 2)" },
     ]);
+    // The succeeded version step records the team version label — the panel's "Live · vN"
+    // success headline reads it off the steps.
+    expect(row!.steps!.find((s) => s.key === "version")?.detail).toBe("v1");
 
     // Commit carried both files; drafts were deleted only after it landed.
     expect(deps.commitToDefaultBranch).toHaveBeenCalledOnce();

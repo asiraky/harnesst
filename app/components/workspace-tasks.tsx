@@ -5,10 +5,11 @@
  * It self-fetches this project's running + recent terminal tasks from the
  * `/repos/:projectId/tasks` resource route (keyed fetcher, so it reuses its data across page
  * navigations) and polls: 3s while any task is running, 10s otherwise, paused while the tab is
- * hidden. Running tasks show a spinner + the running pipeline step's label; terminal tasks linger
- * with a back-link and a dismiss (×) until the user clears them. Renders nothing off a workspace
- * page or with no tasks — the queue is the ops primitive; this is only its small user-facing
- * projection.
+ * hidden. A running task's one-liner is DERIVED from its pipeline `steps` via the same
+ * `runningStepSummary` the publish panel's full stepper state uses — one source of truth, two
+ * densities (issue #225 §4.3). Terminal tasks linger with a back-link and a dismiss (×) until
+ * the user clears them. Renders nothing off a workspace page or with no tasks — the queue is
+ * the ops primitive; this is only its small user-facing projection.
  */
 import { Loader2, CheckCircle2, XCircle, X } from "lucide-react";
 import { useEffect, useRef } from "react";
@@ -16,6 +17,7 @@ import { Link, useFetcher, useLocation } from "react-router";
 
 import type { PipelineStep } from "~/data/ports";
 import { cn } from "~/lib/utils";
+import { runningStepSummary } from "~/publish/publish-panel";
 
 export interface WorkspaceTask {
   id: string;
@@ -28,13 +30,6 @@ export interface WorkspaceTask {
   resultUrl: string | null;
   error: string | null;
   createdAt: string;
-}
-
-/** The running task's one-liner, derived from its steps (one source of truth, §3.5). */
-function runningSummary(task: WorkspaceTask): string | null {
-  const running = task.steps?.find((s) => s.status === "running");
-  if (!running) return null;
-  return running.detail ? `${running.label} — ${running.detail}` : running.label;
 }
 
 const ACTIVE_POLL_MS = 3000;
@@ -123,8 +118,11 @@ export function TaskRow({
           />
           <span className="min-w-0 truncate">
             <span className="font-medium">{task.label}</span>
-            {runningSummary(task) && (
-              <span className="text-muted-foreground"> — {runningSummary(task)}</span>
+            {runningStepSummary(task.steps) && (
+              <span className="text-muted-foreground">
+                {" "}
+                — {runningStepSummary(task.steps)}
+              </span>
             )}
           </span>
         </>

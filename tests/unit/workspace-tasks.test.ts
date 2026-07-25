@@ -73,6 +73,21 @@ describe("task lifecycle", () => {
     expect(row?.error).toBeNull();
   });
 
+  it("keeps a step's detail through completion (the panel's Live · vN reads it off the steps)", async () => {
+    const task = await createTask(base, store);
+    await updateTaskSteps(
+      task.id,
+      [{ key: "version", label: "Creating version", status: "succeeded", detail: "v13" }],
+      store,
+    );
+    await completeTask(task.id, {}, store);
+    expect((await store.workspaceTasks.findById(task.id))?.steps?.[0]).toMatchObject({
+      key: "version",
+      status: "succeeded",
+      detail: "v13",
+    });
+  });
+
   it("failTask resolves failed with the error and keeps the steps", async () => {
     const task = await createTask({ ...base, steps: steps("failed") }, store);
     await failTask(task.id, "This change doesn't build yet", store);

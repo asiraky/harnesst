@@ -785,6 +785,7 @@ export function ChatComposer({
   busy,
   busyHint,
   disabled = false,
+  initialValue,
   onSend,
   controls,
 }: {
@@ -794,12 +795,23 @@ export function ChatComposer({
   busyHint?: string;
   /** Disable composing without showing the in-flight spinner used for `busy`. */
   disabled?: boolean;
+  /** Seed the composer's text (e.g. a publish failure handed off as context to fix). */
+  initialValue?: string;
   onSend: (message: string) => void;
   /** Optional controls rendered in the toolbar, left of the send button (e.g. a picker). */
   controls?: ReactNode;
 }) {
   const ref = useRef<HTMLTextAreaElement>(null);
   const unavailable = busy || disabled;
+
+  // The textarea is uncontrolled, so defaultValue only applies on mount: size a pre-seeded
+  // composer to its content immediately, and re-seed when a new handoff arrives while mounted.
+  useEffect(() => {
+    const el = ref.current;
+    if (!el || initialValue == null || el.value === initialValue) return;
+    el.value = initialValue;
+    autoGrow(el);
+  }, [initialValue]);
 
   const send = () => {
     const message = ref.current?.value.trim();
@@ -817,6 +829,7 @@ export function ChatComposer({
         ref={ref}
         placeholder={placeholder}
         aria-label={placeholder}
+        defaultValue={initialValue}
         rows={1}
         className="max-h-48 min-h-11 resize-none border-0 bg-transparent px-4 py-3 text-sm shadow-none focus-visible:ring-0 disabled:bg-transparent dark:bg-transparent dark:disabled:bg-transparent"
         disabled={unavailable}

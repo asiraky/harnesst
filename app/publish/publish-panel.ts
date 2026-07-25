@@ -29,6 +29,16 @@ export function runningStepSummary(steps: PipelineStep[] | null | undefined): st
   return running.detail ? `${running.label} — ${running.detail}` : running.label;
 }
 
+/**
+ * The version label a finished publish went live as ("v13") — the pipeline records it as the
+ * succeeded `version` step's detail, so the panel's success headline and the steps stay one
+ * source of truth. Null when the step didn't run (e.g. an assistant-config-only publish).
+ */
+export function publishedVersion(steps: PipelineStep[] | null | undefined): string | null {
+  const version = steps?.find((s) => s.key === "version");
+  return version?.status === "succeeded" ? (version.detail ?? null) : null;
+}
+
 /** What a saved change does to its file — the panel's per-file action badge (§4.2). */
 export type ChangeAction = "edited" | "new" | "deleted";
 
@@ -116,6 +126,12 @@ export interface PublishStatePayload {
   running: { taskId: string; steps: PipelineStep[] | null } | null;
   /** The most recent failed, undismissed publish task, if any. */
   failed: { taskId: string; steps: PipelineStep[] | null; error: string | null } | null;
+  /**
+   * The most recent succeeded, undismissed publish task. The panel's success state (§4.3
+   * "Live · vN", auto-dismiss) reads it when the publish it was watching completes; the
+   * header control ignores it (a finished publish quietly becomes the Live text).
+   */
+  succeeded: { taskId: string; steps: PipelineStep[] | null } | null;
 }
 
 /** The `?diff=<path>` GET payload: one saved change's diff for the expandable row. */

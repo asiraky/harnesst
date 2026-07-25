@@ -65,6 +65,7 @@ const DISCONNECTED: PublishStatePayload = {
   needsEnvironmentChoice: false,
   running: null,
   failed: null,
+  succeeded: null,
 };
 
 export const loader = (args: LoaderFunctionArgs) =>
@@ -177,10 +178,15 @@ async function publishState(connected: ConnectedProject): Promise<PublishStatePa
     .limit(1);
 
   const running = tasks.find((t) => t.subjectKey === "publish" && t.status === "running");
-  // Newest failed, undismissed publish (listWorkspaceTasks already filters dismissed rows).
+  // Newest failed/succeeded, undismissed publish (listWorkspaceTasks filters dismissed rows).
+  // The panel's success state only fires for a publish it watched run, so the succeeded row
+  // lingering in the task window never re-celebrates on a later open.
   const failed = [...tasks]
     .reverse()
     .find((t) => t.subjectKey === "publish" && t.status === "failed");
+  const succeeded = [...tasks]
+    .reverse()
+    .find((t) => t.subjectKey === "publish" && t.status === "succeeded");
 
   // §2.8: ask only when several envs exist and no persisted answer still names one of them.
   // Change-sets that touch only the assistant's config deploy nothing — never ask for those.
@@ -199,6 +205,7 @@ async function publishState(connected: ConnectedProject): Promise<PublishStatePa
     needsEnvironmentChoice: envNames.length > 1 && !resolved && !assistantConfigOnly,
     running: running ? { taskId: running.id, steps: running.steps } : null,
     failed: failed ? { taskId: failed.id, steps: failed.steps, error: failed.error } : null,
+    succeeded: succeeded ? { taskId: succeeded.id, steps: succeeded.steps } : null,
   };
 }
 

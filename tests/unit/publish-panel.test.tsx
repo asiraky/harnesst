@@ -21,6 +21,7 @@ import {
   initialPublishSteps,
   publishControlState,
   publishDisabledReason,
+  publishedVersion,
   runningStepSummary,
   type PublishChangeRow,
 } from "~/publish/publish-panel";
@@ -167,6 +168,30 @@ describe("runningStepSummary", () => {
   it("is null when no step is running (or there are no steps)", () => {
     expect(runningStepSummary(null)).toBeNull();
     expect(runningStepSummary(initialPublishSteps())).toBeNull();
+  });
+});
+
+describe("publishedVersion", () => {
+  it("reads the version label off the succeeded version step", () => {
+    expect(
+      publishedVersion([
+        { key: "commit", label: "Saving to your repository", status: "succeeded" },
+        { key: "version", label: "Creating version", status: "succeeded", detail: "v13" },
+      ]),
+    ).toBe("v13");
+  });
+
+  it("is null when the version step was skipped, unfinished, or absent", () => {
+    expect(
+      publishedVersion([
+        { key: "version", label: "Creating version", status: "skipped", reason: "x" },
+      ]),
+    ).toBeNull();
+    expect(publishedVersion(initialPublishSteps())).toBeNull();
+    expect(
+      publishedVersion([{ key: "version", label: "Creating version", status: "succeeded" }]),
+    ).toBeNull();
+    expect(publishedVersion(null)).toBeNull();
   });
 });
 
@@ -341,5 +366,42 @@ describe("PipelineStepList", () => {
     const html = renderInRouter(<PipelineStepList steps={steps} />);
     expect(html.match(/aria-live="polite"/g)).toHaveLength(1);
     expect(html).toContain("orphan gate");
+  });
+
+  it("auto-expands a failure — output and recovery actions render without interaction — and later steps stay pending", () => {
+    const steps = initialPublishSteps();
+    steps[0].status = "succeeded";
+    steps[1].status = "failed";
+    steps[1].error = "src/agent.ts(3,7): error TS2304: Cannot find name 'foo'.\n  3 | foo();";
+    const html = renderInRouter(
+      <PipelineStepList
+        steps={steps}
+        assistantFixHref="/repos/proj_1/assistant?fix=task_9"
+        onAskAssistant={() => {}}
+        onBackToChanges={() => {}}
+      />,
+    );
+    // The error is expanded on render — no click required — with its newline structure intact
+    // (a <pre> block; both lines of the compiler output are present).
+    expect(html).toContain("<pre");
+    expect(html).toContain("Cannot find name");
+    expect(html).toContain("3 | foo();");
+    // The two §4.3 recovery actions sit beneath the output.
+    expect(html).toContain("Ask the assistant to fix this");
+    expect(html).toContain('href="/repos/proj_1/assistant?fix=task_9"');
+    expect(html).toContain("Back to changes");
+    // Steps after the failure render as pending, never as failed — only one step ever fails.
+    for (const key of ["commit", "version", "deploy"]) {
+      expect(html).toContain(`data-step="${key}" data-status="pending"`);
+    }
+    expect(html.match(/data-status="failed"/g)).toHaveLength(1);
+  });
+
+  it("shows the recorded version label on the succeeded version step", () => {
+    const steps = initialPublishSteps();
+    for (const step of steps) step.status = "succeeded";
+    steps.find((s) => s.key === "version")!.detail = "v13";
+    const html = renderInRouter(<PipelineStepList steps={steps} />);
+    expect(html).toContain("v13");
   });
 });

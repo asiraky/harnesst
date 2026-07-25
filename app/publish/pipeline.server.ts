@@ -532,7 +532,13 @@ export async function runPublish(
       await failAt("version", error instanceof Error ? error.message : String(error));
       return;
     }
-    await succeed("version");
+    // Succeed with the team version label as the step's detail — the success panel's
+    // "Live · vN" headline reads it off the steps (one source of truth). Labels can differ
+    // per member; use the first, as the version history does.
+    const versionStep = step("version");
+    versionStep.status = "succeeded";
+    versionStep.detail = releases[0]?.release.version;
+    await save();
 
     // ── deploy ────────────────────────────────────────────────────────────────────────────
     // Queue one deploy per roster member into the live env (the team is the deployment unit).

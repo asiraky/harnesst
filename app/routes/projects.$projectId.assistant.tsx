@@ -24,6 +24,7 @@ import {
   useFetcher,
   useNavigate,
   useRevalidator,
+  useSearchParams,
   type ActionFunctionArgs,
   type LoaderFunctionArgs,
 } from "react-router";
@@ -82,6 +83,7 @@ import {
 } from "~/playground/ownership";
 import { shouldSettleAbandonedSession } from "~/playground/settle";
 import { requireProject, requireRepo } from "~/project/guard.server";
+import { getRuntime } from "~/seams/index.server";
 import type { Route } from "./+types/projects.$projectId.assistant";
 
 export const loader = (args: LoaderFunctionArgs) =>
@@ -204,8 +206,29 @@ export const loader = (args: LoaderFunctionArgs) =>
         );
       }
 
+      // Publish-failure handoff (#225 §4.3): the publish panel's "Ask the assistant to fix
+      // this" links here with ?fix=<taskId>; the failed step's output pre-fills the composer
+      // as context for the model. The task must belong to this project and have failed.
+      let fixPrefill: string | null = null;
+      const fixTaskId = args.url.searchParams.get("fix");
+      if (fixTaskId) {
+        const fixTask = await getRuntime()
+          .data.workspaceTasks.findById(fixTaskId)
+          .catch(() => null);
+        if (fixTask && fixTask.projectId === project.id && fixTask.status === "failed") {
+          const failedStep = fixTask.steps?.find((s) => s.status === "failed");
+          const error = failedStep?.error ?? fixTask.error;
+          if (error) {
+            fixPrefill = `I tried to publish and it failed at "${
+              failedStep?.label ?? "Publish"
+            }". Please fix this so I can publish again:\n\n${error}`;
+          }
+        }
+      }
+
       return {
         project,
+        fixPrefill,
         instanceStatus: snapshot.status,
         provisionStage: snapshot.provisionStage,
         provisionStartedAt: snapshot.provisionStartedAt,
@@ -282,6 +305,7 @@ interface LiveTurn {
 export default function Assistant({ loaderData }: Route.ComponentProps) {
   const {
     project,
+    fixPrefill,
     instanceStatus,
     provisionStage,
     provisionStartedAt,
@@ -303,6 +327,17 @@ export default function Assistant({ loaderData }: Route.ComponentProps) {
   const newSessionFetcher = useFetcher<typeof action>();
   const NewSessionForm = newSessionFetcher.Form;
   const ProvisionForm = provisionFetcher.Form;
+
+  // The ?fix= handoff is one-shot: once the composer is seeded from the loader, strip the
+  // param so a reload (or sending the message) doesn't re-fill it. The textarea is
+  // uncontrolled, so its seeded text survives the revalidation this triggers.
+  const [searchParams, setSearchParams] = useSearchParams();
+  useEffect(() => {
+    if (!searchParams.has("fix")) return;
+    const params = new URLSearchParams(searchParams);
+    params.delete("fix");
+    setSearchParams(params, { replace: true, preventScrollReset: true });
+  }, [searchParams, setSearchParams]);
 
   const [live, setLive] = useState<LiveTurn | null>(null);
   // A turn from another selected session is never rendered here. For the current session, keep a
@@ -821,6 +856,7 @@ export default function Assistant({ loaderData }: Route.ComponentProps) {
           }
           // Not-yet-provisioned reads as unavailable (setup card explains), not as in-flight work.
           disabled={currentSessionContinuationBlocked || idle || failed}
+          initialValue={fixPrefill ?? undefined}
           onSend={send}
         />
       </div>
