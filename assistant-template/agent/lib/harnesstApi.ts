@@ -3,12 +3,12 @@
 // (injected by harnesst's deploy). Never throws — every failure path returns { ok: false, error } so
 // the model reads the text, exactly like the delegation relay.
 
-type harnesstResult = Record<string, unknown> & { ok?: boolean; error?: string };
+type HarnesstResult = Record<string, unknown> & { ok?: boolean; error?: string };
 
 export async function harnesstCall(
   action: string,
   body: Record<string, unknown> = {},
-): Promise<harnesstResult> {
+): Promise<HarnesstResult> {
   const baseUrl = process.env.HARNESST_API_URL;
   const token = process.env.HARNESST_ASSISTANT_TOKEN;
   if (!baseUrl || !token) {
@@ -24,7 +24,7 @@ export async function harnesstCall(
       body: JSON.stringify(body),
       signal: AbortSignal.timeout(180_000),
     });
-    const data = (await res.json().catch(() => null)) as harnesstResult | null;
+    const data = (await res.json().catch(() => null)) as HarnesstResult | null;
     if (!res.ok) {
       return {
         ok: false,

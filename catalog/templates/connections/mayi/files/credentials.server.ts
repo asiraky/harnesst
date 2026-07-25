@@ -11,7 +11,7 @@
  * Tokens are cached until shortly before `expiresAt` (with in-flight dedupe), so broker traffic
  * is about one request per token lifetime — roughly hourly — not per approval.
  */
-interface harnesstCredentials {
+interface HarnesstCredentials {
   getAccessToken(integration: "mayi"): Promise<string>;
 }
 
@@ -67,7 +67,7 @@ async function fetchAccessToken(integration: string): Promise<string> {
  * access token for the named integration, fetched from harnesst's token broker and cached per
  * `expiresAt`. The adapter and SDK never store tokens.
  */
-export const credentials: harnesstCredentials = {
+export const credentials: HarnesstCredentials = {
   async getAccessToken(integration) {
     const cached = cache.get(integration);
     if (cached && Date.now() < cached.expiresAt - 60_000) return cached.token;
