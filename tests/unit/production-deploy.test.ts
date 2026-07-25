@@ -6,6 +6,7 @@ import { describe, expect, it } from "vitest";
 const root = resolve(import.meta.dirname, "../..");
 const read = (path: string) => readFileSync(resolve(root, path), "utf8");
 
+const nginx = read("deploy/vps/nginx-eden.conf");
 const stack = read("docker-stack.production.yml");
 const workflow = read(".github/workflows/deploy.yml");
 const script = read("deploy/production/deploy.sh");
@@ -134,6 +135,51 @@ describe("production Swarm stack", () => {
     expect(serviceNames).toEqual(["postgres", "eden"]);
     expect(stack).not.toMatch(/^\s{2}(nginx|certbot):/m);
     expect(stack).not.toMatch(/^\s+build:/m);
+  });
+});
+
+describe("production nginx site", () => {
+  const locations = [
+    ...nginx.matchAll(
+      /^ {4}location\s+(?:(=|\^~)\s+)?(\S+)\s*\{\n([\s\S]*?)^ {4}\}$/gm,
+    ),
+  ].map(([, modifier, prefix, body]) => ({ modifier, prefix, body }));
+
+  it("keeps proxied prefix locations clear of nginx's trailing-slash 301", () => {
+    // Nginx answers a request for a proxy_pass prefix location's exact string *without* its
+    // trailing slash with a 301 to the slashed form. Browsers re-issue a 301'd POST as a bodyless
+    // GET, so any such location silently breaks the endpoint sitting at its bare path — which is
+    // how `POST /api/auth/reset-password` turned into a 404 and every password reset failed.
+    // `/e/` is the one safe case: nothing serves `/e`, and unslashing it would swallow unrelated
+    // routes beginning with "e".
+    const proxied = locations.filter(
+      (location) =>
+        location.modifier !== "=" &&
+        location.body.includes("proxy_pass") &&
+        // The catch-all cannot be reached without its slash, so it is unaffected.
+        location.prefix !== "/",
+    );
+
+    expect(proxied.length).toBeGreaterThan(1);
+    expect(
+      proxied
+        .map((location) => location.prefix)
+        .filter((prefix) => prefix.endsWith("/")),
+    ).toEqual(["/e/"]);
+  });
+
+  it("routes the reset-password submit and token callback to harnesst unlogged", () => {
+    const reset = locations.filter((location) =>
+      location.prefix.startsWith("/api/auth/reset-password"),
+    );
+
+    // One per vhost: the port-80 upgrade and the app's proxy_pass.
+    expect(reset).toHaveLength(2);
+    for (const location of reset) {
+      expect(location.prefix).toBe("/api/auth/reset-password");
+      expect(location.modifier).toBe("^~");
+      expect(location.body).toContain("access_log off;");
+    }
   });
 });
 
