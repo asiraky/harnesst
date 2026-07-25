@@ -9,7 +9,7 @@
  */
 import { getSessionAuth, sessionLoader } from "~/auth/session.server";
 import {
-  GitPullRequest,
+  CheckCircle2,
   Info,
   Loader2,
   MessageSquare,
@@ -274,7 +274,7 @@ interface LiveTurn {
   /** Post-turn checkout sync outcome — arrives after `done`, absent for pure-Q&A turns. */
   sync: {
     synced: boolean;
-    prNumber: number | null;
+    stagedCount: number;
     error: string | null;
   } | null;
 }
@@ -839,7 +839,7 @@ type StreamEvent =
   | {
       type: "sync";
       synced: boolean;
-      prNumber: number | null;
+      stagedCount: number;
       error: string | null;
     }
   | {
@@ -890,7 +890,7 @@ function reduceLive(prev: LiveTurn, evt: StreamEvent): LiveTurn {
         ...prev,
         sync: {
           synced: evt.synced,
-          prNumber: evt.prNumber,
+          stagedCount: evt.stagedCount,
           error: evt.error,
         },
       };
@@ -1068,23 +1068,27 @@ function SyncNote({ sync }: { sync: NonNullable<LiveTurn["sync"]> }) {
       <p className="flex items-start gap-1.5 text-xs text-amber-700 dark:text-amber-400">
         <TriangleAlert className="mt-0.5 size-3.5 shrink-0" aria-hidden />
         <span>
-          Eden couldn&apos;t sync this turn&apos;s changes to the pull request (
-          {sync.error}). They&apos;re safe in the conversation checkout and will
-          sync after the next turn.
+          Eden couldn&apos;t save this turn&apos;s changes ({sync.error}).
+          They&apos;re safe in the conversation checkout and will be picked up
+          after the next turn.
         </span>
       </p>
     );
   }
+  const n = sync.stagedCount;
   return (
     <p className="flex items-start gap-1.5 text-xs text-muted-foreground">
-      <GitPullRequest
+      <CheckCircle2
         className="mt-0.5 size-3.5 shrink-0 text-emerald-600 dark:text-emerald-400"
         aria-hidden
       />
       <span>
-        Changes synced
-        {sync.prNumber ? ` to PR #${sync.prNumber}` : ""} — review them on the
-        Changes tab.
+        Staged {n} change{n === 1 ? "" : "s"} —{" "}
+        {/* `?publish=1` opens the publish panel from the workspace-header Publish control. */}
+        <Link to="?publish=1" className="font-medium underline underline-offset-4">
+          review and publish them
+        </Link>{" "}
+        when you&apos;re ready.
       </span>
     </p>
   );

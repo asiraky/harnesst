@@ -450,16 +450,22 @@ export async function runPublish(
       return;
     }
 
-    // Only after the commit succeeds: the published drafts now live on the default branch,
-    // and any conversation whose synced work was included has just been published.
+    // Only after the commit succeeds: the published drafts now live on the default branch.
     await store.drafts.deleteByPaths(
       connected.id,
       drafts.map((d) => d.path),
     );
-    try {
-      await deps.discardConversationCheckouts(connected.id);
-    } catch (error) {
-      console.warn("[publish] committed but couldn't discard conversation checkouts:", error);
+    // Any conversation whose staged drafts were included has just been published — drop the
+    // project's checkout link rows so the next assistant turn re-syncs against the new head.
+    // Assistant-staged drafts are the authorless ones (§2.7: human saves always carry a user
+    // id); a publish containing none touched no conversation's work, and discarding then would
+    // re-stage work the user had deliberately discarded.
+    if (drafts.some((d) => d.createdBy === null)) {
+      try {
+        await deps.discardConversationCheckouts(connected.id);
+      } catch (error) {
+        console.warn("[publish] committed but couldn't discard conversation checkouts:", error);
+      }
     }
     await succeed("commit");
 

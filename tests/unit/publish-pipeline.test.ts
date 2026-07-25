@@ -231,6 +231,25 @@ describe("runPublish — happy path", () => {
     expect(jobs.filter((j) => j.kind === "deploy_release").length).toBe(2);
     expect(deps.promoteImage).toHaveBeenCalledOnce();
   });
+
+  it("leaves conversation checkouts alone when every published draft was human-staged", async () => {
+    seedTeam();
+    // A human save always carries a user id; assistant-staged drafts are the authorless ones.
+    await store.drafts.upsert({
+      projectId: PROJECT,
+      agentId: "agent_ivy",
+      path: "agents/ivy/agent/agent.ts",
+      content: "export default {};",
+      createdBy: "user_1",
+    });
+    const task = await seedTask();
+    const deps = makeDeps();
+
+    await runPublish(payload(task.id), deps, store);
+
+    expect((await store.workspaceTasks.findById(task.id))?.status).toBe("succeeded");
+    expect(deps.discardConversationCheckouts).not.toHaveBeenCalled();
+  });
 });
 
 describe("runPublish — failures leave nothing landed", () => {

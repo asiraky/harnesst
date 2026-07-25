@@ -129,10 +129,10 @@ export async function action(args: ActionFunctionArgs) {
   // new-session button, a send queued while the instance provisions), and long conversations can
   // lose the one-time note to context compaction. A model that never sees its checkout path goes
   // hunting with `find`, edits a stale checkout from another conversation, and the post-turn sync
-  // of the real (untouched) checkout silently no-ops — edits exist on disk but never reach a PR.
+  // of the real (untouched) checkout silently no-ops — edits exist on disk but are never staged.
   if (!ensured.unsupported) {
     prefixParts.push(
-      `[Eden] Your working checkout for this conversation is at ${conversationCheckoutPath(session.id)} on branch ${conversationBranch(session.id)}. Do ALL repo edits inside that directory with bash — never in any other checkout or clone — Eden auto-syncs changes from that directory (only) to a pull request after each turn.`,
+      `[Eden] Your working checkout for this conversation is at ${conversationCheckoutPath(session.id)} on branch ${conversationBranch(session.id)}. Do ALL repo edits inside that directory with bash — never in any other checkout or clone — after each turn Eden stages changes from that directory (only) as drafts the user reviews and publishes.`,
     );
   }
   if (ensured.note) prefixParts.push(`[Eden] ${ensured.note}`);

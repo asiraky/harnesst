@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import {
   checkoutEnsureError,
@@ -9,7 +9,14 @@ import {
   policyWarnings,
   type TreeState,
 } from "~/assistant/checkout-sync";
+import {
+  syncConversationCheckout,
+  type AssistantCheckout,
+  type SyncEngineDeps,
+} from "~/assistant/checkout-sync.server";
+import { stageDraft } from "~/drafts/drafts.server";
 import { narrowedReadTokenParams } from "~/github/client.server";
+import { makeFakeStore, type FakeStore } from "../fakes/store";
 // The instance-side sidecar's pure record classifier (importing the module must not bind a port).
 import { classifyRawRecord } from "../../assistant-template/checkout-sidecar.mjs";
 
@@ -219,5 +226,164 @@ describe("github: narrowed read token request shape", () => {
     });
     // Guard against accidental permission widening.
     expect(Object.keys(params.permissions)).toEqual(["contents"]);
+  });
+});
+
+// ── Post-turn sync engine (server half, all I/O injected) ──────────────────────
+
+/** A connected project with one member rooted at `agent/`, so drafts attribute to it. */
+function seedRepoProject(store: FakeStore): void {
+  store.seedProject({
+    id: "proj_1",
+    orgId: "org_1",
+    repoOwner: "acme",
+    repoName: "agent",
+    repoInstallationId: "inst_1",
+    defaultBranch: "main",
+  });
+  store.seedAgent({ id: "agent_1", projectId: "proj_1", name: "agent", root: "agent" });
+}
+
+function makeSyncDeps(over: Partial<SyncEngineDeps> = {}): SyncEngineDeps {
+  return {
+    auxBase: vi.fn(async () => ({ supported: true, base: "http://sidecar" })),
+    readTree: vi.fn(async () => tree([])),
+    getRow: vi.fn(async () => null),
+    upsertRow: vi.fn(async () => {}),
+    mirror: vi.fn(async () => "mirror_sha"),
+    stage: stageDraft,
+    recordFailure: vi.fn(async () => {}),
+    ...over,
+  };
+}
+
+const syncInput = {
+  projectId: "proj_1",
+  conversationId: "conv1",
+  deploymentId: "dep_1",
+} as const;
+
+describe("checkout-sync: post-turn sync engine", () => {
+  it("stages drafts (writes and deletions), opens no PR, and still mirrors the conversation branch", async () => {
+    const store = makeFakeStore();
+    seedRepoProject(store);
+    const t = tree([
+      { path: "agent/tools/foo.ts", status: "added", content: "export default 1;" },
+      { path: "agent/instructions.md", status: "modified", content: "Be nice." },
+      { path: "agent/old.ts", status: "deleted" },
+    ]);
+    const deps = makeSyncDeps({ readTree: vi.fn(async () => t) });
+
+    const result = await syncConversationCheckout({ ...syncInput, store }, deps);
+
+    expect(result).toEqual({ synced: true, kind: "synced", stagedCount: 3, warnings: undefined });
+    // The sync's only surfaces are the staging area and the durability mirror — no PR identity.
+    expect("prNumber" in result).toBe(false);
+
+    // Every planned write AND the deletion (content: null) landed as drafts, attributed to the
+    // owning member, authorless (a null createdBy is what marks a draft assistant-staged).
+    const drafts = await store.drafts.listByProject("proj_1");
+    expect(drafts.map((d) => [d.path, d.content])).toEqual([
+      ["agent/instructions.md", "Be nice."],
+      ["agent/old.ts", null],
+      ["agent/tools/foo.ts", "export default 1;"],
+    ]);
+    expect(drafts.every((d) => d.agentId === "agent_1" && d.createdBy === null)).toBe(true);
+
+    // The durability branch was still mirrored, once, from the merge-base the diff was cut at.
+    expect(deps.mirror).toHaveBeenCalledOnce();
+    const [, branch, baseSha] = vi.mocked(deps.mirror).mock.calls[0];
+    expect(branch).toBe("eden/conv-conv1");
+    expect(baseSha).toBe("base0");
+
+    // The row advanced to the plan's hash so the next identical tree no-ops.
+    expect(deps.upsertRow).toHaveBeenCalledWith(
+      expect.objectContaining({
+        conversationId: "conv1",
+        branch: "eden/conv-conv1",
+        lastSyncedHash: planCommit(t).hash,
+      }),
+    );
+  });
+
+  it("an unchanged tree no-ops without staging or mirroring", async () => {
+    const store = makeFakeStore();
+    seedRepoProject(store);
+    const t = tree([{ path: "agent/a.ts", status: "added", content: "A" }]);
+    const stage = vi.fn();
+    const deps = makeSyncDeps({
+      readTree: vi.fn(async () => t),
+      getRow: vi.fn(async () => ({ lastSyncedHash: planCommit(t).hash }) as AssistantCheckout),
+      stage,
+    });
+
+    const result = await syncConversationCheckout({ ...syncInput, store }, deps);
+
+    expect(result).toEqual({ synced: false, kind: "noop", reason: "unchanged", stagedCount: 0 });
+    expect(stage).not.toHaveBeenCalled();
+    expect(deps.mirror).not.toHaveBeenCalled();
+  });
+
+  it("a mirror failure fails the sync before anything is staged", async () => {
+    const store = makeFakeStore();
+    seedRepoProject(store);
+    const stage = vi.fn();
+    const deps = makeSyncDeps({
+      readTree: vi.fn(async () => tree([{ path: "agent/a.ts", status: "added", content: "A" }])),
+      mirror: vi.fn(async () => {
+        throw new Error("boom");
+      }),
+      stage,
+    });
+
+    const result = await syncConversationCheckout({ ...syncInput, store }, deps);
+
+    expect(result.kind).toBe("failed");
+    expect(result.stagedCount).toBe(0);
+    expect(result.reason).toContain("mirroring to GitHub failed: boom");
+    expect(stage).not.toHaveBeenCalled();
+    expect(await store.drafts.listByProject("proj_1")).toEqual([]);
+    expect(deps.recordFailure).toHaveBeenCalledOnce();
+  });
+
+  it("a staging failure keeps the hash behind so the next turn retries", async () => {
+    const store = makeFakeStore();
+    seedRepoProject(store);
+    const deps = makeSyncDeps({
+      readTree: vi.fn(async () => tree([{ path: "agent/a.ts", status: "added", content: "A" }])),
+      stage: vi.fn(async () => {
+        throw new Error("db down");
+      }),
+    });
+
+    const result = await syncConversationCheckout({ ...syncInput, store }, deps);
+
+    expect(result.kind).toBe("failed");
+    expect(result.reason).toContain("staging the changes failed: db down");
+    // The row never advanced — the next turn re-mirrors (idempotent) and re-stages.
+    expect(deps.upsertRow).not.toHaveBeenCalled();
+    expect(deps.recordFailure).toHaveBeenCalledOnce();
+  });
+
+  it("a turn whose only edits were policy-stripped lands the warnings on the row", async () => {
+    const store = makeFakeStore();
+    seedRepoProject(store);
+    const stage = vi.fn();
+    const deps = makeSyncDeps({
+      readTree: vi.fn(async () =>
+        tree([{ path: ".eden/assistant/assistant.json", status: "modified", content: "{}" }]),
+      ),
+      stage,
+    });
+
+    const result = await syncConversationCheckout({ ...syncInput, store }, deps);
+
+    expect(result.kind).toBe("noop");
+    expect(result.warnings?.[0]).toContain(".eden/assistant/assistant.json");
+    expect(stage).not.toHaveBeenCalled();
+    expect(deps.mirror).not.toHaveBeenCalled();
+    expect(deps.upsertRow).toHaveBeenCalledWith(
+      expect.objectContaining({ warnings: result.warnings }),
+    );
   });
 });
