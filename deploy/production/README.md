@@ -201,60 +201,131 @@ certbot, and their certificate volumes; only its harnesst and Postgres services 
 ## One-time rename cutover (`eden` → `harnesst`)
 
 Issue #213 renamed the deployment identifiers, so a host provisioned before that change carries
-`eden` names the current stack definition no longer looks for: the stack and service names, the
-`/opt/eden` deploy root, the Postgres role and database, and the `EDEN_*` keys in `production.env`.
-Nothing here is derived at runtime — deploying the new definition against an un-migrated host would
-create a *second* stack contending for the same host ports and would initdb an empty Postgres
-alongside the real one. Do these steps first, in order, in one sitting.
+`eden` names the current code no longer looks for. Two kinds of name are involved, and the second
+kind is the one that bites:
 
-1. Quiesce the app so the database has no client connections (`ALTER DATABASE ... RENAME` fails
-   while any session is attached). Postgres stays up:
+- **Static** — the stack and service names, the `/opt/eden` deploy root, the Postgres role and
+  database, and the `EDEN_*` keys in `production.env`. Deploying the new definition against an
+  un-migrated host would create a *second* stack contending for the same host ports and would
+  initdb an empty Postgres alongside the real one.
+- **Derived at runtime**, and therefore easy to miss — `worldDbName()`, `homeVolumeName()` and the
+  instance container name in `app/seams/oss/deploy.localdocker.server.ts` build
+  `harnesst_env_<key>_<sha>`, `harnesst-home-<key>-<sha>` and `harnesst-inst-<id>` from prefixes
+  that moved. The suffixes are hashes of the (unchanged) worldKey, so each old name maps 1:1 onto a
+  new one. Skip this and nothing errors: every environment quietly comes up with an empty world
+  database and an empty agent home.
 
-   ```bash
-   docker service scale eden_eden=0
-   ```
+Do these steps in order, in one sitting. Downtime spans the whole window.
 
-2. Rename the role and database in place. Connect to the `postgres` database — you cannot rename
-   the database you are connected to. The password reset is required, not optional: an MD5 password
-   is salted with the role name, so renaming the role silently clears it. Use the same value that
-   `EDEN_PG_PASSWORD` holds in `/opt/eden/production.env`.
+1. Back the database up first. The stack runs Postgres on **port 5442** with
+   `listen_addresses=127.0.0.1,172.17.0.1` and no default unix socket, so every in-container
+   `psql`/`pg_dump` needs `-h 127.0.0.1 -p 5442` and a password — bare `psql -U eden` fails looking
+   for `/var/run/postgresql/.s.PGSQL.5432`.
 
    ```bash
    PG="$(docker ps -qf name=eden_postgres)"
-   docker exec -i "$PG" psql -U eden -d postgres -c 'ALTER DATABASE eden RENAME TO harnesst'
-   docker exec -i "$PG" psql -U eden -d postgres -c 'ALTER ROLE eden RENAME TO harnesst'
-   docker exec -i "$PG" psql -U harnesst -d postgres \
-     -c "ALTER ROLE harnesst WITH PASSWORD '<the EDEN_PG_PASSWORD value>'"
+   PW="$(sudo grep -oP '^EDEN_PG_PASSWORD=\K.*' /opt/eden/production.env)"
+   mkdir -p ~/backups
+   docker exec -e PGPASSWORD="$PW" "$PG" \
+     pg_dump -h 127.0.0.1 -p 5442 -U eden -d eden --format=custom > ~/backups/eden-pre-rename.dump
    ```
 
-3. Remove the old stack and wait for its tasks to drain, then move the deploy root. The Postgres
-   data directory travels with it; this is a rename on the same filesystem, not a copy.
+2. Quiesce everything that holds a connection — the control plane, and the agent instances, which
+   hold connections to their world databases. `ALTER DATABASE ... RENAME` fails while any session is
+   attached. Postgres itself stays up.
+
+   ```bash
+   docker service scale --detach eden_eden=0
+   docker stop $(docker ps -qf name=eden-inst-)
+   ```
+
+3. Rename the databases — the control-plane one and every per-environment world database. Connect to
+   the `postgres` database; you cannot rename the one you are connected to.
+
+   ```bash
+   adm() { docker exec -e PGPASSWORD="$PW" "$PG" \
+     psql -h 127.0.0.1 -p 5442 -U eden -d postgres -v ON_ERROR_STOP=1 -tAc "$1"; }
+   adm "SELECT count(pg_terminate_backend(pid)) FROM pg_stat_activity
+        WHERE datname LIKE 'eden%' AND pid <> pg_backend_pid()"
+   for d in $(adm "SELECT datname FROM pg_database
+                   WHERE datname='eden' OR datname LIKE 'eden\_env\_%'"); do
+     adm "ALTER DATABASE \"$d\" RENAME TO \"harnesst${d#eden}\""
+   done
+   ```
+
+4. Rename the role. `ALTER ROLE eden RENAME TO harnesst` fails with *session user cannot be renamed*
+   when you are connected as `eden`, and `eden` is the only login role on a stock host — so make a
+   throwaway superuser, rename from there, and drop it.
+
+   Whether the password survives depends on the hash: a SCRAM verifier does not include the role
+   name, so it carries over untouched, but an MD5 hash is salted with the role name and is silently
+   cleared by the rename. `postgres:17` defaults to SCRAM; confirm before assuming, and only reset
+   the password if this reports `md5`.
+
+   ```bash
+   adm "SELECT CASE WHEN rolpassword LIKE 'SCRAM-SHA-256%' THEN 'scram' ELSE 'md5' END
+        FROM pg_authid WHERE rolname='eden'"
+
+   TMP="$(openssl rand -hex 24)"
+   printf "CREATE ROLE pgrename_tmp SUPERUSER LOGIN PASSWORD '%s';\n" "$TMP" |
+     docker exec -i -e PGPASSWORD="$PW" "$PG" psql -h 127.0.0.1 -p 5442 -U eden -d postgres -q
+   docker exec -e PGPASSWORD="$TMP" "$PG" psql -h 127.0.0.1 -p 5442 -U pgrename_tmp -d postgres \
+     -c 'ALTER ROLE eden RENAME TO harnesst'
+   docker exec -e PGPASSWORD="$PW" "$PG" psql -h 127.0.0.1 -p 5442 -U harnesst -d harnesst \
+     -c 'SELECT count(*) FROM organization'   # proves the password carried over
+   docker exec -e PGPASSWORD="$PW" "$PG" psql -h 127.0.0.1 -p 5442 -U harnesst -d postgres \
+     -c 'DROP ROLE pgrename_tmp'
+   ```
+
+5. Migrate the agent home volumes. Docker cannot rename a volume, so this is a copy; the originals
+   stay put as the rollback. `diff -r` is the check that matters — `du` totals differ harmlessly
+   because directory entry sizes vary between the source and a freshly written copy.
+
+   ```bash
+   for src in $(docker volume ls --format '{{.Name}}' | grep '^eden-home-'); do
+     dst="harnesst-home-${src#eden-home-}"
+     docker volume create "$dst" >/dev/null
+     docker run --rm -v "$src":/from:ro -v "$dst":/to alpine:3 sh -c 'cp -a /from/. /to/'
+     docker run --rm -v "$src":/a:ro -v "$dst":/b:ro alpine:3 diff -r /a /b && echo "$dst ok"
+   done
+   ```
+
+6. Remove the old instance containers. Their name, env keys and world-database URL are all stale, so
+   they cannot be restarted into the new world — they must be redeployed from the UI afterwards.
+   Everything durable (agent home, session history) is in the volume and database you just migrated.
+
+   ```bash
+   docker rm -f $(docker ps -aqf name=eden-inst-)
+   ```
+
+7. Remove the old stack, wait for its tasks to drain, then move the deploy root. The Postgres data
+   directory travels with it; this is a rename on the same filesystem, not a copy.
 
    ```bash
    docker stack rm eden
-   while docker service ls --format '{{.Name}}' | grep -q '^eden_'; do sleep 2; done
+   while [ -n "$(docker ps -aq --filter label=com.docker.stack.namespace=eden)" ]; do sleep 2; done
    sudo mv /opt/eden /opt/harnesst
    ```
 
-4. Rewrite the env file's keys and its `DATABASE_URL`. Every `EDEN_*` name became `HARNESST_*`;
+8. Rewrite the env file's keys and its `DATABASE_URL`. Every `EDEN_*` name became `HARNESST_*`;
    values are unchanged. `HARNESST_SECRETS_KEY` must keep its existing value — a new key makes every
    stored secret unreadable.
 
    ```bash
-   sudo cp /opt/harnesst/production.env /opt/harnesst/production.env.bak
+   sudo cp -a /opt/harnesst/production.env /opt/harnesst/production.env.pre-rename.bak
    sudo sed -i 's/^EDEN_/HARNESST_/' /opt/harnesst/production.env
    sudo sed -i 's#postgres://eden:#postgres://harnesst:#; s#/eden$#/harnesst#' \
      /opt/harnesst/production.env
-   sudo grep -c '^HARNESST_' /opt/harnesst/production.env   # sanity: non-zero
+   sudo grep -c '^EDEN_' /opt/harnesst/production.env       # sanity: 0
    sudo grep '^DATABASE_URL' /opt/harnesst/production.env | sed 's/:[^:@]*@/:***@/'
    ```
 
-5. Deploy: run **Deploy production** on `main`, or `gh workflow run deploy.yml --ref main`. It
+9. Deploy: run **Deploy production** on `main`, or `gh workflow run deploy.yml --ref main`. It
    creates the `harnesst` stack, migrates, and waits for health.
 
-6. nginx needs no change to keep working — it proxies to loopback ports, which the rename does not
-   move. Renaming its container and conf file (`eden-nginx`, `eden.conf`) is cosmetic and can be
-   done later.
+10. nginx keeps working untouched — it proxies loopback ports, which the rename does not move. The
+    container and conf-file names are cosmetic *except* where something references them by name:
+    check the crontab, which runs `docker exec eden-nginx nginx -s reload` after certbot renewal.
 
 Per-project follow-up, once the control plane is up. Repositories that harnesst manages carry two
 generated filenames that were renamed, and existing agent instances carry the old env names:
@@ -263,8 +334,8 @@ generated filenames that were renamed, and existing agent instances carry the ol
   `git mv <member>/eden-model.ts <member>/harnesst-model.ts`, updating the `./eden-model` /
   `../../eden-model` imports in `agent.ts` and each `subagents/*/agent.ts`. Without the lock
   rename the Deployment tab shows no installs and stops injecting their secrets.
-- Redeploy each agent instance so it receives `HARNESST_*` env instead of `EDEN_*`. Instances keep
-  running on their baked-in old names until then.
+- Redeploy every agent instance (step 6 removed the old containers), which also gives them
+  `HARNESST_*` env in place of `EDEN_*`.
 
 ## Verification and operations
 
