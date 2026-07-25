@@ -9,7 +9,7 @@ import { ThemeToggle } from "~/components/theme-toggle";
 import { Logo } from "~/components/marketing/logo";
 
 /** The public source repository. harnesst is open source; every marketing page links here. */
-export const REPO_URL = "https://github.com/zero8ai/eden";
+export const REPO_URL = "https://github.com/asiraky/harnesst";
 
 /**
  * `appOrigin` is the app's absolute origin when the page serves from the marketing host

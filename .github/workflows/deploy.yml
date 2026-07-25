@@ -29,7 +29,7 @@ jobs:
 
   build:
     needs: checks
-    if: github.repository == 'zero8ai/eden' && github.ref == 'refs/heads/main'
+    if: github.repository == 'asiraky/harnesst' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:
@@ -54,7 +54,7 @@ jobs:
       - id: metadata
         uses: docker/metadata-action@v5
         with:
-          images: ghcr.io/zero8ai/eden
+          images: ghcr.io/asiraky/harnesst
           tags: |
             type=sha,format=short,prefix=
             type=raw,value=latest
@@ -73,7 +73,7 @@ jobs:
           context: .
           target: build-env
           push: true
-          tags: ghcr.io/zero8ai/eden:${{ steps.image.outputs.tag }}-migrate
+          tags: ghcr.io/asiraky/harnesst:${{ steps.image.outputs.tag }}-migrate
           cache-from: type=gha,scope=migrate
           cache-to: type=gha,mode=max,scope=migrate
 
@@ -81,7 +81,7 @@ jobs:
     needs:
       - checks
       - build
-    if: github.repository == 'zero8ai/eden' && github.ref == 'refs/heads/main'
+    if: github.repository == 'asiraky/harnesst' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     environment: production

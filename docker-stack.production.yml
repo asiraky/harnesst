@@ -47,7 +47,7 @@ services:
         order: stop-first
 
   eden:
-    image: ghcr.io/zero8ai/eden:${IMAGE_TAG:?set IMAGE_TAG}
+    image: ghcr.io/asiraky/harnesst:${IMAGE_TAG:?set IMAGE_TAG}
     env_file:
       - ./production.env
     networks:

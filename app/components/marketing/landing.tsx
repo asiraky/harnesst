@@ -403,7 +403,7 @@ export function MarketingLanding({ appOrigin = "" }: { appOrigin?: string }) {
               Same software either way.
             </p>
             <a
-              href="https://github.com/zero8ai/eden"
+              href="https://github.com/asiraky/harnesst"
               className="mt-8 inline-flex items-center gap-2 text-lg font-medium underline underline-offset-8 hover:opacity-70"
             >
               View the source on GitHub →
@@ -417,7 +417,7 @@ export function MarketingLanding({ appOrigin = "" }: { appOrigin?: string }) {
                 </p>
                 <p>
                   <span className="text-harnesst-band-muted">$ </span>
-                  git clone github.com/zero8ai/eden
+                  git clone github.com/asiraky/harnesst
                 </p>
                 <p>
                   <span className="text-harnesst-band-muted">$ </span>

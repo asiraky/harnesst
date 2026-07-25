@@ -13,9 +13,9 @@ idea to merged.
 
 Every change starts with an issue so we can agree on the approach before code is written.
 
-- **Found a bug?** Open a [Bug report](https://github.com/zero8ai/eden/issues/new?template=bug_report.yml).
-- **Have an idea?** Open a [Feature request](https://github.com/zero8ai/eden/issues/new?template=feature_request.yml).
-- **Just a question?** Use [Discussions](https://github.com/zero8ai/eden/discussions) instead.
+- **Found a bug?** Open a [Bug report](https://github.com/asiraky/harnesst/issues/new?template=bug_report.yml).
+- **Have an idea?** Open a [Feature request](https://github.com/asiraky/harnesst/issues/new?template=feature_request.yml).
+- **Just a question?** Use [Discussions](https://github.com/asiraky/harnesst/discussions) instead.
 
 Please search existing issues first to avoid duplicates. Wait for a maintainer to
 confirm the approach on non-trivial work before investing time in a PR.
