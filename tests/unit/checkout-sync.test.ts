@@ -359,7 +359,7 @@ describe("checkout-sync: post-turn sync engine", () => {
     const result = await syncConversationCheckout({ ...syncInput, store }, deps);
 
     expect(result.kind).toBe("failed");
-    expect(result.reason).toContain("staging the changes failed: db down");
+    expect(result.reason).toContain("saving the changes failed: db down");
     // The row never advanced — the next turn re-mirrors (idempotent) and re-stages.
     expect(deps.upsertRow).not.toHaveBeenCalled();
     expect(deps.recordFailure).toHaveBeenCalledOnce();

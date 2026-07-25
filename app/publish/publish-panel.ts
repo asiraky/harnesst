@@ -39,6 +39,86 @@ export function publishedVersion(steps: PipelineStep[] | null | undefined): stri
   return version?.status === "succeeded" ? (version.detail ?? null) : null;
 }
 
+/** A deployment row's live status, keyed by id — what the deploy substeps resolve against. */
+export interface DeploymentSnapshot {
+  status: string;
+  errorDetail: string | null;
+}
+
+/**
+ * Present a task's steps against the LIVE deployment rows (§3.2 honesty). The pipeline's work
+ * ends when every member's deploy is queued — each queued deploy substep records its
+ * deploymentId — but "Starting your agents" is only true once the rows actually reach `live`.
+ * This resolves each recorded substep to its row's current state (pending/building → running,
+ * live/replaced → succeeded, failed → failed with the row's error) and re-derives the deploy
+ * step from them, so the panel keeps spinning per member until each agent is up and a
+ * post-queue deploy failure surfaces in the pipeline UI instead of only on the Deployment tab.
+ * A recorded failure is never rewritten; a substep whose row aged out keeps its recorded state.
+ */
+export function resolveDeployProgress(
+  steps: PipelineStep[] | null,
+  deployments: Map<string, DeploymentSnapshot>,
+): PipelineStep[] | null {
+  if (!steps) return steps;
+  return steps.map((step) => {
+    if (step.key !== "deploy" || !step.substeps || step.substeps.length === 0) return step;
+    const substeps = step.substeps.map((sub) => {
+      if (!sub.deploymentId) return sub;
+      const row = deployments.get(sub.deploymentId);
+      if (!row) return sub;
+      if (row.status === "failed") {
+        return {
+          ...sub,
+          status: "failed" as const,
+          error: row.errorDetail ?? "The deployment failed — see the Deployment tab.",
+        };
+      }
+      if (row.status === "pending" || row.status === "building") {
+        return { ...sub, status: "running" as const };
+      }
+      // live — or already replaced by a later deploy (draining/stopped): it did come up.
+      return { ...sub, status: "succeeded" as const };
+    });
+    // Re-derive the step's presented status from the substeps; a step the pipeline recorded
+    // as failed (queue-time failure) keeps its record.
+    if (step.status !== "succeeded") return { ...step, substeps };
+    const failed = substeps.filter((s) => s.status === "failed");
+    if (failed.length > 0) {
+      return {
+        ...step,
+        substeps,
+        status: "failed" as const,
+        error: `Couldn't start ${failed.map((s) => s.label).join(", ")}:\n\n${failed
+          .map((s) => s.error)
+          .filter(Boolean)
+          .join("\n")}`,
+      };
+    }
+    if (substeps.some((s) => s.status === "running")) {
+      return { ...step, substeps, status: "running" as const };
+    }
+    return { ...step, substeps };
+  });
+}
+
+/** Every deployment id the steps' deploy substeps recorded (what the route reads back). */
+export function deploymentIdsOf(steps: PipelineStep[] | null | undefined): string[] {
+  const deploy = steps?.find((s) => s.key === "deploy");
+  return (deploy?.substeps ?? [])
+    .map((s) => s.deploymentId)
+    .filter((id): id is string => id != null);
+}
+
+/** True when no presented step is still running — the publish's work has fully landed. */
+export function stepsSettled(steps: PipelineStep[] | null | undefined): boolean {
+  return !steps || steps.every((s) => s.status !== "running");
+}
+
+/** The presented failed step, if any (a queue-time failure or a post-queue deploy failure). */
+export function stepsFailure(steps: PipelineStep[] | null | undefined): PipelineStep | null {
+  return steps?.find((s) => s.status === "failed") ?? null;
+}
+
 /** What a saved change does to its file — the panel's per-file action badge (§4.2). */
 export type ChangeAction = "edited" | "new" | "deleted";
 

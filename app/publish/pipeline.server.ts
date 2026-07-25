@@ -14,9 +14,16 @@
  * the deployment unit — everyone deploys) get a Release with no imageRef and build at deploy
  * time, which docker layer caching keeps cheap.
  *
- * The commit is a compare-and-swap fast-forward onto the default branch (§3.1): if an external
- * push moves the head mid-publish, the pipeline rebuilds against the new head and retries the
- * commit exactly once before failing with a clear message.
+ * The commit is a compare-and-swap fast-forward onto the default branch (§3.1), anchored on the
+ * head sha the build pass captured: an external push anywhere in the build→commit window makes
+ * the ref update non-fast-forward, and the pipeline rebuilds against the new head and retries
+ * the commit exactly once before failing with a clear message. Nothing unbuilt ever lands.
+ *
+ * The pipeline itself finishes when every member's deploy is QUEUED (the worker is
+ * concurrency-1, so it cannot wait on jobs behind itself). Each queued deploy substep records
+ * its deploymentId; the publish state route re-reads those rows and presents the deploy step as
+ * still running/failed until every agent is actually live — the record says what the pipeline
+ * did, the presentation says what is true now.
  *
  * Error policy (carried over from the queued-publish runner it replaces): every step failure is
  * the TASK's outcome — fail the task, do not rethrow, let the job complete (`maxAttempts: 1`).
@@ -25,7 +32,7 @@
  * GitHub/docker/runtime dependencies are injectable so unit tests run with zero I/O.
  */
 import { discardConversationCheckoutsForProject } from "~/assistant/checkout-sync.server";
-import type { DataStore, PipelineStep, Project } from "~/data/ports";
+import type { DataStore, PipelineStep, Project, WorkspaceTask } from "~/data/ports";
 import { ensureReleasesForCommit, queueDeploy } from "~/deploy/controller.server";
 import { listTeamEnvNames } from "~/deploy/environments.server";
 import {
@@ -45,7 +52,11 @@ import { detectAgentRoots, hasTeamLayout } from "~/eve/parse";
 import { syncProjectAgents } from "~/db/queries.server";
 import { getAgentSource, invalidateRepoSource, warmAgentSource } from "~/github/cached.server";
 import { fetchAgentSource } from "~/github/repo.server";
-import { commitToDefaultBranch, NonFastForwardError } from "~/github/write.server";
+import {
+  commitToDefaultBranch,
+  getBranchHead,
+  NonFastForwardError,
+} from "~/github/write.server";
 import { enqueue } from "~/jobs/queue.server";
 import { isAssistantConfigPath } from "~/project/guard.server";
 import { initialPublishSteps } from "~/publish/publish-panel";
@@ -73,6 +84,7 @@ export interface PublishPipelineDeps {
   checkBuild: CheckBuildFn;
   listRepoPaths: ListRepoPathsFn;
   normalizeDrafts: typeof normalizeOpenRouterPackageDrafts;
+  getBranchHead: typeof getBranchHead;
   commitToDefaultBranch: typeof commitToDefaultBranch;
   fetchAgentSource: typeof fetchAgentSource;
   detectAgentRoots: typeof detectAgentRoots;
@@ -105,6 +117,7 @@ function defaultDeps(): PublishPipelineDeps {
       }
     },
     normalizeDrafts: normalizeOpenRouterPackageDrafts,
+    getBranchHead,
     commitToDefaultBranch,
     fetchAgentSource,
     detectAgentRoots,
@@ -131,11 +144,32 @@ const ASSISTANT_ONLY_REASON = "This change only affects the assistant's configur
 const CAS_FAILED_MESSAGE =
   "Someone else changed this repository while we were publishing. Try publishing again.";
 
+/** The outcome of a publish whose process died mid-run (boot reconciliation / rerun guard). */
+export const PUBLISH_INTERRUPTED_MESSAGE =
+  "Eden restarted while this publish was running. Nothing you saved was lost — publish again.";
+
+/**
+ * The `workspace_tasks_running_subject_uq` partial unique violation: another request created the
+ * running publish task between our dedupe read and our insert. Walks `cause` like
+ * isVersionLabelCollision so wrapped driver errors still match.
+ */
+function isRunningPublishCollision(err: unknown): boolean {
+  for (let e: unknown = err; e instanceof Error; e = e.cause) {
+    const pg = e as Error & { code?: string; constraint_name?: string };
+    if (pg.code === "23505" && pg.constraint_name === "workspace_tasks_running_subject_uq") {
+      return true;
+    }
+  }
+  return false;
+}
+
 /**
  * Trigger a publish (§2.9: one per project at a time): dedupe on the running `publish` task,
  * create the task with the full step shape visible from the start, enqueue the `publish` job
  * (`maxAttempts: 1` — a failed pipeline is the task's outcome, never an auto-retry), and link
- * the job onto the task. Returns the existing running task when one is already in flight.
+ * the job onto the task. Returns the existing running task when one is already in flight —
+ * the find is racy on its own, so the running-subject partial unique index is the real gate
+ * and an insert collision resolves to "already running" too.
  */
 export async function startPublish(
   input: {
@@ -153,18 +187,27 @@ export async function startPublish(
   const drafts = await store.drafts.listByProject(input.projectId);
   if (drafts.length === 0) throw new Error("Nothing to publish — no saved changes.");
 
-  const task = await createTask(
-    {
-      projectId: input.projectId,
-      kind: "publish",
-      subjectKey: "publish",
-      label: `Publishing ${drafts.length} change${drafts.length === 1 ? "" : "s"}`,
-      originUrl: input.originUrl,
-      steps: initialPublishSteps(),
-      createdBy: input.createdBy,
-    },
-    store,
-  );
+  let task: WorkspaceTask;
+  try {
+    task = await createTask(
+      {
+        projectId: input.projectId,
+        kind: "publish",
+        subjectKey: "publish",
+        label: `Publishing ${drafts.length} change${drafts.length === 1 ? "" : "s"}`,
+        originUrl: input.originUrl,
+        steps: initialPublishSteps(),
+        createdBy: input.createdBy,
+      },
+      store,
+    );
+  } catch (error) {
+    if (isRunningPublishCollision(error)) {
+      const winner = await findRunningTask(input.projectId, "publish", store);
+      if (winner) return { taskId: winner.id, alreadyRunning: true };
+    }
+    throw error;
+  }
   const jobId = await enqueue(
     "publish",
     {
@@ -221,18 +264,26 @@ export async function publishNow(
   const drafts = await store.drafts.listByProject(input.projectId);
   if (drafts.length === 0) throw new Error("Nothing to publish — no saved changes.");
 
-  const task = await createTask(
-    {
-      projectId: input.projectId,
-      kind: "publish",
-      subjectKey: "publish",
-      label: `Publishing ${drafts.length} change${drafts.length === 1 ? "" : "s"}`,
-      originUrl: input.originUrl,
-      steps: initialPublishSteps(),
-      createdBy: input.createdBy,
-    },
-    store,
-  );
+  let task: WorkspaceTask;
+  try {
+    task = await createTask(
+      {
+        projectId: input.projectId,
+        kind: "publish",
+        subjectKey: "publish",
+        label: `Publishing ${drafts.length} change${drafts.length === 1 ? "" : "s"}`,
+        originUrl: input.originUrl,
+        steps: initialPublishSteps(),
+        createdBy: input.createdBy,
+      },
+      store,
+    );
+  } catch (error) {
+    if (isRunningPublishCollision(error)) {
+      throw new Error("A publish is already running for this project.");
+    }
+    throw error;
+  }
   return runPublish(
     {
       projectId: input.projectId,
@@ -329,6 +380,19 @@ export async function runPublish(
     deploymentIds: [],
   };
 
+  // Rerun guard: a publish task runs exactly ONCE. If this task already carries progress (or
+  // resolved), a restart re-delivered its job — rerunning would clobber the real history, and a
+  // crash after the commit would re-read zero drafts and misreport a landed publish as "nothing
+  // to publish" (or land a duplicate commit). Fail it cleanly instead; boot reconciliation
+  // (worker.server.ts) normally settles these before the queue ever re-delivers.
+  if (task.status !== "running" || (task.steps ?? []).some((s) => s.status !== "pending")) {
+    if (task.status === "running") {
+      await failTask(taskId, PUBLISH_INTERRUPTED_MESSAGE, store);
+    }
+    outcome.error = PUBLISH_INTERRUPTED_MESSAGE;
+    return outcome;
+  }
+
   // ── Step bookkeeping: ONE array, updated in place and re-persisted after every transition. ──
   const steps = initialPublishSteps();
   const step = (key: PipelineStep["key"]): PipelineStep =>
@@ -377,11 +441,18 @@ export async function runPublish(
   let provisional = new Map<string | undefined, string>();
   const cleanupTags: string[] = [];
 
+  // The head the current build pass was based on — the commit's CAS anchor (§3.1). Captured at
+  // the START of each build pass and passed to commitToDefaultBranch as the expected head, so an
+  // external push ANYWHERE in the minutes-long build→commit window is a NonFastForwardError,
+  // never a silently-unbuilt tree landing on the default branch.
+  let baseHeadSha: string | null = null;
+
   /**
    * The build step (§3.2): one sequential build per member root the change-set touches (one
    * docker tag namespace per task, but the underlying builder still races on shared caches —
-   * and the worker is concurrency-1 anyway). Rerunnable: a CAS retry calls it again against
-   * the moved head. Returns false after failing the task.
+   * and the worker is concurrency-1 anyway). Pins the built tree to the head sha it captures,
+   * which the commit then CASes on. Rerunnable: a CAS retry calls it again, capturing the moved
+   * head. Returns false after failing the task.
    */
   const runBuildStep = async (files: PublishFile[]): Promise<boolean> => {
     const buildStep = step("build");
@@ -399,6 +470,8 @@ export async function runPublish(
     buildStep.substeps = subs;
     provisional = new Map();
     await save();
+    const headSha = await deps.getBranchHead(installationId, repo, connected.defaultBranch);
+    baseHeadSha = headSha;
 
     for (const [i, agentRoot] of buildRoots.entries()) {
       const sub = subs[i];
@@ -409,7 +482,9 @@ export async function runPublish(
       const result = await deps.checkBuild({
         projectId: connected.id,
         repo,
-        ref: connected.defaultBranch,
+        // Pinned to the captured head, not the branch name: the built tree must be exactly
+        // what the CAS commit lands on.
+        ref: headSha,
         installationId,
         overlay: files,
         agentRoot,
@@ -490,9 +565,15 @@ export async function runPublish(
     const message = commitMessage(files);
     let sha: string;
     try {
+      // Config-only publishes never ran a build — capture the CAS anchor now.
+      if (baseHeadSha === null) {
+        baseHeadSha = await deps.getBranchHead(installationId, repo, connected.defaultBranch);
+      }
       const commit = () =>
         deps.commitToDefaultBranch(installationId, repo, {
           branch: connected.defaultBranch,
+          // Read at call time: the CAS retry below refreshes it before recommitting.
+          expectedHeadSha: baseHeadSha!,
           files,
           message,
         });
@@ -500,12 +581,23 @@ export async function runPublish(
         sha = (await commit()).sha;
       } catch (error) {
         if (!(error instanceof NonFastForwardError)) throw error;
-        // CAS miss (§3.1): the head moved under us. Rebuild against the new head and retry
-        // exactly once — the ref is a branch name, so the rerun naturally sees the new base.
-        step("commit").detail = "The repository changed — rebuilding and retrying";
+        // CAS miss (§3.1): the head moved since the build's anchor. Set the commit step back to
+        // pending — only one step is ever active (§4.3), and a failed rebuild must not strand a
+        // spinning commit in a failed task — then rebuild against the new head and retry the
+        // commit exactly once.
+        const commitStep = step("commit");
+        commitStep.status = "pending";
+        commitStep.detail = "The repository changed — rebuilding and retrying";
         await save();
-        if (!assistantConfigOnly && !(await runBuildStep(files))) return outcome;
-        step("commit").status = "running";
+        if (assistantConfigOnly) {
+          baseHeadSha = await deps.getBranchHead(installationId, repo, connected.defaultBranch);
+        } else if (!(await runBuildStep(files))) {
+          delete commitStep.detail;
+          await save();
+          return outcome;
+        }
+        commitStep.status = "running";
+        delete commitStep.detail;
         await save();
         try {
           sha = (await commit()).sha;
@@ -524,9 +616,11 @@ export async function runPublish(
     outcome.commitSha = sha;
 
     // Only after the commit succeeds: the published drafts now live on the default branch.
-    await store.drafts.deleteByPaths(
+    // Guarded per row by the updatedAt captured at pipeline start — a save that landed on the
+    // same path DURING the build/commit window was not published and must stay saved.
+    await store.drafts.deletePublished(
       connected.id,
-      drafts.map((d) => d.path),
+      drafts.map((d) => ({ path: d.path, updatedAt: d.updatedAt })),
     );
     // Any conversation whose staged drafts were included has just been published — drop the
     // project's checkout link rows so the next assistant turn re-syncs against the new head.
@@ -623,6 +717,10 @@ export async function runPublish(
     // ── deploy ────────────────────────────────────────────────────────────────────────────
     // Queue one deploy per roster member into the live env (the team is the deployment unit).
     // rebuild: false — promoted Releases reuse their image; the rest build in the deploy job.
+    // Queuing is this step's own work (§3.3); whether each agent actually comes up is its
+    // deployment row's story, so every queued substep records its deploymentId and the publish
+    // state route re-reads those rows until each agent is live or failed (§3.2: report
+    // deploy-time work honestly, never pretend the team was already up).
     const deployStep = step("deploy");
     deployStep.status = "running";
     const deploySubs = roster.map((a) => ({
@@ -654,6 +752,7 @@ export async function runPublish(
         );
         outcome.deploymentIds.push(dep.id);
         sub.status = "succeeded";
+        sub.deploymentId = dep.id;
         queued++;
       } catch (error) {
         // e.g. the env already has a deploy in flight (deployments_env_inflight_uq).
@@ -663,11 +762,9 @@ export async function runPublish(
       await save();
     }
     const failedMembers = deploySubs.filter((s) => s.status === "failed");
-    if (queued === 0) {
-      await failAt("deploy", `No "${envName}" environment found to deploy into.`);
-      return outcome;
-    }
     if (failedMembers.length > 0) {
+      // The per-member errors always win over any aggregate guess — a "no environment"
+      // message when every member's real failure was just recorded would misdirect the user.
       await failAt(
         "deploy",
         `Couldn't start ${failedMembers.map((s) => s.label).join(", ")}:\n\n${failedMembers
@@ -677,6 +774,10 @@ export async function runPublish(
       );
       return outcome;
     }
+    if (queued === 0) {
+      await failAt("deploy", "This team has no agents to deploy.");
+      return outcome;
+    }
     deployStep.status = "succeeded";
     await save();
     await completeTask(taskId, { resultUrl: task.originUrl }, store);
@@ -684,10 +785,19 @@ export async function runPublish(
     return outcome;
   } catch (error) {
     // Unexpected failure outside the per-step handlers: still the task's outcome, never a
-    // stranded running task or a queue retry.
+    // stranded running task or a queue retry. Anchor the failure to the running step, else the
+    // first still-pending one — never rewrite a step that already succeeded (a post-completion
+    // hiccup must not repaint a landed pipeline as failed at "check").
     const message = error instanceof Error ? error.message : String(error);
-    const running = steps.find((s) => s.status === "running");
-    await failAt(running?.key ?? "check", message);
+    const anchor =
+      steps.find((s) => s.status === "running") ?? steps.find((s) => s.status === "pending");
+    if (anchor) {
+      await failAt(anchor.key, message);
+    } else {
+      await failTask(taskId, message, store);
+      outcome.status = "failed";
+      outcome.error = message;
+    }
     return outcome;
   } finally {
     // Provisional tags never outlive the publish (§7): promoted images keep their real tags.

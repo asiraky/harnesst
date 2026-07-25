@@ -16,6 +16,7 @@ import {
 } from "~/eve/agentModule";
 import { EMPTY_TEAM_MARKER } from "~/eve/parse";
 import { readAgentFile } from "~/github/repo.server";
+import { isAssistantConfigPath } from "~/project/guard.server";
 import { getRuntime } from "~/seams/index.server";
 import type { BuildCheckRequest, BuildCheckResult } from "~/seams/types";
 
@@ -154,6 +155,11 @@ export function inferBuildRoots(
 ): string[] | undefined {
   const roots = new Set<string>();
   for (const draft of drafts) {
+    // Assistant config (`.eden/assistant/**`) compiles into nothing — the pipeline restarts the
+    // assistant instead of building. Skip it BEFORE the agentId lookup: these drafts carry the
+    // internal assistant row's id, whose `.eden/assistant` root is not a buildable eve project,
+    // and a mixed set (member edit + assistant config) must build exactly the member roots.
+    if (isAssistantConfigPath(draft.path)) continue;
     const agentRoot =
       (draft.agentId
         ? agents.find((a) => a.id === draft.agentId)?.root

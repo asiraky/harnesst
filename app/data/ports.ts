@@ -206,6 +206,12 @@ export interface JobRepo {
   ): Promise<void>;
   /** Requeue jobs stranded in `running` (a process restart killed their worker mid-job). */
   requeueRunning(): Promise<number>;
+  /**
+   * Fail every `running` job of one kind, returning the failed rows. Boot reconciliation uses
+   * this for `publish` jobs, which must NEVER be requeued after a restart — a rerun against a
+   * task with recorded progress could land a duplicate commit or misreport a landed publish.
+   */
+  failRunningByKind(kind: string, error: string): Promise<Job[]>;
   statsByStatus(): Promise<Record<string, number>>;
 }
 
@@ -224,7 +230,17 @@ export interface PipelineStep {
   detail?: string; // "Ivy (2 of 3)"
   reason?: string; // why skipped
   error?: string; // full failure output, preserving newlines
-  substeps?: { label: string; status: PipelineStepStatus; error?: string }[];
+  substeps?: {
+    label: string;
+    status: PipelineStepStatus;
+    error?: string;
+    /**
+     * Deploy substeps: the queued deployment row. The pipeline succeeds the substep when the
+     * deploy is QUEUED; the publish state route re-reads this row and presents the substep as
+     * running/failed until the agent is actually live (§3.2 honesty).
+     */
+    deploymentId?: string;
+  }[];
 }
 
 /**
@@ -259,6 +275,12 @@ export interface WorkspaceTaskRepo {
   listActive(projectId: string, terminalSince: Date): Promise<WorkspaceTask[]>;
   /** The running task for a trigger surface, for dedupe (one publish per project at a time). */
   findRunningBySubject(projectId: string, subjectKey: string): Promise<WorkspaceTask | null>;
+  /**
+   * Every `running` task of one kind, across all projects. Boot reconciliation reads this to
+   * fail publishes stranded by a restart (their in-process pipeline died with the process); a
+   * stranded running task would otherwise disable Publish for its project forever.
+   */
+  listRunningByKind(kind: string): Promise<WorkspaceTask[]>;
 }
 
 export interface DraftRepo {
@@ -274,10 +296,19 @@ export interface DraftRepo {
     createdBy?: string | null;
   }): Promise<DraftChange>;
   get(projectId: string, path: string): Promise<DraftChange | null>;
-  /** A project's staged drafts, oldest first (stable checkbox order in the UI). */
+  /** A project's saved drafts, oldest first (stable order in the publish panel). */
   listByProject(projectId: string): Promise<DraftChange[]>;
-  /** Remove drafts by path (after publish, or an explicit discard). */
+  /** Remove drafts by path (an explicit discard). */
   deleteByPaths(projectId: string, paths: string[]): Promise<void>;
+  /**
+   * Remove drafts a publish landed — but never a row saved AFTER the pipeline captured it
+   * (row `updatedAt` newer than the captured one): a save that raced the multi-minute
+   * build/commit window was not published and must stay saved for the next publish.
+   */
+  deletePublished(
+    projectId: string,
+    entries: { path: string; updatedAt: Date }[],
+  ): Promise<void>;
 }
 
 export interface AuditRepo {

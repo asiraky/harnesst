@@ -427,6 +427,13 @@ export const drizzleDataStore: DataStore = {
         .returning({ id: jobs.id });
       return rows.length;
     },
+    async failRunningByKind(kind, error) {
+      return db
+        .update(jobs)
+        .set({ status: "failed", error, updatedAt: new Date() })
+        .where(and(eq(jobs.status, "running"), eq(jobs.kind, kind)))
+        .returning();
+    },
     async statsByStatus() {
       const rows = await db
         .select({ status: jobs.status, count: sql<number>`count(*)::int` })
@@ -498,6 +505,12 @@ export const drizzleDataStore: DataStore = {
         .limit(1);
       return row ?? null;
     },
+    async listRunningByKind(kind) {
+      return db
+        .select()
+        .from(workspaceTasks)
+        .where(and(eq(workspaceTasks.kind, kind), eq(workspaceTasks.status, "running")));
+    },
   },
 
   drafts: {
@@ -545,6 +558,21 @@ export const drizzleDataStore: DataStore = {
       await db
         .delete(draftChanges)
         .where(and(eq(draftChanges.projectId, projectId), inArray(draftChanges.path, paths)));
+    },
+    async deletePublished(projectId, entries) {
+      if (entries.length === 0) return;
+      // One statement, per-row updatedAt guard: a row re-saved after the pipeline captured it
+      // has a newer updatedAt and survives (it was not part of the published commit).
+      await db.delete(draftChanges).where(
+        and(
+          eq(draftChanges.projectId, projectId),
+          or(
+            ...entries.map((e) =>
+              and(eq(draftChanges.path, e.path), lte(draftChanges.updatedAt, e.updatedAt)),
+            ),
+          ),
+        ),
+      );
     },
   },
 

@@ -198,7 +198,11 @@ export interface SyncResult {
    */
   kind: "synced" | "noop" | "failed";
   reason?: string;
-  /** Files staged as drafts by this sync — 0 unless `kind` is "synced". */
+  /**
+   * Files whose SAVED draft this sync actually changed (new content, or a path not saved
+   * before) — 0 unless `kind` is "synced". The sync re-saves the checkout's whole diff, so
+   * this deliberately excludes files re-saved with identical content.
+   */
   stagedCount: number;
   warnings?: string[];
 }
@@ -367,14 +371,21 @@ export async function syncConversationCheckout(
     );
   }
 
-  // Stage the plan as drafts (§2.7): every write and deletion (a content:null draft) lands in
+  // Save the plan as drafts (§2.7): every write and deletion (a content:null draft) lands in
   // the same staging area the editors feed, and the same Publish button takes them live. `createdBy`
   // is deliberately absent — human saves always carry a user id, so a null author is what marks
-  // a draft assistant-staged in the publish panel. A failure here is a sync failure: the hash is
+  // a draft assistant-saved in the publish panel. A failure here is a sync failure: the hash is
   // NOT advanced, so the next turn retries both the mirror (an idempotent force-update) and the
-  // staging.
+  // saving. `stagedCount` counts only files whose SAVED state this sync actually changed: the
+  // plan is the checkout's whole diff against base, so re-saving twelve unchanged files after a
+  // one-line turn must read as one change, not thirteen.
+  let stagedCount = 0;
   try {
+    const before = new Map(
+      (await store.drafts.listByProject(input.projectId)).map((d) => [d.path, d.content]),
+    );
     for (const file of plan.files) {
+      if (!before.has(file.path) || before.get(file.path) !== file.content) stagedCount++;
       await deps.stage(
         { projectId: input.projectId, path: file.path, content: file.content },
         store,
@@ -382,7 +393,7 @@ export async function syncConversationCheckout(
     }
   } catch (error) {
     return failed(
-      `staging the changes failed: ${error instanceof Error ? error.message : String(error)}`,
+      `saving the changes failed: ${error instanceof Error ? error.message : String(error)}`,
     );
   }
 
@@ -398,7 +409,7 @@ export async function syncConversationCheckout(
   return {
     synced: true,
     kind: "synced",
-    stagedCount: plan.files.length,
+    stagedCount,
     warnings: warnings.length > 0 ? warnings : undefined,
   };
 }

@@ -3,9 +3,9 @@
  *
  * Two levels share this module (route ids `settings` + `member-settings`):
  *  - MEMBER sections (team members at /agents/:name/settings; included for single-agent
- *    repos): Model (staged into agent.ts like any edit), Secrets (per-member + per-
+ *    repos): Model (saved into agent.ts like any edit), Secrets (per-member + per-
  *    environment, write-only values), Marketplace installs, and the member danger zone
- *    (remove agent — a change-set PR deleting its directory).
+ *    (remove agent — saves the deletion of its directory for the next publish).
  *  - REPO sections (team repos at /repos/:id/settings; appended for single-agent repos):
  *    Marketplace installs, General (the GitHub connection), Run ingestion tokens, and the repo
  *    danger zone — Delete repository, a FULL Eden-side teardown (instances stopped and
@@ -80,7 +80,6 @@ import { listDrafts, stageDeletions, stageDraft } from "~/drafts/drafts.server";
 import { EMPTY_TEAM_MARKER } from "~/eve/parse";
 import { getAgentSource } from "~/github/cached.server";
 import { fetchAgentSource, readAgentFile } from "~/github/repo.server";
-import { proposeChange, type FileChange } from "~/github/write.server";
 import { contextPath } from "~/lib/paths";
 import {
   catalogLocator,
@@ -158,7 +157,7 @@ interface SettingsView {
   canRemoveMember: boolean;
   /** Member: whether the active agent can be renamed (any member/single-agent, self view). */
   canRenameMember: boolean;
-  /** Member: an in-flight rename target (open PR), or null. */
+  /** Member: a saved-but-unpublished rename target, or null. */
   pendingName: string | null;
   /** Member: current model (staged draft wins) + staging state. */
   model: string | null;
@@ -841,11 +840,10 @@ export async function action(args: ActionFunctionArgs) {
 
     // ── Member: rename agent ──
     // Root single-agent: the name is decoupled from the directory, so the rename is INSTANT (a
-    // DB update, no PR). Team member: the name IS the `agents/<name>/` directory, so it lands
-    // as a pull request on GitHub that moves the directory; the row is renamed in place when
-    // it lands (pendingName; the webhook keeps this path alive — the ONE surviving
-    // Eden-authored-PR flow, because a directory move deserves review and the pendingName
-    // lifecycle is keyed to the PR).
+    // DB update, no repo change). Team member: the name IS the `agents/<name>/` directory, so
+    // the rename SAVES the full directory move as drafts (§2.4: structural operations save
+    // their file set in one action) and the Publish pipeline lands it; the roster sync maps the
+    // row in place (pendingName) once the published tree shows the new directory.
     if (intent === "rename-member") {
       const newName = slugifyResourceName(String(form.get("name") ?? ""));
       if (!newName) return { error: "New name is required." };
@@ -871,10 +869,21 @@ export async function action(args: ActionFunctionArgs) {
       if (taken) {
         return { error: `An agent named "${newName}" already exists.` };
       }
+      const drafts = await listDrafts(project.id);
       if (active.pendingName) {
-        return {
-          error: `A rename to "${active.pendingName}" is already in flight — complete or close its pull request on GitHub first.`,
-        };
+        // A saved rename is still waiting to publish. If its saved files were discarded, the
+        // mark is stale — clear it and let this rename proceed; otherwise the earlier rename
+        // must publish (or be discarded) first.
+        const pendingDir = `agents/${active.pendingName}/`;
+        const stillSaved = drafts.some(
+          (d) => d.path.startsWith(pendingDir) && d.content !== null,
+        );
+        if (stillSaved) {
+          return {
+            error: `A rename to "${active.pendingName}" is already saved — publish it, or discard its saved changes, then rename again.`,
+          };
+        }
+        await getRuntime().data.agents.setPendingName(active.id, null);
       }
 
       // Root single-agent: rename in place, no repo change.
@@ -886,25 +895,38 @@ export async function action(args: ActionFunctionArgs) {
         return { ok: true as const, renamed: newName };
       }
 
-      // Team member: move `agents/<old>/` → `agents/<new>/` as a change-set.
+      // Team member: save the whole `agents/<old>/` → `agents/<new>/` move as drafts. A saved
+      // edit under the old directory rides along (its content moves, its old path deletes) —
+      // the publish must land the tree the user last saw, not the repo's stale copy.
       const oldName = active.name;
       const source = await fetchAgentSource(project.repoInstallationId, repo);
       const oldDir = `agents/${oldName}/`;
       const newDir = `agents/${newName}/`;
-      const memberPaths = source.paths.filter((p) => p.startsWith(oldDir));
-      if (memberPaths.length === 0) {
+      const draftByPath = new Map(drafts.map((d) => [d.path, d]));
+      const oldPaths = new Set(
+        source.paths.filter((p) => p.startsWith(oldDir)),
+      );
+      for (const d of drafts) {
+        if (!d.path.startsWith(oldDir)) continue;
+        // A saved deletion stays a deletion at the old path; everything else moves.
+        if (d.content === null) oldPaths.delete(d.path);
+        else oldPaths.add(d.path);
+      }
+      if (oldPaths.size === 0) {
         return { error: `No files found under ${oldDir}.` };
       }
+      const paths = [...oldPaths];
       const contents = await Promise.all(
-        memberPaths.map((p) =>
-          readAgentFile(project.repoInstallationId, repo, p),
+        paths.map(
+          (p) =>
+            draftByPath.get(p)?.content ??
+            readAgentFile(project.repoInstallationId, repo, p),
         ),
       );
-      const files: FileChange[] = [];
-      memberPaths.forEach((p, i) => {
+      const moves: { from: string; content: string }[] = [];
+      paths.forEach((p, i) => {
         const content = contents[i];
-        if (content === null) return; // unreadable/binary — skip, leave it for the reviewer.
-        const destPath = `${newDir}${p.slice(oldDir.length)}`;
+        if (content === null) return; // unreadable/binary — leave it in place.
         // The member package.json carries `"name": "<member>"` — retarget it to the new name.
         let destContent = content;
         if (p === `${oldDir}package.json`) {
@@ -913,58 +935,48 @@ export async function action(args: ActionFunctionArgs) {
             pkg.name = newName;
             destContent = JSON.stringify(pkg, null, 2) + "\n";
           } catch {
-            // Leave a malformed package.json as-is; the reviewer sees it in the pull request.
+            // Leave a malformed package.json as-is; it shows in the publish panel's diff.
           }
         }
-        files.push({ path: destPath, content: destContent });
-        files.push({ path: p, content: null });
+        moves.push({ from: p, content: destContent });
       });
 
-      // eden-lock.json lives at the repo root: retag this member's installs old → new.
-      const lockRaw = source.files["eden-lock.json"] ?? null;
+      // Mark the rename in-flight BEFORE saving the file set: if saving dies halfway, the mark
+      // plus the partial drafts are recoverable (publish the rest, or discard — the stale-mark
+      // self-heal above clears a mark whose saved files are gone).
+      await getRuntime().data.agents.setPendingName(active.id, newName);
+      for (const move of moves) {
+        await stageDraft({
+          projectId: project.id,
+          path: `${newDir}${move.from.slice(oldDir.length)}`,
+          content: move.content,
+          createdBy: auth.user.id,
+        });
+      }
+      await stageDeletions({
+        projectId: project.id,
+        paths: moves.map((m) => m.from),
+        createdBy: auth.user.id,
+      });
+
+      // eden-lock.json lives at the repo root: retag this member's installs old → new. Overlay
+      // any saved lock draft so an unpublished install/uninstall isn't clobbered.
+      const lockRaw =
+        draftByPath.get("eden-lock.json")?.content ??
+        source.files["eden-lock.json"] ??
+        null;
       if (lockRaw) {
-        const rewritten = renameMember(
-          overlayLock(lockRaw, []),
-          oldName,
-          newName,
-        );
+        const rewritten = renameMember(overlayLock(lockRaw, []), oldName, newName);
         if (rewritten.changed) {
-          files.push({
+          await stageDraft({
+            projectId: project.id,
             path: "eden-lock.json",
             content: serializeLock(rewritten.lock),
+            createdBy: auth.user.id,
           });
         }
       }
-
-      // Mark the rename in-flight BEFORE opening the PR. If we opened the PR first and this DB
-      // write then failed, the PR could still merge with no pending mark — planPendingRenames would
-      // skip the row and syncRoster would cascade-delete its environments/releases/secrets/drafts.
-      // Marking first is safe: a stale mark left by a failed proposeChange (below) is rolled back.
-      await getRuntime().data.agents.setPendingName(active.id, newName);
-      let change;
-      try {
-        change = await proposeChange(project.repoInstallationId, repo, {
-          base: project.defaultBranch,
-          branch: `eden/rename-member-${oldName}-${newName}`,
-          files,
-          title: `Rename agent: ${oldName} → ${newName}`,
-          body:
-            `Moves \`agents/${oldName}/\` to \`agents/${newName}/\` (${memberPaths.length} files) ` +
-            `and retargets its package.json and marketplace installs. eden renames the agent in ` +
-            `place on merge — its environments, versions, secrets and run history are preserved.\n\n` +
-            `Note: mentions of \`${oldName}\` in other agents' instructions or tools are not ` +
-            `rewritten automatically — update those separately if needed.`,
-        });
-      } catch (err) {
-        // No PR was opened, so drop the pending mark to avoid soft-locking future renames.
-        await getRuntime().data.agents.setPendingName(active.id, null);
-        throw err;
-      }
-      return {
-        ok: true as const,
-        changeUrl: change.pullRequestUrl,
-        member: newName,
-      };
+      return { ok: true as const, renameSaved: newName };
     }
 
     // ── Repo: ingest tokens ──
@@ -1027,9 +1039,9 @@ export default function Settings({
     actionData && "token" in actionData
       ? (actionData.token as string | null)
       : null;
-  const changeUrl =
-    actionData && "changeUrl" in actionData
-      ? (actionData.changeUrl as string)
+  const renameSaved =
+    actionData && "renameSaved" in actionData
+      ? (actionData.renameSaved as string)
       : null;
   const removalSaved =
     actionData && "removalSaved" in actionData
@@ -1098,20 +1110,18 @@ export default function Settings({
           </AlertDescription>
         </Alert>
       )}
-      {changeUrl && !renamed && (
+      {renameSaved && (
         <Alert className="mb-6">
-          <AlertTitle>Rename opened on GitHub</AlertTitle>
+          <AlertTitle>Rename to {renameSaved} saved</AlertTitle>
           <AlertDescription>
-            The rename is a pull request on GitHub — nothing changes until it
-            lands there.{" "}
-            <a
-              href={changeUrl}
-              target="_blank"
-              rel="noreferrer"
+            The directory move is saved with your other changes — nothing is
+            renamed until you publish.{" "}
+            <Link
+              to="?publish=1"
               className="font-medium underline underline-offset-4"
             >
-              View it on GitHub →
-            </a>
+              Review &amp; publish →
+            </Link>
           </AlertDescription>
         </Alert>
       )}
@@ -1543,9 +1553,9 @@ function IngestSection({
 
 /**
  * Rename this agent. Root single-agent repos rename instantly (the name is decoupled from the
- * directory); team members open a pull request on GitHub that moves `agents/<name>/`, and the
- * row is renamed in place when it lands — so environments, versions, secrets and history are
- * preserved either way.
+ * directory); a team member's rename saves the `agents/<name>/` directory move with the other
+ * changes, and the row is renamed in place when the publish lands — so environments, versions,
+ * secrets and history are preserved either way.
  */
 function RenameSection({
   activeAgent,
@@ -1566,11 +1576,11 @@ function RenameSection({
       {pendingName ? (
         <Card>
           <CardContent className="py-4 text-sm">
-            <p className="font-medium">Rename to {pendingName} pending</p>
+            <p className="font-medium">Rename to {pendingName} saved</p>
             <p className="text-muted-foreground">
-              A pull request that renames this agent is open on GitHub. The
-              rename applies when it lands there; closing it without landing
-              cancels the rename.
+              The directory move is saved with your other changes. The rename
+              applies when you publish; discarding its saved changes cancels
+              it.
             </p>
           </CardContent>
         </Card>
@@ -1594,7 +1604,7 @@ function RenameSection({
             </Form>
             <p className="text-sm text-muted-foreground">
               {isTeam
-                ? `Opens a pull request on GitHub that moves agents/${activeAgent}/ to the new name. Environments, versions, secrets and history are preserved when it lands. Mentions of "${activeAgent}" in other agents' instructions or tools are not rewritten automatically.`
+                ? `Saves a move of agents/${activeAgent}/ to the new name with your other changes — nothing is renamed until you publish. Environments, versions, secrets and history are preserved. Mentions of "${activeAgent}" in other agents' instructions or tools are not rewritten automatically.`
                 : "Applies immediately across eden. The agent's repository directory is unaffected."}
             </p>
           </CardContent>

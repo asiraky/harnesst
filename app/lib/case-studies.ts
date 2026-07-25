@@ -58,7 +58,7 @@ export const caseStudies: CaseStudy[] = [
       "The engineers wanted to build the actual product. Instead they spent their days writing glue code they'd written a dozen times before, and the requests still piled up faster than they could clear them.",
     ],
     approach: [
-      "Now the engineers describe the tool they need and the assistant drafts it. They read the change, adjust what's wrong, and merge. The work that used to mean an afternoon of boilerplate is a review and a nod.",
+      "Now the engineers describe the tool they need and the assistant drafts it. They read the change, adjust what's wrong, and publish. The work that used to mean an afternoon of boilerplate is a review and a nod.",
       "The bigger shift was upstream: teammates outside engineering build their own simple agents for the routine asks, so those never reach the platform team at all. The engineers moved from typing every integration to managing the fleet that writes them.",
     ],
     agents: [
@@ -77,7 +77,7 @@ export const caseStudies: CaseStudy[] = [
       { value: "70%", label: "of the week back on product work" },
     ],
     quote: {
-      text: "I went from writing the same integration for the fifth time to reviewing a pull request and hitting merge. Same job title, completely different day.",
+      text: "I went from writing the same integration for the fifth time to reading over a change and hitting Publish. Same job title, completely different day.",
       name: "Priya Natarajan",
       role: "Staff Engineer, Cadence",
     },

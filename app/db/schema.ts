@@ -346,13 +346,13 @@ export const agents = pgTable(
     name: text("name").notNull(),
     root: text("root").notNull(),
     /**
-     * A rename in flight (team members): the roster name the open `eden/rename-member-*` PR will
-     * land. Set the moment the rename change-set is opened; the roster sync maps the old row to
-     * this name IN PLACE when the merge is detected (the new `agents/<pendingName>/` directory
-     * appears and the old one is gone), then clears it — so the row id, and every FK to it
-     * (environments, releases, secrets, drafts, …), survives the rename. Null when no rename is
-     * pending. Root single-agent renames are instant (name is decoupled from the directory) and
-     * never set this.
+     * A rename in flight (team members): the roster name the saved directory move will land.
+     * Set the moment the rename's file set is saved as drafts (settings.tsx); the roster sync
+     * maps the old row to this name IN PLACE once the published tree shows the new
+     * `agents/<pendingName>/` directory and the old one gone, then clears it — so the row id,
+     * and every FK to it (environments, releases, secrets, drafts, …), survives the rename.
+     * Null when no rename is pending. Root single-agent renames are instant (name is decoupled
+     * from the directory) and never set this.
      */
     pendingName: text("pending_name"),
     /**
@@ -456,12 +456,12 @@ export const deployments = pgTable(
 );
 
 /**
- * Staged, unpublished edits — the product's "git staging area" (PRD §7.3: edits accumulate
- * per change-set; PUBLISHING opens the PR). One row per (project, path), latest content wins.
- * Saving an editor stages a draft here (no git write); the Changes tab lists drafts with
- * checkboxes and Publish turns the selected ones into one branch + one PR, then deletes them.
- * The repo stays the source of truth for published config — this table only ever holds
- * in-flight edits, and rows are short-lived.
+ * Saved, unpublished edits (issue #225). One row per (project, path), latest content wins.
+ * Saving an editor (or an assistant turn's sync) writes a draft here — no git write. The header
+ * Publish control lists every saved draft; Publish takes ALL of them through the pipeline
+ * (check → build → commit → version → deploy) and deletes the published rows. The repo stays
+ * the source of truth for published config — this table only ever holds in-flight edits, and
+ * rows are short-lived.
  */
 export const draftChanges = pgTable(
   "draft_changes",
@@ -1015,6 +1015,12 @@ export const workspaceTasks = pgTable(
   },
   (t) => [
     index("workspace_tasks_project_status_idx").on(t.projectId, t.status),
+    // §2.9's one-publish-per-project gate, enforced where it must be: two concurrent triggers
+    // (double-submit, UI + MCP) can both pass the find-running read, and only the database can
+    // make the insert atomic. Terminal rows are unconstrained.
+    uniqueIndex("workspace_tasks_running_subject_uq")
+      .on(t.projectId, t.subjectKey)
+      .where(sql`${t.status} = 'running'`),
   ],
 );
 

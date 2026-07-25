@@ -1119,10 +1119,14 @@ function SyncNote({ sync }: { sync: NonNullable<LiveTurn["sync"]> }) {
         aria-hidden
       />
       <span>
-        Saved {n} change{n === 1 ? "" : "s"} —{" "}
+        {/* n counts what this sync actually changed; 0 means everything was already saved. */}
+        {n === 0 ? "Everything from this turn was already saved" : (
+          <>Saved {n} change{n === 1 ? "" : "s"}</>
+        )}{" "}
+        —{" "}
         {/* `?publish=1` opens the publish panel from the workspace-header Publish control. */}
         <Link to="?publish=1" className="font-medium underline underline-offset-4">
-          review and publish them
+          review and publish
         </Link>{" "}
         when you&apos;re ready.
       </span>

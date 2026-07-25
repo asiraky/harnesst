@@ -103,7 +103,7 @@ Same box (as containers) for v1; logically the control plane, and separable onto
 
 ### 3.1 Deploy controller (`DeployTarget`)
 
-Runs the pipeline on merge: `eve build` → package image → push to a **local registry** on the box →
+Runs the pipeline on publish (and on redeploy/rollback): `eve build` → package image → push to a **local registry** on the box →
 provision the instance's Postgres DB + secrets → `docker run` (via Nomad/Docker API) with the chosen
 gVisor/Kata runtime → wire ingress → health-check. Handles rollback (previous image tag) and
 stop/start for scale-to-zero.
@@ -266,13 +266,13 @@ administration is limited by the plugin's default roles.
 
 ### 3.9 Release registry & versioning (PRD §7.7)
 
-eve has no native versioning; Eden layers one over git. A **Release = an immutable build at a merge
-commit** — `{ label (v1/v2…), commit_sha, image_digest, changelog, author, created_at }`. Immutability
+eve has no native versioning; Eden layers one over git. A **Release = an immutable build at a
+default-branch commit** — `{ label (v1/v2…), commit_sha, image_digest, changelog, author, created_at }`. Immutability
 is inherited: git commits + content-addressed images, nothing engineered.
 
 - The **deploy controller** (§3.1) records a Release per build and keeps the image (already retained
-  for rollback). **Fast rollback** = re-point an environment/split to a prior Release's image (no
-  rebuild); **git revert** = an undo PR through the normal pipeline.
+  for rollback). **Roll back** = re-point an environment/split to a prior Release's image (no
+  rebuild) — the safety net; there is no per-change undo.
 - An **environment maps to one or more active Releases with weights** (the split config the ingress
   proxy §3.6 enforces). Running multiple versions live is the core product primitive — Eden does
   _not_ ship an automated A/B/experimentation engine; per-version telemetry (§3.7) is how humans judge.
@@ -312,10 +312,10 @@ model directive). `playground_sessions.cache_index_offset` shifts the fresh sess
 
 ---
 
-## 5. Deploy pipeline (managed, on merge)
+## 5. Deploy pipeline (managed, on publish)
 
 ```
-PR merged ──► Deploy Controller:
+Publish ──► Deploy Controller:
   1. eve build            → .eve/ + Nitro .output/
   2. docker build         → image (shared base layer)
   3. push                 → local registry on the box
@@ -326,6 +326,9 @@ PR merged ──► Deploy Controller:
   8. health + smoke       → mark live; keep previous Release image for fast rollback
   9. idle                 → scheduler stops container after idle timeout
 ```
+
+A publish pre-builds the touched members' images during its build step and the queued deploys reuse
+them (steps 1–3 are skipped); untouched members still build at deploy time, cheap via layer cache.
 
 The data plane admits multiple live Releases per environment (§3.6/§3.9), but since M5.6 the
 controller enforces single-live: step 8's "mark live" also demotes the environment's other live

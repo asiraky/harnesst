@@ -131,16 +131,17 @@ export function withPreservedNames(
 }
 
 /**
- * Decide how a pending member rename maps onto a freshly-detected roster. A rename is "in flight"
- * when a member row carries `pendingName` (its `eden/rename-member-*` PR is open). We map the row
- * IN PLACE — preserving its id and all FKs — only when the merge is unambiguous:
+ * Decide how a pending member rename maps onto a freshly-detected roster. A rename is "in
+ * flight" when a member row carries `pendingName` (its saved directory move hasn't published
+ * yet). We map the row IN PLACE — preserving its id and all FKs — only when the landed tree is
+ * unambiguous:
  *
  *  - `apply`: the pending target directory is now detected AND the old directory is gone → the
- *    rename PR merged. Rename the row to the target name/root and clear `pendingName`.
+ *    rename published. Rename the row to the target name/root and clear `pendingName`.
  *  - `clear`: BOTH the old and the new directory are detected as separate members → the pending
- *    name is stale (e.g. the PR was closed and a genuinely new member later took that name). Drop
- *    the pending mark so it can never hijack that unrelated member.
- *  - otherwise (old present, new absent): the PR hasn't merged — leave the pending mark untouched.
+ *    name is stale (e.g. the saved rename was discarded and a genuinely new member later took
+ *    that name). Drop the pending mark so it can never hijack that unrelated member.
+ *  - otherwise (old present, new absent): the rename hasn't published — leave the mark alone.
  *
  * Pure over its inputs (the store does the writes), so the mapping rule is unit-testable.
  */
@@ -162,7 +163,7 @@ export function planPendingRenames(
   for (const row of existing) {
     if (row.kind !== "member" || !row.pendingName) continue;
     const target = detectedByName.get(row.pendingName);
-    if (!target) continue; // new directory not present yet — PR unmerged, or row being pruned.
+    if (!target) continue; // new directory not present yet — rename unpublished, or row being pruned.
     if (detectedByName.has(row.name)) {
       clear.push(row.id); // old dir still present too → stale pending mark.
     } else {
@@ -231,7 +232,7 @@ export async function syncProjectAgents(
   const existing = await store.agents.listByProject(projectId);
   const existingNames = new Set(existing.map((a) => a.name));
 
-  // A pending rename (open eden/rename-member-* PR) whose merge just landed must be mapped IN
+  // A pending rename (saved directory move) whose publish just landed must be mapped IN
   // PLACE — otherwise syncRoster would prune the old-named row (cascading its environments,
   // releases, secrets and drafts away) and insert a bare new row. Apply the in-place renames
   // BEFORE syncRoster so its upsert matches the row by its new name and the prune leaves it be.

@@ -103,6 +103,7 @@ function makeDeps(over: Partial<PublishPipelineDeps> = {}): PublishPipelineDeps 
       .fn()
       .mockResolvedValue(["agents/ivy/agent/agent.ts", "agents/otto/agent/agent.ts"]),
     normalizeDrafts: vi.fn(async ({ files }: { files: unknown }) => files),
+    getBranchHead: vi.fn().mockResolvedValue("base0000head0000sha0000000000000000000000"),
     commitToDefaultBranch: vi.fn().mockResolvedValue({ sha: SHA }),
     fetchAgentSource: vi.fn().mockResolvedValue({ paths: [] }),
     detectAgentRoots: vi.fn().mockReturnValue([]),

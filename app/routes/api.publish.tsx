@@ -46,7 +46,12 @@ import { cleanupOrphanedPendingSecrets } from "~/project/secrets.server";
 import { startPublish } from "~/publish/pipeline.server";
 import {
   changeAction,
+  deploymentIdsOf,
   groupDrafts,
+  resolveDeployProgress,
+  stepsFailure,
+  stepsSettled,
+  type DeploymentSnapshot,
   type PublishChangeRow,
   type PublishDiffPayload,
   type PublishStatePayload,
@@ -189,6 +194,54 @@ async function publishState(connected: ConnectedProject): Promise<PublishStatePa
     .reverse()
     .find((t) => t.subjectKey === "publish" && t.status === "succeeded");
 
+  // Present each task's steps against the LIVE deployment rows (§3.2 honesty): the pipeline
+  // resolves when every deploy is queued, but "your agents started" is only true once those
+  // rows reach `live` — and a post-queue deploy failure must surface here, not just on the
+  // Deployment tab. A completed task whose deploys are still coming up is presented as the
+  // running publish; one whose deploy failed is presented as the failed publish.
+  const deploymentIds = [
+    ...new Set([running, failed, succeeded].flatMap((t) => deploymentIdsOf(t?.steps))),
+  ];
+  const deploymentRows = deploymentIds.length
+    ? await db
+        .select({
+          id: deployments.id,
+          status: deployments.status,
+          errorDetail: deployments.errorDetail,
+        })
+        .from(deployments)
+        .where(inArray(deployments.id, deploymentIds))
+    : [];
+  const snapshots = new Map<string, DeploymentSnapshot>(
+    deploymentRows.map((d) => [d.id, { status: d.status, errorDetail: d.errorDetail }]),
+  );
+  let runningPayload = running
+    ? { taskId: running.id, steps: resolveDeployProgress(running.steps, snapshots) }
+    : null;
+  let failedPayload = failed
+    ? {
+        taskId: failed.id,
+        steps: resolveDeployProgress(failed.steps, snapshots),
+        error: failed.error,
+      }
+    : null;
+  let succeededPayload: PublishStatePayload["succeeded"] = null;
+  if (succeeded) {
+    const resolved = resolveDeployProgress(succeeded.steps, snapshots);
+    const failure = stepsFailure(resolved);
+    if (failure && (!failed || succeeded.createdAt > failed.createdAt)) {
+      failedPayload = {
+        taskId: succeeded.id,
+        steps: resolved,
+        error: failure.error ?? null,
+      };
+    } else if (!failure && !stepsSettled(resolved)) {
+      runningPayload ??= { taskId: succeeded.id, steps: resolved };
+    } else if (!failure) {
+      succeededPayload = { taskId: succeeded.id, steps: resolved };
+    }
+  }
+
   // §2.8: ask only when several envs exist and no persisted answer still names one of them.
   // Change-sets that touch only the assistant's config deploy nothing — never ask for those.
   const resolved =
@@ -204,9 +257,9 @@ async function publishState(connected: ConnectedProject): Promise<PublishStatePa
     liveVersion: liveRow?.version ?? null,
     envNames,
     needsEnvironmentChoice: envNames.length > 1 && !resolved && !assistantConfigOnly,
-    running: running ? { taskId: running.id, steps: running.steps } : null,
-    failed: failed ? { taskId: failed.id, steps: failed.steps, error: failed.error } : null,
-    succeeded: succeeded ? { taskId: succeeded.id, steps: succeeded.steps } : null,
+    running: runningPayload,
+    failed: failedPayload,
+    succeeded: succeededPayload,
   };
 }
 
@@ -221,6 +274,30 @@ async function sweepPendingSecrets(projectId: string): Promise<void> {
     });
   } catch (error) {
     console.warn("[secrets] pending-secret sweep failed:", error);
+  }
+}
+
+/**
+ * Discard abandonment sweep for renames: a member's pending rename lives or dies with its saved
+ * directory move — when no saved change still creates `agents/<pendingName>/`, the rename was
+ * discarded and the mark must clear, or the member would read "rename saved" forever.
+ */
+async function sweepStalePendingRenames(projectId: string): Promise<void> {
+  try {
+    const store = getRuntime().data;
+    const [agents, drafts] = await Promise.all([
+      store.agents.listByProject(projectId),
+      listDrafts(projectId),
+    ]);
+    for (const agent of agents) {
+      if (agent.kind !== "member" || !agent.pendingName) continue;
+      const dir = `agents/${agent.pendingName}/`;
+      if (!drafts.some((d) => d.path.startsWith(dir) && d.content !== null)) {
+        await store.agents.setPendingName(agent.id, null);
+      }
+    }
+  } catch (error) {
+    console.warn("[publish] pending-rename sweep failed:", error);
   }
 }
 
@@ -276,6 +353,7 @@ export async function action(args: ActionFunctionArgs) {
       if (!path) return { error: "Missing file to discard." };
       await discardDrafts(project.id, [path]);
       await sweepPendingSecrets(project.id);
+      await sweepStalePendingRenames(project.id);
       return { ok: true as const };
     }
 
@@ -286,6 +364,7 @@ export async function action(args: ActionFunctionArgs) {
         drafts.map((d) => d.path),
       );
       await sweepPendingSecrets(project.id);
+      await sweepStalePendingRenames(project.id);
       return { ok: true as const };
     }
 

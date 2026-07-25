@@ -35,7 +35,7 @@
  * real Docker sandbox backend — no change to customer repos required.
  */
 import { execFile } from "node:child_process";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, rmdir, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -446,23 +446,38 @@ export async function buildStagedTree(
 
     for (const file of input.overlay) {
       const target = path.join(srcDir, file.path);
-      // Overlay paths come from Eden's own staging (already normalized under agent/), but
+      // Overlay paths come from Eden's own saved drafts (already normalized under agent/), but
       // never write outside the checkout regardless.
       if (!target.startsWith(srcDir + path.sep)) continue;
       if (file.content === null) {
-        // Staged deletion — build the tree as it will exist after the commit lands.
+        // Saved deletion — build the tree as it will exist after the commit lands. Prune
+        // now-empty parent directories too: a member removal or rename deletes EVERY file
+        // under `agents/<name>/agent`, and the root-existence check below must see that root
+        // as gone, not as an empty directory left behind by the tarball extraction.
         await rm(target, { force: true });
+        for (
+          let dir = path.dirname(target);
+          dir.startsWith(srcDir + path.sep);
+          dir = path.dirname(dir)
+        ) {
+          try {
+            await rmdir(dir); // ENOTEMPTY on a dir that still has content — stop pruning.
+          } catch {
+            break;
+          }
+        }
         continue;
       }
       await exec("mkdir", ["-p", path.dirname(target)]);
       await writeFile(target, file.content);
     }
 
-    // A member root that doesn't exist at this ref (the change deletes the member) has nothing
-    // to build — the post-commit roster sync handles removal; failing here would block the
-    // publish with an opaque eve error (issue #137). Runs AFTER the overlay loop so an overlay
-    // that creates a brand-new member's files still builds (fetchSource mkdir's only the parent
-    // package dir, never `…/agent`, so this existence check is authoritative).
+    // A member root that doesn't exist after the overlay (the change deletes or moves the whole
+    // member) has nothing to build — the post-commit roster sync handles removal; failing here
+    // would block the publish with an opaque eve error (issue #137). Runs AFTER the overlay
+    // loop so an overlay that creates a brand-new member's files still builds, and the deletion
+    // pruning above means a fully-deleted root really is absent (fetchSource mkdir's only the
+    // parent package dir, never `…/agent`, so this existence check is authoritative).
     if (
       input.agentRoot &&
       input.agentRoot !== "agent" &&
