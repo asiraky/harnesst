@@ -16,9 +16,9 @@ export interface DiscordAppConfig {
 
 /** The shared app's config, or null when the operator hasn't set all three env vars. */
 export function getDiscordAppConfig(): DiscordAppConfig | null {
-  const applicationId = process.env.EDEN_DISCORD_APPLICATION_ID?.trim();
-  const botToken = process.env.EDEN_DISCORD_BOT_TOKEN?.trim();
-  const publicKey = process.env.EDEN_DISCORD_PUBLIC_KEY?.trim();
+  const applicationId = process.env.HARNESST_DISCORD_APPLICATION_ID?.trim();
+  const botToken = process.env.HARNESST_DISCORD_BOT_TOKEN?.trim();
+  const publicKey = process.env.HARNESST_DISCORD_PUBLIC_KEY?.trim();
   if (!applicationId || !botToken || !publicKey) return null;
   return { applicationId, botToken, publicKey };
 }

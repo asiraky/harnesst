@@ -16,8 +16,8 @@
  */
 import type { ChatEntry } from "~/chat/types";
 
-export const SEED_CONTEXT_START = "<!-- eden:context-start -->";
-export const SEED_CONTEXT_END = "<!-- eden:context-end -->";
+export const SEED_CONTEXT_START = "<!-- harnesst:context-start -->";
+export const SEED_CONTEXT_END = "<!-- harnesst:context-end -->";
 
 /** Cap per message so one huge turn can't dominate the seed. */
 const MAX_MESSAGE_CHARS = 4_000;

@@ -1,5 +1,5 @@
 /**
- * `eden-lock.json` — the install provenance ledger (PRD §7.8 "Update-from-source"),
+ * `harnesst-lock.json` — the install provenance ledger (PRD §7.8 "Update-from-source"),
  * generalizing the skills-lock idea to every hierarchy level.
  *
  * One record per install: what was installed, at what version, from where, and — the load-
@@ -12,7 +12,7 @@
  *
  * Client-safe: pure Zod + pure helpers, no server imports — the install planner and the wizard
  * route component alike reference these types. Callers treat a MISSING file as an empty lock
- * (a repo that has never installed anything has no `eden-lock.json`); malformed bytes throw.
+ * (a repo that has never installed anything has no `harnesst-lock.json`); malformed bytes throw.
  */
 import { z } from "zod";
 
@@ -22,7 +22,7 @@ import { TEMPLATE_TYPES, type TemplateType } from "./manifest";
 export const LOCK_VERSION = 1;
 
 /** The lock's fixed repo-root location. */
-export const LOCK_PATH = "eden-lock.json";
+export const LOCK_PATH = "harnesst-lock.json";
 
 const installEntrySchema = z.object({
   /** The template id (kebab slug) — the marketplace identity. */
@@ -37,7 +37,7 @@ const installEntrySchema = z.object({
   registry: z.string().min(1),
   /** Owning roster member; null = the single-agent repo's root agent. */
   member: z.string().nullable(),
-  /** FINAL repo-relative paths the install owns (excludes package.json / eden-lock.json). */
+  /** FINAL repo-relative paths the install owns (excludes package.json / harnesst-lock.json). */
   files: z.array(z.string().min(1)),
   /**
    * Paths this install deliberately PRESERVED at register time (issue #177): files that already
@@ -158,13 +158,13 @@ export const lockSchema = z.object({
 
 export type HarnesstLock = z.infer<typeof lockSchema>;
 
-/** A fresh, empty lock — what callers use when `eden-lock.json` is absent. */
+/** A fresh, empty lock — what callers use when `harnesst-lock.json` is absent. */
 export function emptyLock(): HarnesstLock {
   return { version: LOCK_VERSION, installs: [] };
 }
 
 /**
- * Parse+validate raw `eden-lock.json` bytes. Throws on malformed content (a corrupt lock is a
+ * Parse+validate raw `harnesst-lock.json` bytes. Throws on malformed content (a corrupt lock is a
  * real problem the reviewer must see, not a silent reset). Callers handle the *missing*-file
  * case themselves with `emptyLock()`.
  */
@@ -173,10 +173,10 @@ export function parseLock(json: unknown): HarnesstLock {
 }
 
 /**
- * The effective lock for a repo: the staged `eden-lock.json` draft if there is one, else the
+ * The effective lock for a repo: the staged `harnesst-lock.json` draft if there is one, else the
  * branch's file, else empty. A corrupt lock degrades to empty rather than crashing the surface
  * that reads it (the next install's change-set rewrites it cleanly). `repoContent` is the
- * branch's `eden-lock.json` bytes (or null when absent).
+ * branch's `harnesst-lock.json` bytes (or null when absent).
  */
 export function overlayLock(
   repoContent: string | null,

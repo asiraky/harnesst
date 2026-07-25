@@ -1150,7 +1150,7 @@ function projectEventsToEntries(
           }
         }
         // Strip both wrappers: the model directive and, for a cross-redeploy reseed turn (#71),
-        // the leading eden:context block seeded from the cached transcript.
+        // the leading harnesst:context block seeded from the cached transcript.
         turn.userText = stripSeedContext(stripModelDirective(raw));
         break;
       }

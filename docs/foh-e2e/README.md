@@ -13,10 +13,10 @@ Run it from the repo root (same opt-in as `tests/integration`):
 
 ```
 set -a; source .env.local; set +a
-EDEN_DB_SMOKE=1 npm run test:e2e
+HARNESST_DB_SMOKE=1 npm run test:e2e
 ```
 
-Without `EDEN_DB_SMOKE=1` the specs skip; the default `npm test` glob never picks them up
+Without `HARNESST_DB_SMOKE=1` the specs skip; the default `npm test` glob never picks them up
 (they are named `*.e2e.ts` and run through `tests/e2e/vitest.config.ts` only).
 
 What it proves, at the HTTP/route layer:
@@ -47,7 +47,7 @@ Screenshot evidence for every acceptance criterion in
 (project `agents`, team members `sam` and `ivy`) and the `MAILBOX_DIR` file mailbox driver.
 Two rounds were run on 2026-07-24; delegation criteria were re-run after the test agents were
 redeployed from the branch's own control plane (their previous containers carried a stale
-`EDEN_TEAM_URL` from another checkout — an environment issue, not a code path).
+`HARNESST_TEAM_URL` from another checkout — an environment issue, not a code path).
 
 ## Regression
 

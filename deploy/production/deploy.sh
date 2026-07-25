@@ -2,15 +2,15 @@
 
 set -Eeuo pipefail
 
-readonly DEPLOY_ROOT="${DEPLOY_ROOT:-/opt/eden}"
-readonly STACK_NAME="${STACK_NAME:-eden}"
+readonly DEPLOY_ROOT="${DEPLOY_ROOT:-/opt/harnesst}"
+readonly STACK_NAME="${STACK_NAME:-harnesst}"
 readonly DEPLOY_TIMEOUT="${DEPLOY_TIMEOUT:-120}"
 readonly STACK_FILE="${DEPLOY_ROOT}/docker-stack.production.yml"
 readonly ENV_FILE="${DEPLOY_ROOT}/production.env"
 readonly IMAGE_TAG="${IMAGE_TAG:?IMAGE_TAG is required}"
 readonly RUNTIME_IMAGE="ghcr.io/asiraky/harnesst:${IMAGE_TAG}"
 readonly MIGRATION_IMAGE="${RUNTIME_IMAGE}-migrate"
-readonly EDEN_SERVICE="${STACK_NAME}_eden"
+readonly HARNESST_SERVICE="${STACK_NAME}_harnesst"
 readonly POSTGRES_SERVICE="${STACK_NAME}_postgres"
 
 diagnostics_enabled=false
@@ -45,7 +45,7 @@ on_error() {
   trap - ERR
   printf '[deploy] failed at line %s (exit %s)\n' "$line_number" "$exit_code" >&2
   if [[ "$diagnostics_enabled" == true ]]; then
-    dump_service_diagnostics "$EDEN_SERVICE"
+    dump_service_diagnostics "$HARNESST_SERVICE"
     dump_service_diagnostics "$POSTGRES_SERVICE"
   fi
   exit "$exit_code"
@@ -100,8 +100,8 @@ deploy_stack() {
   log "deploying stack ${STACK_NAME} with harnesst replicas=${replicas}"
   (
     cd "$DEPLOY_ROOT"
-    export IMAGE_TAG EDEN_PG_PASSWORD
-    export EDEN_REPLICAS="$replicas"
+    export IMAGE_TAG HARNESST_PG_PASSWORD
+    export HARNESST_REPLICAS="$replicas"
     docker stack deploy \
       --with-registry-auth \
       --resolve-image changed \
@@ -273,31 +273,31 @@ requested_image_is_running() {
       --no-trunc \
       --filter desired-state=running \
       --format '{{.Image}}|{{.CurrentState}}' \
-      "$EDEN_SERVICE"
+      "$HARNESST_SERVICE"
   )
 
   [[ "$spec_image" == "$RUNTIME_IMAGE" || "$spec_image" == "$RUNTIME_IMAGE@"* ]] &&
     [[ "$running_total" -eq 1 && "$running_requested" -eq 1 ]]
 }
 
-wait_for_eden() {
+wait_for_harnesst() {
   local deadline=$((SECONDS + DEPLOY_TIMEOUT))
   local desired spec_image update_state
 
-  log "waiting for ${EDEN_SERVICE} to run ${RUNTIME_IMAGE}"
+  log "waiting for ${HARNESST_SERVICE} to run ${RUNTIME_IMAGE}"
   while ((SECONDS < deadline)); do
-    if docker service inspect "$EDEN_SERVICE" >/dev/null 2>&1; then
-      assert_update_not_failed "$EDEN_SERVICE"
+    if docker service inspect "$HARNESST_SERVICE" >/dev/null 2>&1; then
+      assert_update_not_failed "$HARNESST_SERVICE"
       desired="$(docker service inspect \
-        --format '{{.Spec.Mode.Replicated.Replicas}}' "$EDEN_SERVICE")"
+        --format '{{.Spec.Mode.Replicated.Replicas}}' "$HARNESST_SERVICE")"
       spec_image="$(docker service inspect \
-        --format '{{.Spec.TaskTemplate.ContainerSpec.Image}}' "$EDEN_SERVICE")"
-      update_state="$(service_update_state "$EDEN_SERVICE")"
+        --format '{{.Spec.TaskTemplate.ContainerSpec.Image}}' "$HARNESST_SERVICE")"
+      update_state="$(service_update_state "$HARNESST_SERVICE")"
 
       if [[ "$desired" == "1" ]] &&
         [[ -z "$update_state" || "$update_state" == "completed" ]] &&
         requested_image_is_running "$spec_image" &&
-        service_has_one_healthy_container "$EDEN_SERVICE" "$RUNTIME_IMAGE"; then
+        service_has_one_healthy_container "$HARNESST_SERVICE" "$RUNTIME_IMAGE"; then
         log "harnesst rollout completed with one healthy container"
         return 0
       fi
@@ -305,7 +305,7 @@ wait_for_eden() {
     sleep 2
   done
 
-  printf '[deploy] timed out waiting for %s to converge\n' "$EDEN_SERVICE" >&2
+  printf '[deploy] timed out waiting for %s to converge\n' "$HARNESST_SERVICE" >&2
   return 1
 }
 
@@ -319,16 +319,16 @@ docker pull "$MIGRATION_IMAGE"
 # Let Docker parse the env file. It is Compose-style input and must never be
 # sourced as shell code. The password is captured for stack interpolation and
 # is intentionally never written to stdout or command arguments.
-EDEN_PG_PASSWORD="$(
+HARNESST_PG_PASSWORD="$(
   docker run --rm \
     --env-file "$ENV_FILE" \
     --entrypoint node \
     "$MIGRATION_IMAGE" \
-    -e 'const required=["EDEN_PG_PASSWORD","DATABASE_URL"]; const missing=required.filter((name)=>!process.env[name]); if (missing.length) { console.error(`missing required environment: ${missing.join(", ")}`); process.exit(1); } process.stdout.write(process.env.EDEN_PG_PASSWORD)'
+    -e 'const required=["HARNESST_PG_PASSWORD","DATABASE_URL"]; const missing=required.filter((name)=>!process.env[name]); if (missing.length) { console.error(`missing required environment: ${missing.join(", ")}`); process.exit(1); } process.stdout.write(process.env.HARNESST_PG_PASSWORD)'
 )"
-readonly EDEN_PG_PASSWORD
-[[ -n "$EDEN_PG_PASSWORD" ]] || {
-  printf '[deploy] EDEN_PG_PASSWORD is missing from %s\n' "$ENV_FILE" >&2
+readonly HARNESST_PG_PASSWORD
+[[ -n "$HARNESST_PG_PASSWORD" ]] || {
+  printf '[deploy] HARNESST_PG_PASSWORD is missing from %s\n' "$ENV_FILE" >&2
   exit 1
 }
 
@@ -368,7 +368,7 @@ else
     "$postgres_version_after" \
     "$postgres_update_started_before"
 fi
-wait_for_eden
+wait_for_harnesst
 
 log "smoke-checking harnesst on localhost:3000"
 curl --fail --silent --show-error --max-time 10 \

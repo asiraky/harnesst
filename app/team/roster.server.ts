@@ -1,5 +1,5 @@
 /**
- * Teammate roster env (Team delegation — D3). Builds the `EDEN_TEAMMATES` payload the controller
+ * Teammate roster env (Team delegation — D3). Builds the `HARNESST_TEAMMATES` payload the controller
  * injects for a team member: every OTHER roster member's name plus a short role blurb (the first
  * real paragraph of that member's `instructions.md`). Discovery only — permissions are enforced
  * live at the relay, so this list is never filtered by who-can-ask-whom.
@@ -48,7 +48,7 @@ export function firstParagraph(
 }
 
 /**
- * The `EDEN_TEAMMATES` roster for one member: every other member with its role blurb. Returns an
+ * The `HARNESST_TEAMMATES` roster for one member: every other member with its role blurb. Returns an
  * empty array for a team of one. Never throws — a failed source read yields empty roles.
  */
 export async function teammateRoster(input: {

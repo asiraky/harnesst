@@ -8,7 +8,7 @@
  */
 import type { DataStore, DraftChange } from "~/data/ports";
 import { agentForPath } from "~/db/queries.server";
-import { EDEN_EVE_DOCKERFILE } from "~/deploy/eve-image.server";
+import { HARNESST_EVE_DOCKERFILE } from "~/deploy/eve-image.server";
 import {
   ensureOpenRouterDependency,
   LEGACY_OPENROUTER_PROVIDER_PACKAGE,
@@ -158,7 +158,7 @@ function inferBuildRoots(
     }
     // Marketplace provenance is repo-level but should not force a whole-repo build when
     // selected with member install/update drafts.
-    if (draft.path === "eden-lock.json") continue;
+    if (draft.path === "harnesst-lock.json") continue;
     return undefined;
   }
   return [...roots];
@@ -358,7 +358,7 @@ async function normalizeOpenRouterPackageDrafts(input: {
     // Repos scaffolded by older harnesst releases carry a committed copy of harnesst's reference
     // Dockerfile that COPYs package-lock.json explicitly and runs a bare `npm ci` — deleting the
     // lock would break it at COPY. That file is ours (its header says so — either the current
-    // "harnesst" marker or the legacy "eden" one), so heal it to the current reference image,
+    // "harnesst" marker or the legacy "harnesst" one), so heal it to the current reference image,
     // which tolerates a missing lock. A user-authored Dockerfile (no such header) is never
     // touched — the repo stays theirs (D3).
     const dockerfilePath = file.path.replace(/package\.json$/, "Dockerfile");
@@ -371,11 +371,11 @@ async function normalizeOpenRouterPackageDrafts(input: {
     if (
       dockerfile !== null &&
       dockerfile.includes("package-lock.json") &&
-      /^#.*(eden|harnesst).*(reference|generated)/im.test(
+      /^#.*(harnesst|harnesst).*(reference|generated)/im.test(
         dockerfile.split("\n", 1)[0],
       )
     ) {
-      byPath.set(dockerfilePath, { path: dockerfilePath, content: EDEN_EVE_DOCKERFILE });
+      byPath.set(dockerfilePath, { path: dockerfilePath, content: HARNESST_EVE_DOCKERFILE });
     }
   }
 
@@ -458,7 +458,7 @@ export async function publishDrafts(
     files: selected.map((d) => ({ path: d.path, content: d.content })),
   });
 
-  // The built-in assistant's config (.eden/assistant/** markdown + JSON) is not part of any eve
+  // The built-in assistant's config (.harnesst/assistant/** markdown + JSON) is not part of any eve
   // build, so a changeset of ONLY those files has nothing to compile — skip the gate. Any member
   // file in the selection still triggers the normal build check.
   const assistantConfigOnly = selected.every((d) => isAssistantConfigPath(d.path));
@@ -506,7 +506,7 @@ export async function publishDrafts(
     { owner: input.project.repoOwner, repo: input.project.repoName },
     {
       base: input.project.defaultBranch,
-      branch: `eden/publish-${newId()}`,
+      branch: `harnesst/publish-${newId()}`,
       files,
       title,
       body,

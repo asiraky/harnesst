@@ -18,8 +18,8 @@ import { db } from "~/db/client.server";
 import { deployments } from "~/db/schema";
 import { pickWeighted } from "./split";
 
-const PORT = Number(process.env.EDEN_SPLITTER_PORT ?? 8787);
-const COOKIE = "eden_split";
+const PORT = Number(process.env.HARNESST_SPLITTER_PORT ?? 8787);
+const COOKIE = "harnesst_split";
 
 type LiveDeployment = { id: string; url: string; trafficWeight: number };
 
@@ -80,7 +80,7 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse) {
     upstream,
     {
       method: req.method,
-      headers: { ...req.headers, host: upstream.host, "x-eden-release": target.id },
+      headers: { ...req.headers, host: upstream.host, "x-harnesst-release": target.id },
     },
     (up) => {
       res.writeHead(up.statusCode ?? 502, up.headers);
@@ -109,11 +109,11 @@ function startSplitter(): { stop: () => void } {
 }
 
 const globalForSplitter = globalThis as unknown as {
-  __edenSplitter?: { stop: () => void };
+  __harnesstSplitter?: { stop: () => void };
 };
 
 /** Start the splitter once per process; safe to call from any server module. */
 export function ensureSplitterStarted(): void {
-  if (process.env.EDEN_DISABLE_SPLITTER === "1") return;
-  globalForSplitter.__edenSplitter ??= startSplitter();
+  if (process.env.HARNESST_DISABLE_SPLITTER === "1") return;
+  globalForSplitter.__harnesstSplitter ??= startSplitter();
 }

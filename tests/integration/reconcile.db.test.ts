@@ -5,7 +5,7 @@
  * lands as a `running` row, a Discord placeholder is settled IN PLACE (channel + metadata
  * preserved), and a second sweep is idempotent (no duplicate runs; steps replaced, not appended).
  *
- * Run: `EDEN_DB_SMOKE=1 npx vitest run tests/integration/reconcile.db.test.ts` with `.env.local`
+ * Run: `HARNESST_DB_SMOKE=1 npx vitest run tests/integration/reconcile.db.test.ts` with `.env.local`
  * sourced.
  */
 import { and, eq } from "drizzle-orm";
@@ -16,7 +16,7 @@ import type { IndexedEveEvent } from "~/observability/session-turns.server";
 import type { ReconcileDeps, ReconcileTarget } from "~/observability/reconcile.server";
 import type { WorldSessionSummary } from "~/seams/types";
 
-const LIVE = process.env.EDEN_DB_SMOKE === "1";
+const LIVE = process.env.HARNESST_DB_SMOKE === "1";
 
 function indexed(events: RawEveEvent[]): IndexedEveEvent[] {
   return events.map((e, i) => ({ ...e, streamIndex: i + 1 }));
@@ -256,7 +256,7 @@ describe.runIf(LIVE)("run reconciler against real Postgres", () => {
 });
 
 describe.runIf(!LIVE)("run reconciler db smoke (skipped)", () => {
-  it("runs only with EDEN_DB_SMOKE=1 against a live database", () => {
+  it("runs only with HARNESST_DB_SMOKE=1 against a live database", () => {
     expect(LIVE).toBe(false);
   });
 });

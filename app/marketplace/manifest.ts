@@ -112,7 +112,7 @@ export const templateManifestSchema = z
   dependencies: z.record(npmName, z.string().min(1)).optional(),
   /**
    * Secrets the template needs, by name — the wizard collects values at install. `sandbox: true`
-   * marks one for the agent's sandbox shell (EDEN_SANDBOX_ENV convention): the install flips the
+   * marks one for the agent's sandbox shell (HARNESST_SANDBOX_ENV convention): the install flips the
    * exposure flag so terminal-driven agents get their credentials without a manual Settings trip.
    */
   secrets: z

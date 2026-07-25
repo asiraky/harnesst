@@ -1,7 +1,7 @@
 /**
  * Instance token broker endpoint (issue #167). An agent instance whose provider uses
  * "access-token-broker" credential delivery (rotating refresh grants — the instance never holds
- * the refresh token) POSTs `{ provider }` here with `Authorization: Bearer <EDEN_TEAM_TOKEN>`
+ * the refresh token) POSTs `{ provider }` here with `Authorization: Bearer <HARNESST_TEAM_TOKEN>`
  * (the same delegation token the team relay and Discord send proxy use — one instance-facing
  * auth story). The token authenticates the CALLER DEPLOYMENT; the control plane resolves its
  * deployment → environment → agent and returns a fresh access token + `expiresAt` for

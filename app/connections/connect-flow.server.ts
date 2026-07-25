@@ -158,7 +158,7 @@ export function connectionConnectLoader(
         return {
           error:
             `This harnesst installation has no ${provider.label} OAuth client configured. An operator must set ` +
-            `EDEN_${provider.envPrefix}_CLIENT_ID and EDEN_${provider.envPrefix}_CLIENT_SECRET on the control plane (see the ` +
+            `HARNESST_${provider.envPrefix}_CLIENT_ID and HARNESST_${provider.envPrefix}_CLIENT_SECRET on the control plane (see the ` +
             `self-host docs) before ${provider.label} can be connected.`,
           backUrl,
           providerLabel: provider.label,
@@ -181,7 +181,7 @@ export function connectionConnectLoader(
         }),
       ]);
       const lock = overlayLock(
-        source.files["eden-lock.json"] ?? null,
+        source.files["harnesst-lock.json"] ?? null,
         drafts.map((draft) => ({
           path: draft.path,
           content: draft.content,
@@ -228,10 +228,10 @@ export function connectionConnectLoader(
       // consent tab was open (the client is immutable; see the callback's coverage check).
       let registeredEnvironmentIds: string[] | undefined;
       if (provider.clientRegistration) {
-        // Instance callbacks must be publicly reachable — prefer the operator's EDEN_PUBLIC_ORIGIN
+        // Instance callbacks must be publicly reachable — prefer the operator's HARNESST_PUBLIC_ORIGIN
         // (the same origin EVE_PUBLIC_ORIGIN injection uses) over the request-derived origin.
         const callbackBase =
-          process.env.EDEN_PUBLIC_ORIGIN?.trim() || publicOrigin(args.request);
+          process.env.HARNESST_PUBLIC_ORIGIN?.trim() || publicOrigin(args.request);
         const callbackPath = provider.clientRegistration.approvalCallbackPath;
         const environments = callbackPath
           ? await listAgentEnvironments(agent.id)
@@ -254,7 +254,7 @@ export function connectionConnectLoader(
             error:
               `${(error as Error).message} ${provider.label} requires every callback URL to be ` +
               "public HTTPS, so this harnesst installation needs a publicly reachable " +
-              "EDEN_PUBLIC_ORIGIN (a local-dev host can't receive approval callbacks).",
+              "HARNESST_PUBLIC_ORIGIN (a local-dev host can't receive approval callbacks).",
             backUrl,
             providerLabel: provider.label,
           };
@@ -448,7 +448,7 @@ export function connectionCallbackLoader(
           listDrafts(project.id),
         ]);
         const lock = overlayLock(
-          source.files["eden-lock.json"] ?? null,
+          source.files["harnesst-lock.json"] ?? null,
           drafts.map((draft) => ({ path: draft.path, content: draft.content })),
         );
         const requiredNow = requiredScopesByProvider(
@@ -502,7 +502,7 @@ export function connectionCallbackLoader(
       if (!config) {
         return fail(
           `This harnesst installation no longer has a ${label} OAuth client configured — ask an ` +
-            `operator to set the EDEN_${provider.envPrefix}_* env vars.`,
+            `operator to set the HARNESST_${provider.envPrefix}_* env vars.`,
           backUrl,
         );
       }

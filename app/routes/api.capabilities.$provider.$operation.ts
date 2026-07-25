@@ -1,7 +1,7 @@
 /**
  * Generic capability route (issue #166): `POST /api/capabilities/:provider/:operation`. An agent
  * instance's thin per-operation tool POSTs its typed input here with
- * `Authorization: Bearer <EDEN_TEAM_TOKEN>` — the SAME delegation-token auth as the Discord send
+ * `Authorization: Bearer <HARNESST_TEAM_TOKEN>` — the SAME delegation-token auth as the Discord send
  * proxy and #167's token broker (one instance-facing auth story, three consumers). The token
  * authenticates the CALLER DEPLOYMENT; the control plane resolves deployment → environment →
  * agent, then hands off to the framework (capabilities/execute.server.ts): enablement → shape →

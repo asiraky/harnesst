@@ -10,13 +10,13 @@ import {
 // token is provided to the instance: the shared token stays on the control plane, and
 // interaction replies use the interaction token, so the channel works without it.
 
-const EDEN_REPLY_REQUEST_ID = "eden:reply";
+const HARNESST_REPLY_REQUEST_ID = "harnesst:reply";
 // = eve's DISCORD_HITL_FREEFORM_CUSTOM_ID_PREFIX ("eve_input_freeform:") +
-//   base64url(JSON.stringify({ requestId: EDEN_REPLY_REQUEST_ID })) — 54 chars, under
+//   base64url(JSON.stringify({ requestId: HARNESST_REPLY_REQUEST_ID })) — 54 chars, under
 //   Discord's 100-char custom_id cap. Hardcoded so eve's built-in freeform route decodes the
 //   click with zero code on our side; if eve's decoder format ever drifts, clicks degrade to
 //   an acked no-op rather than an error.
-const EDEN_REPLY_CUSTOM_ID =
+const HARNESST_REPLY_CUSTOM_ID =
   "eve_input_freeform:eyJyZXF1ZXN0SWQiOiJlZGVuOnJlcGx5In0";
 
 const base = discordChannel({
@@ -25,7 +25,7 @@ const base = discordChannel({
     // default behavior (startTyping) here. We also reset the per-turn flag that tracks whether
     // this turn already posted its own question — see the "session.waiting" workaround below.
     async "turn.started"(event, channel) {
-      (channel.state as any).edenTurnAskedQuestion = false;
+      (channel.state as any).harnesstTurnAskedQuestion = false;
       channel.discord.startTyping();
     },
 
@@ -35,7 +35,7 @@ const base = discordChannel({
     // the latest question routes; older superseded buttons remain stale. If one event contains
     // multiple requests, only the last posted request routes.
     async "input.requested"(event, channel) {
-      (channel.state as any).edenTurnAskedQuestion = true;
+      (channel.state as any).harnesstTurnAskedQuestion = true;
       for (const request of event.requests) {
         const content =
           splitDiscordMessageContent(request.prompt)[0] ?? request.prompt;
@@ -61,7 +61,7 @@ const base = discordChannel({
     // do not clobber that question's own button routing. Remove once eve grows this upstream.
     async "session.waiting"(event, channel) {
       if (event.wait !== "next-user-message") return;
-      if ((channel.state as any).edenTurnAskedQuestion) return; // question buttons already routing
+      if ((channel.state as any).harnesstTurnAskedQuestion) return; // question buttons already routing
       const posted = await channel.discord.post({
         content: "_Reply to continue this conversation._",
         components: [
@@ -72,7 +72,7 @@ const base = discordChannel({
                 type: 2, // BUTTON
                 style: 1, // PRIMARY
                 label: "Reply",
-                custom_id: EDEN_REPLY_CUSTOM_ID,
+                custom_id: HARNESST_REPLY_CUSTOM_ID,
               },
             ],
           },
@@ -94,11 +94,11 @@ const base = discordChannel({
 // first-class reply-to-continue affordance.
 const deliver: typeof base.adapter.deliver = (payload, ctx) => {
   const replies = (payload.inputResponses ?? []).filter(
-    (r) => r.requestId === EDEN_REPLY_REQUEST_ID && typeof r.text === "string",
+    (r) => r.requestId === HARNESST_REPLY_REQUEST_ID && typeof r.text === "string",
   );
   if (replies.length === 0) return base.adapter.deliver(payload, ctx);
   const rest = (payload.inputResponses ?? []).filter(
-    (r) => r.requestId !== EDEN_REPLY_REQUEST_ID,
+    (r) => r.requestId !== HARNESST_REPLY_REQUEST_ID,
   );
   return {
     message: replies.map((r) => r.text).join("\n\n"),

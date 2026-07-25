@@ -14,17 +14,17 @@ import { narrowedReadTokenParams } from "~/github/client.server";
 import { classifyRawRecord } from "../../assistant-template/checkout-sidecar.mjs";
 
 const tree = (dirty: TreeState["dirty"], baseSha = "base0"): TreeState => ({
-  branch: "eden/conv-abc",
+  branch: "harnesst/conv-abc",
   baseSha,
   dirty,
 });
 
 describe("checkout-sync: path policy", () => {
-  it("blocks assistant.json and .ts under .eden/assistant, allows everything else", () => {
-    expect(isBlockedPath(".eden/assistant/assistant.json")).toBe(true);
-    expect(isBlockedPath(".eden/assistant/tools/foo.ts")).toBe(true);
-    expect(isBlockedPath(".eden/assistant/instructions.md")).toBe(false);
-    expect(isBlockedPath(".eden/assistant/skills/x.md")).toBe(false);
+  it("blocks assistant.json and .ts under .harnesst/assistant, allows everything else", () => {
+    expect(isBlockedPath(".harnesst/assistant/assistant.json")).toBe(true);
+    expect(isBlockedPath(".harnesst/assistant/tools/foo.ts")).toBe(true);
+    expect(isBlockedPath(".harnesst/assistant/instructions.md")).toBe(false);
+    expect(isBlockedPath(".harnesst/assistant/skills/x.md")).toBe(false);
     expect(isBlockedPath("agent/tools/foo.ts")).toBe(false);
     expect(isBlockedPath("package.json")).toBe(false);
   });
@@ -33,13 +33,13 @@ describe("checkout-sync: path policy", () => {
     const plan = planCommit(
       tree([
         { path: "agent/tools/foo.ts", status: "added", content: "export default 1;" },
-        { path: ".eden/assistant/assistant.json", status: "modified", content: "{}" },
-        { path: ".eden/assistant/agent.ts", status: "added", content: "x" },
+        { path: ".harnesst/assistant/assistant.json", status: "modified", content: "{}" },
+        { path: ".harnesst/assistant/agent.ts", status: "added", content: "x" },
       ]),
     );
     expect(plan.files.map((f) => f.path)).toEqual(["agent/tools/foo.ts"]);
-    expect(plan.blocked).toEqual([".eden/assistant/agent.ts", ".eden/assistant/assistant.json"]);
-    expect(policyWarnings(plan)[0]).toContain(".eden/assistant/agent.ts");
+    expect(plan.blocked).toEqual([".harnesst/assistant/agent.ts", ".harnesst/assistant/assistant.json"]);
+    expect(policyWarnings(plan)[0]).toContain(".harnesst/assistant/agent.ts");
   });
 });
 
@@ -143,7 +143,7 @@ describe("checkout-sync: diff → commit mapping", () => {
 
 describe("checkout-sync: naming", () => {
   it("derives branch and checkout path from the conversation id", () => {
-    expect(conversationBranch("abc")).toBe("eden/conv-abc");
+    expect(conversationBranch("abc")).toBe("harnesst/conv-abc");
     expect(conversationCheckoutPath("abc")).toBe("/workspace/home/checkouts/abc");
   });
 });

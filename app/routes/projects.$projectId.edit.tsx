@@ -68,7 +68,7 @@ interface FileEditView {
 function templateFor(path: string): string | null {
   // The sandbox definition is a singleton directly under the agent root (both layouts), not
   // a category — a repo running the framework default starts from harnesst's scaffold, which is
-  // behaviorally identical until a secret is exposed (EDEN_SANDBOX_ENV convention).
+  // behaviorally identical until a secret is exposed (HARNESST_SANDBOX_ENV convention).
   if (/^(?:agent|agents\/[^/]+\/agent)\/sandbox\.[cm]?[jt]s$/.test(path)) {
     return DEFAULT_SANDBOX_MODULE;
   }

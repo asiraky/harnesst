@@ -10,20 +10,20 @@ const openrouter = createOpenAICompatible({
   baseURL: "https://openrouter.ai/api/v1",
   apiKey: process.env.OPENROUTER_API_KEY ?? "",
 });
-const edenGateway = createOpenAICompatible({
-  name: "eden",
-  baseURL: process.env.EDEN_MODEL_GATEWAY_URL ?? "",
-  apiKey: process.env.EDEN_MODEL_GATEWAY_TOKEN ?? "",
+const harnesstGateway = createOpenAICompatible({
+  name: "harnesst",
+  baseURL: process.env.HARNESST_MODEL_GATEWAY_URL ?? "",
+  apiKey: process.env.HARNESST_MODEL_GATEWAY_TOKEN ?? "",
 });
 
-// Eden playground model override: the playground pins a model per conversation by
+// harnesst playground model override: the playground pins a model per conversation by
 // prefixing the sent message with one machine-readable line, e.g.
-//   <!-- eden:model anthropic/<connection>/claude-sonnet-5 ctx=200000 -->
-//   <!-- eden:sig <hmac> -->
-// Eden strips that line from every transcript surface; here it picks the model per step.
-const EDEN_MODEL_DIRECTIVE =
-  /^<!--\s*eden:model\s+(\S+?)(?:\s+ctx=(\d+))?\s*-->\n<!--\s*eden:sig\s+([a-f0-9]{64})\s*-->\n\n([\s\S]*)$/;
-function edenSelectedModel(
+//   <!-- harnesst:model anthropic/<connection>/claude-sonnet-5 ctx=200000 -->
+//   <!-- harnesst:sig <hmac> -->
+// harnesst strips that line from every transcript surface; here it picks the model per step.
+const HARNESST_MODEL_DIRECTIVE =
+  /^<!--\s*harnesst:model\s+(\S+?)(?:\s+ctx=(\d+))?\s*-->\n<!--\s*harnesst:sig\s+([a-f0-9]{64})\s*-->\n\n([\s\S]*)$/;
+function harnesstSelectedModel(
   messages: ReadonlyArray<{ role: string; content: unknown }>,
 ): { id: string; contextWindowTokens: number | undefined } | null {
   for (let i = messages.length - 1; i >= 0; i -= 1) {
@@ -43,8 +43,8 @@ function edenSelectedModel(
               )
               .join("\n")
           : "";
-    const match = text.match(EDEN_MODEL_DIRECTIVE);
-    const secret = process.env.EDEN_MODEL_DIRECTIVE_SECRET;
+    const match = text.match(HARNESST_MODEL_DIRECTIVE);
+    const secret = process.env.HARNESST_MODEL_DIRECTIVE_SECRET;
     if (match?.[1] && match[3] && secret) {
       const expected = createHmac("sha256", secret)
         .update(match[1] + "\n" + (match[2] ?? "") + "\n" + match[4])
@@ -66,8 +66,8 @@ function edenSelectedModel(
 }
 
 // Qualified API-key references call their provider directly with the exact connection key.
-// Codex OAuth alone uses Eden's translating gateway; bare ids retain legacy OpenRouter support.
-function edenModel(id: string) {
+// Codex OAuth alone uses harnesst's translating gateway; bare ids retain legacy OpenRouter support.
+function harnesstModel(id: string) {
   const qualified = id.match(
     /^(anthropic|codex|openai|openrouter)\/([a-z]{12})\/(.+)$/,
   );
@@ -75,19 +75,19 @@ function edenModel(id: string) {
   const provider = qualified[1];
   const connectionId = qualified[2];
   const upstreamModelId = qualified[3];
-  if (provider === "codex") return edenGateway.chatModel(id);
+  if (provider === "codex") return harnesstGateway.chatModel(id);
   const envName =
-    "EDEN_PROVIDER_" +
+    "HARNESST_PROVIDER_" +
     provider.toUpperCase() +
     "_" +
     connectionId.toUpperCase() +
     "_API_KEY";
   const apiKey = process.env[envName];
-  // `eve build` evaluates this module INSIDE `docker build`, where Eden deliberately injects no
+  // `eve build` evaluates this module INSIDE `docker build`, where harnesst deliberately injects no
   // connection credentials (they reach only the running container's env). A missing key must not
   // throw here — that would fail every publish-gate and deploy image build. Construct the model
   // with a placeholder and raise the same error on the first actual request instead.
-  const key = apiKey ?? "eden-missing-credential";
+  const key = apiKey ?? "harnesst-missing-credential";
   const model =
     provider === "anthropic"
       ? createAnthropic({ name: "anthropic/" + connectionId, apiKey: key }).chat(
@@ -123,13 +123,13 @@ function edenModel(id: string) {
 export default defineAgent({
   model: defineDynamic({
     // The marketplace planner replaces this sentinel with the active workspace default.
-    fallback: edenModel("__EDEN_WORKSPACE_DEFAULT__"),
+    fallback: harnesstModel("__HARNESST_WORKSPACE_DEFAULT__"),
     events: {
       "step.started": (_event, ctx) => {
-        const selected = edenSelectedModel(ctx.messages);
+        const selected = harnesstSelectedModel(ctx.messages);
         if (!selected) return null;
         return {
-          model: edenModel(selected.id),
+          model: harnesstModel(selected.id),
           modelContextWindowTokens: selected.contextWindowTokens,
         };
       },

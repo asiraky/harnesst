@@ -21,19 +21,19 @@ describe("buildModelDirective", () => {
         effort: "high",
       }),
     ).toBe(
-      "<!-- eden:model anthropic/claude-sonnet-5 ctx=200000 effort=high -->",
+      "<!-- harnesst:model anthropic/claude-sonnet-5 ctx=200000 effort=high -->",
     );
   });
 
   it("omits the context window when unknown", () => {
     expect(buildModelDirective({ id: "openai/gpt-5.1" })).toBe(
-      "<!-- eden:model openai/gpt-5.1 -->",
+      "<!-- harnesst:model openai/gpt-5.1 -->",
     );
   });
 
   it("drops characters that could break the comment or the parser", () => {
     expect(buildModelDirective({ id: "we`ird -->id" })).toBe(
-      "<!-- eden:model weird--id -->",
+      "<!-- harnesst:model weird--id -->",
     );
   });
 });
@@ -50,7 +50,7 @@ describe("parseModelDirective", () => {
 
   it("parses a directive without a context window", () => {
     expect(
-      parseModelDirective("<!-- eden:model openai/gpt-5.1 -->\n\nhi"),
+      parseModelDirective("<!-- harnesst:model openai/gpt-5.1 -->\n\nhi"),
     ).toEqual({
       id: "openai/gpt-5.1",
       contextWindowTokens: undefined,
@@ -61,7 +61,7 @@ describe("parseModelDirective", () => {
   it("parses effort without requiring a context window", () => {
     expect(
       parseModelDirective(
-        "<!-- eden:model codex/abcdefghijkl/gpt-5.5 effort=xhigh -->\n\nhi",
+        "<!-- harnesst:model codex/abcdefghijkl/gpt-5.5 effort=xhigh -->\n\nhi",
       ),
     ).toEqual({
       id: "codex/abcdefghijkl/gpt-5.5",
@@ -76,19 +76,19 @@ describe("parseModelDirective", () => {
 
   it("ignores a directive that is not at the start of the message", () => {
     expect(
-      parseModelDirective("look at this: <!-- eden:model openai/gpt-5.1 -->"),
+      parseModelDirective("look at this: <!-- harnesst:model openai/gpt-5.1 -->"),
     ).toBeNull();
   });
 
   it("returns null for malformed directives", () => {
-    expect(parseModelDirective("<!-- eden:model -->\n\nhi")).toBeNull();
+    expect(parseModelDirective("<!-- harnesst:model -->\n\nhi")).toBeNull();
   });
 });
 
 describe("stripModelDirective", () => {
   it("removes the directive line and the blank line after it", () => {
     const sent =
-      "<!-- eden:model anthropic/claude-sonnet-5 ctx=200000 -->\n\nwhat model are you?";
+      "<!-- harnesst:model anthropic/claude-sonnet-5 ctx=200000 -->\n\nwhat model are you?";
     expect(stripModelDirective(sent)).toBe("what model are you?");
   });
 
@@ -98,7 +98,7 @@ describe("stripModelDirective", () => {
   });
 
   it("leaves a mid-message mention untouched", () => {
-    const text = "the line <!-- eden:model x --> is a directive";
+    const text = "the line <!-- harnesst:model x --> is a directive";
     expect(stripModelDirective(text)).toBe(text);
   });
 });
@@ -108,7 +108,7 @@ describe("effectiveModelId", () => {
     expect(
       effectiveModelId(
         "anthropic/claude-sonnet-5",
-        "<!-- eden:model openai/gpt-5.1 -->\n\nhi",
+        "<!-- harnesst:model openai/gpt-5.1 -->\n\nhi",
       ),
     ).toBe("anthropic/claude-sonnet-5");
   });
@@ -123,7 +123,7 @@ describe("effectiveModelId", () => {
     expect(
       effectiveModelId(
         "dynamic:anthropic/claude-sonnet-5",
-        "<!-- eden:model openai/gpt-5.1 ctx=400000 -->\n\nhi",
+        "<!-- harnesst:model openai/gpt-5.1 ctx=400000 -->\n\nhi",
       ),
     ).toBe("openai/gpt-5.1");
   });
@@ -164,11 +164,11 @@ describe("effectiveModelId", () => {
     ).toBe("openai/abcdefghijkl/gpt-5.4");
   });
 
-  it("strips the eden gateway segment but keeps a codex/<conn>/<slug> id intact (issue #28)", () => {
-    // A codex fallback runs through the edenGateway provider (named "eden"), so eve reports
-    // dynamic:eden/codex/<conn>/<slug>. Only the leading provider segment is stripped.
+  it("strips the harnesst gateway segment but keeps a codex/<conn>/<slug> id intact (issue #28)", () => {
+    // A codex fallback runs through the harnesstGateway provider (named "harnesst"), so eve reports
+    // dynamic:harnesst/codex/<conn>/<slug>. Only the leading provider segment is stripped.
     expect(
-      effectiveModelId("dynamic:eden.chat/codex/abcdefghijkl/gpt-5.5", "hi"),
+      effectiveModelId("dynamic:harnesst.chat/codex/abcdefghijkl/gpt-5.5", "hi"),
     ).toBe("codex/abcdefghijkl/gpt-5.5");
   });
 });

@@ -2,7 +2,7 @@
  * harnesst model gateway — `POST /api/gateway/v1/chat/completions` (issue #28, Phase 1).
  *
  * A deployed agent (or the built-in assistant) set to a `codex/<connectionId>/<slug>` model points
- * its `@ai-sdk/openai-compatible` provider at THIS route, authenticated by an `EDEN_MODEL_GATEWAY_TOKEN`
+ * its `@ai-sdk/openai-compatible` provider at THIS route, authenticated by an `HARNESST_MODEL_GATEWAY_TOKEN`
  * (an `edng_` org token). The gateway:
  *   1. verifies the token → org id (nothing else is trusted from the client),
  *   2. parses the model id and org-checks the named Codex connection,

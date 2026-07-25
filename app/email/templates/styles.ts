@@ -2,7 +2,7 @@ import type { CSSProperties } from "react";
 
 // Brand blue (--primary, oklch(0.625 0.201 265)) approximated in sRGB for
 // email clients, which don't support oklch().
-export const EDEN_BLUE = "#3b6deb";
+export const HARNESST_BLUE = "#3b6deb";
 
 export const emailStyles = {
   main: {
@@ -32,7 +32,7 @@ export const emailStyles = {
     margin: "0 0 28px",
   } satisfies CSSProperties,
   brandAccent: {
-    color: EDEN_BLUE,
+    color: HARNESST_BLUE,
   } satisfies CSSProperties,
   heading: {
     color: "#171717",

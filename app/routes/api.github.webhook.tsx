@@ -90,7 +90,7 @@ export async function action({ request }: ActionFunctionArgs) {
     event === "pull_request" &&
     payload.action === "closed" &&
     !payload.pull_request?.merged &&
-    payload.pull_request?.head?.ref?.startsWith("eden/rename-member-") &&
+    payload.pull_request?.head?.ref?.startsWith("harnesst/rename-member-") &&
     payload.repository?.owner?.login &&
     payload.repository.name
   ) {
@@ -101,7 +101,7 @@ export async function action({ request }: ActionFunctionArgs) {
       const match = agents.find(
         (a) =>
           a.pendingName &&
-          `eden/rename-member-${a.name}-${a.pendingName}` === headRef,
+          `harnesst/rename-member-${a.name}-${a.pendingName}` === headRef,
       );
       if (match) await getRuntime().data.agents.setPendingName(match.id, null);
     }
@@ -150,7 +150,7 @@ export async function action({ request }: ActionFunctionArgs) {
         },
       );
       // D7: a merge that added/removed a member must refresh the OTHER members' running
-      // instances so their EDEN_TEAMMATES reflects the new roster (image reuse, no rebuild).
+      // instances so their HARNESST_TEAMMATES reflects the new roster (image reuse, no rebuild).
       await refreshTeammatesForRosterChange({
         projectId: project.id,
         previousNames: before.map((a) => a.name),

@@ -23,18 +23,18 @@
 /** The public Codex CLI OAuth client id (no secret). Same value the Codex CLI ships. */
 export const CODEX_CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann";
 
-/** Auth host — override with EDEN_CODEX_AUTH_BASE_URL for tests/dev-mocking. */
+/** Auth host — override with HARNESST_CODEX_AUTH_BASE_URL for tests/dev-mocking. */
 export function codexAuthBase(): string {
   return (
-    process.env.EDEN_CODEX_AUTH_BASE_URL?.replace(/\/+$/, "") ||
+    process.env.HARNESST_CODEX_AUTH_BASE_URL?.replace(/\/+$/, "") ||
     "https://auth.openai.com"
   );
 }
 
-/** Codex backend host (the Responses API) — override with EDEN_CODEX_API_BASE_URL. */
+/** Codex backend host (the Responses API) — override with HARNESST_CODEX_API_BASE_URL. */
 export function codexApiBase(): string {
   return (
-    process.env.EDEN_CODEX_API_BASE_URL?.replace(/\/+$/, "") ||
+    process.env.HARNESST_CODEX_API_BASE_URL?.replace(/\/+$/, "") ||
     "https://chatgpt.com/backend-api/codex"
   );
 }

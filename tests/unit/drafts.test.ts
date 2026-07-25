@@ -37,7 +37,7 @@ const PROJECT = {
 };
 
 const proposed: ProposedChange = {
-  branch: "eden/publish-x",
+  branch: "harnesst/publish-x",
   base: "main",
   pullRequestUrl: "https://github.test/pr/7",
   pullRequestNumber: 7,
@@ -149,11 +149,11 @@ describe("publishDrafts", () => {
     ).rejects.toThrow(/No staged changes selected/);
   });
 
-  it("skips the build gate for an assistant-only (.eden/assistant) changeset", async () => {
+  it("skips the build gate for an assistant-only (.harnesst/assistant) changeset", async () => {
     await stageDraft(
       {
         projectId: PROJECT.id,
-        path: ".eden/assistant/instructions.md",
+        path: ".harnesst/assistant/instructions.md",
         content: "hi",
       },
       store,
@@ -163,7 +163,7 @@ describe("publishDrafts", () => {
       .fn()
       .mockResolvedValue({ ok: false, output: "should not run" });
     await publishDrafts(
-      { project: PROJECT, paths: [".eden/assistant/instructions.md"] },
+      { project: PROJECT, paths: [".harnesst/assistant/instructions.md"] },
       store,
       propose,
       checkBuild,
@@ -176,7 +176,7 @@ describe("publishDrafts", () => {
     await stageDraft(
       {
         projectId: PROJECT.id,
-        path: ".eden/assistant/instructions.md",
+        path: ".harnesst/assistant/instructions.md",
         content: "hi",
       },
       store,
@@ -190,7 +190,7 @@ describe("publishDrafts", () => {
     await publishDrafts(
       {
         project: PROJECT,
-        paths: [".eden/assistant/instructions.md", "agent/tools/x.ts"],
+        paths: [".harnesst/assistant/instructions.md", "agent/tools/x.ts"],
       },
       store,
       propose,
@@ -512,7 +512,7 @@ describe("publish gate (build check)", () => {
       ) + "\n";
     // Older harnesst scaffolds committed a copy of the reference image that COPYs the lock
     // explicitly and runs a bare `npm ci` — deleting the lock breaks it at COPY.
-    const staleDockerfile = `# Eden reference image for an eve agent (mirrors LocalDockerTarget.build()).
+    const staleDockerfile = `# harnesst reference image for an eve agent (mirrors LocalDockerTarget.build()).
 FROM node:24-slim AS build
 WORKDIR /app
 COPY package.json package-lock.json ./
@@ -719,7 +719,7 @@ RUN npm ci
       store,
     );
     await stageDraft(
-      { projectId: PROJECT.id, path: "eden-lock.json", content: "{}" },
+      { projectId: PROJECT.id, path: "harnesst-lock.json", content: "{}" },
       store,
     );
 
@@ -730,7 +730,7 @@ RUN npm ci
         paths: [
           "agents/deployer/agent/instructions.md",
           "agents/deployer/package.json",
-          "eden-lock.json",
+          "harnesst-lock.json",
         ],
       },
       store,
@@ -773,7 +773,7 @@ RUN npm ci
       store,
     );
     await stageDraft(
-      { projectId: PROJECT.id, path: "eden-lock.json", content: "{}" },
+      { projectId: PROJECT.id, path: "harnesst-lock.json", content: "{}" },
       store,
     );
 
@@ -784,7 +784,7 @@ RUN npm ci
         paths: [
           "agents/pm/agent/channels/github.ts",
           "agents/reviewer/agent/channels/github.ts",
-          "eden-lock.json",
+          "harnesst-lock.json",
         ],
       },
       store,
@@ -994,7 +994,7 @@ describe("orphaned drafts (issue #67)", () => {
       store,
     );
     await stageDraft(
-      { projectId: PROJECT.id, path: "eden-lock.json", content: "{}" },
+      { projectId: PROJECT.id, path: "harnesst-lock.json", content: "{}" },
       store,
     );
     const propose = vi.fn().mockResolvedValue(proposed);
@@ -1007,7 +1007,7 @@ describe("orphaned drafts (issue #67)", () => {
         paths: [
           "agents/deployer/agent/instructions.md",
           "agents/deployer/package.json",
-          "eden-lock.json",
+          "harnesst-lock.json",
         ],
       },
       store,
@@ -1089,12 +1089,12 @@ describe("findOrphanedDrafts (pure)", () => {
     expect(findOrphanedDrafts([], [], [pkg, code])).toEqual([]);
   });
 
-  it("never flags non-member paths (agent/, root package.json, lock, .eden)", () => {
+  it("never flags non-member paths (agent/, root package.json, lock, .harnesst)", () => {
     const drafts = [
       draft("agent/agent.ts"),
       draft("package.json", "{}"),
-      draft("eden-lock.json", "{}"),
-      draft(".eden/assistant/instructions.md"),
+      draft("harnesst-lock.json", "{}"),
+      draft(".harnesst/assistant/instructions.md"),
     ];
     expect(findOrphanedDrafts([], [], drafts)).toEqual([]);
   });
@@ -1114,14 +1114,14 @@ describe("resolveFileView", () => {
   } = {}): FileViewDeps {
     return {
       readFile: vi.fn(async (_inst, repo: { ref?: string }) =>
-        repo.ref === "eden/publish-x" ? pendingContent : repoContent,
+        repo.ref === "harnesst/publish-x" ? pendingContent : repoContent,
       ) as FileViewDeps["readFile"],
       findOpenChange: vi.fn(async () =>
         pending
           ? {
               number: 7,
               title: "Update agent files",
-              branch: "eden/publish-x",
+              branch: "harnesst/publish-x",
               url: "u",
             }
           : null,

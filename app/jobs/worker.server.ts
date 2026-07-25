@@ -12,7 +12,7 @@ import { getRuntime } from "~/seams/index.server";
 import type { DeployReleasePayload, Job } from "./queue.server";
 import { claimNext, markDone, markFailed } from "./queue.server";
 
-const POLL_MS = Number(process.env.EDEN_WORKER_POLL_MS ?? 2000);
+const POLL_MS = Number(process.env.HARNESST_WORKER_POLL_MS ?? 2000);
 
 async function execute(job: Job): Promise<void> {
   switch (job.kind) {
@@ -146,16 +146,16 @@ function startWorker(): { stop: () => void } {
 }
 
 const globalForWorker = globalThis as unknown as {
-  __edenJobWorker?: { stop: () => void };
+  __harnesstJobWorker?: { stop: () => void };
 };
 
 /** Start the worker once per process; safe to call from any server module. */
 export function ensureWorkerStarted(): void {
-  if (process.env.EDEN_DISABLE_WORKER !== "1") {
-    globalForWorker.__edenJobWorker ??= startWorker();
+  if (process.env.HARNESST_DISABLE_WORKER !== "1") {
+    globalForWorker.__harnesstJobWorker ??= startWorker();
   }
   // The sandbox reaper (issue #118) is a sibling periodic sweep with its own env gate and the
   // local-docker guard. Start it here so every existing worker call site gets it; it is a no-op on
-  // other deploy targets and when EDEN_DISABLE_SANDBOX_REAPER=1.
+  // other deploy targets and when HARNESST_DISABLE_SANDBOX_REAPER=1.
   ensureSandboxReaperStarted();
 }

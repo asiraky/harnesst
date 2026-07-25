@@ -5,7 +5,7 @@
  * over the `/marketplace` route on a hard reload; its destination in the eve OSS repo is still
  * `marketplace/` — the copy step renames it.
  *
- * This is what runs when `EDEN_CATALOG_REPO` isn't set: no network, just node:fs against the
+ * This is what runs when `HARNESST_CATALOG_REPO` isn't set: no network, just node:fs against the
  * seed directory. It exists so harnesst's browse experience works out of the box and so the unit
  * tests can exercise the real parse path against the real seed (tests/unit/marketplace.test.ts).
  *

@@ -108,7 +108,7 @@ describe("discordAuthorizeUrl", () => {
   it("includes the app id, scopes, permissions, redirect and state, url-encoded", () => {
     const url = discordAuthorizeUrl({
       applicationId: "12345",
-      redirectUri: "https://eden.example/discord/callback",
+      redirectUri: "https://harnesst.example/discord/callback",
       state: "st at e",
     });
     const parsed = new URL(url);
@@ -122,7 +122,7 @@ describe("discordAuthorizeUrl", () => {
     );
     expect(parsed.searchParams.get("response_type")).toBe("code");
     expect(parsed.searchParams.get("redirect_uri")).toBe(
-      "https://eden.example/discord/callback",
+      "https://harnesst.example/discord/callback",
     );
     expect(parsed.searchParams.get("state")).toBe("st at e");
   });
@@ -197,7 +197,7 @@ describe("registerGuildCommand", () => {
 
 describe("ensureInteractionsEndpoint", () => {
   const config = { applicationId: "app_1", botToken: "bot_secret" };
-  const endpoint = "https://eden.example/api/discord/interactions";
+  const endpoint = "https://harnesst.example/api/discord/interactions";
 
   it("leaves a matching endpoint alone (no PATCH)", async () => {
     const calls: { url: string; init?: RequestInit }[] = [];

@@ -31,15 +31,15 @@ function setCookies(response: Response): string[] {
 describe("explicit authentication return destinations", () => {
   beforeEach(() => {
     getSession.mockReset();
-    process.env.EDEN_SECRETS_KEY = KEY;
-    process.env.BETTER_AUTH_URL = "https://eden.example.com";
+    process.env.HARNESST_SECRETS_KEY = KEY;
+    process.env.BETTER_AUTH_URL = "https://harnesst.example.com";
   });
 
   it("does not copy callback credentials into the login URL", async () => {
     getSession.mockResolvedValue({ response: null, headers: new Headers() });
     const { sessionLoader } = await import("~/auth/session.server");
     const request = new Request(
-      "https://eden.example.com/google/callback?code=one-time-code&state=signed-state",
+      "https://harnesst.example.com/google/callback?code=one-time-code&state=signed-state",
     );
 
     let response: Response | undefined;
@@ -66,7 +66,7 @@ describe("explicit authentication return destinations", () => {
     getSession.mockResolvedValue({ response: null, headers: new Headers() });
     const { sessionLoader } = await import("~/auth/session.server");
     const request = new Request(
-      "https://eden.example.com/accept-invitation/inv-1?token=abc.def",
+      "https://harnesst.example.com/accept-invitation/inv-1?token=abc.def",
     );
 
     let response: Response | undefined;
@@ -91,7 +91,7 @@ describe("explicit authentication return destinations", () => {
     const { betterAuthSessionMiddleware } =
       await import("~/auth/session.server");
     const sensitiveRequest = new Request(
-      "https://eden.example.com/google/callback?code=raw-code&state=raw-state",
+      "https://harnesst.example.com/google/callback?code=raw-code&state=raw-state",
     );
     const sensitiveContext = new RouterContextProvider();
     const next = vi.fn(async () => new Response("must not render"));
@@ -111,7 +111,7 @@ describe("explicit authentication return destinations", () => {
     expect(staged.headers.get("cache-control")).toBe("private, no-store");
     expect(staged.headers.get("referrer-policy")).toBe("no-referrer");
     const stagingCookie = setCookies(staged).find((value) =>
-      value.startsWith("eden-google-oauth-callback="),
+      value.startsWith("harnesst-google-oauth-callback="),
     );
     expect(stagingCookie).toBeTruthy();
     expect(stagingCookie).not.toContain("raw-code");
@@ -122,7 +122,7 @@ describe("explicit authentication return destinations", () => {
       headers: new Headers(),
     });
     const cleanRequest = new Request(
-      "https://eden.example.com/google/callback",
+      "https://harnesst.example.com/google/callback",
       { headers: { cookie: stagingCookie!.split(";", 1)[0] } },
     );
     const clean = await betterAuthSessionMiddleware(
@@ -137,7 +137,7 @@ describe("explicit authentication return destinations", () => {
     expect(
       setCookies(clean).some(
         (value) =>
-          value.startsWith("eden-google-oauth-callback=") &&
+          value.startsWith("harnesst-google-oauth-callback=") &&
           value.includes("Max-Age=0"),
       ),
     ).toBe(true);
@@ -147,7 +147,7 @@ describe("explicit authentication return destinations", () => {
     const { betterAuthSessionMiddleware } =
       await import("~/auth/session.server");
     const sensitiveRequest = new Request(
-      "https://eden.example.com/github/apps/callback?code=manifest-code&state=raw-state",
+      "https://harnesst.example.com/github/apps/callback?code=manifest-code&state=raw-state",
     );
     const next = vi.fn(async () => new Response("must not render"));
 
@@ -164,7 +164,7 @@ describe("explicit authentication return destinations", () => {
     expect(staged.status).toBe(302);
     expect(staged.headers.get("location")).toBe("/github/apps/callback");
     const stagingCookie = setCookies(staged).find((value) =>
-      value.startsWith("eden-github-manifest-callback="),
+      value.startsWith("harnesst-github-manifest-callback="),
     );
     expect(stagingCookie).toBeTruthy();
     expect(stagingCookie).not.toContain("manifest-code");
@@ -172,7 +172,7 @@ describe("explicit authentication return destinations", () => {
 
     getSession.mockResolvedValue({ response: null, headers: new Headers() });
     const cleanRequest = new Request(
-      "https://eden.example.com/github/apps/callback",
+      "https://harnesst.example.com/github/apps/callback",
       { headers: { cookie: stagingCookie!.split(";", 1)[0] } },
     );
     const clean = await betterAuthSessionMiddleware(
@@ -187,7 +187,7 @@ describe("explicit authentication return destinations", () => {
     expect(
       setCookies(clean).some(
         (value) =>
-          value.startsWith("eden-github-manifest-callback=") &&
+          value.startsWith("harnesst-github-manifest-callback=") &&
           value.includes("Max-Age=0"),
       ),
     ).toBe(true);

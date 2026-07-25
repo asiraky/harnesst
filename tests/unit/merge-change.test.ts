@@ -86,7 +86,7 @@ describe("runMergeChange", () => {
     });
 
     await expect(
-      runMergeChange(payload({ taskId: task.id, branch: "eden/conv-abc" }), deps, store),
+      runMergeChange(payload({ taskId: task.id, branch: "harnesst/conv-abc" }), deps, store),
     ).resolves.toBeUndefined();
 
     const row = await store.workspaceTasks.findById(task.id);
@@ -101,7 +101,7 @@ describe("runMergeChange", () => {
     const deps = makeDeps();
 
     await runMergeChange(
-      payload({ taskId: task.id, branch: "eden/conv-abc" }),
+      payload({ taskId: task.id, branch: "harnesst/conv-abc" }),
       deps,
       store,
     );
@@ -111,10 +111,10 @@ describe("runMergeChange", () => {
       "inst_1",
       { owner: "acme", repo: "agent" },
       5,
-      "eden/conv-abc",
+      "harnesst/conv-abc",
     );
     expect(deps.ensureReleasesForCommit).toHaveBeenCalledOnce();
-    expect(deps.discardConversationCheckoutByBranch).toHaveBeenCalledWith("eden/conv-abc");
+    expect(deps.discardConversationCheckoutByBranch).toHaveBeenCalledWith("harnesst/conv-abc");
 
     const row = await store.workspaceTasks.findById(task.id);
     expect(row?.status).toBe("succeeded");
@@ -153,17 +153,17 @@ describe("runMergeChange", () => {
         .mockResolvedValue([
           "agents/pm/agent/channels/github.ts",
           "agents/reviewer/agent/index.ts",
-          ".eden/config.json",
+          ".harnesst/config.json",
         ]),
     });
 
     await runMergeChange(
-      payload({ projectId: "team_1", taskId: task.id, branch: "eden/conv-abc" }),
+      payload({ projectId: "team_1", taskId: task.id, branch: "harnesst/conv-abc" }),
       deps,
       store,
     );
 
-    // One build per member root the PR spans (`.eden/**` maps to none), each streamed as (i/n).
+    // One build per member root the PR spans (`.harnesst/**` maps to none), each streamed as (i/n).
     expect(checkBuild).toHaveBeenCalledTimes(2);
     expect(checkBuild.mock.calls.map((c) => c[0].agentRoot)).toEqual([
       "agents/pm/agent",

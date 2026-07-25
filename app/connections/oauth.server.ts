@@ -3,7 +3,7 @@
  * code→token network calls, parameterized by a ProviderDefinition from the registry.
  *
  * harnesst owns ONE OAuth client per (installation, provider), operator-registered as
- * EDEN_<PREFIX>_*. The connect flow sends the user through the provider's consent screen for
+ * HARNESST_<PREFIX>_*. The connect flow sends the user through the provider's consent screen for
  * that client; the provider redirects back to the registered callback with a `code`, which this
  * module exchanges server-side for a refresh token (the durable grant harnesst seals in
  * `connection_grants`). Unlike Discord — where the connect proof is a bot-token side effect and
@@ -142,7 +142,7 @@ export interface ConnectState {
 
 /** The HMAC key: the same tenant-wide key that seals secrets. */
 export function connectStateKey(): Buffer {
-  return decodeKey(process.env.EDEN_SECRETS_KEY);
+  return decodeKey(process.env.HARNESST_SECRETS_KEY);
 }
 
 /** Sign a connect state. `returnTo` must already be a validated same-origin path. */

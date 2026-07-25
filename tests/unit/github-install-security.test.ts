@@ -37,7 +37,7 @@ describe("GitHub installation ownership state", () => {
       githubUserAuthorizeUrl({
         clientId: "client-id",
         state: "opaque.state",
-        redirectUri: "https://eden.test/github/installations/callback",
+        redirectUri: "https://harnesst.test/github/installations/callback",
         codeChallenge: pkceChallenge("verifier"),
       }),
     );
@@ -47,7 +47,7 @@ describe("GitHub installation ownership state", () => {
     expect(Object.fromEntries(url.searchParams)).toMatchObject({
       client_id: "client-id",
       state: "opaque.state",
-      redirect_uri: "https://eden.test/github/installations/callback",
+      redirect_uri: "https://harnesst.test/github/installations/callback",
       code_challenge_method: "S256",
       code_challenge: pkceChallenge("verifier"),
     });
@@ -65,7 +65,7 @@ describe("GitHub user OAuth network boundary", () => {
         {
           code: "one-use-code",
           codeVerifier: "pkce-verifier",
-          redirectUri: "https://eden.test/github/installations/callback",
+          redirectUri: "https://harnesst.test/github/installations/callback",
           config: { clientId: "client", clientSecret: "client-secret" },
         },
         fetchImpl as typeof fetch,
@@ -78,7 +78,7 @@ describe("GitHub user OAuth network boundary", () => {
       client_id: "client",
       client_secret: "client-secret",
       code: "one-use-code",
-      redirect_uri: "https://eden.test/github/installations/callback",
+      redirect_uri: "https://harnesst.test/github/installations/callback",
       code_verifier: "pkce-verifier",
     });
   });
@@ -122,7 +122,7 @@ describe("GitHub user OAuth network boundary", () => {
         {
           code: "code",
           codeVerifier: "verifier",
-          redirectUri: "https://eden.test/github/installations/callback",
+          redirectUri: "https://harnesst.test/github/installations/callback",
           config: { clientId: "client", clientSecret: "secret" },
         },
         malformedToken as typeof fetch,

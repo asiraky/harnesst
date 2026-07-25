@@ -13,13 +13,13 @@ describe("runWorldMigrations", () => {
       throw new Error(`unexpected docker call: ${args.join(" ")}`);
     });
 
-    await runWorldMigrations("eden/proj-x:abc", "postgres://world", runDocker);
+    await runWorldMigrations("harnesst/proj-x:abc", "postgres://world", runDocker);
 
     expect(runDocker).toHaveBeenCalledTimes(2);
     expect(runDocker).toHaveBeenLastCalledWith([
       "run",
       "--rm",
-      "eden/proj-x:abc-build",
+      "harnesst/proj-x:abc-build",
       "test",
       "-f",
       WORLD_POSTGRES_SETUP_SCRIPT,
@@ -29,7 +29,7 @@ describe("runWorldMigrations", () => {
   it("runs the Workflow setup script when it is present", async () => {
     const runDocker = vi.fn(async (_args: string[]) => "");
 
-    await runWorldMigrations("eden/proj-x:abc", "postgres://world", runDocker);
+    await runWorldMigrations("harnesst/proj-x:abc", "postgres://world", runDocker);
 
     expect(runDocker).toHaveBeenCalledTimes(4);
     expect(runDocker.mock.calls[2]?.[0]).toEqual([
@@ -39,7 +39,7 @@ describe("runWorldMigrations", () => {
       "host.docker.internal:host-gateway",
       "-e",
       "WORKFLOW_POSTGRES_URL=postgres://world",
-      "eden/proj-x:abc-build",
+      "harnesst/proj-x:abc-build",
       "node",
       "-e",
       expect.stringContaining("createConnection"),
@@ -51,7 +51,7 @@ describe("runWorldMigrations", () => {
       "host.docker.internal:host-gateway",
       "-e",
       "WORKFLOW_POSTGRES_URL=postgres://world",
-      "eden/proj-x:abc-build",
+      "harnesst/proj-x:abc-build",
       "node",
       WORLD_POSTGRES_SETUP_SCRIPT,
     ]);
@@ -65,7 +65,7 @@ describe("runWorldMigrations", () => {
     });
 
     await expect(
-      runWorldMigrations("eden/proj-x:abc", "postgres://world", runDocker),
+      runWorldMigrations("harnesst/proj-x:abc", "postgres://world", runDocker),
     ).rejects.toBe(unreachable);
 
     expect(runDocker).toHaveBeenCalledTimes(3);

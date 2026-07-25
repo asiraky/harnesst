@@ -7,7 +7,7 @@
  * POST (never batch-wide text resolution), and the supersede rule (D13) must resolve BOTH
  * pending items — the un-answered request's item included — before the new turn streams.
  *
- * Opt-in: EDEN_DB_SMOKE=1 with DATABASE_URL pointing at the live dev database.
+ * Opt-in: HARNESST_DB_SMOKE=1 with DATABASE_URL pointing at the live dev database.
  */
 import { describe, expect, it } from "vitest";
 
@@ -229,7 +229,7 @@ describe.runIf(LIVE)("FOH park and request-correlated answer", () => {
 });
 
 describe.runIf(!LIVE)("FOH park/answer e2e (skipped)", () => {
-  it("runs only with EDEN_DB_SMOKE=1 against a live database", () => {
+  it("runs only with HARNESST_DB_SMOKE=1 against a live database", () => {
     expect(LIVE).toBe(false);
   });
 });

@@ -121,7 +121,7 @@ describe("verifyConnectState registry validation", () => {
 describe("authorizeUrl (generic)", () => {
   const input = {
     clientId: "client_1",
-    redirectUri: "https://eden.example/connections/mayi/callback",
+    redirectUri: "https://harnesst.example/connections/mayi/callback",
     state: "signed-state",
     scopes: "mayi.approvals",
   };
@@ -238,7 +238,7 @@ describe("fetchAccountEmail without a userinfo endpoint", () => {
 describe("Google-unchanged regression (issue #163 acceptance criterion 2)", () => {
   const input = {
     clientId: "client_1",
-    redirectUri: "https://eden.example/google/callback",
+    redirectUri: "https://harnesst.example/google/callback",
     state: "st at e",
     scopes: "https://www.googleapis.com/auth/spreadsheets",
   };
@@ -410,9 +410,9 @@ describe("registerOAuthClient (RFC 7591, issue #167)", () => {
       {
         provider: REG,
         clientName: "harnesst — proj / agent",
-        redirectUris: ["https://eden.example/connections/mayi/callback"],
+        redirectUris: ["https://harnesst.example/connections/mayi/callback"],
         approvalCallbackUris: [
-          "https://eden.example/e/env_1/eve/v1/mayi/approval-resolved",
+          "https://harnesst.example/e/env_1/eve/v1/mayi/approval-resolved",
         ],
       },
       fetchImpl,
@@ -421,9 +421,9 @@ describe("registerOAuthClient (RFC 7591, issue #167)", () => {
     expect(calls[0].url).toBe(REG.clientRegistration!.endpoint);
     expect(calls[0].body).toEqual({
       client_name: "harnesst — proj / agent",
-      redirect_uris: ["https://eden.example/connections/mayi/callback"],
+      redirect_uris: ["https://harnesst.example/connections/mayi/callback"],
       approval_callback_uris: [
-        "https://eden.example/e/env_1/eve/v1/mayi/approval-resolved",
+        "https://harnesst.example/e/env_1/eve/v1/mayi/approval-resolved",
       ],
     });
   });

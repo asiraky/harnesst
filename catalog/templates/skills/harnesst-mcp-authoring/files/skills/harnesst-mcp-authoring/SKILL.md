@@ -1,5 +1,5 @@
 ---
-name: eden-mcp-authoring
+name: harnesst-mcp-authoring
 description: Author, review, merge, and deploy eve agents through harnesst's MCP tools. Use when creating or changing agent instructions, skills, tools, schedules, connections, channels, subagents, sandboxes, or agent.ts through a connected harnesst project, including taking the change through one pull request and confirming the deployment is live.
 ---
 
@@ -86,7 +86,7 @@ Follow the existing project and installed eve version. In particular:
   information.
 - Never hardcode or invent a secret. Read it as `process.env.SCREAMING_SNAKE_CASE` inside the
   execution path and report the exact secret names that a human must configure in harnesst. Preserve an
-  existing sandbox's `EDEN_SANDBOX_ENV` forwarding.
+  existing sandbox's `HARNESST_SANDBOX_ENV` forwarding.
 - Prefer `fetch` and Node built-ins. If a dependency is necessary and the client has a checkout,
   use that project's package manager so `package.json` and its lockfile stay synchronized, then
   stage their complete resulting contents. Without a checkout or complete current manifests, do not
@@ -114,7 +114,7 @@ does not close or alter a pull request.
 ## Publish exactly one pull request
 
 When the full change set is ready, call `publish_changes` once with `paths` containing every staged
-path and a concise title. Publishing selected drafts creates one fresh `eden/publish-*` branch, one
+path and a concise title. Publishing selected drafts creates one fresh `harnesst/publish-*` branch, one
 commit, and one pull request targeting the project's configured default branch. It never writes
 directly to that branch.
 

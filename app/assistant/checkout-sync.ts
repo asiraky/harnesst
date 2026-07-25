@@ -40,13 +40,13 @@ export interface TreeState {
 /**
  * Paths the assistant may edit in its sandbox but that must NEVER be committed to the branch:
  * its own model override (`assistant.json`) and the harnesst-owned `.ts` tool/agent layer under
- * `.eden/assistant/`. Review can't undo a merged change to these, so they're stripped pre-commit
+ * `.harnesst/assistant/`. Review can't undo a merged change to these, so they're stripped pre-commit
  * (and the model is told, so it doesn't think its edit stuck). Everything else is allowed —
  * PR review is the backstop.
  */
 export function isBlockedPath(path: string): boolean {
-  if (path === ".eden/assistant/assistant.json") return true;
-  if (path.startsWith(".eden/assistant/") && path.endsWith(".ts")) return true;
+  if (path === ".harnesst/assistant/assistant.json") return true;
+  if (path.startsWith(".harnesst/assistant/") && path.endsWith(".ts")) return true;
   return false;
 }
 
@@ -146,7 +146,7 @@ export function policyWarnings(plan: CommitPlan): string[] {
 
 /** The working branch a conversation's checkout is mirrored onto. */
 export function conversationBranch(conversationId: string): string {
-  return `eden/conv-${conversationId}`;
+  return `harnesst/conv-${conversationId}`;
 }
 
 /** Absolute path of a conversation's checkout inside the instance/sandbox (shared home volume). */
@@ -171,7 +171,7 @@ export function checkoutEnsureError(ensured: {
   return (
     `Couldn't prepare this conversation's repo checkout (${reason}). ` +
     "Try again in a moment. If this keeps happening, check that the assistant instance can " +
-    "reach harnesst's callback API (EDEN_API_URL) — for example, a host firewall blocking the " +
+    "reach harnesst's callback API (HARNESST_API_URL) — for example, a host firewall blocking the " +
     "docker bridge."
   );
 }

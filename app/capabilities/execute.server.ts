@@ -129,7 +129,7 @@ async function defaultEnabledGroups(
     listDrafts(project.id),
   ]);
   const lock = overlayLock(
-    source.files["eden-lock.json"] ?? null,
+    source.files["harnesst-lock.json"] ?? null,
     drafts.map((d) => ({ path: d.path, content: d.content })),
   );
   const member = caller.agent.root === "agent" ? null : caller.agent.name;

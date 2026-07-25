@@ -1,11 +1,11 @@
 import { and, eq, like } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 
-const LIVE = process.env.EDEN_DB_SMOKE === "1";
+const LIVE = process.env.HARNESST_DB_SMOKE === "1";
 const ORIGIN = "http://localhost:5277";
 
 process.env.BETTER_AUTH_SECRET ??=
-  "eden-auth-integration-secret-at-least-32-characters";
+  "harnesst-auth-integration-secret-at-least-32-characters";
 process.env.BETTER_AUTH_URL ??= ORIGIN;
 
 function jsonRequest(

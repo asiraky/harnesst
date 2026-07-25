@@ -61,7 +61,7 @@ export const loader = (args: LoaderFunctionArgs) =>
         return {
           error:
             "This harnesst installation has no Discord app configured. An operator must set " +
-            "EDEN_DISCORD_APPLICATION_ID, EDEN_DISCORD_BOT_TOKEN, and EDEN_DISCORD_PUBLIC_KEY " +
+            "HARNESST_DISCORD_APPLICATION_ID, HARNESST_DISCORD_BOT_TOKEN, and HARNESST_DISCORD_PUBLIC_KEY " +
             "on the control plane (see the self-host docs) before Discord can be connected.",
           backUrl,
         };

@@ -38,12 +38,12 @@ import { mintAssistantToken } from "./token.server";
 /** Internal environment + roster name for the assistant. */
 const ASSISTANT_ENV = "assistant";
 const ASSISTANT_NAME = "assistant";
-const ASSISTANT_ROOT = ".eden/assistant";
+const ASSISTANT_ROOT = ".harnesst/assistant";
 
 /** Where the bundled template lives (mirrors the CatalogSource fixture reading <cwd>/catalog). */
 export function assistantTemplateDir(): string {
   return (
-    process.env.EDEN_ASSISTANT_TEMPLATE_DIR ??
+    process.env.HARNESST_ASSISTANT_TEMPLATE_DIR ??
     path.join(process.cwd(), "assistant-template")
   );
 }
@@ -110,7 +110,7 @@ export async function assistantTemplateHash(): Promise<string> {
 }
 
 function assistantImageRef(hash: string): string {
-  return `eden-assistant:${hash}`;
+  return `harnesst-assistant:${hash}`;
 }
 
 /** gitSha marker for a template-hash release (not a real repo commit — see docs §3). */
@@ -185,9 +185,9 @@ async function renameFirstEnv(
 
 // ── Deploy env assembly (no user secrets, ever) ────────────────────────────────
 
-function edenApiUrl(): string {
-  if (process.env.EDEN_ASSISTANT_API_URL)
-    return process.env.EDEN_ASSISTANT_API_URL;
+function harnesstApiUrl(): string {
+  if (process.env.HARNESST_ASSISTANT_API_URL)
+    return process.env.HARNESST_ASSISTANT_API_URL;
   const port =
     process.env.PORT ??
     (process.env.NODE_ENV === "production" ? "3000" : "5173");
@@ -245,14 +245,14 @@ export async function assistantEnv(input: {
   // Built fresh (no user secrets to shadow); only the harnesst-owned keys are set.
   const env: Record<string, string> = {
     ...providerEnv,
-    EDEN_ASSISTANT_MODEL: model,
-    EDEN_API_URL: edenApiUrl(),
-    EDEN_ASSISTANT_TOKEN: mintAssistantToken(input.deploymentId),
+    HARNESST_ASSISTANT_MODEL: model,
+    HARNESST_API_URL: harnesstApiUrl(),
+    HARNESST_ASSISTANT_TOKEN: mintAssistantToken(input.deploymentId),
   };
-  if (selection.effort) env.EDEN_ASSISTANT_EFFORT = selection.effort;
+  if (selection.effort) env.HARNESST_ASSISTANT_EFFORT = selection.effort;
   if (hasCodex) {
-    env.EDEN_MODEL_GATEWAY_URL = gatewayBaseUrl();
-    env.EDEN_MODEL_GATEWAY_TOKEN = mintGatewayToken(input.orgId);
+    env.HARNESST_MODEL_GATEWAY_URL = gatewayBaseUrl();
+    env.HARNESST_MODEL_GATEWAY_TOKEN = mintGatewayToken(input.orgId);
   }
   return env;
 }
@@ -712,7 +712,7 @@ export async function peekAssistantInstance(
 
 /**
  * Restart the assistant instance so it re-fetches its config bundle and rebuilds (used by the
- * refresh-on-merge hook when `.eden/assistant/**` changes). Best-effort stop → start on the
+ * refresh-on-merge hook when `.harnesst/assistant/**` changes). Best-effort stop → start on the
  * current live/stopped deployment; a missing instance is a no-op (it provisions on next use).
  */
 export async function restartAssistantInstance(

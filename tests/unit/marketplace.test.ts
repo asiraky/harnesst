@@ -345,16 +345,16 @@ describe("composition against the real seed", () => {
       "eve_input_freeform:eyJyZXF1ZXN0SWQiOiJlZGVuOnJlcGx5In0",
     );
     expect(resolved.files["channels/discord.ts"]).toContain(
-      'const EDEN_REPLY_REQUEST_ID = "eden:reply"',
+      'const HARNESST_REPLY_REQUEST_ID = "harnesst:reply"',
     );
     expect(resolved.files["channels/discord.ts"]).toContain(
-      "r.requestId === EDEN_REPLY_REQUEST_ID",
+      "r.requestId === HARNESST_REPLY_REQUEST_ID",
     );
     expect(resolved.files["channels/discord.ts"]).toContain(
       "message: replies.map((r) => r.text).join",
     );
     expect(resolved.files["channels/discord.ts"]).toContain(
-      "edenTurnAskedQuestion",
+      "harnesstTurnAskedQuestion",
     );
     expect(resolved.files["channels/discord.ts"]).toContain(
       'async "turn.started"(event, channel)',
@@ -365,7 +365,7 @@ describe("composition against the real seed", () => {
     // The send tool now proxies through harnesst's control plane (issue #32) — it reads the
     // injected send URL/token, not the shared bot token, and no longer imports eve's Discord.
     expect(resolved.files["tools/discord-send-message.ts"]).toContain(
-      "EDEN_DISCORD_SEND_URL",
+      "HARNESST_DISCORD_SEND_URL",
     );
     expect(resolved.files["tools/discord-send-message.ts"]).not.toContain(
       "sendDiscordChannelMessage",
@@ -463,7 +463,7 @@ describe("fakeCatalog", () => {
 /**
  * The "Installed" facet (issue #72). The data path — aggregating install keys across the org's
  * connected projects — can't be browser-exercised without a connected repo carrying an
- * `eden-lock.json`, so the pure identity/aggregation logic is covered thoroughly here.
+ * `harnesst-lock.json`, so the pure identity/aggregation logic is covered thoroughly here.
  */
 function installEntry(over: {
   id: string;

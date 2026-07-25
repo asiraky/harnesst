@@ -36,7 +36,7 @@ describe("harnesst MCP server", () => {
     const [clientTransport, serverTransport] =
       InMemoryTransport.createLinkedPair();
     const server = createHarnesstMcpServer(service);
-    const client = new Client({ name: "eden-test", version: "1.0.0" });
+    const client = new Client({ name: "harnesst-test", version: "1.0.0" });
     await server.connect(serverTransport);
     await client.connect(clientTransport);
     close.push(

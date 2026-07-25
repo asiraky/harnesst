@@ -28,11 +28,11 @@ COPY --from=production-dependencies-env /app/node_modules /app/node_modules
 COPY --from=build-env /app/build /app/build
 COPY server /app/server
 # First-party marketplace catalog (the fixture CatalogSource reads <cwd>/catalog). Bundled into
-# the image so a self-hosted deploy works offline; the GitHub-raw source (EDEN_CATALOG_REPO) is
+# the image so a self-hosted deploy works offline; the GitHub-raw source (HARNESST_CATALOG_REPO) is
 # only for pointing at a public catalog repo.
 COPY catalog /app/catalog
 # The built-in assistant's eve project (docs/ASSISTANT.md). Bundled so the control plane can
-# build the shared eden-assistant:<hash> image from a local directory (no GitHub tarball).
+# build the shared harnesst-assistant:<hash> image from a local directory (no GitHub tarball).
 COPY assistant-template /app/assistant-template
 WORKDIR /app
 ENV NODE_ENV=production

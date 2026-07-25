@@ -135,7 +135,7 @@ vi.mock("~/github/repo.server", () => ({
 }));
 vi.mock("~/lib/ingress", async (importOriginal) => {
   const actual = await importOriginal<typeof import("~/lib/ingress")>();
-  return { ...actual, publicOrigin: () => "https://eden.example.com" };
+  return { ...actual, publicOrigin: () => "https://harnesst.example.com" };
 });
 vi.mock("~/project/guard.server", () => ({
   requireProject: mocks.requireProject,
@@ -145,7 +145,7 @@ vi.mock("~/seams/index.server", () => ({
   getRuntime: () => ({ data: { audit: { record: mocks.auditRecord } } }),
 }));
 
-process.env.EDEN_SECRETS_KEY =
+process.env.HARNESST_SECRETS_KEY =
   "1f8b16e6a46dd3ac12ef7a328f1ce35c67b5bc8f1acdd76280e3674c3a4f19b2";
 
 const PROJECT = {
@@ -217,11 +217,11 @@ function resetSeams() {
   mocks.fetchAccountEmail.mockReset().mockResolvedValue(null);
   mocks.findGrant.mockReset().mockResolvedValue(null);
   mocks.getAgentSource.mockReset().mockResolvedValue({
-    files: { "eden-lock.json": lockWith("google", SHEETS_SCOPE) },
+    files: { "harnesst-lock.json": lockWith("google", SHEETS_SCOPE) },
     paths: [],
   });
   mocks.fetchAgentSource.mockReset().mockResolvedValue({
-    files: { "eden-lock.json": lockWith("google", SHEETS_SCOPE) },
+    files: { "harnesst-lock.json": lockWith("google", SHEETS_SCOPE) },
     paths: [],
   });
   mocks.getConfig.mockReset().mockReturnValue({
@@ -248,7 +248,7 @@ describe("provider-generic connection routes (issue #163)", () => {
     );
     const result = await loader(
       routeArgs(
-        "https://eden.example.com/connections/notaprovider/connect?project=projabcdefgh&agent=agent&returnTo=%2Fdashboard",
+        "https://harnesst.example.com/connections/notaprovider/connect?project=projabcdefgh&agent=agent&returnTo=%2Fdashboard",
         { provider: "notaprovider" },
       ),
     );
@@ -269,7 +269,7 @@ describe("provider-generic connection routes (issue #163)", () => {
       "~/routes/connections.$provider.callback"
     );
     const result = await loader(
-      routeArgs("https://eden.example.com/connections/notaprovider/callback", {
+      routeArgs("https://harnesst.example.com/connections/notaprovider/callback", {
         provider: "notaprovider",
       }),
     );
@@ -290,7 +290,7 @@ describe("provider-generic connection routes (issue #163)", () => {
     const response = await redirectFrom(
       loader(
         routeArgs(
-          "https://eden.example.com/connections/google/connect?project=projabcdefgh&agent=agent&returnTo=%2Fdashboard",
+          "https://harnesst.example.com/connections/google/connect?project=projabcdefgh&agent=agent&returnTo=%2Fdashboard",
           { provider: "google" },
         ),
       ),
@@ -301,7 +301,7 @@ describe("provider-generic connection routes (issue #163)", () => {
       "https://accounts.google.com/o/oauth2/v2/auth",
     );
     expect(location.searchParams.get("redirect_uri")).toBe(
-      "https://eden.example.com/google/callback",
+      "https://harnesst.example.com/google/callback",
     );
     // Google declares no pkce — the generic route must not add PKCE params for it.
     expect(location.searchParams.has("code_challenge")).toBe(false);
@@ -312,20 +312,20 @@ describe("provider-generic connection routes (issue #163)", () => {
     const response = await redirectFrom(
       loader(
         routeArgs(
-          "https://eden.example.com/google/connect?project=projabcdefgh&agent=agent&returnTo=%2Fdashboard",
+          "https://harnesst.example.com/google/connect?project=projabcdefgh&agent=agent&returnTo=%2Fdashboard",
         ),
       ),
     );
     expect(response.status).toBe(302);
     const location = new URL(response.headers.get("location")!);
     expect(location.searchParams.get("redirect_uri")).toBe(
-      "https://eden.example.com/google/callback",
+      "https://harnesst.example.com/google/callback",
     );
   });
 
   it("puts an S256 code_challenge on a PKCE provider's authorize URL and the verifier in the state", async () => {
     mocks.getAgentSource.mockResolvedValue({
-      files: { "eden-lock.json": lockWith("mayi", MAYI_SCOPE) },
+      files: { "harnesst-lock.json": lockWith("mayi", MAYI_SCOPE) },
       paths: [],
     });
     const { loader } = await import(
@@ -337,7 +337,7 @@ describe("provider-generic connection routes (issue #163)", () => {
     const response = await redirectFrom(
       loader(
         routeArgs(
-          "https://eden.example.com/connections/mayi/connect?project=projabcdefgh&agent=agent&returnTo=%2Fdashboard",
+          "https://harnesst.example.com/connections/mayi/connect?project=projabcdefgh&agent=agent&returnTo=%2Fdashboard",
           { provider: "mayi" },
         ),
       ),
@@ -348,7 +348,7 @@ describe("provider-generic connection routes (issue #163)", () => {
     );
     // New providers use the canonical redirect path — no legacy override.
     expect(location.searchParams.get("redirect_uri")).toBe(
-      "https://eden.example.com/connections/mayi/callback",
+      "https://harnesst.example.com/connections/mayi/callback",
     );
     expect(location.searchParams.get("code_challenge_method")).toBe("S256");
 
@@ -397,7 +397,7 @@ describe("provider-generic connection routes (issue #163)", () => {
     // Credential-bearing hit stages into the path-scoped cookie and redirects clean.
     const staged = await loader(
       routeArgs(
-        `https://eden.example.com/connections/mayi/callback?code=one-time-code&state=${encodeURIComponent(state)}`,
+        `https://harnesst.example.com/connections/mayi/callback?code=one-time-code&state=${encodeURIComponent(state)}`,
         { provider: "mayi" },
       ),
     );
@@ -412,7 +412,7 @@ describe("provider-generic connection routes (issue #163)", () => {
     const response = await redirectFrom(
       loader(
         routeArgs(
-          "https://eden.example.com/connections/mayi/callback",
+          "https://harnesst.example.com/connections/mayi/callback",
           { provider: "mayi" },
           { cookie },
         ),
@@ -425,7 +425,7 @@ describe("provider-generic connection routes (issue #163)", () => {
         provider: expect.objectContaining({ id: "mayi" }),
         config: { clientId: "client_1", clientSecret: "secret_1" },
         code: "one-time-code",
-        redirectUri: "https://eden.example.com/connections/mayi/callback",
+        redirectUri: "https://harnesst.example.com/connections/mayi/callback",
         codeVerifier,
       }),
     );
@@ -462,7 +462,7 @@ describe("provider-generic connection routes (issue #163)", () => {
     );
     const staged = await loader(
       routeArgs(
-        `https://eden.example.com/connections/mayi/callback?code=one-time-code&state=${encodeURIComponent(state)}`,
+        `https://harnesst.example.com/connections/mayi/callback?code=one-time-code&state=${encodeURIComponent(state)}`,
         { provider: "mayi" },
       ),
     );
@@ -471,7 +471,7 @@ describe("provider-generic connection routes (issue #163)", () => {
       .split(";", 1)[0];
     const result = await loader(
       routeArgs(
-        "https://eden.example.com/connections/mayi/callback",
+        "https://harnesst.example.com/connections/mayi/callback",
         { provider: "mayi" },
         { cookie },
       ),
@@ -484,14 +484,14 @@ describe("provider-generic connection routes (issue #163)", () => {
 });
 
 describe("per-grant dynamic client registration (issue #167)", () => {
-  const OLD_PUBLIC_ORIGIN = process.env.EDEN_PUBLIC_ORIGIN;
+  const OLD_PUBLIC_ORIGIN = process.env.HARNESST_PUBLIC_ORIGIN;
   beforeEach(() => {
     resetSeams();
-    process.env.EDEN_PUBLIC_ORIGIN = "https://eden.public.example";
+    process.env.HARNESST_PUBLIC_ORIGIN = "https://harnesst.public.example";
     // Registration providers have NO operator client env — that must not block Connect.
     mocks.getConfig.mockReturnValue(null);
     mocks.getAgentSource.mockResolvedValue({
-      files: { "eden-lock.json": lockWith("regprov", "approval:create") },
+      files: { "harnesst-lock.json": lockWith("regprov", "approval:create") },
       paths: [],
     });
     mocks.listAgentEnvironments.mockResolvedValue([
@@ -501,8 +501,8 @@ describe("per-grant dynamic client registration (issue #167)", () => {
     mocks.registerOAuthClient.mockResolvedValue({ clientId: "reg_client_1" });
   });
   afterEach(() => {
-    if (OLD_PUBLIC_ORIGIN === undefined) delete process.env.EDEN_PUBLIC_ORIGIN;
-    else process.env.EDEN_PUBLIC_ORIGIN = OLD_PUBLIC_ORIGIN;
+    if (OLD_PUBLIC_ORIGIN === undefined) delete process.env.HARNESST_PUBLIC_ORIGIN;
+    else process.env.HARNESST_PUBLIC_ORIGIN = OLD_PUBLIC_ORIGIN;
   });
 
   it("registers one client at Connect covering every environment's exact callback URL, and the minted client_id rides the authorize URL + signed state", async () => {
@@ -513,7 +513,7 @@ describe("per-grant dynamic client registration (issue #167)", () => {
     const response = await redirectFrom(
       loader(
         routeArgs(
-          "https://eden.example.com/connections/regprov/connect?project=projabcdefgh&agent=agent&returnTo=%2Fdashboard",
+          "https://harnesst.example.com/connections/regprov/connect?project=projabcdefgh&agent=agent&returnTo=%2Fdashboard",
           { provider: "regprov" },
         ),
       ),
@@ -522,12 +522,12 @@ describe("per-grant dynamic client registration (issue #167)", () => {
       expect.objectContaining({
         provider: expect.objectContaining({ id: "regprov" }),
         clientName: "harnesst — projabcdefgh / agent",
-        redirectUris: ["https://eden.example.com/connections/regprov/callback"],
+        redirectUris: ["https://harnesst.example.com/connections/regprov/callback"],
         // Exact per-environment instance callback URLs, rooted at the OPERATOR's public origin
-        // (EDEN_PUBLIC_ORIGIN — the same origin EVE_PUBLIC_ORIGIN injection uses).
+        // (HARNESST_PUBLIC_ORIGIN — the same origin EVE_PUBLIC_ORIGIN injection uses).
         approvalCallbackUris: [
-          "https://eden.public.example/e/envaaaaaaaaa/eve/v1/regprov/approval-resolved",
-          "https://eden.public.example/e/envbbbbbbbbb/eve/v1/regprov/approval-resolved",
+          "https://harnesst.public.example/e/envaaaaaaaaa/eve/v1/regprov/approval-resolved",
+          "https://harnesst.public.example/e/envbbbbbbbbb/eve/v1/regprov/approval-resolved",
         ],
       }),
     );
@@ -579,7 +579,7 @@ describe("per-grant dynamic client registration (issue #167)", () => {
 
     const staged = await loader(
       routeArgs(
-        `https://eden.example.com/connections/regprov/callback?code=one-time-code&state=${encodeURIComponent(state)}`,
+        `https://harnesst.example.com/connections/regprov/callback?code=one-time-code&state=${encodeURIComponent(state)}`,
         { provider: "regprov" },
       ),
     );
@@ -589,7 +589,7 @@ describe("per-grant dynamic client registration (issue #167)", () => {
     const response = await redirectFrom(
       loader(
         routeArgs(
-          "https://eden.example.com/connections/regprov/callback",
+          "https://harnesst.example.com/connections/regprov/callback",
           { provider: "regprov" },
           { cookie },
         ),
@@ -645,7 +645,7 @@ describe("per-grant dynamic client registration (issue #167)", () => {
     // …but environment B exists by the time the consent completes (beforeEach lists A and B).
     const staged = await loader(
       routeArgs(
-        `https://eden.example.com/connections/regprov/callback?code=one-time-code&state=${encodeURIComponent(state)}`,
+        `https://harnesst.example.com/connections/regprov/callback?code=one-time-code&state=${encodeURIComponent(state)}`,
         { provider: "regprov" },
       ),
     );
@@ -654,7 +654,7 @@ describe("per-grant dynamic client registration (issue #167)", () => {
       .split(";", 1)[0];
     const result = await loader(
       routeArgs(
-        "https://eden.example.com/connections/regprov/callback",
+        "https://harnesst.example.com/connections/regprov/callback",
         { provider: "regprov" },
         { cookie },
       ),
@@ -697,7 +697,7 @@ describe("per-grant dynamic client registration (issue #167)", () => {
     });
     const staged = await loader(
       routeArgs(
-        `https://eden.example.com/connections/regprov/callback?code=one-time-code&state=${encodeURIComponent(state)}`,
+        `https://harnesst.example.com/connections/regprov/callback?code=one-time-code&state=${encodeURIComponent(state)}`,
         { provider: "regprov" },
       ),
     );
@@ -707,7 +707,7 @@ describe("per-grant dynamic client registration (issue #167)", () => {
     const response = await redirectFrom(
       loader(
         routeArgs(
-          "https://eden.example.com/connections/regprov/callback",
+          "https://harnesst.example.com/connections/regprov/callback",
           { provider: "regprov" },
           { cookie },
         ),
@@ -724,7 +724,7 @@ describe("per-grant dynamic client registration (issue #167)", () => {
     const { loader } = await import("~/routes/connections.$provider.connect");
     const result = await loader(
       routeArgs(
-        "https://eden.example.com/connections/regprov/connect?project=projabcdefgh&agent=agent&returnTo=%2Fdashboard",
+        "https://harnesst.example.com/connections/regprov/connect?project=projabcdefgh&agent=agent&returnTo=%2Fdashboard",
         { provider: "regprov" },
       ),
     );
@@ -733,21 +733,21 @@ describe("per-grant dynamic client registration (issue #167)", () => {
       backUrl: "/dashboard",
       providerLabel: "Regprov",
     });
-    expect((result as { error: string }).error).toContain("EDEN_PUBLIC_ORIGIN");
+    expect((result as { error: string }).error).toContain("HARNESST_PUBLIC_ORIGIN");
     // Failed before any consent state was minted.
     expect(mocks.createOAuthStateNonce).not.toHaveBeenCalled();
   });
 
   it("google never registers a client and keeps requiring the operator config (regression)", async () => {
     mocks.getAgentSource.mockResolvedValue({
-      files: { "eden-lock.json": lockWith("google", SHEETS_SCOPE) },
+      files: { "harnesst-lock.json": lockWith("google", SHEETS_SCOPE) },
       paths: [],
     });
     const { loader } = await import("~/routes/connections.$provider.connect");
     // Unconfigured google still renders the operator-env error — registration is no substitute.
     const result = await loader(
       routeArgs(
-        "https://eden.example.com/connections/google/connect?project=projabcdefgh&agent=agent&returnTo=%2Fdashboard",
+        "https://harnesst.example.com/connections/google/connect?project=projabcdefgh&agent=agent&returnTo=%2Fdashboard",
         { provider: "google" },
       ),
     );
@@ -764,7 +764,7 @@ describe("per-grant dynamic client registration (issue #167)", () => {
     const response = await redirectFrom(
       loader(
         routeArgs(
-          "https://eden.example.com/connections/google/connect?project=projabcdefgh&agent=agent&returnTo=%2Fdashboard",
+          "https://harnesst.example.com/connections/google/connect?project=projabcdefgh&agent=agent&returnTo=%2Fdashboard",
           { provider: "google" },
         ),
       ),

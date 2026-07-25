@@ -206,11 +206,11 @@ export async function catalogOp(
 // ── Bundle (entrypoint materialization; published config only) ─────────────────
 
 export interface AssistantBundle {
-  /** Published `.eden/assistant/instructions.md`, or null. */
+  /** Published `.harnesst/assistant/instructions.md`, or null. */
   instructions: string | null;
   /** agent-relative target path → content (skills/user/*, schedules/user/*). */
   files: Record<string, string>;
-  /** Per-project model override from `.eden/assistant/assistant.json`, or null. */
+  /** Per-project model override from `.harnesst/assistant/assistant.json`, or null. */
   model: string | null;
   /** Explicit normalized effort paired with the project model, or provider default when null. */
   effort: ReasoningEffort | null;

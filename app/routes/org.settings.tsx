@@ -815,7 +815,7 @@ function AddAgentOverrideRow() {
       {missingName && (
         <p className="text-sm text-destructive">
           Enter the agent's name first — it's the name in{" "}
-          <code>edenAgentModel('…')</code>.
+          <code>harnesstAgentModel('…')</code>.
         </p>
       )}
       {fetcher.data && "error" in fetcher.data && fetcher.data.error && (

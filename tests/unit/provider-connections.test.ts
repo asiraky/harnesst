@@ -87,9 +87,9 @@ describe("buildProviderDeploymentEnv", () => {
       },
     ]);
     expect(env).toEqual({
-      EDEN_PROVIDER_ANTHROPIC_ABCDEFGHIJKL_API_KEY: "ant-first",
-      EDEN_PROVIDER_ANTHROPIC_MNOPQRSTUVWX_API_KEY: "ant-second",
-      EDEN_PROVIDER_OPENAI_ZYXWVUTSRQPO_API_KEY: "openai-first",
+      HARNESST_PROVIDER_ANTHROPIC_ABCDEFGHIJKL_API_KEY: "ant-first",
+      HARNESST_PROVIDER_ANTHROPIC_MNOPQRSTUVWX_API_KEY: "ant-second",
+      HARNESST_PROVIDER_OPENAI_ZYXWVUTSRQPO_API_KEY: "openai-first",
       ANTHROPIC_API_KEY: "ant-first",
       OPENAI_API_KEY: "openai-first",
     });

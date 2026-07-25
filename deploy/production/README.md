@@ -8,7 +8,7 @@
 The root [`docker-stack.production.yml`](../../docker-stack.production.yml) and
 [`deploy.yml`](../../.github/workflows/deploy.yml) implement continuous deployment for
 `asiraky/harnesst`. A push to `main` runs the same typecheck and tests as CI, builds immutable runtime and
-migration images, pushes them to GHCR, applies migrations, and updates the `eden` Swarm stack on the
+migration images, pushes them to GHCR, applies migrations, and updates the `harnesst` Swarm stack on the
 maintained VPS. A manual workflow dispatch must select `main` to do the same. Dispatching another
 branch runs the checks only; only `refs/heads/main` in the canonical repository may publish images
 or deploy. The deploy job also uses secrets scoped to GitHub's `production` Environment, so forks
@@ -18,10 +18,10 @@ cannot deploy to this host.
 
 Swarm manages only the services that the deployment workflow replaces:
 
-- `eden`: one replica on the manager, attached to Docker's predefined host network and mounting the
+- `harnesst`: one replica on the manager, attached to Docker's predefined host network and mounting the
   Docker socket. Host networking is required because deployed agent instance URLs use loopback.
 - `postgres`: one replica on the manager with its data bind-mounted from
-  `/opt/eden/volumes/postgres`. It also uses the host network and listens only on
+  `/opt/harnesst/volumes/postgres`. It also uses the host network and listens only on
   `127.0.0.1:5442` and `172.17.0.1:5442`.
 
 nginx and certbot remain ordinary Docker Compose containers from `deploy/vps`. Keeping them outside
@@ -31,7 +31,7 @@ continues to reach harnesst and the traffic splitter at `127.0.0.1:3000` and `12
 The marketing site (landing page + case studies) is host-split: when `MARKETING_HOST` is set in
 the harnesst env, those pages serve only on that host while `/` on the app host is Front of House.
 Enabling it on this box is a deploy-day step, not a deploy.sh change: DNS A record for the
-marketing host, the marketing `server` blocks from `deploy/vps/nginx-eden.conf` (same
+marketing host, the marketing `server` blocks from `deploy/vps/nginx-harnesst.conf` (same
 `127.0.0.1:3000` upstream and verbatim `proxy_set_header` lines — Better Auth rate-limits on the
 nginx-owned `X-Real-IP`), certificate coverage via an extra `-d`, and `MARKETING_HOST` in the
 stack env. Without it, `/` simply serves Front of House on the sole host.
@@ -80,9 +80,9 @@ workflow will use.
    deploy user must own it.
 
    ```bash
-   sudo install -d -m 0750 -o "$USER" -g "$(id -gn)" /opt/eden
-   sudo install -d -m 0750 -o "$USER" -g "$(id -gn)" /opt/eden/volumes
-   sudo install -d -m 0700 -o "$USER" -g "$(id -gn)" /opt/eden/volumes/postgres
+   sudo install -d -m 0750 -o "$USER" -g "$(id -gn)" /opt/harnesst
+   sudo install -d -m 0750 -o "$USER" -g "$(id -gn)" /opt/harnesst/volumes
+   sudo install -d -m 0700 -o "$USER" -g "$(id -gn)" /opt/harnesst/volumes/postgres
    ```
 
 4. Copy the maintained instance's existing environment file to the path consumed by the stack.
@@ -90,12 +90,12 @@ workflow will use.
 
    ```bash
    sudo install -m 0600 -o "$USER" -g "$(id -gn)" \
-     ~/apps/eden/deploy/vps/.env /opt/eden/production.env
+     ~/apps/harnesst/deploy/vps/.env /opt/harnesst/production.env
    ```
 
    It uses the same variables documented in [`deploy/vps/env.example`](../vps/env.example),
-   including `EDEN_PG_PASSWORD` and a `DATABASE_URL` that points to
-   `postgres://eden:<password>@localhost:5442/eden`. Back up `EDEN_SECRETS_KEY` separately; a
+   including `HARNESST_PG_PASSWORD` and a `DATABASE_URL` that points to
+   `postgres://harnesst:<password>@localhost:5442/harnesst`. Back up `HARNESST_SECRETS_KEY` separately; a
    database restore is not useful without it.
 
 ## GitHub production Environment
@@ -117,7 +117,7 @@ its fingerprint through the VPS provider's console:
 
 ```bash
 # Run in the trusted VPS console. Use the exact value stored in PROD_VPS_HOST.
-PROD_VPS_HOST=eden.example.com
+PROD_VPS_HOST=harnesst.example.com
 sudo ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub -E sha256
 sudo awk -v host="$PROD_VPS_HOST" '{print host, $1, $2}' \
   /etc/ssh/ssh_host_ed25519_key.pub
@@ -127,7 +127,7 @@ Store the `awk` output as the secret. If an operator instead acquires the record
 workstation, verify it out of band before storing it:
 
 ```bash
-ssh-keyscan -t ed25519 eden.example.com > production-known-hosts
+ssh-keyscan -t ed25519 harnesst.example.com > production-known-hosts
 ssh-keygen -lf production-known-hosts -E sha256
 ```
 
@@ -154,11 +154,11 @@ discover the real source from the container instead of guessing Compose's volume
 1. From the existing checkout, inspect the Postgres data mount and record its source:
 
    ```bash
-   cd ~/apps/eden
-   docker inspect eden-postgres --format \
+   cd ~/apps/harnesst
+   docker inspect harnesst-postgres --format \
      '{{range .Mounts}}{{if eq .Destination "/var/lib/postgresql/data"}}{{printf "%s\t%s\n" .Type .Source}}{{end}}{{end}}'
 
-   POSTGRES_SOURCE="$(docker inspect eden-postgres --format \
+   POSTGRES_SOURCE="$(docker inspect harnesst-postgres --format \
      '{{range .Mounts}}{{if eq .Destination "/var/lib/postgresql/data"}}{{.Source}}{{end}}{{end}}')"
    test -n "$POSTGRES_SOURCE"
    ```
@@ -168,47 +168,115 @@ discover the real source from the container instead of guessing Compose's volume
    harnesst.
 
    ```bash
-   docker compose -f deploy/vps/docker-compose.yml stop eden postgres
+   docker compose -f deploy/vps/docker-compose.yml stop harnesst postgres
    ```
 
 3. Confirm the destination is empty, then copy every file, including dotfiles, while preserving
    ownership and modes:
 
    ```bash
-   test -z "$(sudo find /opt/eden/volumes/postgres -mindepth 1 -print -quit)"
-   sudo cp -a "$POSTGRES_SOURCE"/. /opt/eden/volumes/postgres/
-   sudo chown --reference="$POSTGRES_SOURCE" /opt/eden/volumes/postgres
-   sudo chmod --reference="$POSTGRES_SOURCE" /opt/eden/volumes/postgres
-   sudo du -sh "$POSTGRES_SOURCE" /opt/eden/volumes/postgres
+   test -z "$(sudo find /opt/harnesst/volumes/postgres -mindepth 1 -print -quit)"
+   sudo cp -a "$POSTGRES_SOURCE"/. /opt/harnesst/volumes/postgres/
+   sudo chown --reference="$POSTGRES_SOURCE" /opt/harnesst/volumes/postgres
+   sudo chmod --reference="$POSTGRES_SOURCE" /opt/harnesst/volumes/postgres
+   sudo du -sh "$POSTGRES_SOURCE" /opt/harnesst/volumes/postgres
    ```
 
    If the emptiness check fails, stop and inspect the directory before copying. Do not merge two
    Postgres data directories.
 
-4. Do **not** run `docker compose down -v`, remove the source volume, or restart the Compose `eden`
+4. Do **not** run `docker compose down -v`, remove the source volume, or restart the Compose `harnesst`
    and `postgres` services. Keeping the source intact gives the operator a recovery copy; the old
    services must remain stopped because they would contend for the same host ports and database.
 
 5. Run **Deploy production** from the Actions tab and explicitly select the `main` branch, or let the
    next push to `main` trigger it. A dispatch from any other branch runs checks only and cannot
-   publish or deploy. The workflow copies the stack definition to `/opt/eden`, runs the migration
+   publish or deploy. The workflow copies the stack definition to `/opt/harnesst`, runs the migration
    image against Postgres, deploys the stack, and waits for both services to finish their current
    update and pass their container health checks before succeeding.
 
 The existing certbot renewal command remains valid. The old Compose project still owns nginx,
 certbot, and their certificate volumes; only its harnesst and Postgres services are retired.
 
+## One-time rename cutover (`eden` → `harnesst`)
+
+Issue #213 renamed the deployment identifiers, so a host provisioned before that change carries
+`eden` names the current stack definition no longer looks for: the stack and service names, the
+`/opt/eden` deploy root, the Postgres role and database, and the `EDEN_*` keys in `production.env`.
+Nothing here is derived at runtime — deploying the new definition against an un-migrated host would
+create a *second* stack contending for the same host ports and would initdb an empty Postgres
+alongside the real one. Do these steps first, in order, in one sitting.
+
+1. Quiesce the app so the database has no client connections (`ALTER DATABASE ... RENAME` fails
+   while any session is attached). Postgres stays up:
+
+   ```bash
+   docker service scale eden_eden=0
+   ```
+
+2. Rename the role and database in place. Connect to the `postgres` database — you cannot rename
+   the database you are connected to. The password reset is required, not optional: an MD5 password
+   is salted with the role name, so renaming the role silently clears it. Use the same value that
+   `EDEN_PG_PASSWORD` holds in `/opt/eden/production.env`.
+
+   ```bash
+   PG="$(docker ps -qf name=eden_postgres)"
+   docker exec -i "$PG" psql -U eden -d postgres -c 'ALTER DATABASE eden RENAME TO harnesst'
+   docker exec -i "$PG" psql -U eden -d postgres -c 'ALTER ROLE eden RENAME TO harnesst'
+   docker exec -i "$PG" psql -U harnesst -d postgres \
+     -c "ALTER ROLE harnesst WITH PASSWORD '<the EDEN_PG_PASSWORD value>'"
+   ```
+
+3. Remove the old stack and wait for its tasks to drain, then move the deploy root. The Postgres
+   data directory travels with it; this is a rename on the same filesystem, not a copy.
+
+   ```bash
+   docker stack rm eden
+   while docker service ls --format '{{.Name}}' | grep -q '^eden_'; do sleep 2; done
+   sudo mv /opt/eden /opt/harnesst
+   ```
+
+4. Rewrite the env file's keys and its `DATABASE_URL`. Every `EDEN_*` name became `HARNESST_*`;
+   values are unchanged. `HARNESST_SECRETS_KEY` must keep its existing value — a new key makes every
+   stored secret unreadable.
+
+   ```bash
+   sudo cp /opt/harnesst/production.env /opt/harnesst/production.env.bak
+   sudo sed -i 's/^EDEN_/HARNESST_/' /opt/harnesst/production.env
+   sudo sed -i 's#postgres://eden:#postgres://harnesst:#; s#/eden$#/harnesst#' \
+     /opt/harnesst/production.env
+   sudo grep -c '^HARNESST_' /opt/harnesst/production.env   # sanity: non-zero
+   sudo grep '^DATABASE_URL' /opt/harnesst/production.env | sed 's/:[^:@]*@/:***@/'
+   ```
+
+5. Deploy: run **Deploy production** on `main`, or `gh workflow run deploy.yml --ref main`. It
+   creates the `harnesst` stack, migrates, and waits for health.
+
+6. nginx needs no change to keep working — it proxies to loopback ports, which the rename does not
+   move. Renaming its container and conf file (`eden-nginx`, `eden.conf`) is cosmetic and can be
+   done later.
+
+Per-project follow-up, once the control plane is up. Repositories that harnesst manages carry two
+generated filenames that were renamed, and existing agent instances carry the old env names:
+
+- In each agent repo: `git mv eden-lock.json harnesst-lock.json`, and for every member root
+  `git mv <member>/eden-model.ts <member>/harnesst-model.ts`, updating the `./eden-model` /
+  `../../eden-model` imports in `agent.ts` and each `subagents/*/agent.ts`. Without the lock
+  rename the Deployment tab shows no installs and stops injecting their secrets.
+- Redeploy each agent instance so it receives `HARNESST_*` env instead of `EDEN_*`. Instances keep
+  running on their baked-in old names until then.
+
 ## Verification and operations
 
 Inspect service state and recent task history on the host:
 
 ```bash
-docker stack services eden
-docker service ps eden_eden --no-trunc
-docker service ps eden_postgres --no-trunc
-docker service logs --tail 200 eden_eden
-docker service logs --tail 200 eden_postgres
-docker logs --tail 200 eden-nginx
+docker stack services harnesst
+docker service ps harnesst_harnesst --no-trunc
+docker service ps harnesst_postgres --no-trunc
+docker service logs --tail 200 harnesst_harnesst
+docker service logs --tail 200 harnesst_postgres
+docker logs --tail 200 harnesst-nginx
 ```
 
 Confirm harnesst is serving nginx locally and Postgres is not listening on a wildcard address:
@@ -227,9 +295,9 @@ Swarm automatically attempts the stack's configured rollback when a new harnesst
 check. To inspect or manually request the retained previous service specification:
 
 ```bash
-docker service inspect eden_eden --pretty
-docker service update --rollback eden_eden
-docker service ps eden_eden --no-trunc
+docker service inspect harnesst_harnesst --pretty
+docker service update --rollback harnesst_harnesst
+docker service ps harnesst_harnesst --no-trunc
 ```
 
 The deploy transaction applies database migrations before changing harnesst. Swarm rolls back the
@@ -244,5 +312,5 @@ docker image prune -f
 ```
 
 Never run `docker system prune -a`, `docker image prune -a`, or `docker volume prune`. Old
-control-plane and agent-version images, `eve-sbx-tpl-*` sandbox templates, and `eden-home-*` volumes
+control-plane and agent-version images, `eve-sbx-tpl-*` sandbox templates, and `harnesst-home-*` volumes
 can all look unused while still being required for rollback or persistent agent state.

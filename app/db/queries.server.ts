@@ -132,7 +132,7 @@ export function withPreservedNames(
 
 /**
  * Decide how a pending member rename maps onto a freshly-detected roster. A rename is "in flight"
- * when a member row carries `pendingName` (its `eden/rename-member-*` PR is open). We map the row
+ * when a member row carries `pendingName` (its `harnesst/rename-member-*` PR is open). We map the row
  * IN PLACE — preserving its id and all FKs — only when the merge is unambiguous:
  *
  *  - `apply`: the pending target directory is now detected AND the old directory is gone → the
@@ -231,7 +231,7 @@ export async function syncProjectAgents(
   const existing = await store.agents.listByProject(projectId);
   const existingNames = new Set(existing.map((a) => a.name));
 
-  // A pending rename (open eden/rename-member-* PR) whose merge just landed must be mapped IN
+  // A pending rename (open harnesst/rename-member-* PR) whose merge just landed must be mapped IN
   // PLACE — otherwise syncRoster would prune the old-named row (cascading its environments,
   // releases, secrets and drafts away) and insert a bare new row. Apply the in-place renames
   // BEFORE syncRoster so its upsert matches the row by its new name and the prune leaves it be.

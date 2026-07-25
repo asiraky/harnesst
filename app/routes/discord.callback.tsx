@@ -110,7 +110,7 @@ export const loader = (args: LoaderFunctionArgs) =>
       if (!config) {
         return fail(
           "This harnesst installation no longer has a Discord app configured — ask an operator " +
-            "to set the EDEN_DISCORD_* env vars.",
+            "to set the HARNESST_DISCORD_* env vars.",
           backUrl,
         );
       }

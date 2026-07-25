@@ -5,7 +5,7 @@
  * provider's capability definition, and the provider itself must be a registered
  * `credentialDelivery: "capability"` entry. It also pins the Xero template's contract: one thin
  * tool file per whitelisted operation, each POSTing to its own capability endpoint with the
- * deployment's EDEN_TEAM_TOKEN — and no `XERO_*` env expectations anywhere (the instance never
+ * deployment's HARNESST_TEAM_TOKEN — and no `XERO_*` env expectations anywhere (the instance never
  * holds credential material).
  */
 import { readdirSync, readFileSync, statSync } from "node:fs";
@@ -93,8 +93,8 @@ describe("the xero template's tool files", () => {
       expect(template.manifest.files, `manifest lists ${toolPath}`).toContain(toolPath);
       const source = readFileSync(join(template.dir, "files", toolPath), "utf8");
       expect(source).toContain(`/api/capabilities/xero/${op}`);
-      expect(source).toContain("EDEN_TEAM_TOKEN");
-      expect(source).toContain("EDEN_API_URL");
+      expect(source).toContain("HARNESST_TEAM_TOKEN");
+      expect(source).toContain("HARNESST_API_URL");
       // The tool never expects credential material — that's the whole point.
       expect(source).not.toMatch(/XERO_OAUTH|XERO_CLIENT|refresh[_ ]?token/i);
     }

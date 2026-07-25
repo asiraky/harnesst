@@ -16,7 +16,7 @@ export interface RepositoryDeps {
 }
 
 export const REPOSITORY_TEARDOWN_TIMEOUT_MS = Number(
-  process.env.EDEN_REPOSITORY_TEARDOWN_TIMEOUT_MS ?? 60 * 1000,
+  process.env.HARNESST_REPOSITORY_TEARDOWN_TIMEOUT_MS ?? 60 * 1000,
 );
 
 function repoDeps(): RepositoryDeps {

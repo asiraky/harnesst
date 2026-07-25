@@ -6,7 +6,7 @@
       "name": "Engineer",
       "version": "0.6.1",
       "description": "A general-purpose software engineer agent that works GitHub issues across authorized repositories, creates feature branches, and opens pull requests into main.",
-      "hash": "208fb47e38731dfd933db274cf6874afba8a4b26"
+      "hash": "4d82a7c2882ae4bcdaa7ba168799061e305ae46b"
     },
     {
       "id": "github-bundle",
@@ -22,7 +22,7 @@
       "name": "Google Sheets",
       "version": "0.2.0",
       "description": "Everything an agent needs to work with Google Sheets: the connector (install → Connect Google → read/write spreadsheets) plus a usage skill teaching A1 notation, read-before-write, and the values vs batchUpdate operations. Recommended way to add Sheets.",
-      "hash": "25be1039aafdf48b0fba189fae7c3080748a4ee3"
+      "hash": "9e231c66e6b8354380c56662bde4e3336781c9ef"
     },
     {
       "id": "discord",
@@ -30,7 +30,7 @@
       "name": "Discord",
       "version": "0.3.2",
       "description": "Talk to this agent from Discord — one-click connect via harnesst's shared Discord app, a slash command named after the agent, and signature-verified interactions via eve's discordChannel.",
-      "hash": "06f34b0d8271b56768b8dee7c7f3fdaf00f893e4"
+      "hash": "cca69ed447148b0fe1d8ba990de756d180c4646a"
     },
     {
       "id": "github",
@@ -54,7 +54,7 @@
       "name": "Gmail",
       "version": "0.1.0",
       "description": "Read, label, and send mail from the connected Google account. One template, selectable permission levels: pick Read mail / Manage labels / Send mail at install (read-only by default), connect the mailbox on the agent's Deployment tab, and the agent gets gmail__* tools via eve's OpenAPI connection — access tokens self-refresh at runtime, and the granted level is visible to the agent so it never promises what it can't do.",
-      "hash": "858214e28f023a4e24c9beb34c3a0bc60470cd7a"
+      "hash": "d198bd49bfdb88c15bcb41717dca2906ab5f4b7e"
     },
     {
       "id": "google-sheets",
@@ -62,7 +62,7 @@
       "name": "Google Sheets",
       "version": "0.2.0",
       "description": "Read and write Google Sheets from this agent. Install it, then click Connect Google on the agent's Deployment tab to authorize your account, and the agent gets google_sheets__* tools (read/append/update cells, metadata, batch updates) via eve's OpenAPI connection — access tokens self-refresh at runtime.",
-      "hash": "f037c9f4b487cb34ee319f25ecf6a9dd3fd9e443"
+      "hash": "9aa2c0d631d62bd519a32db8032254eb120eba8f"
     },
     {
       "id": "mayi",
@@ -70,7 +70,7 @@
       "name": "May I?",
       "version": "0.2.0",
       "description": "Human approvals for agent actions via May I? (mayi.sh). Install it, click Connect on the agent's Deployment tab (harnesst registers the OAuth client automatically — no operator app to create), and gated tools park until a human approves in the May I? app, then resume with a signed receipt. Scheduled work that may need an approval must use the handler form of an eve schedule and hand the run to the channel with receive(mayi, ...) — task-mode schedules can't park for a human.",
-      "hash": "41801a92de7b37bb2274c6bdc240d4e66c7bb24c"
+      "hash": "30a9078bedd0b898473310175c83d6c7ed10d91b"
     },
     {
       "id": "xero",
@@ -78,7 +78,7 @@
       "name": "Xero",
       "version": "0.1.1",
       "description": "Bookkeeping operations against a Xero organisation through harnesst's brokered-capability framework: the agent's container never holds any Xero credential. harnesst keeps the OAuth grant and executes only a whitelisted set of operations — read reference data, search bills, look up and create contacts, and create DRAFT bills (a human approves them in Xero) with attached source files. Which operation groups are enabled is your choice at install time and editable any time from the Deployment tab, with instant effect.",
-      "hash": "0ac453dea0af03ccc4ceac9005c791af3ea186f3"
+      "hash": "8aba539a50f4e88223a75984e9663d35e8607435"
     },
     {
       "id": "agent-browser",
@@ -113,14 +113,6 @@
       "hash": "41984ed836ce423397e415bc44ee1ea027833f8d"
     },
     {
-      "id": "eden-mcp-authoring",
-      "type": "skill",
-      "name": "Authoring eve agents with harnesst MCP",
-      "version": "0.1.0",
-      "description": "End-to-end guidance for authoring eve agents through harnesst's MCP server: stage complete files, publish one reviewable PR, merge after review, deploy the exact merge, and poll every deployment until live.",
-      "hash": "62acb36f1b4b0e1a5106b00224309a85383db462"
-    },
-    {
       "id": "github-app-auth",
       "type": "skill",
       "name": "GitHub App auth",
@@ -135,6 +127,14 @@
       "version": "0.1.0",
       "description": "Practical guidance for driving the google_sheets__* tools: A1 notation, read-before-write discipline, RAW vs USER_ENTERED, append vs update, and the batchUpdate request shapes for structural changes.",
       "hash": "2c6db05b9eb0f1e5ff9f4c6f777ac6030e507b05"
+    },
+    {
+      "id": "harnesst-mcp-authoring",
+      "type": "skill",
+      "name": "Authoring eve agents with harnesst MCP",
+      "version": "0.1.0",
+      "description": "End-to-end guidance for authoring eve agents through harnesst's MCP server: stage complete files, publish one reviewable PR, merge after review, deploy the exact merge, and poll every deployment until live.",
+      "hash": "37ee01b0b60ec087e797d960f86cb553a97e5052"
     },
     {
       "id": "legal-advisor",
@@ -158,7 +158,7 @@
       "name": "Discord Send Message",
       "version": "0.2.0",
       "description": "Send a message to a Discord channel by channel id via harnesst's control plane, using the installation's shared Discord app — scoped to servers this agent is connected to.",
-      "hash": "ba7c51c0288757fa560f3a5310cc8ea73234de95"
+      "hash": "da04f11360c41de6e9e11d974972b74ee76b809f"
     },
     {
       "id": "firecrawl-search",

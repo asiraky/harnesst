@@ -13,9 +13,9 @@ describe("worldDbName", () => {
     expect(worldDbName("env_abc123")).toBe(worldDbName("env_abc123"));
   });
 
-  it("produces a legal, lowercase pg identifier prefixed eden_env_", () => {
+  it("produces a legal, lowercase pg identifier prefixed harnesst_env_", () => {
     const name = worldDbName("Env-With/Weird.Chars");
-    expect(name).toMatch(/^eden_env_[a-z0-9_]*_[0-9a-f]{8}$/);
+    expect(name).toMatch(/^harnesst_env_[a-z0-9_]*_[0-9a-f]{8}$/);
     expect(name).toBe(name.toLowerCase());
     expect(name.length).toBeLessThanOrEqual(63); // Postgres identifier limit
   });

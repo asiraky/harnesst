@@ -1,7 +1,7 @@
 /**
  * Connector provider registry (issues #30, #163) — everything harnesst needs to broker OAuth against
  * a provider, keyed by provider id. Registering a new provider is a data addition here plus the
- * operator's `EDEN_<PREFIX>_CLIENT_ID`/`_CLIENT_SECRET` env vars — no new routes, flows, or schema.
+ * operator's `HARNESST_<PREFIX>_CLIENT_ID`/`_CLIENT_SECRET` env vars — no new routes, flows, or schema.
  * Unknown provider → null.
  */
 export interface ProviderDefinition {
@@ -19,7 +19,7 @@ export interface ProviderDefinition {
   authorizeParams?: Record<string, string>;
   /** Identity scopes appended so the callback can name the account. */
   identityScopes?: string[];
-  /** Env prefix: operator `EDEN_<PREFIX>_CLIENT_ID/SECRET`, injected `<PREFIX>_OAUTH_*`. */
+  /** Env prefix: operator `HARNESST_<PREFIX>_CLIENT_ID/SECRET`, injected `<PREFIX>_OAUTH_*`. */
   envPrefix: string;
   /**
    * Redirect path this provider's OAuth app has registered. Defaults to
@@ -33,7 +33,7 @@ export interface ProviderDefinition {
    * How the token endpoint authenticates harnesst's client (issue #167). `"client_secret_post"`
    * (default) posts the operator secret; `"none"` is a PUBLIC client (RFC 8414
    * `token_endpoint_auth_methods_supported: ["none"]`) — no secret exists, PKCE is the
-   * code-exchange proof, and only `EDEN_<PREFIX>_CLIENT_ID` is required operator config.
+   * code-exchange proof, and only `HARNESST_<PREFIX>_CLIENT_ID` is required operator config.
    */
   tokenEndpointAuth?: "client_secret_post" | "none";
   /**
@@ -41,21 +41,21 @@ export interface ProviderDefinition {
    * `"refresh-token"` (default) ships the `<PREFIX>_OAUTH_*` trio so the instance self-refreshes.
    * `"access-token-broker"` never ships the refresh token — providers that ROTATE it per refresh
    * (and revoke the whole family on reuse) can only have ONE writer, so harnesst refreshes centrally
-   * and the instance fetches short-lived access tokens from `POST <EDEN_API_URL>/api/connections/token`
-   * (authenticated by its `EDEN_TEAM_TOKEN` delegation token).
+   * and the instance fetches short-lived access tokens from `POST <HARNESST_API_URL>/api/connections/token`
+   * (authenticated by its `HARNESST_TEAM_TOKEN` delegation token).
    * `"capability"` (issue #166) ships NOTHING — the instance never sees any credential material.
    * harnesst holds the grant and executes only the provider's whitelisted operations itself
-   * (`POST <EDEN_API_URL>/api/capabilities/:provider/:operation`, same delegation-token auth);
+   * (`POST <HARNESST_API_URL>/api/capabilities/:provider/:operation`, same delegation-token auth);
    * the provider must have a capability definition registered in `app/capabilities/`.
    */
   credentialDelivery?: "refresh-token" | "access-token-broker" | "capability";
   /**
    * RFC 7591-shaped dynamic client registration (issue #167). When present, the connect flow
-   * registers ONE OAuth client PER GRANT at Connect time (no `EDEN_<PREFIX>_CLIENT_ID` operator
+   * registers ONE OAuth client PER GRANT at Connect time (no `HARNESST_<PREFIX>_CLIENT_ID` operator
    * step) — required when the provider's clients are immutable with exact-match callback URIs,
    * so a single shared client can't cover per-environment callback URLs. `approvalCallbackPath`
    * is the instance-side route the provider calls back (registered as
-   * `<EDEN_PUBLIC_ORIGIN>/e/<envId><approvalCallbackPath>` for every environment the agent has).
+   * `<HARNESST_PUBLIC_ORIGIN>/e/<envId><approvalCallbackPath>` for every environment the agent has).
    */
   clientRegistration?: { endpoint: string; approvalCallbackPath?: string };
   /**
@@ -124,7 +124,7 @@ const PROVIDERS: Record<string, ProviderDefinition> = {
   // on reuse, 60-day expiry), so every harnesst-side refresh rides #167's rotation-safe serialized
   // path. The scope set requested at consent is a fixed superset (see the catalog template) —
   // the operation whitelist, not the token scope, is the enforcement plane. Operator env:
-  // EDEN_XERO_CLIENT_ID / EDEN_XERO_CLIENT_SECRET (a harnesst-owned app at developer.xero.com with
+  // HARNESST_XERO_CLIENT_ID / HARNESST_XERO_CLIENT_SECRET (a harnesst-owned app at developer.xero.com with
   // redirect `<origin>/connections/xero/callback`).
   xero: {
     id: "xero",

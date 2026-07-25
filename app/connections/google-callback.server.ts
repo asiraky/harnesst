@@ -11,7 +11,7 @@ import {
 export type GoogleCallbackPayload = OAuthCallbackPayload;
 
 const staging = createOAuthCallbackStaging({
-  cookieName: "eden-google-oauth-callback",
+  cookieName: "harnesst-google-oauth-callback",
   path: "/google/callback",
 });
 

@@ -38,7 +38,7 @@ describe("assistant instance: agent + environment", () => {
     expect(agent).toMatchObject({
       kind: "assistant",
       name: "assistant",
-      root: ".eden/assistant",
+      root: ".harnesst/assistant",
     });
     expect(environment.name).toBe("assistant");
     // Idempotent: a second call returns the same rows.

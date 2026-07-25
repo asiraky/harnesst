@@ -1,6 +1,6 @@
 /**
  * Teammate delegation relay (Team delegation — D1/§2). A team member's `ask-teammate` tool POSTs
- * `{ teammate, message }` here with its `EDEN_TEAM_TOKEN`; the route verifies the token to a
+ * `{ teammate, message }` here with its `HARNESST_TEAM_TOKEN`; the route verifies the token to a
  * deployment id and hands that plus the body to `runAsk`. Everything else — caller resolution,
  * authorization, concurrency caps, target env/deployment resolution, the eve turn, run recording,
  * and the correlation row — lives here so the flow is unit-testable against an injected store +
@@ -43,7 +43,7 @@ const PROJECT_CAP = 10;
 const MAX_MESSAGE_BYTES = 100_000;
 
 export function delegationTimeoutMs(): number {
-  const raw = Number(process.env.EDEN_DELEGATION_TIMEOUT_MS);
+  const raw = Number(process.env.HARNESST_DELEGATION_TIMEOUT_MS);
   return Number.isFinite(raw) && raw > 0 ? raw : DEFAULT_DELEGATION_TIMEOUT_MS;
 }
 

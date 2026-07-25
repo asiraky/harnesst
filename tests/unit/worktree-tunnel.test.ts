@@ -13,7 +13,7 @@ import {
 
 const metadata = {
   tunnelId: "11111111-2222-3333-4444-555555555555",
-  tunnelName: "eden-dev",
+  tunnelName: "harnesst-dev",
   credentialsFile: "/tmp/cloudflared/credentials.json",
   domain: "dev.zero8.ai",
 };
@@ -50,12 +50,12 @@ describe("worktree tunnel identity", () => {
     expect(
       resolveTunnelDomain(
         { domain: "dev.persisted.example" },
-        { EDEN_TUNNEL_DOMAIN: "dev.environment.example" },
+        { HARNESST_TUNNEL_DOMAIN: "dev.environment.example" },
       ),
     ).toBe("dev.persisted.example");
     expect(
       resolveTunnelDomain(null, {
-        EDEN_TUNNEL_DOMAIN: "dev.environment.example",
+        HARNESST_TUNNEL_DOMAIN: "dev.environment.example",
       }),
     ).toBe("dev.environment.example");
     expect(resolveTunnelDomain(null, {})).toBe("dev.zero8.ai");

@@ -2,7 +2,7 @@
 .output/
 .workflow-data/
 node_modules/
-.eden-user-layer
-.eden-assistant-env
+.harnesst-user-layer
+.harnesst-assistant-env
 agent/skills/user/
 agent/schedules/user/

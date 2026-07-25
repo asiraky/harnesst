@@ -70,7 +70,7 @@ import { loader } from "~/routes/github.installations.callback";
 
 const args = () =>
   ({
-    request: new Request("https://eden.test/github/installations/callback"),
+    request: new Request("https://harnesst.test/github/installations/callback"),
     context: {},
   }) as never;
 

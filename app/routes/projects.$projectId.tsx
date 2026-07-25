@@ -233,7 +233,7 @@ export const loader = (args: LoaderFunctionArgs) =>
         if (view === "member" && !active)
           throw redirect(`/repos/${project.id}`);
         const lock = overlayLock(
-          source.files["eden-lock.json"] ?? null,
+          source.files["harnesst-lock.json"] ?? null,
           drafts.map((d) => ({ path: d.path, content: d.content })),
         );
         const members =
@@ -450,7 +450,7 @@ export async function action(args: ActionFunctionArgs) {
       // day one and model changes never touch the repo.
       const change = await proposeChange(project.repoInstallationId, repo, {
         base: project.defaultBranch,
-        branch: `eden/add-member-${name}`,
+        branch: `harnesst/add-member-${name}`,
         files: memberScaffold(name),
         title: `Add agent: ${name}`,
         body:

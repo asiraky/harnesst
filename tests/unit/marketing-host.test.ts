@@ -27,7 +27,7 @@ function setEnv(name: keyof typeof SAVED, value: string | undefined) {
 
 beforeEach(() => {
   setEnv("MARKETING_HOST", undefined);
-  setEnv("BETTER_AUTH_URL", "https://eden.example.com");
+  setEnv("BETTER_AUTH_URL", "https://harnesst.example.com");
 });
 
 afterEach(() => {
@@ -51,16 +51,16 @@ describe("marketingHost", () => {
   });
 
   it("normalizes to a lowercased bare host", () => {
-    setEnv("MARKETING_HOST", "  WWW.Eden.Example.com ");
-    expect(marketingHost()).toBe("www.eden.example.com");
+    setEnv("MARKETING_HOST", "  WWW.harnesst.Example.com ");
+    expect(marketingHost()).toBe("www.harnesst.example.com");
   });
 
   it("rejects values with a scheme, path, credentials, or whitespace", () => {
     for (const bad of [
-      "https://www.eden.example.com",
-      "www.eden.example.com/landing",
-      "user@www.eden.example.com",
-      "www eden",
+      "https://www.harnesst.example.com",
+      "www.harnesst.example.com/landing",
+      "user@www.harnesst.example.com",
+      "www harnesst",
     ]) {
       setEnv("MARKETING_HOST", bad);
       expect(marketingHost()).toBeNull();
@@ -68,7 +68,7 @@ describe("marketingHost", () => {
   });
 
   it("treats a marketing host equal to the app host as unset (loop guard)", () => {
-    setEnv("MARKETING_HOST", "eden.example.com");
+    setEnv("MARKETING_HOST", "harnesst.example.com");
     expect(marketingHost()).toBeNull();
     // With a port in BETTER_AUTH_URL, both the host and hostname forms are refused.
     setEnv("BETTER_AUTH_URL", "http://localhost:5284");
@@ -81,8 +81,8 @@ describe("marketingHost", () => {
 
 describe("appOrigin", () => {
   it("derives the origin from BETTER_AUTH_URL (tolerating trailing slash)", () => {
-    setEnv("BETTER_AUTH_URL", "https://eden.example.com/");
-    expect(appOrigin()).toBe("https://eden.example.com");
+    setEnv("BETTER_AUTH_URL", "https://harnesst.example.com/");
+    expect(appOrigin()).toBe("https://harnesst.example.com");
     setEnv("BETTER_AUTH_URL", "http://localhost:5284");
     expect(appOrigin()).toBe("http://localhost:5284");
   });
@@ -97,8 +97,8 @@ describe("appOrigin", () => {
 
 describe("marketingOrigin", () => {
   it("uses the app origin's scheme, https in prod", () => {
-    setEnv("MARKETING_HOST", "www.eden.example.com");
-    expect(marketingOrigin()).toBe("https://www.eden.example.com");
+    setEnv("MARKETING_HOST", "www.harnesst.example.com");
+    expect(marketingOrigin()).toBe("https://www.harnesst.example.com");
   });
 
   it("inherits the app origin's port for a port-less dev host", () => {
@@ -120,7 +120,7 @@ describe("marketingOrigin", () => {
 
 describe("isMarketingHost", () => {
   it("is always false when unset", () => {
-    expect(isMarketingHost(get("https://www.eden.example.com/"))).toBe(false);
+    expect(isMarketingHost(get("https://www.harnesst.example.com/"))).toBe(false);
   });
 
   it("matches the forwarded host on any port when MARKETING_HOST has none", () => {
@@ -158,18 +158,18 @@ describe("isMarketingPath", () => {
 
 describe("marketingHostRedirect", () => {
   it("is a no-op everywhere when MARKETING_HOST is unset (self-host)", () => {
-    expect(marketingHostRedirect(get("https://eden.example.com/"))).toBeNull();
+    expect(marketingHostRedirect(get("https://harnesst.example.com/"))).toBeNull();
     expect(
-      marketingHostRedirect(get("https://eden.example.com/case-studies")),
+      marketingHostRedirect(get("https://harnesst.example.com/case-studies")),
     ).toBeNull();
     expect(
-      marketingHostRedirect(get("https://eden.example.com/sitemap.xml")),
+      marketingHostRedirect(get("https://harnesst.example.com/sitemap.xml")),
     ).toBeNull();
   });
 
   describe("with a marketing host configured", () => {
     beforeEach(() => {
-      setEnv("MARKETING_HOST", "www.eden.example.com");
+      setEnv("MARKETING_HOST", "www.harnesst.example.com");
     });
 
     it("serves marketing paths on the marketing host", () => {
@@ -181,59 +181,59 @@ describe("marketingHostRedirect", () => {
         "/robots.txt",
       ]) {
         expect(
-          marketingHostRedirect(get(`https://www.eden.example.com${path}`)),
+          marketingHostRedirect(get(`https://www.harnesst.example.com${path}`)),
         ).toBeNull();
       }
     });
 
     it("bounces every other GET on the marketing host to the app origin, preserving path + query", () => {
       const res = marketingHostRedirect(
-        get("https://www.eden.example.com/login?returnTo=%2F"),
+        get("https://www.harnesst.example.com/login?returnTo=%2F"),
       );
       expect(res?.status).toBe(302);
       expect(location(res)).toBe(
-        "https://eden.example.com/login?returnTo=%2F",
+        "https://harnesst.example.com/login?returnTo=%2F",
       );
       expect(
         location(
           marketingHostRedirect(
-            get("https://www.eden.example.com/t/proj/agent"),
+            get("https://www.harnesst.example.com/t/proj/agent"),
           ),
         ),
-      ).toBe("https://eden.example.com/t/proj/agent");
+      ).toBe("https://harnesst.example.com/t/proj/agent");
       expect(
         location(
-          marketingHostRedirect(get("https://www.eden.example.com/repos/p1")),
+          marketingHostRedirect(get("https://www.harnesst.example.com/repos/p1")),
         ),
-      ).toBe("https://eden.example.com/repos/p1");
+      ).toBe("https://harnesst.example.com/repos/p1");
     });
 
     it("bounces marketing-only paths on the app host to the marketing origin", () => {
       expect(
         location(
-          marketingHostRedirect(get("https://eden.example.com/case-studies")),
+          marketingHostRedirect(get("https://harnesst.example.com/case-studies")),
         ),
-      ).toBe("https://www.eden.example.com/case-studies");
+      ).toBe("https://www.harnesst.example.com/case-studies");
       expect(
         location(
-          marketingHostRedirect(get("https://eden.example.com/sitemap.xml")),
+          marketingHostRedirect(get("https://harnesst.example.com/sitemap.xml")),
         ),
-      ).toBe("https://www.eden.example.com/sitemap.xml");
+      ).toBe("https://www.harnesst.example.com/sitemap.xml");
     });
 
     it("leaves `/` and robots.txt alone on the app host (dual/per-host paths)", () => {
       expect(
-        marketingHostRedirect(get("https://eden.example.com/")),
+        marketingHostRedirect(get("https://harnesst.example.com/")),
       ).toBeNull();
       expect(
-        marketingHostRedirect(get("https://eden.example.com/robots.txt")),
+        marketingHostRedirect(get("https://harnesst.example.com/robots.txt")),
       ).toBeNull();
     });
 
     it("never redirects mutations (the marketing host stays GET-only by the origin check)", () => {
       expect(
         marketingHostRedirect(
-          get("https://www.eden.example.com/api/auth/sign-in", "POST"),
+          get("https://www.harnesst.example.com/api/auth/sign-in", "POST"),
         ),
       ).toBeNull();
     });
@@ -242,10 +242,10 @@ describe("marketingHostRedirect", () => {
       expect(
         location(
           marketingHostRedirect(
-            get("https://www.eden.example.com/dashboard", "HEAD"),
+            get("https://www.harnesst.example.com/dashboard", "HEAD"),
           ),
         ),
-      ).toBe("https://eden.example.com/dashboard");
+      ).toBe("https://harnesst.example.com/dashboard");
     });
   });
 

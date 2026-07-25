@@ -17,7 +17,7 @@ import type { BuildCheckRequest, BuildCheckResult } from "~/seams/types";
 /**
  * The build directories a conversation change's paths span — the merge gate builds each one.
  * Team layout: every `agents/<member>/…` path maps to that member's `agents/<member>/agent`
- * root; `.eden/**` config and repo-root/shared files (root package-lock.json, workspace
+ * root; `.harnesst/**` config and repo-root/shared files (root package-lock.json, workspace
  * config) map to NO root — a team repo's root is a workspaces shell, not an eve project, so
  * there is nothing to build for them (issue #137: falling back to the repo root here is what
  * broke multi-member merges). An empty result means the gate has nothing to compile and
@@ -31,7 +31,7 @@ export function inferMergeBuildRoots(
   if (!teamLayout) return [undefined];
   const roots = new Set<string>();
   for (const p of paths) {
-    if (p.startsWith(".eden/")) continue;
+    if (p.startsWith(".harnesst/")) continue;
     const m = p.match(/^agents\/([^/]+)\//);
     if (m) roots.add(`agents/${m[1]}/agent`);
   }

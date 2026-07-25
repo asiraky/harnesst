@@ -1,6 +1,6 @@
 /**
  * Teammate delegation relay endpoint (Team delegation — D1/§2). A team member's `ask-teammate`
- * tool POSTs `{ teammate, message }` here with `Authorization: Bearer <EDEN_TEAM_TOKEN>`. The
+ * tool POSTs `{ teammate, message }` here with `Authorization: Bearer <HARNESST_TEAM_TOKEN>`. The
  * token authenticates the CALLER DEPLOYMENT and nothing else — everything downstream (caller
  * identity, authorization, the target, its live deployment) is derived server-side in
  * `runAsk`. Bad token → 401; every business outcome the model should read → 200 `{ ok:false }`.

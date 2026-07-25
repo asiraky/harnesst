@@ -8,7 +8,7 @@ describe("repo scaffold", () => {
     const paths = teamFiles("my-team").map((file) => file.path);
     expect(paths).toContain(EMPTY_TEAM_MARKER);
     expect(paths).toContain("package.json");
-    expect(paths).toContain("eden.json");
+    expect(paths).toContain("harnesst.json");
     expect(paths.some((path) => /^agents\/[^/]+\/agent\//.test(path))).toBe(
       false,
     );
@@ -23,7 +23,7 @@ describe("repo scaffold", () => {
     expect(files.map((file) => file.path)).toEqual([
       "agents/assistant/agent/instructions.md",
       "agents/assistant/agent/agent.ts",
-      "agents/assistant/agent/eden-model.ts",
+      "agents/assistant/agent/harnesst-model.ts",
       "agents/assistant/agent/sandbox.ts",
       "agents/assistant/package.json",
     ]);
@@ -33,12 +33,12 @@ describe("repo scaffold", () => {
     )?.content;
     // The member resolves its model from harnesst's workspace configuration by NAME — no model
     // string anywhere in the repo.
-    expect(agentTs).toContain("edenAgentModel('assistant')");
-    expect(agentTs).toContain("from './eden-model'");
+    expect(agentTs).toContain("harnesstAgentModel('assistant')");
+    expect(agentTs).toContain("from './harnesst-model'");
     const moduleTs = files.find((file) =>
-      file.path.endsWith("eden-model.ts"),
+      file.path.endsWith("harnesst-model.ts"),
     )?.content;
-    expect(moduleTs).toContain("export function edenAgentModel");
+    expect(moduleTs).toContain("export function harnesstAgentModel");
     expect(moduleTs).toContain("/model-config?agent=");
     const packageJson = files.find((file) =>
       file.path.endsWith("package.json"),
