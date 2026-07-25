@@ -122,7 +122,7 @@ repository operations fail closed until the signed-in GitHub user completes the 
 ## Project layout
 
 ```
-eden/
+harnesst/
 ├── app/
 │   ├── routes/           # RR7 routes (home, dashboard, connect, projects.$id, auth)
 │   ├── auth/             # Better Auth session + active-workspace resolution

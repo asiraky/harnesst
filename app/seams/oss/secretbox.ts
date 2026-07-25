@@ -15,7 +15,7 @@ export interface SealedSecret {
 export function decodeKey(raw: string | undefined): Buffer {
   if (!raw) {
     throw new Error(
-      "EDEN_SECRETS_KEY is not set. Provide a 32-byte key as 64 hex chars or base64 " +
+      "HARNESST_SECRETS_KEY is not set. Provide a 32-byte key as 64 hex chars or base64 " +
         "(e.g. `openssl rand -hex 32`) to use the local secrets store.",
     );
   }
@@ -24,7 +24,7 @@ export function decodeKey(raw: string | undefined): Buffer {
       ? Buffer.from(raw, "hex")
       : Buffer.from(raw, "base64");
   if (buf.length !== 32) {
-    throw new Error("EDEN_SECRETS_KEY must decode to exactly 32 bytes.");
+    throw new Error("HARNESST_SECRETS_KEY must decode to exactly 32 bytes.");
   }
   return buf;
 }

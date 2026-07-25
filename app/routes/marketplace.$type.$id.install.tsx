@@ -362,7 +362,7 @@ export const loader = (args: LoaderFunctionArgs) =>
         content: d.content,
       }));
       const lock = overlayLock(
-        source.files["eden-lock.json"] ?? null,
+        source.files["harnesst-lock.json"] ?? null,
         draftPaths,
       );
 
@@ -388,7 +388,7 @@ export const loader = (args: LoaderFunctionArgs) =>
         });
         base.preview = {
           files: plan.writes
-            .filter((w) => w.path !== "eden-lock.json")
+            .filter((w) => w.path !== "harnesst-lock.json")
             .map((w) => w.path),
           deletions: plan.deletions,
           conflicts: plan.conflicts,
@@ -462,7 +462,7 @@ export const loader = (args: LoaderFunctionArgs) =>
       }
       base.preview = {
         files: plan.writes
-          .filter((w) => w.path !== "eden-lock.json")
+          .filter((w) => w.path !== "harnesst-lock.json")
           .map((w) => w.path),
         deletions: plan.deletions,
         conflicts: plan.conflicts,
@@ -522,7 +522,7 @@ export async function action(args: ActionFunctionArgs) {
       content: d.content,
     }));
     const lock = overlayLock(
-      source.files["eden-lock.json"] ?? null,
+      source.files["harnesst-lock.json"] ?? null,
       draftPaths,
     );
 
@@ -740,7 +740,7 @@ export async function action(args: ActionFunctionArgs) {
         // sync migrates them, and abandonment cleanup discards them.
         const hasWork = ops.some((op) => op.kind !== "skip");
         if (hasWork) {
-          const key = decodeKey(process.env.EDEN_SECRETS_KEY);
+          const key = decodeKey(process.env.HARNESST_SECRETS_KEY);
           for (const op of ops) {
             if (op.kind === "set") {
               await writePendingSecret({

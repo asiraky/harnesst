@@ -15,7 +15,7 @@
  *    member's package.json);
  *  - an agent installs AS A NEW team member (a fresh `agents/<name>/` project — files plus a
  *    generated package.json).
- * Both always rewrite `eden-lock.json` so provenance is one more reviewable file in the PR.
+ * Both always rewrite `harnesst-lock.json` so provenance is one more reviewable file in the PR.
  */
 import semver from "semver";
 
@@ -42,7 +42,7 @@ import {
 } from "./lock";
 
 /** Files that are MERGED, never owned — they can't be conflicts and never land in a lock entry. */
-const MERGED_FILES = new Set(["eden-lock.json"]);
+const MERGED_FILES = new Set(["harnesst-lock.json"]);
 
 type SandboxSetup = NonNullable<TemplateManifest["sandbox"]>;
 
@@ -194,10 +194,10 @@ function renderManagedSandboxModule(
 
 const addons = [${addons}];
 
-// harnesst convention: EDEN_SANDBOX_ENV is a comma-separated allowlist of secret names
+// harnesst convention: HARNESST_SANDBOX_ENV is a comma-separated allowlist of secret names
 // forwarded from the instance into the sandbox shell. Marketplace add-ons can also
 // contribute non-secret env defaults; exposed secrets win on name collisions.
-const names = (process.env.EDEN_SANDBOX_ENV ?? "").split(",").filter(Boolean);
+const names = (process.env.HARNESST_SANDBOX_ENV ?? "").split(",").filter(Boolean);
 const exposedEnv = Object.fromEntries(names.map((name) => [name, process.env[name] ?? ""]));
 const addonEnv = Object.assign({}, ...addons.map((addon) => addon.env ?? {}));
 const env = { ...addonEnv, ...exposedEnv };
@@ -251,7 +251,7 @@ export interface PlanContext {
   drafts: Array<{ path: string; content: string | null }>;
   /** CURRENT contents of the target's package.json (caller overlays drafts); null if absent. */
   packageJson: string | null;
-  /** Current lock (caller overlays a staged eden-lock.json draft); empty default. */
+  /** Current lock (caller overlays a staged harnesst-lock.json draft); empty default. */
   lock: HarnesstLock;
   target: InstallTarget;
   /** Existing roster member names — a new-member install must not collide with one. */
@@ -309,9 +309,9 @@ export interface InstallPlan {
 
 /** The lock's registry locator, from the same env the CatalogSource seam reads (index.server). */
 export function catalogLocator(): string {
-  const repo = process.env.EDEN_CATALOG_REPO;
+  const repo = process.env.HARNESST_CATALOG_REPO;
   if (!repo) return "fixture";
-  const ref = process.env.EDEN_CATALOG_REF ?? "main";
+  const ref = process.env.HARNESST_CATALOG_REF ?? "main";
   return `github:${repo}@${ref}`;
 }
 
@@ -617,7 +617,7 @@ export function planInstall(ctx: PlanContext): InstallPlan {
     ),
   ];
 
-  // ── 3. The lock write — always. files exclude package.json / eden-lock.json (they're merges). ──
+  // ── 3. The lock write — always. files exclude package.json / harnesst-lock.json (they're merges). ──
   const entry: InstallEntry = {
     id: manifest.id,
     type: manifest.type,
@@ -675,7 +675,7 @@ export function planInstall(ctx: PlanContext): InstallPlan {
   for (const e of absorbed) baseLock = removeInstall(baseLock, e.id, e.member);
   const nextLock = upsertInstall(baseLock, entry);
   writes.push({
-    path: "eden-lock.json",
+    path: "harnesst-lock.json",
     content: serializeLock(nextLock),
   });
   const nextSandboxEntries = sandboxEntries(nextLock, member);
@@ -756,7 +756,7 @@ export function planUninstall(ctx: {
     return {
       deletions: [],
       writes: [],
-      lockWrite: { path: "eden-lock.json", content: serializeLock(ctx.lock) },
+      lockWrite: { path: "harnesst-lock.json", content: serializeLock(ctx.lock) },
       depsLeft: [],
       notFound: true,
     };
@@ -765,7 +765,7 @@ export function planUninstall(ctx: {
   const nextLock = removeInstall(ctx.lock, ctx.id, ctx.memberName);
   const writes = [
     {
-      path: "eden-lock.json",
+      path: "harnesst-lock.json",
       content: serializeLock(nextLock),
     },
   ];

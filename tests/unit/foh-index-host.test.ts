@@ -46,7 +46,7 @@ function setEnv(name: keyof typeof SAVED, value: string | undefined) {
 beforeEach(() => {
   vi.clearAllMocks();
   setEnv("MARKETING_HOST", undefined);
-  setEnv("BETTER_AUTH_URL", "https://eden.example.com");
+  setEnv("BETTER_AUTH_URL", "https://harnesst.example.com");
   // Default authenticated behavior: run the callback like the real overload would.
   mocks.sessionLoader.mockImplementation(
     async (
@@ -95,18 +95,18 @@ async function caughtResponse(promise: Promise<unknown>): Promise<Response> {
 
 describe("routes/foh loader (the `/` host branch)", () => {
   it("serves the marketing landing on the marketing host without touching auth", async () => {
-    setEnv("MARKETING_HOST", "www.eden.example.com");
-    const result = await fohLoader(loaderArgs("https://www.eden.example.com/"));
+    setEnv("MARKETING_HOST", "www.harnesst.example.com");
+    const result = await fohLoader(loaderArgs("https://www.harnesst.example.com/"));
     expect(result).toEqual({
       marketing: true,
-      appOrigin: "https://eden.example.com",
+      appOrigin: "https://harnesst.example.com",
     });
     expect(mocks.sessionLoader).not.toHaveBeenCalled();
     expect(mocks.ensureWorkspace).not.toHaveBeenCalled();
   });
 
   it("gates the app host behind sign-in (redirect surfaces from sessionLoader)", async () => {
-    setEnv("MARKETING_HOST", "www.eden.example.com");
+    setEnv("MARKETING_HOST", "www.harnesst.example.com");
     mocks.sessionLoader.mockImplementation(async () => {
       throw new Response(null, {
         status: 302,
@@ -114,7 +114,7 @@ describe("routes/foh loader (the `/` host branch)", () => {
       });
     });
     const response = await caughtResponse(
-      fohLoader(loaderArgs("https://eden.example.com/")),
+      fohLoader(loaderArgs("https://harnesst.example.com/")),
     );
     expect(response.status).toBe(302);
     expect(response.headers.get("location")).toBe("/login?returnTo=%2F");
@@ -123,9 +123,9 @@ describe("routes/foh loader (the `/` host branch)", () => {
   });
 
   it("returns shell data for a signed-in visitor on the app host", async () => {
-    setEnv("MARKETING_HOST", "www.eden.example.com");
+    setEnv("MARKETING_HOST", "www.harnesst.example.com");
     const result = (await fohLoader(
-      loaderArgs("https://eden.example.com/"),
+      loaderArgs("https://harnesst.example.com/"),
     )) as Record<string, unknown>;
     expect(result.orgName).toBe("Acme");
     expect(result.backOfHouse).toBe(true);
@@ -138,7 +138,7 @@ describe("routes/foh loader (the `/` host branch)", () => {
 
   it("always serves FOH when MARKETING_HOST is unset — even on a www-looking host", async () => {
     const result = (await fohLoader(
-      loaderArgs("https://www.eden.example.com/"),
+      loaderArgs("https://www.harnesst.example.com/"),
     )) as Record<string, unknown>;
     expect(result).not.toHaveProperty("marketing");
     expect(mocks.sessionLoader).toHaveBeenCalledTimes(1);
@@ -147,27 +147,27 @@ describe("routes/foh loader (the `/` host branch)", () => {
 
 describe("case-studies loader host guard", () => {
   it("redirects the app host to the marketing origin when configured", async () => {
-    setEnv("MARKETING_HOST", "www.eden.example.com");
+    setEnv("MARKETING_HOST", "www.harnesst.example.com");
     const response = await caughtResponse(
-      caseStudiesLoader(loaderArgs("https://eden.example.com/case-studies")),
+      caseStudiesLoader(loaderArgs("https://harnesst.example.com/case-studies")),
     );
     expect(response.status).toBe(302);
     expect(response.headers.get("location")).toBe(
-      "https://www.eden.example.com/case-studies",
+      "https://www.harnesst.example.com/case-studies",
     );
   });
 
   it("serves on the marketing host with cross-host auth links", async () => {
-    setEnv("MARKETING_HOST", "www.eden.example.com");
+    setEnv("MARKETING_HOST", "www.harnesst.example.com");
     const result = (await caseStudiesLoader(
-      loaderArgs("https://www.eden.example.com/case-studies"),
+      loaderArgs("https://www.harnesst.example.com/case-studies"),
     )) as { appOrigin: string };
-    expect(result.appOrigin).toBe("https://eden.example.com");
+    expect(result.appOrigin).toBe("https://harnesst.example.com");
   });
 
   it("serves by path with same-origin links when unset (self-host, D11)", async () => {
     const result = (await caseStudiesLoader(
-      loaderArgs("https://eden.example.com/case-studies"),
+      loaderArgs("https://harnesst.example.com/case-studies"),
     )) as { appOrigin: string };
     expect(result.appOrigin).toBe("");
   });
@@ -181,27 +181,27 @@ describe("robots.txt per host", () => {
   }
 
   it("marketing host: crawlable marketing policy with the marketing sitemap", async () => {
-    setEnv("MARKETING_HOST", "www.eden.example.com");
-    const body = await robotsBody("https://www.eden.example.com/robots.txt");
+    setEnv("MARKETING_HOST", "www.harnesst.example.com");
+    const body = await robotsBody("https://www.harnesst.example.com/robots.txt");
     expect(body).toContain("Allow: /");
     expect(body).toContain("Disallow: /repos/");
     expect(body).toContain("Disallow: /t/");
     expect(body).toContain(
-      "Sitemap: https://www.eden.example.com/sitemap.xml",
+      "Sitemap: https://www.harnesst.example.com/sitemap.xml",
     );
   });
 
   it("app host with a marketing host configured: nothing indexable", async () => {
-    setEnv("MARKETING_HOST", "www.eden.example.com");
-    const body = await robotsBody("https://eden.example.com/robots.txt");
+    setEnv("MARKETING_HOST", "www.harnesst.example.com");
+    const body = await robotsBody("https://harnesst.example.com/robots.txt");
     expect(body).toContain("Disallow: /");
     expect(body).not.toContain("Allow: /");
     expect(body).not.toContain("Sitemap:");
   });
 
   it("unset (self-host): marketing policy with the sitemap on this host's own origin", async () => {
-    const body = await robotsBody("https://my-eden.internal/robots.txt");
+    const body = await robotsBody("https://my-harnesst.internal/robots.txt");
     expect(body).toContain("Allow: /");
-    expect(body).toContain("Sitemap: https://my-eden.internal/sitemap.xml");
+    expect(body).toContain("Sitemap: https://my-harnesst.internal/sitemap.xml");
   });
 });

@@ -12,7 +12,7 @@
  *    digest, never the raw payload. The execute path is WRITE-AHEAD: a "pending" row must land
  *    before the vendor operation runs (no row → no execution), and a failed finalize never masks
  *    the result.
- *  - the `POST /api/capabilities/:provider/:operation` action (mocked seams): EDEN_TEAM_TOKEN
+ *  - the `POST /api/capabilities/:provider/:operation` action (mocked seams): HARNESST_TEAM_TOKEN
  *    delegation auth (the Discord-send-proxy pattern), deployment → environment → agent
  *    resolution, a hard body-size cap enforced while streaming (413), transport refusals
  *    (malformed/oversized bodies) audited for the authenticated caller, and outcome passthrough.

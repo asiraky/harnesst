@@ -1,19 +1,19 @@
 /**
  * Shared harness for the FOH e2e suite (docs/PRD-FRONT-OF-HOUSE.md §5–§6, issue #221).
  *
- * Same opt-in pattern as tests/integration: specs run only with EDEN_DB_SMOKE=1 and a
+ * Same opt-in pattern as tests/integration: specs run only with HARNESST_DB_SMOKE=1 and a
  * DATABASE_URL pointing at a live dev database (source .env.local first). Everything here is
  * REAL — Better Auth signup/cookies against the real handler, Drizzle writes to the live
  * Postgres, and the real route modules invoked with framework-shaped args — except the eve
  * instance, which is the protocol-faithful fake in ./fake-eve.ts.
  *
- * App modules are imported dynamically inside each helper so a skipped run (no EDEN_DB_SMOKE)
+ * App modules are imported dynamically inside each helper so a skipped run (no HARNESST_DB_SMOKE)
  * never touches the database-backed module graph.
  */
-export const LIVE = process.env.EDEN_DB_SMOKE === "1";
+export const LIVE = process.env.HARNESST_DB_SMOKE === "1";
 
 process.env.BETTER_AUTH_SECRET ??=
-  "eden-auth-e2e-secret-at-least-32-characters";
+  "harnesst-auth-e2e-secret-at-least-32-characters";
 process.env.BETTER_AUTH_URL ??= "http://localhost:5277";
 /** Request origin must match BETTER_AUTH_URL (Better Auth's trusted-origin check). */
 export const ORIGIN = process.env.BETTER_AUTH_URL;

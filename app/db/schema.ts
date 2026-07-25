@@ -338,7 +338,7 @@ export const agents = pgTable(
     name: text("name").notNull(),
     root: text("root").notNull(),
     /**
-     * A rename in flight (team members): the roster name the open `eden/rename-member-*` PR will
+     * A rename in flight (team members): the roster name the open `harnesst/rename-member-*` PR will
      * land. Set the moment the rename change-set is opened; the roster sync maps the old row to
      * this name IN PLACE when the merge is detected (the new `agents/<pendingName>/` directory
      * appears and the old one is gone), then clears it — so the row id, and every FK to it
@@ -515,7 +515,7 @@ export const secretsMetadata = pgTable(
     key: text("key").notNull(),
     /**
      * Expose this secret to the agent's SANDBOX shell (not just its tools). Deploys join the
-     * exposed names into EDEN_SANDBOX_ENV — the allowlist the scaffolded sandbox.ts forwards
+     * exposed names into HARNESST_SANDBOX_ENV — the allowlist the scaffolded sandbox.ts forwards
      * into the sandbox env (~/eve/templates). Metadata, not a value: it lives here (never in
      * the SecretsProvider) so exposure survives provider swaps and value rotations.
      * For SHARED secrets this is only the DEFAULT seeded into new attachments — the authoritative
@@ -732,7 +732,7 @@ export const apiKeys = pgTable(
 /**
  * Encrypted secret VALUES for the OSS local SecretsProvider. Managed uses KMS/Vault instead
  * (same seam), so this table is only populated by the local provider. Values are AES-256-GCM
- * encrypted with `EDEN_SECRETS_KEY`; we store ciphertext + iv + auth tag, never plaintext.
+ * encrypted with `HARNESST_SECRETS_KEY`; we store ciphertext + iv + auth tag, never plaintext.
  * `secrets_metadata` remains the name/audit index; this is the value store behind the seam.
  */
 export const secretValues = pgTable(
@@ -1021,8 +1021,8 @@ export const workspaceSettings = pgTable("workspace_settings", {
 /**
  * Per-agent model overrides — the workspace's explicit exceptions to the default model.
  *
- * An agent whose `agent.ts` resolves through the generated `eden-model.ts`
- * (`model: edenAgentModel('<agent-name>')`) asks harnesst at runtime which model to run. The
+ * An agent whose `agent.ts` resolves through the generated `harnesst-model.ts`
+ * (`model: harnesstAgentModel('<agent-name>')`) asks harnesst at runtime which model to run. The
  * answer is this map's entry for the agent's name when one exists, else the workspace default
  * (`workspace_settings.assistant_model`). Subagents resolve with their PARENT's name, so they
  * always run the parent's model. Removing a row falls the agent back to the workspace default
@@ -1034,7 +1034,7 @@ export const agentModelOverrides = pgTable(
     orgId: text("org_id")
       .notNull()
       .references(() => organization.id, { onDelete: "cascade" }),
-    /** The eve agent name (`edenAgentModel('<name>')` argument), not a harnesst row id. */
+    /** The eve agent name (`harnesstAgentModel('<name>')` argument), not a harnesst row id. */
     agentName: text("agent_name").notNull(),
     /** Connection-qualified model ref, e.g. `anthropic/<connectionId>/<model>`. */
     model: text("model").notNull(),
@@ -1248,7 +1248,7 @@ export const playgroundEvents = pgTable(
  * Assistant coding-agent checkouts. One row per
  * assistant conversation (a `playground_sessions` row on the assistant channel) that has grown a
  * repo checkout. The assistant edits a per-conversation git checkout on the shared home volume;
- * after each turn the control plane mirrors that checkout onto the branch `eden/conv-<id>` and
+ * after each turn the control plane mirrors that checkout onto the branch `harnesst/conv-<id>` and
  * (on first non-empty sync) opens a PR. This table is the only durable link from a conversation to
  * its branch/PR — the checkout itself is ephemeral (volume/instance loss is recovered by re-cloning
  * the remote branch). `lastSyncedHash` lets the sync engine skip a no-op turn (tree unchanged).
@@ -1264,7 +1264,7 @@ export const assistantCheckouts = pgTable(
     projectId: varchar("project_id", { length: 12 })
       .notNull()
       .references(() => projects.id, { onDelete: "cascade" }),
-    /** Working branch the conversation's checkout is mirrored onto (`eden/conv-<id>`). */
+    /** Working branch the conversation's checkout is mirrored onto (`harnesst/conv-<id>`). */
     branch: text("branch").notNull(),
     /** Base branch the working branch is cut from (the project default at first sync). */
     baseBranch: text("base_branch").notNull(),

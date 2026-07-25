@@ -59,14 +59,14 @@ describe("shared opaque harnesst tokens", () => {
   it("retains the ingest endpoint's exact Bearer parsing behavior", () => {
     expect(
       ednBearerToken(
-        new Request("https://eden.test/api/ingest/runs", {
+        new Request("https://harnesst.test/api/ingest/runs", {
           headers: { authorization: `Bearer ${TOKEN}` },
         }),
       ),
     ).toBe(TOKEN);
     expect(
       ednBearerToken(
-        new Request("https://eden.test/api/ingest/runs", {
+        new Request("https://harnesst.test/api/ingest/runs", {
           headers: { authorization: `bearer ${TOKEN}` },
         }),
       ),

@@ -134,7 +134,7 @@ No eve changes anywhere below (hard constraint — harnesst-side surfaces only).
 | Answering a parked question | Existing continuation path (playground option buttons today), from the session row's handle. |
 | Delegation records + agent↔agent messages | `delegations` + linked peer runs (`runs`/`run_steps` hold the ask text, reply, and tool calls). |
 | "Needs you" detection for unwatched turns | New chokepoint in the event drains: `input.requested` ⇒ inbox row; terminal event ⇒ resolve it. Relay (`runAsk`) does the same for delegation-driven peer turns instead of erroring (supersedes the M7 "parked peer = error" punt). |
-| Instance-facing auth for anything new | Existing HMAC deployment token (`EDEN_TEAM_TOKEN`) + relay pattern (`app/team/*`). |
+| Instance-facing auth for anything new | Existing HMAC deployment token (`HARNESST_TEAM_TOKEN`) + relay pattern (`app/team/*`). |
 | Presence | Deploy-target container state + active-turn state — both already known. |
 
 ---

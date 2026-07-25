@@ -8,14 +8,14 @@
  * policy (issue #221 finding 3): members see only sessions they can open, and run events keep
  * their metadata but redact input/error — and the actor — unless the run is theirs to read.
  *
- * Opt-in: runs only when EDEN_DB_SMOKE=1 and DATABASE_URL point at a live dev database
- * (`EDEN_DB_SMOKE=1 npx vitest run tests/integration/foh-activity.db.test.ts` with
+ * Opt-in: runs only when HARNESST_DB_SMOKE=1 and DATABASE_URL point at a live dev database
+ * (`HARNESST_DB_SMOKE=1 npx vitest run tests/integration/foh-activity.db.test.ts` with
  * .env.local sourced). Creates its own rows and deletes them, so it's safe to re-run.
  */
 import { eq } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 
-const LIVE = process.env.EDEN_DB_SMOKE === "1";
+const LIVE = process.env.HARNESST_DB_SMOKE === "1";
 
 describe.runIf(LIVE)("FOH activity projection against real Postgres", () => {
   it("reconstructs the sam → ivy scenario in order, with the exchange expansion", async () => {
@@ -194,7 +194,7 @@ describe.runIf(LIVE)("FOH activity projection against real Postgres", () => {
         channel: "teammate",
         status: "completed",
         metadata: {
-          input: "can you check DNS for eden.dev?",
+          input: "can you check DNS for harnesst.dev?",
           delegationId: "pending", // patched below once the delegation row exists
           fromAgentId: sam.id,
           fromAgentName: "sam",
@@ -220,7 +220,7 @@ describe.runIf(LIVE)("FOH activity projection against real Postgres", () => {
       .update(runs)
       .set({
         metadata: {
-          input: "can you check DNS for eden.dev?",
+          input: "can you check DNS for harnesst.dev?",
           delegationId: delegationRow.id,
           fromAgentId: sam.id,
           fromAgentName: "sam",
@@ -232,7 +232,7 @@ describe.runIf(LIVE)("FOH activity projection against real Postgres", () => {
         runId: delegationRun.id,
         seq: 1,
         type: "message",
-        data: { role: "user", text: "can you check DNS for eden.dev?" },
+        data: { role: "user", text: "can you check DNS for harnesst.dev?" },
       },
       { runId: delegationRun.id, seq: 2, type: "model_call", data: {} },
       {
@@ -240,7 +240,7 @@ describe.runIf(LIVE)("FOH activity projection against real Postgres", () => {
         seq: 3,
         type: "tool_call",
         toolName: "bash",
-        data: { summary: "dig eden.dev" },
+        data: { summary: "dig harnesst.dev" },
       },
       {
         runId: delegationRun.id,
@@ -254,7 +254,7 @@ describe.runIf(LIVE)("FOH activity projection against real Postgres", () => {
     // The relayed ask lands in the linked run's metadata, but the REAL exchange lives in
     // the FOH session's cached events (relay parking): parked question, human answer,
     // final reply.
-    const PARKED_ASK = 'From your teammate "sam": which registrar for eden.dev?';
+    const PARKED_ASK = 'From your teammate "sam": which registrar for harnesst.dev?';
     const [parkedRun] = await db
       .insert(runs)
       .values({
@@ -417,7 +417,7 @@ describe.runIf(LIVE)("FOH activity projection against real Postgres", () => {
       type: "delegation",
       fromAgentName: "sam",
       toAgentName: "ivy",
-      ask: "can you check DNS for eden.dev?",
+      ask: "can you check DNS for harnesst.dev?",
       status: "completed",
       finishedAt: t(46).toISOString(),
     });
@@ -523,10 +523,10 @@ describe.runIf(LIVE)("FOH activity projection against real Postgres", () => {
       fromAgentName: "sam",
       toAgentName: "ivy",
       status: "completed",
-      ask: "can you check DNS for eden.dev?",
+      ask: "can you check DNS for harnesst.dev?",
     });
     expect(exchange?.steps).toEqual([
-      { kind: "tool", toolName: "bash", summary: "dig eden.dev", isError: false },
+      { kind: "tool", toolName: "bash", summary: "dig harnesst.dev", isError: false },
       {
         kind: "message",
         role: "assistant",

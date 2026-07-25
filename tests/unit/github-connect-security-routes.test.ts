@@ -90,7 +90,7 @@ const args = (url: string) =>
 
 function post(fields: Record<string, string>) {
   return {
-    request: new Request("https://eden.test/connect", {
+    request: new Request("https://harnesst.test/connect", {
       method: "POST",
       body: new URLSearchParams(fields),
     }),
@@ -113,7 +113,7 @@ describe("secure GitHub connect routes", () => {
 
   it("does no grant or GitHub API work for missing/invalid setup state", async () => {
     const result = await loader(
-      args("https://eden.test/connect?installation_id=123&state=tampered"),
+      args("https://harnesst.test/connect?installation_id=123&state=tampered"),
     );
     expect(result.github).toMatchObject({ state: "unconfigured" });
     expect(mocks.bind).not.toHaveBeenCalled();
@@ -128,7 +128,7 @@ describe("secure GitHub connect routes", () => {
       orgId: "org-1",
     });
     const result = await loader(
-      args("https://eden.test/connect?installation_id=123&state=signed"),
+      args("https://harnesst.test/connect?installation_id=123&state=signed"),
     );
     expect(result.github).toMatchObject({ state: "unconfigured" });
     expect(mocks.bind).not.toHaveBeenCalled();
@@ -142,7 +142,7 @@ describe("secure GitHub connect routes", () => {
       orgId: "org-2",
     });
     const result = await loader(
-      args("https://eden.test/connect?installation_id=123&state=signed"),
+      args("https://harnesst.test/connect?installation_id=123&state=signed"),
     );
     expect(result.github).toMatchObject({ state: "unconfigured" });
     expect(mocks.bind).not.toHaveBeenCalled();
@@ -160,7 +160,7 @@ describe("secure GitHub connect routes", () => {
     mocks.bind.mockResolvedValue("verifier");
     await expect(
       loader(
-        args("https://eden.test/connect?installation_id=123&state=signed"),
+        args("https://harnesst.test/connect?installation_id=123&state=signed"),
       ),
     ).rejects.toMatchObject({ status: 302 });
     expect(mocks.bind).toHaveBeenCalledWith(
@@ -176,7 +176,7 @@ describe("secure GitHub connect routes", () => {
     mocks.listRepos.mockResolvedValue([
       { owner: "octo", repo: "eve", fullName: "octo/eve" },
     ]);
-    const result = await loader(args("https://eden.test/connect"));
+    const result = await loader(args("https://harnesst.test/connect"));
     expect(result.github).toMatchObject({
       state: "pick",
       installationGrantId: "grant1234567",

@@ -87,7 +87,7 @@ $ docker inspect … --format '{{json .Config.Labels}}'
  "eve.sandbox.template-key":"eve-sbx-tpl-docker-…", "org.opencontainers.image.version":"26.04", …}
 ```
 
-The owning instance container logs nothing after boot (4 lines total for an `eden-inst-*` instance),
+The owning instance container logs nothing after boot (4 lines total for an `harnesst-inst-*` instance),
 so a stalled cron turn leaves no log trace at all.
 
 ### Prod evidence (from the originating report, harnesst issue #118)
@@ -129,7 +129,7 @@ so the trigger path (schedule/channel) is implicated, not the sandbox backend or
 ## Possibly-related observation (flagged, not asserted as cause)
 
 On the reproducing host, every instance's `WORKFLOW_POSTGRES_URL` world database
-(`eden_env_*`) contains **zero tables** — the Workflow world appears never to have been
+(`harnesst_env_*`) contains **zero tables** — the Workflow world appears never to have been
 initialized/migrated with a live schema. We cannot tell whether the scheduled-turn stall is a
 consequence of the Workflow persistence layer never coming up, or an independent issue in the
 schedule trigger path. Flagging it for maintainers who know the Workflow world lifecycle; we are not

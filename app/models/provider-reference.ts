@@ -128,7 +128,7 @@ export function providerConnectionEnvName(
   ) {
     return null;
   }
-  return `EDEN_PROVIDER_${provider.toUpperCase()}_${connectionId.toUpperCase()}_API_KEY`;
+  return `HARNESST_PROVIDER_${provider.toUpperCase()}_${connectionId.toUpperCase()}_API_KEY`;
 }
 
 /** Explicit alias retained for call sites where the credential kind is useful context. */

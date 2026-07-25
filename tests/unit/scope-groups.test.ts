@@ -201,7 +201,7 @@ describe("lock — group-less regression (google-sheets unchanged)", () => {
       memberCtx({ template: sheetsTpl, authSelections: { google: ["read"] } }),
     );
     const lockOfPlan = (p: typeof plain) =>
-      p.writes.find((w) => w.path === "eden-lock.json")!.content;
+      p.writes.find((w) => w.path === "harnesst-lock.json")!.content;
     expect(lockOfPlan(withSelections)).toBe(lockOfPlan(plain));
     const entry = findInstall(
       parseLock(JSON.parse(lockOfPlan(plain))),
@@ -230,7 +230,7 @@ describe("lock — group-less regression (google-sheets unchanged)", () => {
 describe("planInstall — scope-group selection lands in the lock (issue #165)", () => {
   const entryOf = (ctx: PlanContext) => {
     const plan = planInstall(ctx);
-    const write = plan.writes.find((w) => w.path === "eden-lock.json")!;
+    const write = plan.writes.find((w) => w.path === "harnesst-lock.json")!;
     return findInstall(parseLock(JSON.parse(write.content)), "gmail", "pm")!;
   };
 

@@ -42,7 +42,7 @@ describe("Better Auth resource-route errors", () => {
       const response = await handler(
         args(
           new Request(
-            `https://eden.example.com/api/auth/reset-password/${sentinel}`,
+            `https://harnesst.example.com/api/auth/reset-password/${sentinel}`,
             { method: handler === action ? "POST" : "GET" },
           ),
         ),

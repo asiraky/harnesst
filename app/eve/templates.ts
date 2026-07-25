@@ -149,10 +149,10 @@ export function resourcePath(
 /**
  * Default sandbox definition — scaffolded into new agents and used as the starter template
  * when a repo without one opens the sandbox editor. Behaviorally identical to eve's
- * framework default until the human exposes a secret: with no EDEN_SANDBOX_ENV names the
+ * framework default until the human exposes a secret: with no HARNESST_SANDBOX_ENV names the
  * env map is empty, which is exactly what `defaultBackend()` gets when it isn't configured.
  *
- * The EDEN_SANDBOX_ENV contract (harnesst convention, both sides must agree):
+ * The HARNESST_SANDBOX_ENV contract (harnesst convention, both sides must agree):
  *  - harnesst's deploy pipeline sets it on the INSTANCE container to the comma-separated NAMES
  *    of the secrets marked "available in the agent's sandbox shell" (Settings → Secrets).
  *    Names only, never values — the values are already in the instance env as secrets.
@@ -174,10 +174,10 @@ export const DEFAULT_SANDBOX_MODULE = `import { defaultBackend, defineSandbox } 
 // bootstrap() hook to preinstall CLIs (gh, wrangler, ...) — it runs ONCE and is snapshotted
 // into a reusable template, so sessions start fast with the tools already in place.
 //
-// harnesst convention: EDEN_SANDBOX_ENV is a comma-separated allowlist of env var NAMES
+// harnesst convention: HARNESST_SANDBOX_ENV is a comma-separated allowlist of env var NAMES
 // (managed from the Secrets page — "available in the agent's sandbox shell") forwarded from
 // the instance into the sandbox. Everything else stays sealed out of the shell.
-const names = (process.env.EDEN_SANDBOX_ENV ?? "").split(",").filter(Boolean);
+const names = (process.env.HARNESST_SANDBOX_ENV ?? "").split(",").filter(Boolean);
 const env = Object.fromEntries(names.map((n) => [n, process.env[n] ?? ""]));
 
 export default defineSandbox({

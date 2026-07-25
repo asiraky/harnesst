@@ -9,7 +9,7 @@
  * round-trip. The organization plugin's `requireEmailVerificationOnInvitation` gate stays ON:
  * anyone who arrives with only the enumerable id (no token) still has to verify by email.
  *
- * Keyed by the same `EDEN_SECRETS_KEY` as the other signed-state flows (never a new env var);
+ * Keyed by the same `HARNESST_SECRETS_KEY` as the other signed-state flows (never a new env var);
  * pure over an injected key so mint/verify unit-test without env. No `exp` in the payload: the
  * invitation row carries its own expiry and Better Auth enforces it on get/accept, so a token
  * outlives its invitation harmlessly — it only ever attests delivery to the invited mailbox.
@@ -27,7 +27,7 @@ type InvitationTokenPayload = {
 
 /** The signing key — reuses the secrets key source (never a new env var). */
 export function invitationTokenKey(): Buffer {
-  return decodeKey(process.env.EDEN_SECRETS_KEY);
+  return decodeKey(process.env.HARNESST_SECRETS_KEY);
 }
 
 /** Mint the delivery token embedded in an invitation email link. */

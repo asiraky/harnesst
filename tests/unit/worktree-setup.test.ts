@@ -21,10 +21,10 @@ describe("withDatabaseName", () => {
   test("replaces the database name, preserving auth/host/port", () => {
     expect(
       withDatabaseName(
-        "postgres://eden:eden@localhost:5442/eden",
-        "eden_feature_x",
+        "postgres://harnesst:harnesst@localhost:5442/harnesst",
+        "harnesst_feature_x",
       ),
-    ).toBe("postgres://eden:eden@localhost:5442/eden_feature_x");
+    ).toBe("postgres://harnesst:harnesst@localhost:5442/harnesst_feature_x");
   });
 
   test("accepts postgresql:// scheme", () => {
@@ -53,11 +53,11 @@ describe("withDatabaseName", () => {
 describe("parseDatabaseUrl", () => {
   test("extracts user, password, and db", () => {
     expect(
-      parseDatabaseUrl("postgres://eden:eden@localhost:5442/eden"),
+      parseDatabaseUrl("postgres://harnesst:harnesst@localhost:5442/harnesst"),
     ).toEqual({
-      user: "eden",
-      password: "eden",
-      db: "eden",
+      user: "harnesst",
+      password: "harnesst",
+      db: "harnesst",
     });
   });
 

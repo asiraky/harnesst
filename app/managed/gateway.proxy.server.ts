@@ -11,10 +11,10 @@ export const managedModelGateway: ModelGateway = {
   name: "managed-proxy",
 
   async endpointFor(instanceId: string) {
-    const base = process.env.EDEN_MODEL_GATEWAY_URL ?? "";
+    const base = process.env.HARNESST_MODEL_GATEWAY_URL ?? "";
     // The instance authenticates to the proxy with a per-instance token; the proxy holds the
     // real provider keys. (Token issuance wired with the gateway deployment.)
-    const headers: Record<string, string> = base ? { "x-eden-instance": instanceId } : {};
+    const headers: Record<string, string> = base ? { "x-harnesst-instance": instanceId } : {};
     return { baseUrl: base, headers };
   },
 

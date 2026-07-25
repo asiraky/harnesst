@@ -12,15 +12,15 @@ import {
 } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 
-export const DEFAULT_TUNNEL_NAME = "eden-dev";
+export const DEFAULT_TUNNEL_NAME = "harnesst-dev";
 export const DEFAULT_TUNNEL_DOMAIN = "dev.zero8.ai";
 export const TUNNEL_SHORT_ID_LENGTH = 8;
 
 export function tunnelSettings(env = process.env) {
   return {
-    name: env.EDEN_TUNNEL_NAME || DEFAULT_TUNNEL_NAME,
-    domain: (env.EDEN_TUNNEL_DOMAIN || DEFAULT_TUNNEL_DOMAIN).toLowerCase(),
-    cloudflaredBin: env.EDEN_CLOUDFLARED_BIN || "cloudflared",
+    name: env.HARNESST_TUNNEL_NAME || DEFAULT_TUNNEL_NAME,
+    domain: (env.HARNESST_TUNNEL_DOMAIN || DEFAULT_TUNNEL_DOMAIN).toLowerCase(),
+    cloudflaredBin: env.HARNESST_CLOUDFLARED_BIN || "cloudflared",
   };
 }
 
@@ -65,8 +65,8 @@ export function resolveTunnelDomain(metadata, env = process.env) {
     metadata != null && Object.hasOwn(metadata, "domain");
   const source = hasPersistedDomain
     ? "persisted tunnel metadata"
-    : env.EDEN_TUNNEL_DOMAIN
-      ? "EDEN_TUNNEL_DOMAIN"
+    : env.HARNESST_TUNNEL_DOMAIN
+      ? "HARNESST_TUNNEL_DOMAIN"
       : "default tunnel configuration";
   const domain = hasPersistedDomain
     ? metadata.domain
@@ -343,7 +343,7 @@ export async function replaceManagedConnector(
   child.unref();
   closeSync(logFd);
   await new Promise((resolvePromise) =>
-    setTimeout(resolvePromise, Number(env.EDEN_TUNNEL_START_DELAY_MS || 1200)),
+    setTimeout(resolvePromise, Number(env.HARNESST_TUNNEL_START_DELAY_MS || 1200)),
   );
   if (spawnError || !processIsManagedConnector(paths, child.pid)) {
     throw new Error(

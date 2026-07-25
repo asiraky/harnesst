@@ -11,7 +11,7 @@
 # TLS-related is installed on the host.
 #
 # Networking notes that make this work:
-#  - `eden` and `nginx` use host networking: instance URLs are loopback (http://127.0.0.1:<port>)
+#  - `harnesst` and `nginx` use host networking: instance URLs are loopback (http://127.0.0.1:<port>)
 #    by design, so the control plane must share the host's network namespace to reach them, and
 #    nginx fronts harnesst (:3000) and the splitter (:8787) over the same loopback.
 #  - Postgres publishes on TWO explicit host addresses: 127.0.0.1 (for harnesst) and 172.17.0.1
@@ -23,27 +23,27 @@
 services:
   postgres:
     image: postgres:17
-    container_name: eden-postgres
+    container_name: harnesst-postgres
     restart: unless-stopped
     environment:
-      POSTGRES_USER: eden
-      POSTGRES_PASSWORD: ${EDEN_PG_PASSWORD:?set EDEN_PG_PASSWORD in deploy/vps/.env}
-      POSTGRES_DB: eden
+      POSTGRES_USER: harnesst
+      POSTGRES_PASSWORD: ${HARNESST_PG_PASSWORD:?set HARNESST_PG_PASSWORD in deploy/vps/.env}
+      POSTGRES_DB: harnesst
     ports:
       - "127.0.0.1:5442:5432"
       - "172.17.0.1:5442:5432"
     volumes:
-      - eden-postgres-data:/var/lib/postgresql/data
+      - harnesst-postgres-data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U eden -d eden"]
+      test: ["CMD-SHELL", "pg_isready -U harnesst -d harnesst"]
       interval: 5s
       timeout: 5s
       retries: 5
 
-  eden:
+  harnesst:
     build:
       context: ../..
-    container_name: eden
+    container_name: harnesst
     restart: unless-stopped
     network_mode: host # reach loopback instance URLs + serve 127.0.0.1:3000 to nginx
     env_file: .env
@@ -56,18 +56,18 @@ services:
         condition: service_healthy
 
   # TLS terminator + reverse proxy. Host networking so it can reach harnesst and the splitter on
-  # loopback. Won't start until a cert exists at the path in nginx-eden.conf (README step 6).
+  # loopback. Won't start until a cert exists at the path in nginx-harnesst.conf (README step 6).
   nginx:
     image: nginx:stable-alpine
-    container_name: eden-nginx
+    container_name: harnesst-nginx
     restart: unless-stopped
-    network_mode: host # fronts eden (127.0.0.1:3000) and the splitter (127.0.0.1:8787)
+    network_mode: host # fronts harnesst (127.0.0.1:3000) and the splitter (127.0.0.1:8787)
     volumes:
-      - ./nginx-eden.conf:/etc/nginx/conf.d/default.conf:ro
-      - eden-letsencrypt:/etc/letsencrypt:ro
-      - eden-certbot-webroot:/var/www/certbot:ro
+      - ./nginx-harnesst.conf:/etc/nginx/conf.d/default.conf:ro
+      - harnesst-letsencrypt:/etc/letsencrypt:ro
+      - harnesst-certbot-webroot:/var/www/certbot:ro
     depends_on:
-      - eden
+      - harnesst
 
   # One-off cert issuance/renewal: `docker compose run --rm certbot ...` (README step 6).
   # Renewal runs from the host crontab; certbot stays containerized (no host certbot/systemd timer).
@@ -75,8 +75,8 @@ services:
     profiles: ["tools"]
     image: certbot/certbot
     volumes:
-      - eden-letsencrypt:/etc/letsencrypt
-      - eden-certbot-webroot:/var/www/certbot
+      - harnesst-letsencrypt:/etc/letsencrypt
+      - harnesst-certbot-webroot:/var/www/certbot
 
   # One-off schema migrations: `docker compose run --rm --build migrate`.
   # Uses the build stage (dev deps + drizzle/ live there), not the runtime image.
@@ -95,6 +95,6 @@ services:
         condition: service_healthy
 
 volumes:
-  eden-postgres-data:
-  eden-letsencrypt:
-  eden-certbot-webroot:
+  harnesst-postgres-data:
+  harnesst-letsencrypt:
+  harnesst-certbot-webroot:

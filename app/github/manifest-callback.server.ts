@@ -12,7 +12,7 @@ import {
 export type GitHubManifestCallbackPayload = OAuthCallbackPayload;
 
 const staging = createOAuthCallbackStaging({
-  cookieName: "eden-github-manifest-callback",
+  cookieName: "harnesst-github-manifest-callback",
   path: "/github/apps/callback",
 });
 

@@ -189,7 +189,7 @@ async function defaultApplySecretOps(
   if (target.kind !== "new-member") return;
   const actionable = ops.filter((op) => op.kind !== "skip");
   if (actionable.length === 0) return;
-  const key = decodeKey(process.env.EDEN_SECRETS_KEY);
+  const key = decodeKey(process.env.HARNESST_SECRETS_KEY);
   for (const op of actionable) {
     if (op.kind === "set") {
       await writePendingSecret({
@@ -338,7 +338,7 @@ export async function installMarketplaceTemplate(
       content: draft.content,
     }));
     const lock = overlayLock(
-      source.files["eden-lock.json"] ?? null,
+      source.files["harnesst-lock.json"] ?? null,
       draftPaths,
     );
 

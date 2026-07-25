@@ -13,7 +13,7 @@
  * Invite delivery/acceptance itself is already covered end-to-end by
  * tests/integration/foh-teams.db.test.ts (real Better Auth + mailbox driver) — not repeated.
  *
- * Opt-in: EDEN_DB_SMOKE=1 with DATABASE_URL pointing at the live dev database.
+ * Opt-in: HARNESST_DB_SMOKE=1 with DATABASE_URL pointing at the live dev database.
  */
 import { describe, expect, it } from "vitest";
 
@@ -235,7 +235,7 @@ describe.runIf(LIVE)("FOH roles and inbox visibility", () => {
 });
 
 describe.runIf(!LIVE)("FOH roles/inbox e2e (skipped)", () => {
-  it("runs only with EDEN_DB_SMOKE=1 against a live database", () => {
+  it("runs only with HARNESST_DB_SMOKE=1 against a live database", () => {
     expect(LIVE).toBe(false);
   });
 });

@@ -10,10 +10,10 @@ Use this workflow for every request to create, build, change, or fix an eve agen
 
 Before offering a plan, suggestion, or change:
 
-1. Call `eden_project_context`.
-2. In the checkout Eden provided, use bash to inspect `pwd`, `git status`, the repository tree, and the relevant `package.json` files.
+1. Call `harnesst_project_context`.
+2. In the checkout harnesst provided, use bash to inspect `pwd`, `git status`, the repository tree, and the relevant `package.json` files.
 3. Read the target agent's `instructions.md`, configuration, and the nearest examples of the tools, skills, schedules, evals, or other files you may change.
-4. Reconcile the single-agent or team roots returned by `eden_project_context` with the directories on disk. Work from the target member's project root.
+4. Reconcile the single-agent or team roots returned by `harnesst_project_context` with the directories on disk. Work from the target member's project root.
 
 If a grounding tool or checkout inspection fails, report exactly what failed. Do not fabricate paths, files, conventions, or current behavior.
 
@@ -29,7 +29,7 @@ Edit the real connected checkout, following the installed eve version, the offic
 
 - Never hardcode or invent secrets. Read named secrets through `process.env` inside execution paths and report which names the human must configure.
 - Prefer platform APIs and existing dependencies. When a package is justified, run `npm install <pkg>` in the correct project root so `package.json` and the lockfile stay synchronized.
-- Preserve the repository's package manager, scripts, team layout, and `EDEN_SANDBOX_ENV` handling.
+- Preserve the repository's package manager, scripts, team layout, and `HARNESST_SANDBOX_ENV` handling.
 
 ## 4. Validate in layers
 

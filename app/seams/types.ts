@@ -4,7 +4,7 @@
  * Every capability that differs between the open-source/self-host build and the commercial
  * managed service hides behind one of these interfaces. OSS ships local/no-op/BYO
  * implementations; managed ships the real ones (KMS, model-gateway proxy, Stripe, Nomad).
- * There is no fork — `getRuntime()` (index.server.ts) selects implementations by `EDEN_MODE`.
+ * There is no fork — `getRuntime()` (index.server.ts) selects implementations by `HARNESST_MODE`.
  *
  * Pure types only (no server imports) so they can be referenced anywhere.
  */

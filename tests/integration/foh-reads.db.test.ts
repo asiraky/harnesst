@@ -4,14 +4,14 @@
  * the viewer's `finished` inbox items (D13) while leaving question/approval items and other
  * users' finished items pending.
  *
- * Opt-in: EDEN_DB_SMOKE=1 with DATABASE_URL pointing at a live dev database
- * (`EDEN_DB_SMOKE=1 npx vitest run tests/integration/foh-reads.db.test.ts` with .env.local
+ * Opt-in: HARNESST_DB_SMOKE=1 with DATABASE_URL pointing at a live dev database
+ * (`HARNESST_DB_SMOKE=1 npx vitest run tests/integration/foh-reads.db.test.ts` with .env.local
  * sourced). Creates and removes its own rows; safe to re-run.
  */
 import { eq } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 
-const LIVE = process.env.EDEN_DB_SMOKE === "1";
+const LIVE = process.env.HARNESST_DB_SMOKE === "1";
 
 describe.runIf(LIVE)("FOH read cursor against real Postgres", () => {
   it("advances only forward and resolves the viewer's finished items on read", async () => {

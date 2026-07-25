@@ -142,8 +142,8 @@ name only.
 
 ### 3.6 Ingress / routing
 
-A reverse proxy (**Caddy or Traefik**) on the box with **wildcard TLS** (`*.eden.app`), routing
-`agent-<id>.eden.app` → the instance container, integrated with the wake-proxy (§2.3). Also terminates
+A reverse proxy (**Caddy or Traefik**) on the box with **wildcard TLS** (`*.harnesst.app`), routing
+`agent-<id>.harnesst.app` → the instance container, integrated with the wake-proxy (§2.3). Also terminates
 channel webhooks (Slack/HTTP) per instance. **Discord (issue #32)** is the exception: one
 harnesst-owned Discord app serves the whole installation, so its single Interactions Endpoint URL
 points at the **control plane** (`/api/discord/interactions`), which verifies the signature and
@@ -292,7 +292,7 @@ A redeploy destroys the container and with it the eve session; the cache survive
 follow-up to a conversation whose owning deployment was replaced can't reach the original eve
 session. Instead of dead-ending, harnesst **reseeds** (#71): the next turn transparently starts a fresh
 eve session on the replacement deployment, seeded from the cached transcript via a strippable
-`eden:context` block prepended to the sent message (invisible in the rendered transcript, like the
+`harnesst:context` block prepended to the sent message (invisible in the rendered transcript, like the
 model directive). `playground_sessions.cache_index_offset` shifts the fresh session's stream indices
 (which restart at 1) above the preserved history so its events append after it on the
 `(session, stream_index)` PK instead of colliding. The assistant surface keeps its 409 block instead
@@ -416,7 +416,7 @@ lives.
 │  │  [ACTIVE]     │ │  [ACTIVE]     │ │   0 cpu/ram)  │   │  DB-per-instance,│ │
 │  └───────┬───────┘ └───────┬───────┘ └───────────────┘   │  durable log)    │ │
 │          │                 │                             └──────────────────┘ │
-│  Caddy/Traefik + wake-proxy (Sablier) ── *.eden.app ── Slack/HTTP webhooks     │
+│  Caddy/Traefik + wake-proxy (Sablier) ── *.harnesst.app ── Slack/HTTP webhooks     │
 │                                                                                │
 └────────────────────────────────────────────────────────────────────────────────┘
    Backups (WAL + snapshots) ──► object storage (S3/B2)   [protect Postgres first]

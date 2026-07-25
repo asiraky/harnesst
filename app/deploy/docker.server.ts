@@ -4,7 +4,7 @@ import { promisify } from "node:util";
 const exec = promisify(execFile);
 
 export const DOCKER_PREFLIGHT_TIMEOUT_MS = Number(
-  process.env.EDEN_DOCKER_PREFLIGHT_TIMEOUT_MS ?? 10_000,
+  process.env.HARNESST_DOCKER_PREFLIGHT_TIMEOUT_MS ?? 10_000,
 );
 
 export class DockerUnavailableError extends Error {

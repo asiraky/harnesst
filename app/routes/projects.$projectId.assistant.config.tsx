@@ -1,5 +1,5 @@
 /**
- * Assistant configuration — the user layer over `.eden/assistant/**`.
+ * Assistant configuration — the user layer over `.harnesst/assistant/**`.
  * Editing here STAGES drafts through the normal Changes flow; the fixed harnesst-owned layer
  * (instructions + tools) is shown read-only so the assistant is inspectable. Config takes effect
  * after the change is published + merged, which restarts the instance (refresh-on-merge).

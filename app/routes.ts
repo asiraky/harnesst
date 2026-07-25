@@ -197,10 +197,10 @@ export default [
   route("connections/:provider/connect", "routes/connections.$provider.connect.tsx"),
   route("connections/:provider/callback", "routes/connections.$provider.callback.tsx"),
   // Instance token broker (issue #167): instances of access-token-broker providers (rotating
-  // refresh grants — mayi) fetch fresh access tokens here with their EDEN_TEAM_TOKEN.
+  // refresh grants — mayi) fetch fresh access tokens here with their HARNESST_TEAM_TOKEN.
   route("api/connections/token", "routes/api.connections.token.ts"),
   // Brokered capabilities (issue #166): capability providers' whitelisted operations. Instances
-  // POST typed inputs with their EDEN_TEAM_TOKEN; harnesst validates and executes with the
+  // POST typed inputs with their HARNESST_TEAM_TOKEN; harnesst validates and executes with the
   // control-plane-held credential — the grant never reaches the container.
   route(
     "api/capabilities/:provider/:operation",
@@ -224,7 +224,7 @@ export default [
   // harnesst model gateway (issue #28): a deployed agent / the assistant set to a codex/<conn>/<slug>
   // model reaches this route (Bearer edng_ token) to run on the org's connected Codex subscription.
   route("api/gateway/v1/chat/completions", "routes/api.gateway.chat.ts"),
-  // Runtime model resolution: a deployed agent's generated eden-model.ts asks (same Bearer
+  // Runtime model resolution: a deployed agent's generated harnesst-model.ts asks (same Bearer
   // edng_ token) which model the workspace wants it on — per-agent override, else the default.
   route("api/gateway/v1/model-config", "routes/api.gateway.model-config.ts"),
   // Connect an OpenAI Codex subscription via device-code OAuth (Org settings dialog fetcher).

@@ -187,7 +187,7 @@ describe("assistant marketplace install", () => {
         "agent/sandbox/addons/example-bundle.ts",
         "agent/sandbox/sandbox.ts",
         "package.json",
-        "eden-lock.json",
+        "harnesst-lock.json",
       ]),
     );
     expect(appliedOps()).toEqual([
@@ -195,7 +195,7 @@ describe("assistant marketplace install", () => {
     ]);
 
     const drafts = await listDrafts(project.id, store);
-    const lockDraft = drafts.find((draft) => draft.path === "eden-lock.json");
+    const lockDraft = drafts.find((draft) => draft.path === "harnesst-lock.json");
     const lock = parseLock(JSON.parse(lockDraft?.content ?? "null"));
     expect(lock.installs[0]).toMatchObject({
       id: "example-bundle",
@@ -226,7 +226,7 @@ describe("assistant marketplace install", () => {
     expect(result).toMatchObject({
       ok: false,
       conflicts: ["agent/tools/example-api.ts"],
-      writes: expect.arrayContaining(["eden-lock.json", "package.json"]),
+      writes: expect.arrayContaining(["harnesst-lock.json", "package.json"]),
     });
     expect(await listDrafts(project.id, store)).toEqual([]);
   });
@@ -253,7 +253,7 @@ describe("assistant marketplace install", () => {
     expect(update).toMatchObject({ ok: true, isUpdate: true });
 
     const drafts = await listDrafts(project.id, store);
-    const lockDraft = drafts.find((draft) => draft.path === "eden-lock.json");
+    const lockDraft = drafts.find((draft) => draft.path === "harnesst-lock.json");
     const lock = parseLock(JSON.parse(lockDraft?.content ?? "null"));
     expect(lock.installs[0].auth?.[0].selectedGroups).toEqual(["write"]);
   });
@@ -279,7 +279,7 @@ describe("assistant marketplace install", () => {
       { kind: "set", name: "EXAMPLE_TOKEN", value: "s3cr3t", sandbox: true },
     ]);
     const drafts = await listDrafts(project.id, store);
-    expect(drafts.some((draft) => draft.path === "eden-lock.json")).toBe(true);
+    expect(drafts.some((draft) => draft.path === "harnesst-lock.json")).toBe(true);
   });
 
   it("stages nothing when the GitHub-App credential guard rejects the install", async () => {

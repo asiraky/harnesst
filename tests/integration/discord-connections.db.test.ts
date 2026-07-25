@@ -3,15 +3,15 @@
  * (guildId, commandName), and the lookups the relay + send proxy depend on — the Drizzle
  * behaviour the unit fakes can't prove.
  *
- * Opt-in: runs only when EDEN_DB_SMOKE=1 and DATABASE_URL point at a live dev database
- * (`EDEN_DB_SMOKE=1 npx vitest run tests/integration/discord-connections.db.test.ts` with
+ * Opt-in: runs only when HARNESST_DB_SMOKE=1 and DATABASE_URL point at a live dev database
+ * (`HARNESST_DB_SMOKE=1 npx vitest run tests/integration/discord-connections.db.test.ts` with
  * .env.local sourced). Creates its own org/project/agent/env rows and deletes them, so it's
  * safe to re-run.
  */
 import { eq } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 
-const LIVE = process.env.EDEN_DB_SMOKE === "1";
+const LIVE = process.env.HARNESST_DB_SMOKE === "1";
 
 describe.runIf(LIVE)("discord connections against real Postgres", () => {
   it("upserts by (guild, command) and reads back by guild/agent", async () => {

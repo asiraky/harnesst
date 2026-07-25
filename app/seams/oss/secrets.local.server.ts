@@ -52,5 +52,5 @@ export function makeLocalSecretsProvider(
 }
 
 export const localSecretsProvider = makeLocalSecretsProvider(drizzleSecretKV, () =>
-  decodeKey(process.env.EDEN_SECRETS_KEY),
+  decodeKey(process.env.HARNESST_SECRETS_KEY),
 );

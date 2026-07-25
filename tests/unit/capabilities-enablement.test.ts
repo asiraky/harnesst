@@ -113,7 +113,7 @@ describe("install snapshot — capabilityGroups + selectedCapabilityGroups", () 
   it("snapshots offered groups and defaults the selection to the registry's default-flagged reads", () => {
     const plan = planInstall(memberCtx());
     const lock = JSON.parse(
-      plan.writes.find((s) => s.path === "eden-lock.json")!.content,
+      plan.writes.find((s) => s.path === "harnesst-lock.json")!.content,
     ) as HarnesstLock;
     const entry = findInstall(lock, "xero", "books")!;
     expect(entry.auth?.[0]).toMatchObject({
@@ -133,7 +133,7 @@ describe("install snapshot — capabilityGroups + selectedCapabilityGroups", () 
       }),
     );
     const lock = JSON.parse(
-      plan.writes.find((s) => s.path === "eden-lock.json")!.content,
+      plan.writes.find((s) => s.path === "harnesst-lock.json")!.content,
     ) as HarnesstLock;
     const entry = findInstall(lock, "xero", "books")!;
     // Snapshot declaration order, not the posted order; the forged id is gone.
@@ -146,7 +146,7 @@ describe("install snapshot — capabilityGroups + selectedCapabilityGroups", () 
   it("writes an EMPTY selection when the installer unticks everything (explicit least privilege)", () => {
     const plan = planInstall(memberCtx({ capabilitySelections: { xero: [] } }));
     const lock = JSON.parse(
-      plan.writes.find((s) => s.path === "eden-lock.json")!.content,
+      plan.writes.find((s) => s.path === "harnesst-lock.json")!.content,
     ) as HarnesstLock;
     expect(
       findInstall(lock, "xero", "books")!.auth?.[0].selectedCapabilityGroups,

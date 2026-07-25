@@ -140,7 +140,7 @@ describe("transactional email client", () => {
     let baseDir: string;
 
     beforeEach(async () => {
-      baseDir = await mkdtemp(join(tmpdir(), "eden-mailbox-"));
+      baseDir = await mkdtemp(join(tmpdir(), "harnesst-mailbox-"));
     });
 
     afterEach(async () => {

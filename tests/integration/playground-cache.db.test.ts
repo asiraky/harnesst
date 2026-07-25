@@ -7,14 +7,14 @@
  * path projects (see tests/unit/playground-replay.test.ts) project IDENTICALLY when sourced from
  * the cache, and (2) the (session, streamIndex) PK makes re-drained writes idempotent.
  *
- * Opt-in: runs only when EDEN_DB_SMOKE=1 and DATABASE_URL point at a live dev database
- * (`EDEN_DB_SMOKE=1 npx vitest run tests/integration/playground-cache.db.test.ts` with .env.local
+ * Opt-in: runs only when HARNESST_DB_SMOKE=1 and DATABASE_URL point at a live dev database
+ * (`HARNESST_DB_SMOKE=1 npx vitest run tests/integration/playground-cache.db.test.ts` with .env.local
  * sourced). Creates its own org/project/agent/session rows and deletes them, so it's safe to re-run.
  */
 import { eq } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 
-const LIVE = process.env.EDEN_DB_SMOKE === "1";
+const LIVE = process.env.HARNESST_DB_SMOKE === "1";
 
 describe.runIf(LIVE)(
   "playground transcript cache against real Postgres",

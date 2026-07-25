@@ -346,7 +346,7 @@ export const loader = (args: LoaderFunctionArgs) =>
         content: d.content,
       }));
       const lock = overlayLock(
-        source.files["eden-lock.json"] ?? null,
+        source.files["harnesst-lock.json"] ?? null,
         draftPaths,
       );
       let index: { id: string; type: TemplateType; version: string }[] = [];
@@ -425,7 +425,7 @@ export const loader = (args: LoaderFunctionArgs) =>
           resolveAgentModel(project.orgId, active.name).catch(() => null),
         ]);
         // Model + effort are workspace configuration, resolved from harnesst's control plane by
-        // agent name (the `edenAgentModel('<name>')` identity the running agent resolves itself
+        // agent name (the `harnesstAgentModel('<name>')` identity the running agent resolves itself
         // by) — never parsed out of agent.ts. An explicit per-agent override wins; otherwise the
         // shown value is the workspace default ("inherited default").
         base.model = resolved?.model ?? null;
@@ -609,7 +609,7 @@ export async function action(args: ActionFunctionArgs) {
         content: d.content,
       }));
       const lock = overlayLock(
-        source.files["eden-lock.json"] ?? null,
+        source.files["harnesst-lock.json"] ?? null,
         draftPaths,
       );
       // A staged package.json draft wins over the branch copy — otherwise a second staged
@@ -706,7 +706,7 @@ export async function action(args: ActionFunctionArgs) {
         content: d.content,
       }));
       const lock = overlayLock(
-        source.files["eden-lock.json"] ?? null,
+        source.files["harnesst-lock.json"] ?? null,
         draftPaths,
       );
       const plan = planUninstall({
@@ -716,7 +716,7 @@ export async function action(args: ActionFunctionArgs) {
         repoPaths: source.paths,
       });
       if (plan.notFound) {
-        return { error: "That install isn't recorded in eden-lock.json." };
+        return { error: "That install isn't recorded in harnesst-lock.json." };
       }
       if (plan.deletions.length > 0) {
         await stageDeletions({
@@ -828,7 +828,7 @@ export async function action(args: ActionFunctionArgs) {
       }
       const change = await proposeChange(project.repoInstallationId, repo, {
         base: project.defaultBranch,
-        branch: `eden/remove-member-${name}`,
+        branch: `harnesst/remove-member-${name}`,
         files,
         title: `Remove agent: ${name}`,
         body:
@@ -920,8 +920,8 @@ export async function action(args: ActionFunctionArgs) {
         files.push({ path: p, content: null });
       });
 
-      // eden-lock.json lives at the repo root: retag this member's installs old → new.
-      const lockRaw = source.files["eden-lock.json"] ?? null;
+      // harnesst-lock.json lives at the repo root: retag this member's installs old → new.
+      const lockRaw = source.files["harnesst-lock.json"] ?? null;
       if (lockRaw) {
         const rewritten = renameMember(
           overlayLock(lockRaw, []),
@@ -930,7 +930,7 @@ export async function action(args: ActionFunctionArgs) {
         );
         if (rewritten.changed) {
           files.push({
-            path: "eden-lock.json",
+            path: "harnesst-lock.json",
             content: serializeLock(rewritten.lock),
           });
         }
@@ -945,7 +945,7 @@ export async function action(args: ActionFunctionArgs) {
       try {
         change = await proposeChange(project.repoInstallationId, repo, {
           base: project.defaultBranch,
-          branch: `eden/rename-member-${oldName}-${newName}`,
+          branch: `harnesst/rename-member-${oldName}-${newName}`,
           files,
           title: `Rename agent: ${oldName} → ${newName}`,
           body:
@@ -1269,7 +1269,7 @@ function ModelSection({
 }
 
 /**
- * Marketplace provenance from eden-lock.json. Updates and uninstalls stage normal repo changes;
+ * Marketplace provenance from harnesst-lock.json. Updates and uninstalls stage normal repo changes;
  * Deployment remains the review/publish surface for those staged files.
  */
 function MarketplaceInstallsSection({

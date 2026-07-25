@@ -10,20 +10,20 @@ import {
   validateProviderApiKey,
 } from "~/models/provider-catalog.server";
 
-const oldOpenRouterBase = process.env.EDEN_OPENROUTER_API_BASE_URL;
-const oldAnthropicBase = process.env.EDEN_ANTHROPIC_API_BASE_URL;
-const oldOpenAiBase = process.env.EDEN_OPENAI_API_BASE_URL;
+const oldOpenRouterBase = process.env.HARNESST_OPENROUTER_API_BASE_URL;
+const oldAnthropicBase = process.env.HARNESST_ANTHROPIC_API_BASE_URL;
+const oldOpenAiBase = process.env.HARNESST_OPENAI_API_BASE_URL;
 
 afterEach(() => {
   vi.restoreAllMocks();
   if (oldOpenRouterBase === undefined)
-    delete process.env.EDEN_OPENROUTER_API_BASE_URL;
-  else process.env.EDEN_OPENROUTER_API_BASE_URL = oldOpenRouterBase;
+    delete process.env.HARNESST_OPENROUTER_API_BASE_URL;
+  else process.env.HARNESST_OPENROUTER_API_BASE_URL = oldOpenRouterBase;
   if (oldAnthropicBase === undefined)
-    delete process.env.EDEN_ANTHROPIC_API_BASE_URL;
-  else process.env.EDEN_ANTHROPIC_API_BASE_URL = oldAnthropicBase;
-  if (oldOpenAiBase === undefined) delete process.env.EDEN_OPENAI_API_BASE_URL;
-  else process.env.EDEN_OPENAI_API_BASE_URL = oldOpenAiBase;
+    delete process.env.HARNESST_ANTHROPIC_API_BASE_URL;
+  else process.env.HARNESST_ANTHROPIC_API_BASE_URL = oldAnthropicBase;
+  if (oldOpenAiBase === undefined) delete process.env.HARNESST_OPENAI_API_BASE_URL;
+  else process.env.HARNESST_OPENAI_API_BASE_URL = oldOpenAiBase;
 });
 
 function json(payload: unknown, status = 200): Response {
@@ -35,7 +35,7 @@ function json(payload: unknown, status = 200): Response {
 
 describe("OpenRouter provider catalog", () => {
   it("validates with GET /api/v1/key and a bearer token at the overridable host", async () => {
-    process.env.EDEN_OPENROUTER_API_BASE_URL = "https://router.test///";
+    process.env.HARNESST_OPENROUTER_API_BASE_URL = "https://router.test///";
     const fetcher = vi.fn(async () => json({ data: { label: "key" } }));
     await validateProviderApiKey("openrouter", "sk-or", {
       fetch: fetcher as typeof fetch,
@@ -56,7 +56,7 @@ describe("OpenRouter provider catalog", () => {
   });
 
   it("lists models with the exact connection key", async () => {
-    process.env.EDEN_OPENROUTER_API_BASE_URL = "https://router.test";
+    process.env.HARNESST_OPENROUTER_API_BASE_URL = "https://router.test";
     const fetcher = vi.fn(async () => json({ data: [{ id: "a/model" }] }));
     await expect(
       listProviderModels("openrouter", "sk-exact", {
@@ -105,7 +105,7 @@ describe("Anthropic provider catalog", () => {
   });
 
   it("paginates with Anthropic's required key/version headers", async () => {
-    process.env.EDEN_ANTHROPIC_API_BASE_URL = "https://anthropic.test/";
+    process.env.HARNESST_ANTHROPIC_API_BASE_URL = "https://anthropic.test/";
     const fetcher = vi
       .fn()
       .mockResolvedValueOnce(
@@ -170,7 +170,7 @@ describe("OpenAI provider catalog", () => {
   });
 
   it("uses GET /v1/models with bearer authentication at the overridable host", async () => {
-    process.env.EDEN_OPENAI_API_BASE_URL = "https://openai.test/";
+    process.env.HARNESST_OPENAI_API_BASE_URL = "https://openai.test/";
     const fetcher = vi.fn(async () => json({ data: [{ id: "gpt-5.4" }] }));
     await expect(
       listOpenAiModels("sk-openai", { fetch: fetcher as typeof fetch }),

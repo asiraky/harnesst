@@ -1,19 +1,19 @@
 // Container boot: materialize the user config layer before the agent compiles.
 //
 // eve discovers instructions.md / skills / schedules at BUILD time, not at `eve start`
-// so the entrypoint fetches the project's PUBLISHED .eden/assistant
-// config from Eden, writes it into this fixed image, and — if any user layer was written —
+// so the entrypoint fetches the project's PUBLISHED .harnesst/assistant
+// config from harnesst, writes it into this fixed image, and — if any user layer was written —
 // re-runs `eve build` before `eve start`. On persistent fetch failure it starts with the fixed
 // layer only, so a control-plane hiccup never bricks the assistant.
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
-const API_URL = process.env.EDEN_API_URL;
-const TOKEN = process.env.EDEN_ASSISTANT_TOKEN;
+const API_URL = process.env.HARNESST_API_URL;
+const TOKEN = process.env.HARNESST_ASSISTANT_TOKEN;
 const APP = process.cwd();
 const INSTRUCTIONS = join(APP, "agent", "instructions.md");
-const USER_MARKER = join(APP, ".eden-user-layer");
-const ENV_FILE = join(APP, ".eden-assistant-env");
+const USER_MARKER = join(APP, ".harnesst-user-layer");
+const ENV_FILE = join(APP, ".harnesst-assistant-env");
 const MARKER = "\n\n## Project instructions (user-configured)\n\n";
 
 /** Quote an arbitrary value as one POSIX-shell assignment without allowing expansion. */
@@ -25,7 +25,7 @@ function shellAssignment(name, value) {
 async function fetchBundle() {
   if (!API_URL || !TOKEN) {
     console.warn(
-      "[assistant] EDEN_API_URL / EDEN_ASSISTANT_TOKEN unset — fixed layer only.",
+      "[assistant] HARNESST_API_URL / HARNESST_ASSISTANT_TOKEN unset — fixed layer only.",
     );
     return null;
   }
@@ -104,11 +104,11 @@ async function main() {
     wroteUserLayer = true;
   }
 
-  // Per-project model override (published .eden/assistant/assistant.json) wins over the deploy
+  // Per-project model override (published .harnesst/assistant/assistant.json) wins over the deploy
   // env default. Written to an env file the entrypoint sources; does NOT require a rebuild.
   if (typeof bundle.model === "string" && bundle.model.trim()) {
     let environment = shellAssignment(
-      "EDEN_ASSISTANT_MODEL",
+      "HARNESST_ASSISTANT_MODEL",
       bundle.model.trim(),
     );
     if (
@@ -117,7 +117,7 @@ async function main() {
         bundle.effort,
       )
     ) {
-      environment += shellAssignment("EDEN_ASSISTANT_EFFORT", bundle.effort);
+      environment += shellAssignment("HARNESST_ASSISTANT_EFFORT", bundle.effort);
     }
     await writeFile(ENV_FILE, environment);
   }

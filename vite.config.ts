@@ -42,11 +42,11 @@ export default defineConfig(({ mode }) => {
       // (webhook delivery, OAuth-style redirects) can be exercised against a local dev server.
       allowedHosts: ["host.docker.internal", ".loca.lt", ".trycloudflare.com"],
       // In production nginx routes /e/<environmentId>/… to the traffic splitter
-      // (deploy/vps/nginx-eden.conf); mirror that here so the ingress URLs the UI shows —
+      // (deploy/vps/nginx-harnesst.conf); mirror that here so the ingress URLs the UI shows —
       // and the webhook URLs baked into GitHub App manifests — work against the dev server.
       proxy: {
         "/e/": {
-          target: `http://127.0.0.1:${env.EDEN_SPLITTER_PORT ?? 8787}`,
+          target: `http://127.0.0.1:${env.HARNESST_SPLITTER_PORT ?? 8787}`,
         },
       },
     },

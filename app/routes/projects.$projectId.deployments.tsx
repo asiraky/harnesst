@@ -253,7 +253,7 @@ interface DeploymentData {
   /** Member/single view: Discord connect state when the agent has the marketplace Discord channel. */
   discordSetup: {
     enabled: boolean;
-    /** Whether the operator has configured harnesst's shared Discord app (EDEN_DISCORD_*). */
+    /** Whether the operator has configured harnesst's shared Discord app (HARNESST_DISCORD_*). */
     configured: boolean;
     /** Member view: the agent's connected servers; null in the team view (setup is per member). */
     connections: Array<{
@@ -468,7 +468,7 @@ export const loader = (args: LoaderFunctionArgs) =>
           const shared = await listSharedSecrets(project.id);
           const sharedNames = new Set(shared.map((s) => s.key));
           const lock = overlayLock(
-            source.files["eden-lock.json"] ?? null,
+            source.files["harnesst-lock.json"] ?? null,
             allDrafts.map((d) => ({ path: d.path, content: d.content })),
           );
           const perMemberSecrets = await Promise.all(
@@ -562,7 +562,7 @@ export const loader = (args: LoaderFunctionArgs) =>
       // The effective lock for this agent (drafts overlaid) — drives both the missing-secret guard
       // and the Connections card's required-scope derivation (issue #30).
       const lock = overlayLock(
-        source.files["eden-lock.json"] ?? null,
+        source.files["harnesst-lock.json"] ?? null,
         allDrafts.map((d) => ({ path: d.path, content: d.content })),
       );
       // The lock attributes installs to a member name (team) or null (single-agent root) — mirror
@@ -918,7 +918,7 @@ export async function action(args: ActionFunctionArgs) {
     }
 
     // ── Connection permissions (issue #165): rewrite the lock's scope-group selection ──
-    // The selection is CONFIG living in eden-lock.json, so editing it stages a draft of the lock
+    // The selection is CONFIG living in harnesst-lock.json, so editing it stages a draft of the lock
     // (published/merged with the pipeline like any install). Widening flips the Connections row
     // to needs-reconnect via the existing scope-coverage state; narrowing keeps the row connected
     // but the redirect carries a hint to reconnect for a freshly narrowed grant.
@@ -940,7 +940,7 @@ export async function action(args: ActionFunctionArgs) {
       requireActiveAgent(active, project.id);
       const member = isTeam ? active.name : null;
       const lock = overlayLock(
-        source.files["eden-lock.json"] ?? null,
+        source.files["harnesst-lock.json"] ?? null,
         drafts.map((d) => ({ path: d.path, content: d.content })),
       );
       const before = requiredScopesByProvider(lock, member).get(provider) ?? [];
@@ -953,7 +953,7 @@ export async function action(args: ActionFunctionArgs) {
       if (!changed) return { ok: true as const };
       await stageDraft({
         projectId: project.id,
-        path: "eden-lock.json",
+        path: "harnesst-lock.json",
         content: serializeLock(nextLock),
         createdBy: auth.user.id,
       });
@@ -990,7 +990,7 @@ export async function action(args: ActionFunctionArgs) {
       requireActiveAgent(active, project.id);
       const member = isTeam ? active.name : null;
       const lock = overlayLock(
-        source.files["eden-lock.json"] ?? null,
+        source.files["harnesst-lock.json"] ?? null,
         drafts.map((d) => ({ path: d.path, content: d.content })),
       );
       const { lock: nextLock, changed } = setSelectedCapabilityGroups(
@@ -1002,7 +1002,7 @@ export async function action(args: ActionFunctionArgs) {
       if (!changed) return { ok: true as const };
       await stageDraft({
         projectId: project.id,
-        path: "eden-lock.json",
+        path: "harnesst-lock.json",
         content: serializeLock(nextLock),
         createdBy: auth.user.id,
       });
@@ -1334,7 +1334,7 @@ export default function Deployment({
           <Alert className="mb-6">
             <AlertTitle>{permissionsLabel} permissions reduced</AlertTitle>
             <AlertDescription>
-              The selection is staged to eden-lock.json — publish it with your
+              The selection is staged to harnesst-lock.json — publish it with your
               other changes. The existing grant still covers the smaller set,
               so nothing breaks; reconnect from the Connections card to
               re-issue the grant with only the selected permissions.
@@ -1344,7 +1344,7 @@ export default function Deployment({
           <Alert className="mb-6">
             <AlertTitle>{permissionsLabel} permissions updated</AlertTitle>
             <AlertDescription>
-              The selection is staged to eden-lock.json — publish it with your
+              The selection is staged to harnesst-lock.json — publish it with your
               other changes. If permissions were added, the connection needs a
               reconnect (see the Connections card below) before it covers the
               new set.
@@ -1356,7 +1356,7 @@ export default function Deployment({
         <Alert className="mb-6">
           <AlertTitle>{operationsLabel} operations updated</AlertTitle>
           <AlertDescription>
-            The selection is staged to eden-lock.json and harnesst enforces it on
+            The selection is staged to harnesst-lock.json and harnesst enforces it on
             every call, so it already applies — the agent&rsquo;s next call
             sees the new list. Publish the staged change with your other edits
             to make it permanent.
@@ -2957,7 +2957,7 @@ function EnvironmentsCard({
  * Connections card's visual language (name + state badge, a muted detail line, the one action that
  * matters in the right slot). Discord (issue #32) connects through harnesst's shared app; GitHub
  * (issue #26) through the agent's OWN GitHub App via the Manifest flow. A Discord row without the
- * operator's shared app (EDEN_DISCORD_*) is hidden — a row whose only content is "this isn't
+ * operator's shared app (HARNESST_DISCORD_*) is hidden — a row whose only content is "this isn't
  * available" is noise.
  */
 function ChannelsCard({

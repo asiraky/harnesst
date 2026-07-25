@@ -48,25 +48,25 @@ export default defineAgent({
 `;
 
 // harnesst's generated agent.ts before PR #112: it has the directive selector and dynamic wrapper,
-// but no edenModel router or gateway factory, and the resolver always chooses OpenRouter.
+// but no harnesstModel router or gateway factory, and the resolver always chooses OpenRouter.
 const PRE_112 = `import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
 import { defineAgent, defineDynamic } from 'eve';
 
 const openrouter = createOpenAICompatible({ name: 'openrouter', baseURL: 'https://openrouter.ai/api/v1', apiKey: process.env.OPENROUTER_API_KEY ?? '' });
 
-// Eden playground model override: the playground pins a model per conversation by
+// harnesst playground model override: the playground pins a model per conversation by
 // prefixing the sent message with one machine-readable line, e.g.
-//   <!-- eden:model anthropic/claude-sonnet-5 ctx=200000 -->
-// Eden strips that line from every transcript surface; here it picks the model per step.
-const EDEN_MODEL_DIRECTIVE = /<!--\\s*eden:model\\s+(\\S+?)(?:\\s+ctx=(\\d+))?\\s*-->/;
-function edenSelectedModel(
+//   <!-- harnesst:model anthropic/claude-sonnet-5 ctx=200000 -->
+// harnesst strips that line from every transcript surface; here it picks the model per step.
+const HARNESST_MODEL_DIRECTIVE = /<!--\\s*harnesst:model\\s+(\\S+?)(?:\\s+ctx=(\\d+))?\\s*-->/;
+function harnesstSelectedModel(
   messages: ReadonlyArray<{ role: string; content: unknown }>,
 ): { id: string; contextWindowTokens: number | undefined } | null {
   for (let i = messages.length - 1; i >= 0; i -= 1) {
     const entry = messages[i];
     if (!entry || entry.role !== 'user') continue;
     const text = typeof entry.content === 'string' ? entry.content : '';
-    const match = text.match(EDEN_MODEL_DIRECTIVE);
+    const match = text.match(HARNESST_MODEL_DIRECTIVE);
     if (match?.[1]) {
       return { id: match[1], contextWindowTokens: match[2] ? Number(match[2]) : undefined };
     }
@@ -79,7 +79,7 @@ export default defineAgent({
     fallback: openrouter.chatModel('anthropic/claude-sonnet-5'),
     events: {
       'step.started': (_event, ctx) => {
-        const selected = edenSelectedModel(ctx.messages);
+        const selected = harnesstSelectedModel(ctx.messages);
         if (!selected) return null; // no directive -> the fallback model above
         return { model: openrouter.chatModel(selected.id), modelContextWindowTokens: selected.contextWindowTokens };
       },
@@ -141,15 +141,15 @@ describe("readModelContextWindow", () => {
 
 /** Structural invariants of the dynamic model wrapper harnesst writes. */
 function expectDynamicShape(source: string, model: string) {
-  // The fallback (and the directive resolver) route through the edenModel(...) helper so a codex/*
+  // The fallback (and the directive resolver) route through the harnesstModel(...) helper so a codex/*
   // id reaches harnesst's gateway while everything else stays OpenRouter (issue #28).
-  expect(source).toContain(`fallback: edenModel('${model}')`);
+  expect(source).toContain(`fallback: harnesstModel('${model}')`);
   expect(source.match(/model\s*:\s*defineDynamic\s*\(/g)).toHaveLength(1);
-  expect(source.match(/function edenSelectedModel/g)).toHaveLength(1);
-  expect(source.match(/function edenModel/g)).toHaveLength(1);
-  // The edenModel router needs both provider factories present exactly once.
+  expect(source.match(/function harnesstSelectedModel/g)).toHaveLength(1);
+  expect(source.match(/function harnesstModel/g)).toHaveLength(1);
+  // The harnesstModel router needs both provider factories present exactly once.
   expect(
-    source.match(/const edenGateway = createOpenAICompatible/g),
+    source.match(/const harnesstGateway = createOpenAICompatible/g),
   ).toHaveLength(1);
   expect(source).toMatch(
     /import\s*\{[^}]*\bcreateAnthropic\b[^}]*\}\s*from\s*['"]@ai-sdk\/anthropic['"]/,
@@ -159,17 +159,17 @@ function expectDynamicShape(source: string, model: string) {
   );
   expect(source).toContain("createHmac");
   expect(source).toContain("timingSafeEqual");
-  expect(source).toContain("EDEN_MODEL_DIRECTIVE_SECRET");
-  expect(source).toContain("<!--\\s*eden:sig");
-  expect(source).toContain("'EDEN_PROVIDER_' +");
+  expect(source).toContain("HARNESST_MODEL_DIRECTIVE_SECRET");
+  expect(source).toContain("<!--\\s*harnesst:sig");
+  expect(source).toContain("'HARNESST_PROVIDER_' +");
   expect(source).toMatch(
     /import\s*\{[^}]*\bdefineDynamic\b[^}]*\}\s*from\s*['"]eve['"]/,
   );
   expect(source).toMatch(/['"]step\.started['"]/);
   expect(readModel(source)).toBe(model);
-  // Any generated edenModel call site must ship with its router definition.
-  if (/\bedenModel\s*\(/.test(source)) {
-    expect(source).toContain("function edenModel(");
+  // Any generated harnesstModel call site must ship with its router definition.
+  if (/\bharnesstModel\s*\(/.test(source)) {
+    expect(source).toContain("function harnesstModel(");
   }
 }
 
@@ -193,13 +193,13 @@ describe("setModel", () => {
     expectDynamicShape(second, "openai/gpt-5.1");
     expect(second).toContain("modelContextWindowTokens: 400000");
     // No duplicated helper, import, or resolver from repeated saves.
-    expect(second.match(/const EDEN_MODEL_DIRECTIVE\b/g)).toHaveLength(1);
+    expect(second.match(/const HARNESST_MODEL_DIRECTIVE\b/g)).toHaveLength(1);
   });
 
-  it("rewires a user-authored gateway-string fallback to the edenModel router", () => {
+  it("rewires a user-authored gateway-string fallback to the harnesstModel router", () => {
     const source = `import { defineAgent, defineDynamic } from 'eve';\n\nexport default defineAgent({\n  model: defineDynamic({ fallback: 'anthropic/claude-sonnet-5', events: {} }),\n});\n`;
     const next = setModel(source, "z-ai/glm-5.2");
-    expect(next).toContain("fallback: edenModel('z-ai/glm-5.2')");
+    expect(next).toContain("fallback: harnesstModel('z-ai/glm-5.2')");
     expect(next).toContain("@ai-sdk/openai-compatible");
     expect(readModel(next)).toBe("z-ai/glm-5.2");
   });
@@ -212,7 +212,7 @@ describe("setModel", () => {
   });
 
   it("migrates a legacy factory with trailing commas / multiline formatting", () => {
-    // As authored in the wild (eden-spike-agent): prettier adds a trailing comma, which the
+    // As authored in the wild (harnesst-spike-agent): prettier adds a trailing comma, which the
     // old factory regex missed — leaving an orphan createOpenRouter call with no import.
     const legacy = `import { createOpenRouter } from "@openrouter/ai-sdk-provider";
 import { defineAgent } from "eve";
@@ -288,13 +288,13 @@ export default defineAgent({
     expect(next).toContain("modelContextWindowTokens: 200000");
   });
 
-  it("routes a codex/<connection>/<slug> model through the edenModel gateway wrapper (issue #28)", () => {
+  it("routes a codex/<connection>/<slug> model through the harnesstModel gateway wrapper (issue #28)", () => {
     const id = "codex/abcdefghijkl/gpt-5.5";
     const next = setModel(WRAPPED, id, { contextWindowTokens: 272_000 });
     expectDynamicShape(next, id);
-    // The gateway factory is wired so edenModel('codex/…') resolves at runtime.
+    // The gateway factory is wired so harnesstModel('codex/…') resolves at runtime.
     expect(next).toContain(
-      "const edenGateway = createOpenAICompatible({ name: 'eden', baseURL: process.env.EDEN_MODEL_GATEWAY_URL ?? '', apiKey: process.env.EDEN_MODEL_GATEWAY_TOKEN ?? '' });",
+      "const harnesstGateway = createOpenAICompatible({ name: 'harnesst', baseURL: process.env.HARNESST_MODEL_GATEWAY_URL ?? '', apiKey: process.env.HARNESST_MODEL_GATEWAY_TOKEN ?? '' });",
     );
     expect(readModel(next)).toBe(id);
   });
@@ -303,10 +303,10 @@ export default defineAgent({
     const id = "codex/abcdefghijkl/gpt-5.5";
     const next = setModel(PRE_112, id);
     expectDynamicShape(next, id);
-    expect(next).toContain("return { model: edenModel(selected.id)");
+    expect(next).toContain("return { model: harnesstModel(selected.id)");
     expect(next).not.toContain("openrouter.chatModel(selected.id)");
     expect(
-      next.match(/const edenGateway = createOpenAICompatible/g),
+      next.match(/const harnesstGateway = createOpenAICompatible/g),
     ).toHaveLength(1);
   });
 
@@ -314,15 +314,15 @@ export default defineAgent({
     const id = "openai/gpt-5.1";
     const next = setModel(PRE_112, id);
     expectDynamicShape(next, id);
-    expect(next).toContain("return { model: edenModel(selected.id)");
+    expect(next).toContain("return { model: harnesstModel(selected.id)");
     expect(next).not.toContain("openrouter.chatModel(selected.id)");
   });
 
   it("leaves current wiring byte-identical except for the requested fallback", () => {
     const current = scaffoldAgentModule("anthropic/claude-sonnet-5");
     const expected = current.replace(
-      "fallback: edenModel('anthropic/claude-sonnet-5')",
-      "fallback: edenModel('openai/gpt-5.1')",
+      "fallback: harnesstModel('anthropic/claude-sonnet-5')",
+      "fallback: harnesstModel('openai/gpt-5.1')",
     );
     const next = setModel(current, "openai/gpt-5.1");
     expect(next).toBe(expected);
@@ -349,8 +349,8 @@ export default defineAgent({
     );
     const model = "anthropic/abcdefghijkl/claude-sonnet-4-5";
     const next = setModel(current, model);
-    expect(next.match(/function edenSelectedModel/g)).toHaveLength(1);
-    expect(next.match(/function edenModel/g)).toHaveLength(1);
+    expect(next.match(/function harnesstSelectedModel/g)).toHaveLength(1);
+    expect(next.match(/function harnesstModel/g)).toHaveLength(1);
     expectDynamicShape(next, model);
   });
 
@@ -359,18 +359,18 @@ export default defineAgent({
       effort: "high",
     });
     expect(readReasoningEffort(high)).toBe("high");
-    expect(high).toContain("edenModel('openai/abcdefghijkl/gpt-5.2', 'high')");
+    expect(high).toContain("harnesstModel('openai/abcdefghijkl/gpt-5.2', 'high')");
     expect(high).toContain("reasoning: effort");
 
     const low = setModel(high, "openai/abcdefghijkl/gpt-5.2", {
       effort: "low",
     });
     expect(readReasoningEffort(low)).toBe("low");
-    expect(low.match(/function edenReasoningModel/g)).toHaveLength(1);
+    expect(low.match(/function harnesstReasoningModel/g)).toHaveLength(1);
     // `ai`'s LanguageModel union includes bare id strings, which eve's model slot rejects — the
     // generated signature must exclude them or `tsc --noEmit` fails in the publish gate.
     expect(low).toContain(
-      "function edenReasoningModel(model: Exclude<LanguageModel, string>",
+      "function harnesstReasoningModel(model: Exclude<LanguageModel, string>",
     );
     expect(
       setModel(low, "openai/abcdefghijkl/gpt-5.2", { effort: "low" }),
@@ -381,7 +381,7 @@ export default defineAgent({
     });
     expect(readReasoningEffort(providerDefault)).toBeNull();
     expect(providerDefault).toContain(
-      "fallback: edenModel('openai/abcdefghijkl/gpt-5.2')",
+      "fallback: harnesstModel('openai/abcdefghijkl/gpt-5.2')",
     );
   });
 
@@ -547,24 +547,24 @@ describe("ensureModelProviderDependencies", () => {
 
 /**
  * The generated router must never throw while the MODULE evaluates: `eve build` runs inside
- * `docker build`, where harnesst deliberately injects no EDEN_PROVIDER_* credentials (they reach only
+ * `docker build`, where harnesst deliberately injects no HARNESST_PROVIDER_* credentials (they reach only
  * the running container). A module-scope throw failed every publish-gate and deploy image build
  * for qualified anthropic/openai/openrouter references. The "No credential was deployed" error is
  * deferred into a request-time middleware instead.
  */
-describe("edenModel missing-credential deferral", () => {
-  it("keeps the credential error out of edenModel's synchronous path", () => {
+describe("harnesstModel missing-credential deferral", () => {
+  it("keeps the credential error out of harnesstModel's synchronous path", () => {
     const source = scaffoldAgentModule("openrouter/abcdefghijkl/z-ai/glm-5.2");
     const errorAt = source.indexOf("No credential was deployed");
     expect(errorAt).toBeGreaterThan(-1);
     // The throw may only live inside a deferred middleware (transformParams), not in the
-    // synchronous body between `function edenModel(` and the middleware wrapper.
+    // synchronous body between `function harnesstModel(` and the middleware wrapper.
     const before = source.slice(0, errorAt);
-    const routerAt = before.lastIndexOf("function edenModel(");
+    const routerAt = before.lastIndexOf("function harnesstModel(");
     expect(routerAt).toBeGreaterThan(-1);
     expect(before.lastIndexOf("transformParams")).toBeGreaterThan(routerAt);
     // A missing key builds the model with a placeholder instead of exploding at module scope.
-    expect(source).toContain("eden-missing-credential");
+    expect(source).toContain("harnesst-missing-credential");
   });
 
   it("mirrors the deferral in the engineer template's copy of the router", () => {
@@ -578,9 +578,9 @@ describe("edenModel missing-credential deferral", () => {
     const errorAt = source.indexOf("No credential was deployed");
     expect(errorAt).toBeGreaterThan(-1);
     const before = source.slice(0, errorAt);
-    const routerAt = before.lastIndexOf("function edenModel(");
+    const routerAt = before.lastIndexOf("function harnesstModel(");
     expect(routerAt).toBeGreaterThan(-1);
     expect(before.lastIndexOf("transformParams")).toBeGreaterThan(routerAt);
-    expect(source).toContain("eden-missing-credential");
+    expect(source).toContain("harnesst-missing-credential");
   });
 });

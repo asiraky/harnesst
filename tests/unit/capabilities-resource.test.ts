@@ -98,7 +98,7 @@ vi.mock("~/github/repo.server", () => ({
 }));
 vi.mock("~/lib/ingress", async (importOriginal) => {
   const actual = await importOriginal<typeof import("~/lib/ingress")>();
-  return { ...actual, publicOrigin: () => "https://eden.example.com" };
+  return { ...actual, publicOrigin: () => "https://harnesst.example.com" };
 });
 vi.mock("~/project/guard.server", () => ({
   requireProject: mocks.requireProject,
@@ -108,7 +108,7 @@ vi.mock("~/seams/index.server", () => ({
   getRuntime: () => ({ data: { audit: { record: mocks.auditRecord } } }),
 }));
 
-process.env.EDEN_SECRETS_KEY =
+process.env.HARNESST_SECRETS_KEY =
   "1f8b16e6a46dd3ac12ef7a328f1ce35c67b5bc8f1acdd76280e3674c3a4f19b2";
 
 const PROJECT = {
@@ -198,11 +198,11 @@ function resetSeams() {
   mocks.fetchAccountEmail.mockReset().mockResolvedValue(null);
   mocks.findGrant.mockReset().mockResolvedValue(null);
   mocks.getAgentSource.mockReset().mockResolvedValue({
-    files: { "eden-lock.json": xeroLock() },
+    files: { "harnesst-lock.json": xeroLock() },
     paths: [],
   });
   mocks.fetchAgentSource.mockReset().mockResolvedValue({
-    files: { "eden-lock.json": xeroLock() },
+    files: { "harnesst-lock.json": xeroLock() },
     paths: [],
   });
   mocks.getConfig.mockReset().mockReturnValue({
@@ -242,7 +242,7 @@ async function runCallback() {
   );
   const staged = (await loader(
     routeArgs(
-      `https://eden.example.com/connections/xero/callback?code=one-time-code&state=${encodeURIComponent(state)}`,
+      `https://harnesst.example.com/connections/xero/callback?code=one-time-code&state=${encodeURIComponent(state)}`,
       { provider: "xero" },
     ),
   )) as Response;
@@ -251,7 +251,7 @@ async function runCallback() {
     return {
       data: await loader(
         routeArgs(
-          "https://eden.example.com/connections/xero/callback",
+          "https://harnesst.example.com/connections/xero/callback",
           { provider: "xero" },
           { headers: { cookie } },
         ),
@@ -292,7 +292,7 @@ describe("connect callback — capability resource binding", () => {
     expect(redirect?.status).toBe(302);
     const location = new URL(
       redirect!.headers.get("location")!,
-      "https://eden.example.com",
+      "https://harnesst.example.com",
     );
     expect(location.pathname).toBe("/connections/xero/resource");
     expect(location.searchParams.get("project")).toBe(PROJECT.id);
@@ -366,7 +366,7 @@ function pickerDeps(over: Partial<ResourcePickerDeps> = {}): ResourcePickerDeps 
 }
 
 const PICKER_URL =
-  `https://eden.example.com/connections/xero/resource?project=${PROJECT.id}` +
+  `https://harnesst.example.com/connections/xero/resource?project=${PROJECT.id}` +
   `&agent=${AGENT.name}&returnTo=${encodeURIComponent("/repos/projabcdefgh/agents/books/deployments")}`;
 
 describe("resource picker", () => {
@@ -430,7 +430,7 @@ describe("resource picker", () => {
     );
     const location = new URL(
       response.headers.get("location")!,
-      "https://eden.example.com",
+      "https://harnesst.example.com",
     );
     expect(location.pathname).toBe("/repos/projabcdefgh/agents/books/deployments");
     expect(location.searchParams.get("connected")).toBe("xero");

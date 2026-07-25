@@ -117,7 +117,7 @@ jobs:
             -o StrictHostKeyChecking=yes \
             docker-stack.production.yml \
             deploy/production/deploy.sh \
-            "${PROD_VPS_USER}@${PROD_VPS_HOST}:/opt/eden/"
+            "${PROD_VPS_USER}@${PROD_VPS_HOST}:/opt/harnesst/"
       - name: Deploy immutable image
         shell: bash
         run: |
@@ -129,4 +129,4 @@ jobs:
             "docker login ghcr.io --username '${{ github.actor }}' --password-stdin"
           ssh -o BatchMode=yes -o ConnectTimeout=15 -o StrictHostKeyChecking=yes \
             "${PROD_VPS_USER}@${PROD_VPS_HOST}" \
-            "chmod 700 /opt/eden/deploy.sh && IMAGE_TAG='${IMAGE_TAG}' /opt/eden/deploy.sh"
+            "chmod 700 /opt/harnesst/deploy.sh && IMAGE_TAG='${IMAGE_TAG}' /opt/harnesst/deploy.sh"

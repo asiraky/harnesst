@@ -4,7 +4,7 @@
  *    onto a freshly-detected roster — apply on merge, clear when stale, leave when unmerged.
  *  - `syncProjectAgents` against the in-memory store: a landed rename maps the row IN PLACE, so
  *    its id (and thus its environments/history) survives and its staged drafts move with it.
- *  - `renameMember` (pure): rewriting eden-lock.json install ownership + file paths.
+ *  - `renameMember` (pure): rewriting harnesst-lock.json install ownership + file paths.
  *
  * The load-bearing guarantee is that a rename is NEVER a prune+recreate (which would cascade the
  * member's environments, releases, secrets and drafts away).
@@ -204,7 +204,7 @@ describe("syncProjectAgents — pending rename mapping", () => {
   });
 });
 
-describe("renameMember (eden-lock.json)", () => {
+describe("renameMember (harnesst-lock.json)", () => {
   const lock: HarnesstLock = {
     version: 1,
     installs: [

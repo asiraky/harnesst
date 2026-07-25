@@ -1,10 +1,10 @@
 /**
  * Runtime registry — the single place that binds the seams (types.ts) to concrete
- * implementations for the current `EDEN_MODE` (PRD §8, ARCH §1.5). Everything else in the
+ * implementations for the current `HARNESST_MODE` (PRD §8, ARCH §1.5). Everything else in the
  * app depends on `getRuntime()`, never on a concrete provider, so OSS and managed stay one
  * codebase with no fork.
  *
- * `EDEN_MODE=oss` (default) wires the local/BYO reference implementations. `EDEN_MODE=managed`
+ * `HARNESST_MODE=oss` (default) wires the local/BYO reference implementations. `HARNESST_MODE=managed`
  * will wire the KMS/gateway/Stripe/Nomad implementations as they land (M4); until then it
  * falls back to the OSS impls so the control plane still boots.
  */
@@ -30,12 +30,12 @@ import type {
 } from "./types";
 
 function resolveMode(): HarnesstMode {
-  return process.env.EDEN_MODE === "managed" ? "managed" : "oss";
+  return process.env.HARNESST_MODE === "managed" ? "managed" : "oss";
 }
 
-/** Pick the DeployTarget by `EDEN_DEPLOY_TARGET` (container | nomad | vercel). */
+/** Pick the DeployTarget by `HARNESST_DEPLOY_TARGET` (container | nomad | vercel). */
 function resolveDeployTarget(): DeployTarget {
-  switch (process.env.EDEN_DEPLOY_TARGET) {
+  switch (process.env.HARNESST_DEPLOY_TARGET) {
     case "local-docker":
       return localDockerTarget;
     case "nomad":
@@ -47,9 +47,9 @@ function resolveDeployTarget(): DeployTarget {
   }
 }
 
-/** Catalog source: the GitHub-raw pointer when `EDEN_CATALOG_REPO` is set, else the in-repo fixture. */
+/** Catalog source: the GitHub-raw pointer when `HARNESST_CATALOG_REPO` is set, else the in-repo fixture. */
 function resolveCatalog(): CatalogSource {
-  return process.env.EDEN_CATALOG_REPO ? githubCatalog : fixtureCatalog;
+  return process.env.HARNESST_CATALOG_REPO ? githubCatalog : fixtureCatalog;
 }
 
 function buildRuntime(mode: HarnesstMode): HarnesstRuntime {
@@ -68,7 +68,7 @@ function buildRuntime(mode: HarnesstMode): HarnesstRuntime {
     // Managed swaps in the gateway proxy (keys/metering/caps) and Stripe metering.
     modelGateway: managed ? managedModelGateway : directModelGateway,
     metering: managed ? managedMeteringSink : localMeteringSink,
-    // Marketplace catalog: fixture (in-repo seed) by default; GitHub-raw when EDEN_CATALOG_REPO set.
+    // Marketplace catalog: fixture (in-repo seed) by default; GitHub-raw when HARNESST_CATALOG_REPO set.
     catalog: resolveCatalog(),
   };
 }

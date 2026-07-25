@@ -3,14 +3,20 @@
  *
  * The `edn_` prefix identifies a random credential; it does not encode identity or scope. Each
  * credential table stores only the SHA-256 digest, so the plaintext can be shown exactly once.
+ *
+ * The prefix VALUE is deliberately frozen at `edn_` through the #213 rename. It is on-the-wire
+ * bytes: minted credentials are persisted (as digests users cannot re-derive) and pasted into
+ * third-party configuration, so changing the literal invalidates every credential already issued
+ * while buying nothing user-visible. The sibling HMAC prefixes (`edng_`, `ednt_`, `edna_`) are
+ * frozen for the same reason. Only the constant NAME follows the brand.
  */
 import crypto from "node:crypto";
 
-export const EDEN_TOKEN_PREFIX = "edn_";
+export const HARNESST_TOKEN_PREFIX = "edn_";
 
 /** Mint a 192-bit opaque harnesst credential. */
 export function mintEdnToken(): string {
-  return `${EDEN_TOKEN_PREFIX}${crypto.randomBytes(24).toString("base64url")}`;
+  return `${HARNESST_TOKEN_PREFIX}${crypto.randomBytes(24).toString("base64url")}`;
 }
 
 /** Stable digest used for indexed credential lookup. */

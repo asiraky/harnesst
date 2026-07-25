@@ -6,7 +6,7 @@
  * machine-readable HTML-comment line prepended to the SENT message (via `messagePrefix` in
  * `streamTurnResponse`):
  *
- *   <!-- eden:model anthropic/claude-sonnet-5 ctx=200000 -->
+ *   <!-- harnesst:model anthropic/claude-sonnet-5 ctx=200000 -->
  *
  * The deployed agent's `step.started` resolver (emitted by `~/eve/agentModule`) parses the same
  * line to pick the model, and harnesst strips it from every display surface. Because the directive
@@ -35,11 +35,11 @@ export interface ModelDirective {
   effort?: ReasoningEffort;
 }
 
-/** Must stay in sync with EDEN_MODEL_HELPER in `~/eve/agentModule` (the agent-side parser). */
+/** Must stay in sync with HARNESST_MODEL_HELPER in `~/eve/agentModule` (the agent-side parser). */
 const DIRECTIVE_RE =
-  /^<!--\s*eden:model\s+(\S+?)(?:\s+ctx=(\d+))?(?:\s+effort=(none|minimal|low|medium|high|xhigh))?\s*-->(?:\n<!--\s*eden:sig\s+([a-f0-9]{64})\s*-->)?/;
+  /^<!--\s*harnesst:model\s+(\S+?)(?:\s+ctx=(\d+))?(?:\s+effort=(none|minimal|low|medium|high|xhigh))?\s*-->(?:\n<!--\s*harnesst:sig\s+([a-f0-9]{64})\s*-->)?/;
 const DIRECTIVE_LINE_RE =
-  /^<!--\s*eden:model[^>]*-->(?:\n<!--\s*eden:sig\s+[a-f0-9]{64}\s*-->)?[ \t]*\n*/;
+  /^<!--\s*harnesst:model[^>]*-->(?:\n<!--\s*harnesst:sig\s+[a-f0-9]{64}\s*-->)?[ \t]*\n*/;
 
 function normalizedDirective(directive: ModelDirective): {
   id: string;
@@ -81,8 +81,8 @@ export function buildModelDirective(
     ? ` ctx=${normalized.contextWindowTokens}`
     : "";
   const effort = normalized.effort ? ` effort=${normalized.effort}` : "";
-  const signed = signature ? `\n<!-- eden:sig ${signature} -->` : "";
-  return `<!-- eden:model ${normalized.id}${window}${effort} -->${signed}`;
+  const signed = signature ? `\n<!-- harnesst:sig ${signature} -->` : "";
+  return `<!-- harnesst:model ${normalized.id}${window}${effort} -->${signed}`;
 }
 
 /** Parse the directive off the front of a sent message, or null when absent/malformed. */
@@ -121,13 +121,13 @@ function normalizeDynamicRuntimeId(runtimeId: string): string {
     return `openrouter/${exactOpenRouter[1]}/${exactOpenRouter[2]}`;
   }
   const compatibleWrapper = runtimeId.match(
-    /^(openrouter|eden)\.(?:chat|completion)\/(.+)$/,
+    /^(openrouter|harnesst)\.(?:chat|completion)\/(.+)$/,
   );
   if (compatibleWrapper) return compatibleWrapper[2];
 
   // Retain compatibility with runtime ids produced before the AI SDK provider-flavor suffix.
   if (parseProviderModelReference(runtimeId)) return runtimeId;
-  if (runtimeId.startsWith("eden/")) return runtimeId.slice("eden/".length);
+  if (runtimeId.startsWith("harnesst/")) return runtimeId.slice("harnesst/".length);
   if (runtimeId.startsWith("openrouter/")) {
     return runtimeId.slice("openrouter/".length);
   }

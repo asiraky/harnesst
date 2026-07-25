@@ -26,7 +26,7 @@ function toolResult(value: Record<string, unknown>) {
  * session without sending the caller back through harnesst's resource routes.
  */
 export function createHarnesstMcpServer(service: McpToolService): McpServer {
-  const server = new McpServer({ name: "eden", version: "0.1.0" });
+  const server = new McpServer({ name: "harnesst", version: "0.1.0" });
 
   server.registerTool(
     "list_projects",
@@ -212,7 +212,7 @@ export function createHarnesstMcpServer(service: McpToolService): McpServer {
     "publish_changes",
     {
       description:
-        "Publish selected staged drafts through harnesst's enforced review path: exactly one fresh eden/publish-* branch, one commit, and one pull request targeting the project's default branch. It never commits directly to the default branch; use merge_change later only if review is complete.",
+        "Publish selected staged drafts through harnesst's enforced review path: exactly one fresh harnesst/publish-* branch, one commit, and one pull request targeting the project's default branch. It never commits directly to the default branch; use merge_change later only if review is complete.",
       inputSchema: {
         ...projectInput,
         paths: z

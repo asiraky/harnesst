@@ -73,7 +73,7 @@ function isMachineEndpoint(pathname: string): boolean {
   return (
     pathname.startsWith("/api/assistant/") ||
     // Brokered-capability calls (issue #166): the agent's tools POST per-operation subpaths
-    // (/api/capabilities/<provider>/<operation>) authenticated by their EDEN_TEAM_TOKEN bearer.
+    // (/api/capabilities/<provider>/<operation>) authenticated by their HARNESST_TEAM_TOKEN bearer.
     pathname.startsWith("/api/capabilities/") ||
     SIGNED_OR_BEARER_ENDPOINTS.has(pathname)
   );

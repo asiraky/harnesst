@@ -227,7 +227,7 @@ export const drizzleSecretKV: SecretKVStore = {
 // The per-secret "available in the agent's sandbox shell" flag lives on the METADATA index,
 // not behind the SecretsProvider: it's control-plane policy about a name, so it survives
 // provider swaps (KMS/Vault store values, not harnesst decisions) and value rotations. Deploys
-// join the exposed names into EDEN_SANDBOX_ENV (see ~/deploy/controller.server.ts).
+// join the exposed names into HARNESST_SANDBOX_ENV (see ~/deploy/controller.server.ts).
 
 function metadataScope(ref: SecretRef) {
   return and(

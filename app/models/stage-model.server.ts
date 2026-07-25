@@ -1,8 +1,8 @@
 /**
  * Model staging for Settings' "Model" section. Two module generations exist:
  *
- *  - **Workspace-resolver modules** (`model: edenAgentModel('<name>')` from the generated
- *    `eden-model.ts`): the file carries no model at all — it resolves the org's configured
+ *  - **Workspace-resolver modules** (`model: harnesstAgentModel('<name>')` from the generated
+ *    `harnesst-model.ts`): the file carries no model at all — it resolves the org's configured
  *    model at runtime. A model save writes the org's per-agent override map (harnesst DB) and
  *    touches NOTHING in the repo: no drafts, no publish, no redeploy.
  *  - **Legacy dynamic-wrapper modules**: rewrite the member's `agent.ts` through `setModel`
@@ -103,7 +103,7 @@ export async function stageModelChange(
         ok: false,
         error:
           "This agent resolves its model from the workspace configuration, but its " +
-          "edenAgentModel(...) call has no readable agent name — fix agent.ts first.",
+          "harnesstAgentModel(...) call has no readable agent name — fix agent.ts first.",
       };
     }
     await (deps?.setOverride ?? setAgentModelOverride)(

@@ -9,7 +9,7 @@ import { getRuntime } from "~/seams/index.server";
 import type { DeployTarget } from "~/seams/types";
 
 export const DEPLOYMENT_CONTAINER_CLEANUP_GRACE_MS = Number(
-  process.env.EDEN_DEPLOYMENT_CLEANUP_GRACE_MS || 24 * 60 * 60 * 1000,
+  process.env.HARNESST_DEPLOYMENT_CLEANUP_GRACE_MS || 24 * 60 * 60 * 1000,
 );
 
 export interface DeploymentCleanupDeps {

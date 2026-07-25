@@ -102,7 +102,7 @@ export function verifyConnectState(
 
 /** The HMAC key: the same tenant-wide key that seals secrets (no new key to provision). */
 export function connectStateKey(): Buffer {
-  return decodeKey(process.env.EDEN_SECRETS_KEY);
+  return decodeKey(process.env.HARNESST_SECRETS_KEY);
 }
 
 /* ─────────────────────────────── command name (pure) ─────────────────────────────── */

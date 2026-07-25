@@ -10,7 +10,7 @@
  *
  * Scope — deliberately narrow. This reaps ONLY containers carrying BOTH
  *   eve.sandbox.role=session  AND  eve.sandbox.tag.channel=schedule
- * that also mount a harnesst-owned home volume (a Mount whose Name starts `eden-home-`). Schedule
+ * that also mount a harnesst-owned home volume (a Mount whose Name starts `harnesst-home-`). Schedule
  * sessions are one-shot fire-and-forget — nothing ever resumes them, so a stalled/finished one is
  * always safe to remove. Every OTHER channel (playground / discord / assistant) can be resumed and
  * is never touched, and template-build containers (a different role) are out of scope too.
@@ -41,7 +41,7 @@ const exec = promisify(execFile);
 
 /** How often the reaper sweeps for leaked schedule sandboxes. */
 export const SANDBOX_REAP_SWEEP_MS = Number(
-  process.env.EDEN_SANDBOX_REAP_SWEEP_MS || 5 * 60 * 1000,
+  process.env.HARNESST_SANDBOX_REAP_SWEEP_MS || 5 * 60 * 1000,
 );
 
 /**
@@ -49,12 +49,12 @@ export const SANDBOX_REAP_SWEEP_MS = Number(
  * reaped. Generous by default so a legitimately slow first step is never mistaken for a stall.
  */
 export const SANDBOX_REAP_CEILING_MS = Number(
-  process.env.EDEN_SANDBOX_REAP_CEILING_MS || 45 * 60 * 1000,
+  process.env.HARNESST_SANDBOX_REAP_CEILING_MS || 45 * 60 * 1000,
 );
 
 const SESSION_ROLE_LABEL = "eve.sandbox.role=session";
 const SCHEDULE_CHANNEL_LABEL = "eve.sandbox.tag.channel=schedule";
-const HOME_VOLUME_PREFIX = "eden-home-";
+const HOME_VOLUME_PREFIX = "harnesst-home-";
 /** Docker's zero value for an unset FinishedAt — treat as "never finished". */
 const DOCKER_ZERO_TIME = "0001-01-01T00:00:00Z";
 
@@ -101,7 +101,7 @@ export interface SandboxReapResult {
   error?: string;
 }
 
-/** The eden-home volume mounted by this sandbox, if any (its owning environment's home). */
+/** The harnesst-home volume mounted by this sandbox, if any (its owning environment's home). */
 function homeVolumeOf(c: InspectedContainer): string | null {
   for (const m of c.Mounts ?? []) {
     if (m.Name && m.Name.startsWith(HOME_VOLUME_PREFIX)) return m.Name;
@@ -291,7 +291,7 @@ function startSandboxReaper(): { stop: () => void } {
 }
 
 const globalForReaper = globalThis as unknown as {
-  __edenSandboxReaper?: { stop: () => void };
+  __harnesstSandboxReaper?: { stop: () => void };
 };
 
 /**
@@ -300,7 +300,7 @@ const globalForReaper = globalThis as unknown as {
  * to call from any server module; called from ensureWorkerStarted so every start site gets it.
  */
 export function ensureSandboxReaperStarted(): void {
-  if (process.env.EDEN_DISABLE_SANDBOX_REAPER === "1") return;
+  if (process.env.HARNESST_DISABLE_SANDBOX_REAPER === "1") return;
   if (getRuntime().deployTarget.name !== "local-docker") return;
-  globalForReaper.__edenSandboxReaper ??= startSandboxReaper();
+  globalForReaper.__harnesstSandboxReaper ??= startSandboxReaper();
 }

@@ -3,15 +3,15 @@
  * per-agent environments, per-agent release numbering, per-agent secret isolation, and
  * draft attribution — the Drizzle implementations the unit fakes can't prove.
  *
- * Opt-in: runs only when EDEN_DB_SMOKE=1 and DATABASE_URL point at a live dev database
- * (`EDEN_DB_SMOKE=1 npx vitest run tests/integration/teams.db.test.ts` with .env.local
+ * Opt-in: runs only when HARNESST_DB_SMOKE=1 and DATABASE_URL point at a live dev database
+ * (`HARNESST_DB_SMOKE=1 npx vitest run tests/integration/teams.db.test.ts` with .env.local
  * sourced). Creates its own org/project rows and deletes them, so it's safe to re-run.
  */
 import crypto from "node:crypto";
 import { eq } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 
-const LIVE = process.env.EDEN_DB_SMOKE === "1";
+const LIVE = process.env.HARNESST_DB_SMOKE === "1";
 
 describe.runIf(LIVE)("teams against real Postgres", () => {
   it("roster → environments → releases → secrets → drafts → cascade", async () => {
@@ -156,7 +156,7 @@ describe.runIf(LIVE)("teams against real Postgres", () => {
 });
 
 describe.runIf(!LIVE)("teams db smoke (skipped)", () => {
-  it("runs only with EDEN_DB_SMOKE=1 against a live database", () => {
+  it("runs only with HARNESST_DB_SMOKE=1 against a live database", () => {
     expect(LIVE).toBe(false);
   });
 });

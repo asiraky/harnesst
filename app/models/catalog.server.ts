@@ -165,7 +165,7 @@ async function fetchJson(url: string): Promise<unknown> {
 /** OpenRouter host, overridable for self-hosted proxies and deterministic integration tests. */
 export function openRouterApiBase(): string {
   return (
-    process.env.EDEN_OPENROUTER_API_BASE_URL ?? DEFAULT_OPENROUTER_API_BASE_URL
+    process.env.HARNESST_OPENROUTER_API_BASE_URL ?? DEFAULT_OPENROUTER_API_BASE_URL
   ).replace(/\/+$/, "");
 }
 

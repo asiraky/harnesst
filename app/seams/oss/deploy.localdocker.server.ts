@@ -2,7 +2,7 @@
  * Local-dev DeployTarget: build + run each instance as a Docker container on this host,
  * against the local Postgres (Workflow World), reachable at a mapped localhost port.
  *
- * This is the runnable OSS deploy path for `npm run dev` (EDEN_DEPLOY_TARGET=local-docker).
+ * This is the runnable OSS deploy path for `npm run dev` (HARNESST_DEPLOY_TARGET=local-docker).
  * It's the honest, minimal version of the managed Nomad/gVisor substrate: same DeployTarget
  * seam, plain `docker run` instead of an orchestrator.
  *
@@ -59,16 +59,16 @@ import type {
 const exec = promisify(execFile);
 
 /** Port the eve/Nitro server listens on inside the container. */
-const INSTANCE_PORT = Number(process.env.EDEN_INSTANCE_PORT ?? 3000);
+const INSTANCE_PORT = Number(process.env.HARNESST_INSTANCE_PORT ?? 3000);
 /**
  * Port the assistant checkout sidecar listens on inside the container. Only
  * the assistant image runs a sidecar; regular agent images ignore the
- * extra published port. Kept in sync with `EDEN_AUX_PORT` the sidecar reads.
+ * extra published port. Kept in sync with `HARNESST_AUX_PORT` the sidecar reads.
  */
-const AUX_PORT = Number(process.env.EDEN_AUX_PORT ?? 3100);
+const AUX_PORT = Number(process.env.HARNESST_AUX_PORT ?? 3100);
 /** How the container reaches the host's Postgres (Docker Desktop). */
 const DB_HOST_FROM_CONTAINER =
-  process.env.EDEN_DB_HOST_FROM_CONTAINER ?? "host.docker.internal";
+  process.env.HARNESST_DB_HOST_FROM_CONTAINER ?? "host.docker.internal";
 /**
  * Health-wait budgets. The image boots via `eve start` (eve-image.server.ts), which prewarms
  * sandbox templates BEFORE the server binds its port — a deploy's first boot may pull
@@ -79,13 +79,13 @@ const DB_HOST_FROM_CONTAINER =
  * which the next deploy would absorb anyway). Both env-overridable for slow hosts.
  */
 export const DEPLOY_HEALTH_TIMEOUT_MS = Number(
-  process.env.EDEN_DEPLOY_HEALTH_TIMEOUT_MS ?? 10 * 60 * 1000,
+  process.env.HARNESST_DEPLOY_HEALTH_TIMEOUT_MS ?? 10 * 60 * 1000,
 );
 export const WAKE_HEALTH_TIMEOUT_MS = Number(
-  process.env.EDEN_WAKE_HEALTH_TIMEOUT_MS ?? 120 * 1000,
+  process.env.HARNESST_WAKE_HEALTH_TIMEOUT_MS ?? 120 * 1000,
 );
 
-const containerName = (deploymentId: string) => `eden-inst-${deploymentId}`;
+const containerName = (deploymentId: string) => `harnesst-inst-${deploymentId}`;
 
 /**
  * Postgres database name for an environment's Workflow world. Keyed by the (stable) worldKey,
@@ -99,7 +99,7 @@ export const worldDbName = (worldKey: string): string => {
     .replace(/[^a-z0-9_]/g, "")
     .slice(0, 24);
   const slug = createHash("sha1").update(worldKey).digest("hex").slice(0, 8);
-  return `eden_env_${sanitized}_${slug}`;
+  return `harnesst_env_${sanitized}_${slug}`;
 };
 
 /**
@@ -117,7 +117,7 @@ export const homeVolumeName = (worldKey: string): string => {
     .replace(/[^a-z0-9_.-]/g, "")
     .slice(0, 24);
   const slug = createHash("sha1").update(worldKey).digest("hex").slice(0, 8);
-  return `eden-home-${sanitized}-${slug}`;
+  return `harnesst-home-${sanitized}-${slug}`;
 };
 
 async function docker(args: string[]): Promise<string> {
@@ -454,10 +454,10 @@ export const localDockerTarget: DeployTarget = {
       // Point eve at the shim (eve-image.server.ts) and tell it which volume is this
       // environment's agent home. AFTER the req.env spread so user secrets can never shadow them.
       EVE_DOCKER_PATH: "/usr/local/bin/eve-docker",
-      EDEN_HOME_VOLUME: homeVolumeName(req.worldKey),
+      HARNESST_HOME_VOLUME: homeVolumeName(req.worldKey),
       // The assistant checkout sidecar binds this port inside the container; the published mapping
       // below uses the same value, so `auxEndpoint` can find it. Ignored by non-assistant images.
-      EDEN_AUX_PORT: String(AUX_PORT),
+      HARNESST_AUX_PORT: String(AUX_PORT),
     }).flatMap(([k, v]) => ["-e", `${k}=${v}`]);
 
     await docker([

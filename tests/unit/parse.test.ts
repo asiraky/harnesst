@@ -29,7 +29,7 @@ const TEAM = [
   "agents/product-manager/package.json",
   "agents/deployer/agent/agent.ts",
   "agents/deployer/agent/tools/cloudflare.ts",
-  "eden.json",
+  "harnesst.json",
 ];
 
 describe("detectAgentRoots", () => {
@@ -101,15 +101,15 @@ describe("buildAgentConfig with a member root", () => {
   });
 
   // The model is workspace configuration resolved from the DB by agent name — never parsed out
-  // of agent.ts. buildAgentConfig no longer surfaces a model, so an `edenAgentModel('<name>')`
+  // of agent.ts. buildAgentConfig no longer surfaces a model, so an `harnesstAgentModel('<name>')`
   // module can't leak its NAME argument as if it were a model id (the bug this replaced).
   it("does not expose a model field parsed from agent.ts", () => {
     const config = buildAgentConfig(
       {
         paths: ["agent/agent.ts"],
         files: {
-          "agent/agent.ts": `import { edenAgentModel } from './eden-model';
-export default defineAgent({ model: edenAgentModel('bookkeeping'), modelContextWindowTokens: 200000 });`,
+          "agent/agent.ts": `import { harnesstAgentModel } from './harnesst-model';
+export default defineAgent({ model: harnesstAgentModel('bookkeeping'), modelContextWindowTokens: 200000 });`,
         },
       },
       "agent",

@@ -100,7 +100,7 @@ deploy. The contract:
   new provider is a registry addition in harnesst, not a template concern.
 - **The template's `setup` text carries the operator instructions** (following the
   google-sheets template's pattern): create the OAuth app with the provider, set
-  `EDEN_<PREFIX>_CLIENT_ID` / `EDEN_<PREFIX>_CLIENT_SECRET` on the harnesst control plane, and
+  `HARNESST_<PREFIX>_CLIENT_ID` / `HARNESST_<PREFIX>_CLIENT_SECRET` on the harnesst control plane, and
   register the redirect URI `<origin>/connections/<provider>/callback` (Google alone keeps
   the legacy `<origin>/google/callback`). Providers whose registry entry declares
   `clientRegistration` (below) need **no** operator OAuth app at all.
@@ -120,20 +120,20 @@ the shipped credential code looks like):
 
 - **Public clients** — `tokenEndpointAuth: "none"` (RFC 8414
   `token_endpoint_auth_methods_supported: ["none"]`): no client secret exists, PKCE is the
-  code-exchange proof, and only `EDEN_<PREFIX>_CLIENT_ID` is required operator config.
+  code-exchange proof, and only `HARNESST_<PREFIX>_CLIENT_ID` is required operator config.
 - **Access-token-broker delivery** — `credentialDelivery: "access-token-broker"` for
   providers that **rotate the refresh token on every refresh** (and revoke the whole token
   family on reuse). The refresh token never ships to the instance; harnesst stays the grant's
   single writer, and the shipped credential file fetches short-lived access tokens from
-  harnesst's token broker (`POST <EDEN_API_URL>/api/connections/token`, authenticated with the
-  deployment's injected `EDEN_TEAM_TOKEN`) instead of self-refreshing — see the mayi
+  harnesst's token broker (`POST <HARNESST_API_URL>/api/connections/token`, authenticated with the
+  deployment's injected `HARNESST_TEAM_TOKEN`) instead of self-refreshing — see the mayi
   template's `credentials.server.ts` for the caching pattern (~one call per token lifetime).
   The default `"refresh-token"` delivery keeps the `<PREFIX>_OAUTH_*` trio exactly as before.
 - **Per-grant dynamic client registration** — `clientRegistration: { endpoint }` (RFC
   7591-shaped) for providers whose OAuth clients are register-once/immutable with exact-match
   callback URIs: Connect registers a fresh client per grant covering the exact instance
   callback URL of every environment the agent has, so there is no operator OAuth-app step
-  (the operator only needs a publicly reachable `EDEN_PUBLIC_ORIGIN`). An environment created
+  (the operator only needs a publicly reachable `HARNESST_PUBLIC_ORIGIN`). An environment created
   **after** Connect isn't covered by the immutable client — the Connections card flips to
   "reconnect needed" and one reconnect registers a fresh client (same UX as a scope change).
 
@@ -146,8 +146,8 @@ registry entry declares `credentialDelivery: "capability"` (Xero is the first) i
 `<PREFIX>_OAUTH_*` vars at all. harnesst holds the grant and exposes a fixed, code-defined
 whitelist of operations (`app/capabilities/` in harnesst), grouped into operation groups; the
 agent's shipped tools are thin: each POSTs its typed input to
-`POST <EDEN_API_URL>/api/capabilities/<provider>/<operation>` with the deployment's injected
-`EDEN_TEAM_TOKEN`, and harnesst validates the request server-side (e.g. "bills are always DRAFT")
+`POST <HARNESST_API_URL>/api/capabilities/<provider>/<operation>` with the deployment's injected
+`HARNESST_TEAM_TOKEN`, and harnesst validates the request server-side (e.g. "bills are always DRAFT")
 and performs the one blessed operation itself. Anything not in the whitelist does not exist —
 regardless of what the consented OAuth scopes would allow (the `auth.scopes` set is a fixed
 superset; the operation whitelist, not the token scope, is the enforcement plane). Every call
@@ -168,7 +168,7 @@ What a template author declares:
   schema mirroring the operation's input, one POST, return the response body. No credential
   handling, no vendor SDK.
 - **`setup` text carrying the operator app registration** as usual (Xero: a harnesst-owned app at
-  developer.xero.com, `EDEN_XERO_CLIENT_ID` / `EDEN_XERO_CLIENT_SECRET`, redirect
+  developer.xero.com, `HARNESST_XERO_CLIENT_ID` / `HARNESST_XERO_CLIENT_SECRET`, redirect
   `<origin>/connections/xero/callback`).
 
 Providers whose capability declares a **resource binding** (Xero: the tenant/organisation)
@@ -217,7 +217,7 @@ Two adjacent capabilities connection/channel templates can rely on:
   (e.g. a random state-encryption key). It is never prompted in the install wizard; harnesst
   mints a random value once per agent + environment at first deploy and keeps it stable
   across redeploys (mutually exclusive with `provisioned`).
-- **`EVE_PUBLIC_ORIGIN`** — when the operator configures `EDEN_PUBLIC_ORIGIN`, every deployed
+- **`EVE_PUBLIC_ORIGIN`** — when the operator configures `HARNESST_PUBLIC_ORIGIN`, every deployed
   instance receives `EVE_PUBLIC_ORIGIN`, its per-environment public ingress URL, so adapters
   that take inbound webhooks can build callback URLs. Treat it as optional at runtime — it is
   unset in local dev and on installations without a public origin.

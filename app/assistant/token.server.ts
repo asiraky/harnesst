@@ -1,9 +1,9 @@
 /**
  * Assistant callback tokens. The built-in assistant instance carries an
- * `EDEN_ASSISTANT_TOKEN` identifying the DEPLOYMENT it runs as; the callback routes derive
+ * `HARNESST_ASSISTANT_TOKEN` identifying the DEPLOYMENT it runs as; the callback routes derive
  * everything else (deployment → environment → agent → project) from the DB, so nothing but the
  * deployment id is ever trusted from the client. HMAC-SHA256 over the deployment id keyed by the
- * same `EDEN_SECRETS_KEY` — mirrors `app/team/token.server.ts` exactly, but with a DISTINCT
+ * same `HARNESST_SECRETS_KEY` — mirrors `app/team/token.server.ts` exactly, but with a DISTINCT
  * prefix `edna_` so an assistant token can never be replayed as a team-delegation token (`ednt_`)
  * or vice versa.
  *
@@ -18,14 +18,14 @@ const PREFIX = "edna_";
 
 /** The signing key — reuses the secrets key source (never a new env var). */
 export function assistantKey(): Buffer {
-  return decodeKey(process.env.EDEN_SECRETS_KEY);
+  return decodeKey(process.env.HARNESST_SECRETS_KEY);
 }
 
 function sign(deploymentId: string, key: Buffer): string {
   return crypto.createHmac("sha256", key).update(deploymentId).digest("base64url");
 }
 
-/** Mint the token an assistant instance carries as EDEN_ASSISTANT_TOKEN. */
+/** Mint the token an assistant instance carries as HARNESST_ASSISTANT_TOKEN. */
 export function mintAssistantToken(
   deploymentId: string,
   key: Buffer = assistantKey(),

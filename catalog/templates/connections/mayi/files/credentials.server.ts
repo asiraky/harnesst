@@ -4,14 +4,14 @@
  * May I? rotates its OAuth refresh token on every refresh and revokes the whole token family if
  * an old one is reused — so this instance NEVER holds the refresh token. harnesst owns the grant,
  * refreshes it centrally, and this binding fetches short-lived access tokens from harnesst's token
- * broker (`POST <EDEN_API_URL>/api/connections/token`), authenticated by the deployment's own
- * `EDEN_TEAM_TOKEN`. Both env vars are injected by harnesst at deploy; nothing here is a secret an
+ * broker (`POST <HARNESST_API_URL>/api/connections/token`), authenticated by the deployment's own
+ * `HARNESST_TEAM_TOKEN`. Both env vars are injected by harnesst at deploy; nothing here is a secret an
  * author manages.
  *
  * Tokens are cached until shortly before `expiresAt` (with in-flight dedupe), so broker traffic
  * is about one request per token lifetime — roughly hourly — not per approval.
  */
-interface EdenCredentials {
+interface harnesstCredentials {
   getAccessToken(integration: "mayi"): Promise<string>;
 }
 
@@ -25,11 +25,11 @@ const cache = new Map<string, BrokeredToken>();
 const inFlight = new Map<string, Promise<string>>();
 
 async function fetchAccessToken(integration: string): Promise<string> {
-  const base = process.env.EDEN_API_URL;
-  const teamToken = process.env.EDEN_TEAM_TOKEN;
+  const base = process.env.HARNESST_API_URL;
+  const teamToken = process.env.HARNESST_TEAM_TOKEN;
   if (!base || !teamToken) {
     throw new Error(
-      `The ${integration} connection is not configured — EDEN_API_URL / EDEN_TEAM_TOKEN are ` +
+      `The ${integration} connection is not configured — HARNESST_API_URL / HARNESST_TEAM_TOKEN are ` +
         "injected by harnesst at deploy from the agent's connection. Connect the provider from the " +
         "agent's Deployment tab, then redeploy.",
     );
@@ -67,7 +67,7 @@ async function fetchAccessToken(integration: string): Promise<string> {
  * access token for the named integration, fetched from harnesst's token broker and cached per
  * `expiresAt`. The adapter and SDK never store tokens.
  */
-export const credentials: EdenCredentials = {
+export const credentials: harnesstCredentials = {
   async getAccessToken(integration) {
     const cached = cache.get(integration);
     if (cached && Date.now() < cached.expiresAt - 60_000) return cached.token;

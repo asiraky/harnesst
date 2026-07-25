@@ -63,7 +63,7 @@ source of truth; harnesst is a projection and a control plane over it.
 
 - ✅ **M6** — Recruit / marketplace: traversal-safe template format (Zod `template.json` manifest)
   - first-party catalog + type-filtered browse; install/update/uninstall as change-sets with
-    `eden-lock.json` provenance and semver dependency merge.
+    `harnesst-lock.json` provenance and semver dependency merge.
 - ✅ **M6.1** — Real Docker sandboxes (ship the docker CLI client + mount the host socket, ending
   silent `just-bash` degradation); durable worlds keyed per **environment** — sessions and their
   `/workspace` filesystems survive redeploys.
@@ -78,7 +78,7 @@ source of truth; harnesst is a projection and a control plane over it.
 - ✅ **M8** — Self-host: single-VPS runbook — the supported OSS production topology (one Linux box
   runs harnesst, Postgres, and every agent instance). See [`../deploy/vps/README.md`](../deploy/vps/README.md).
 - ✅ **M8.1** — Sandbox platform: prewarm fix (boot via `eve start`), `sandbox.ts` as a
-  first-class editable surface, `EDEN_SANDBOX_ENV` secret-exposure convention.
+  first-class editable surface, `HARNESST_SANDBOX_ENV` secret-exposure convention.
 - ✅ **M8.2** — Catalog agents get capabilities from the terminal + sandbox-exposed secrets, not
   bespoke tools (Cloudflare App Builder + Deployment Engineer).
 - ✅ **M8.3** — Models: OpenRouter end-to-end (provider-wired `agent.ts`, live catalog, workspace

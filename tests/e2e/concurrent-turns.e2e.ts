@@ -4,7 +4,7 @@
  * stream action on the same session must 409 — losing the atomic claim BEFORE it touches
  * eve — and the winning drain must still settle the session cleanly afterwards.
  *
- * Opt-in: EDEN_DB_SMOKE=1 with DATABASE_URL pointing at the live dev database.
+ * Opt-in: HARNESST_DB_SMOKE=1 with DATABASE_URL pointing at the live dev database.
  */
 import { describe, expect, it } from "vitest";
 
@@ -164,7 +164,7 @@ describe.runIf(LIVE)("FOH concurrent turns on one session", () => {
 });
 
 describe.runIf(!LIVE)("FOH concurrent turns e2e (skipped)", () => {
-  it("runs only with EDEN_DB_SMOKE=1 against a live database", () => {
+  it("runs only with HARNESST_DB_SMOKE=1 against a live database", () => {
     expect(LIVE).toBe(false);
   });
 });

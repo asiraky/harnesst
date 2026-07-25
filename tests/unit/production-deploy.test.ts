@@ -6,7 +6,7 @@ import { describe, expect, it } from "vitest";
 const root = resolve(import.meta.dirname, "../..");
 const read = (path: string) => readFileSync(resolve(root, path), "utf8");
 
-const nginx = read("deploy/vps/nginx-eden.conf");
+const nginx = read("deploy/vps/nginx-harnesst.conf");
 const stack = read("docker-stack.production.yml");
 const workflow = read(".github/workflows/deploy.yml");
 const script = read("deploy/production/deploy.sh");
@@ -84,27 +84,27 @@ describe("production Swarm stack", () => {
     expect(stack).toContain(
       "image: ghcr.io/asiraky/harnesst:${IMAGE_TAG:?set IMAGE_TAG}",
     );
-    expect(stack).toContain("replicas: ${EDEN_REPLICAS:-1}");
+    expect(stack).toContain("replicas: ${HARNESST_REPLICAS:-1}");
     expect(stack.match(/order: stop-first/g)).toHaveLength(4);
     expect(stack).toMatch(/failure_action: rollback/);
     expect(stack).toContain("node.role == manager");
   });
 
   it("fails harnesst health on non-2xx responses within the update monitor", () => {
-    const eden = stack.slice(stack.indexOf("  eden:\n"));
+    const harnesst = stack.slice(stack.indexOf("  harnesst:\n"));
 
-    expect(eden).toContain("process.exit(response.ok ? 0 : 1)");
-    expect(eden).not.toContain(".then(() => process.exit(0))");
-    expect(eden).toMatch(
+    expect(harnesst).toContain("process.exit(response.ok ? 0 : 1)");
+    expect(harnesst).not.toContain(".then(() => process.exit(0))");
+    expect(harnesst).toMatch(
       /interval: 10s\n\s+timeout: 5s\n\s+retries: 3\n\s+start_period: 20s/,
     );
-    expect(eden.match(/monitor: 60s/g)).toHaveLength(2);
+    expect(harnesst.match(/monitor: 60s/g)).toHaveLength(2);
   });
 
   it("detects persistent Postgres health failure within its update monitor", () => {
     const postgres = stack.slice(
       stack.indexOf("  postgres:\n"),
-      stack.indexOf("\n  eden:\n"),
+      stack.indexOf("\n  harnesst:\n"),
     );
 
     expect(postgres).toMatch(
@@ -115,7 +115,7 @@ describe("production Swarm stack", () => {
 
   it("keeps Postgres on its fixed data path and exact host addresses", () => {
     expect(stack).toContain(
-      "/opt/eden/volumes/postgres:/var/lib/postgresql/data",
+      "/opt/harnesst/volumes/postgres:/var/lib/postgresql/data",
     );
     expect(stack).toContain("listen_addresses=127.0.0.1,172.17.0.1");
     expect(stack).toContain("external: true");
@@ -132,7 +132,7 @@ describe("production Swarm stack", () => {
     const serviceNames = [
       ...services.matchAll(/^ {2}([a-z][a-z0-9_-]*):$/gm),
     ].map((match) => match[1]);
-    expect(serviceNames).toEqual(["postgres", "eden"]);
+    expect(serviceNames).toEqual(["postgres", "harnesst"]);
     expect(stack).not.toMatch(/^\s{2}(nginx|certbot):/m);
     expect(stack).not.toMatch(/^\s+build:/m);
   });
@@ -198,13 +198,13 @@ describe("remote deployment transaction", () => {
     const migration = transaction.indexOf("run_migrations");
     const rollout = transaction.indexOf("deploy_stack 1");
     const postgresRollout = transaction.indexOf("wait_for_postgres_rollout");
-    const edenRollout = transaction.indexOf("wait_for_eden");
+    const harnesstRollout = transaction.indexOf("wait_for_harnesst");
 
     expect(bootstrap).toBeGreaterThan(-1);
     expect(migration).toBeGreaterThan(bootstrap);
     expect(rollout).toBeGreaterThan(migration);
     expect(postgresRollout).toBeGreaterThan(rollout);
-    expect(edenRollout).toBeGreaterThan(postgresRollout);
+    expect(harnesstRollout).toBeGreaterThan(postgresRollout);
     expect(transaction).toContain(
       'postgres_version_before="$(service_version "$POSTGRES_SERVICE")"',
     );
@@ -258,7 +258,7 @@ describe("remote deployment transaction", () => {
       metadataComparison,
     );
     const bootstrapBranchEnd = transaction.indexOf(
-      "\nfi\nwait_for_eden",
+      "\nfi\nwait_for_harnesst",
       rolloutWait,
     );
 
@@ -320,16 +320,16 @@ describe("remote deployment transaction", () => {
       script.indexOf("service_has_one_healthy_container() {"),
       script.indexOf("wait_for_postgres() {"),
     );
-    const edenWait = script.slice(
-      script.indexOf("wait_for_eden() {"),
+    const harnesstWait = script.slice(
+      script.indexOf("wait_for_harnesst() {"),
       script.lastIndexOf("\nvalidate_inputs\n"),
     );
 
     expect(helper).toContain(".State.Health.Status");
     expect(helper).toContain("com.docker.swarm.task.id");
     expect(helper).toContain("docker inspect --type task");
-    expect(edenWait).toContain(
-      'service_has_one_healthy_container "$EDEN_SERVICE" "$RUNTIME_IMAGE"',
+    expect(harnesstWait).toContain(
+      'service_has_one_healthy_container "$HARNESST_SERVICE" "$RUNTIME_IMAGE"',
     );
   });
 

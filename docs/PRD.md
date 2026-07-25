@@ -442,7 +442,7 @@ fidelities in §7.9 — no separate "team builder" needed for the simple case.
 **After install it's just a regular agent.** The customer edits its instructions, removes tools,
 adds skills — the template was a starting point, not a subscription. Files are theirs.
 
-**Update-from-source (provenance).** Each install is recorded in a repo-root **`eden-lock.json`**
+**Update-from-source (provenance).** Each install is recorded in a repo-root **`harnesst-lock.json`**
 (generalizing the existing `skills-lock.json` pattern): source registry, template id, version,
 content hash. When the upstream template publishes a new version, harnesst shows "update available";
 accepting opens a **PR with the diff**. If the customer has locally modified the installed files,
@@ -511,12 +511,12 @@ repo/                          repo/
                                    developer/
                                    deployer/
                                  packages/shared/   ← optional shared code (npm workspaces)
-                                 eden.json          ← optional: team name, roster metadata
+                                 harnesst.json          ← optional: team name, roster metadata
 ```
 
 - `agent/` at the repo root → **single-agent mode** (today's behavior, unchanged).
 - `agents/*/agent/` → **team mode**; each subdirectory is a complete, independently buildable eve
-  project. `eden.json` is metadata only (team name, display order) — never required for discovery.
+  project. `harnesst.json` is metadata only (team name, display order) — never required for discovery.
 - Each teammate builds independently: `eve build` in its directory → its own image → its own
   Release → its own instance container. **Multiple runtimes, one repo.**
 - A single-agent repo is just a team of one; the UI stays simple for the common case.
@@ -842,7 +842,7 @@ two-source-of-truth reconciliation problem.
   member; agent → new team member), a live plan preview, and secret inputs (stored per-agent,
   agent-wide). The **dependency merge** follows the PRD policy — absent → add; ranges intersect
   → keep the agent's silently; disjoint → keep + warn (real `semver`, the one dependency added).
-  **Provenance** is a repo-root `eden-lock.json` (final paths + version + hash + registry +
+  **Provenance** is a repo-root `harnesst-lock.json` (final paths + version + hash + registry +
   member), folded into the cached `fetchAgentSource` read so loaders get it for free. The
   Deployment tab shows a **Marketplace installs** card per member: **Update to x.y.z** when the
   catalog has a newer version (`semver.gt`), and **Uninstall** (stages deletions of owned files;
@@ -875,8 +875,8 @@ two-source-of-truth reconciliation problem.
 - **Durable worlds.** eve's durability model keeps sessions in the Workflow "world" (Postgres) and
   each durable session's sandbox as a long-lived sibling container (labelled `eve.sandbox`) that
   eve reattaches via `docker start`. harnesst used to provision a **fresh instance DB per deployment**
-  (`eden_inst_<deploymentId>`), so every redeploy orphaned all sessions and their sandboxes. The
-  world DB is now keyed by **environment** (`eden_env_<sanitized>_<sha1slug>`, from
+  (`harnesst_inst_<deploymentId>`), so every redeploy orphaned all sessions and their sandboxes. The
+  world DB is now keyed by **environment** (`harnesst_env_<sanitized>_<sha1slug>`, from
   `DeployRequest.worldKey = environment.id`): every deploy of an environment shares one world, so
   sessions AND their `/workspace` filesystems (where an agent might keep e.g. SSH keys) survive
   redeploys — eve's intended "sessions survive cold starts, redeploys, and long pauses". During a
@@ -884,7 +884,7 @@ two-source-of-truth reconciliation problem.
   multi-instance mode (Vercel runs many function instances against one world). Per-deployment
   `destroy` now removes only the container; a new `destroyWorld(worldKey)` drops the shared world
   DB once, on environment/repository teardown, after every per-deployment destroy.
-- **Migration:** old `eden_inst_<deploymentId>` databases are orphaned by design (sessions were
+- **Migration:** old `harnesst_inst_<deploymentId>` databases are orphaned by design (sessions were
   never durable before this) — no data migration; they can be dropped manually.
 - **Security surface.** The Docker socket grants the _runtime_ process host-level Docker control;
   the trusted surface is the eve framework + repo-authored tool code (reviewed via change-sets).
@@ -914,9 +914,9 @@ two-source-of-truth reconciliation problem.
 - **The design — an `EVE_DOCKER_PATH` shim.** eve shells out to the docker CLI at `EVE_DOCKER_PATH`.
   The instance image ships a tiny POSIX-sh wrapper at `/usr/local/bin/eve-docker`
   (`EVE_DOCKER_SHIM`, eve-image.server.ts); the deploy target sets `EVE_DOCKER_PATH` to it and
-  `EDEN_HOME_VOLUME` to this environment's volume (both injected AFTER the user-secret env spread, so
+  `HARNESST_HOME_VOLUME` to this environment's volume (both injected AFTER the user-secret env spread, so
   a secret can never shadow them). On a `run` that carries eve's session-container label pair
-  `--label eve.sandbox.role=session`, the shim injects `-v $EDEN_HOME_VOLUME:/workspace/home` right
+  `--label eve.sandbox.role=session`, the shim injects `-v $HARNESST_HOME_VOLUME:/workspace/home` right
   after the `run` token and `exec`s the real client; everything else — template-build runs (shared,
   must not capture a volume), `start`/`exec`/`stop`/`rm`, an unset volume — passes through untouched.
   (The image runs as root, so the mount is already writable — no chown needed.)
@@ -925,7 +925,7 @@ two-source-of-truth reconciliation problem.
   stop mounting — a graceful degradation back to pre-6.2 behaviour, documented here as the thing to
   check when "my SSH key vanished again" resurfaces.
 - **Volume naming & lifecycle.** One named volume per environment: `homeVolumeName(worldKey)` =
-  `eden-home-<sanitized>-<sha1slug8>` (same stability/collision-safety shape as `worldDbName`, wider
+  `harnesst-home-<sanitized>-<sha1slug8>` (same stability/collision-safety shape as `worldDbName`, wider
   volume charset). Docker auto-creates it on first sandbox use — no provisioning. `destroyWorld` now
   tears the whole environment down: drop the world DB, then (best-effort) reap the sandbox containers
   mounting that volume — a `docker ps --filter volume=<name>` finds exactly this env's siblings, which
@@ -951,8 +951,8 @@ two-source-of-truth reconciliation problem.
     authorization chokepoint and the natural correlation point.
   - **Default-allow, directed permissions** (`agent_links` — absent row = allowed) with a
     Settings → Team collaboration matrix; toggles apply live at the relay, no redeploy. Roster
-    identity (`EDEN_TEAMMATES`) + relay coordinates + an HMAC deployment token are env-injected at
-    deploy (stripped-then-set, like `EDEN_SANDBOX_ENV`); a roster change auto-redeploys the other
+    identity (`HARNESST_TEAMMATES`) + relay coordinates + an HMAC deployment token are env-injected at
+    deploy (stripped-then-set, like `HARNESST_SANDBOX_ENV`); a roster change auto-redeploys the other
     members to refresh it.
   - **Linked traces** — a `delegations` row plus a relay-recorded peer run (channel `teammate`)
     give the caller's tool step a link to the peer's run and the peer's run header a "Triggered
@@ -974,7 +974,7 @@ two-source-of-truth reconciliation problem.
   firewall → Docker Engine → clone → env file → compose stack (Postgres + harnesst, host networking,
   socket mount) → nginx + Let's Encrypt (host packages, not Caddy) → Better Auth/Postmark configuration
   - GitHub App pointed at the domain → smoke test. Supporting artifacts: production `Dockerfile`
-    (docker CLI + tar in the runtime image), `deploy/vps/docker-compose.yml`, `nginx-eden.conf`,
+    (docker CLI + tar in the runtime image), `deploy/vps/docker-compose.yml`, `nginx-harnesst.conf`,
     `env.example`.
 - **Acceptance (owner's words):** clone the repo on a fresh VPS, follow the README top to bottom,
   and harnesst is up on the domain — connect a repo, ship, and talk to the agent in the playground.
@@ -1005,11 +1005,11 @@ two-source-of-truth reconciliation problem.
   through the same draft rails as every file. New scaffolds (create repo, add member, both
   catalog agent templates) ship a default `sandbox.ts`; the assistant's METHOD teaches the
   surface, so "add the GitHub CLI to my sandbox" is an assistant edit.
-- **Secret exposure — the `EDEN_SANDBOX_ENV` convention.** eve sandboxes are sealed by default
+- **Secret exposure — the `HARNESST_SANDBOX_ENV` convention.** eve sandboxes are sealed by default
   (they never inherit the instance env — a property we keep). Each secret gets an
   "available in the agent's sandbox shell" toggle (`secrets_metadata.sandbox_exposed` — metadata,
   never values). At deploy, harnesst joins the exposed names that actually resolved into
-  `EDEN_SANDBOX_ENV`, set AFTER the user-secret spread so it can't be shadowed or smuggled; the
+  `HARNESST_SANDBOX_ENV`, set AFTER the user-secret spread so it can't be shadowed or smuggled; the
   scaffolded `sandbox.ts` forwards exactly those variables into the sandbox backend's `env`
   (docker + vercel bags). With nothing exposed the allowlist is absent and behavior is identical
   to the framework default. Two propagation facts, by eve's design: env values are hashed into

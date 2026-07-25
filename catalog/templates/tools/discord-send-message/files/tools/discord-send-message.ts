@@ -2,8 +2,8 @@ import { defineTool } from "eve/tools";
 import { z } from "zod";
 
 // Sends via harnesst's control-plane Discord proxy (issue #32) instead of talking to Discord
-// directly: the shared bot token never reaches the instance. EDEN_DISCORD_SEND_URL and
-// EDEN_TEAM_TOKEN are injected at deploy; the proxy scopes sends to servers this agent is
+// directly: the shared bot token never reaches the instance. HARNESST_DISCORD_SEND_URL and
+// HARNESST_TEAM_TOKEN are injected at deploy; the proxy scopes sends to servers this agent is
 // connected to.
 export default defineTool({
   description:
@@ -20,8 +20,8 @@ export default defineTool({
       .describe("Plain text message to send. Keep it concise."),
   }),
   async execute({ channelId, message }) {
-    const sendUrl = process.env.EDEN_DISCORD_SEND_URL;
-    const token = process.env.EDEN_TEAM_TOKEN;
+    const sendUrl = process.env.HARNESST_DISCORD_SEND_URL;
+    const token = process.env.HARNESST_TEAM_TOKEN;
     if (!sendUrl || !token) {
       return {
         ok: false,

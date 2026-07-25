@@ -1,7 +1,7 @@
 /**
  * Model staging for Settings' "Model" section — against the in-memory store with GitHub and the
  * model catalog stubbed. Pins the two module generations: a workspace-resolver module
- * (`edenAgentModel(...)`) routes a model save into the org override map with zero repo churn,
+ * (`harnesstAgentModel(...)`) routes a model save into the org override map with zero repo churn,
  * while a legacy module gets the dynamic wrapper staged (per-conversation directives work) with
  * package.json normalized alongside.
  */
@@ -45,10 +45,10 @@ const PKG =
 
 /** A workspace-resolver module — no model in the file; org config is the source of truth. */
 const RESOLVER_AGENT_TS = `import { defineAgent } from 'eve';
-import { edenAgentModel } from './eden-model';
+import { harnesstAgentModel } from './harnesst-model';
 
 export default defineAgent({
-  model: edenAgentModel('bookkeeping'),
+  model: harnesstAgentModel('bookkeeping'),
   modelContextWindowTokens: 200000,
 });
 `;

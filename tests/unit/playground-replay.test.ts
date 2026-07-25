@@ -224,7 +224,7 @@ describe("loadPlaygroundEntriesFromEve", () => {
             data: {
               turnId: "turn_1",
               message:
-                "<!-- eden:model openai/gpt-5.1 ctx=400000 effort=high -->\n\nand now?",
+                "<!-- harnesst:model openai/gpt-5.1 ctx=400000 effort=high -->\n\nand now?",
             },
             meta: { at },
           },
@@ -277,7 +277,7 @@ describe("loadPlaygroundEntriesFromEve", () => {
             type: "message.received",
             data: {
               turnId: "turn_0",
-              message: "<!-- eden:model openai/gpt-5.1 -->\n\nand now?",
+              message: "<!-- harnesst:model openai/gpt-5.1 -->\n\nand now?",
             },
             meta: { at },
           },
@@ -356,7 +356,7 @@ describe("loadPlaygroundEntriesFromEve", () => {
     });
     // No leaked transcript or markers in the user bubble.
     expect(entries[0].text).not.toContain("Please deploy my thing.");
-    expect(entries[0].text).not.toContain("eden:context");
+    expect(entries[0].text).not.toContain("harnesst:context");
     expect(entries[1]).toMatchObject({
       role: "assistant",
       text: "Retried successfully.",

@@ -20,7 +20,7 @@ export interface FileChange {
 export interface ProposeChangeInput {
   /** Base branch to branch from and target the PR at; defaults to the repo default branch. */
   base?: string;
-  /** Working branch name to create/reuse (e.g. "eden/edit-instructions-abc"). */
+  /** Working branch name to create/reuse (e.g. "harnesst/edit-instructions-abc"). */
   branch: string;
   files: FileChange[];
   title: string;
@@ -203,7 +203,7 @@ export interface OpenChange {
 }
 
 /**
- * List open pull requests harnesst opened for this repo (head branches under `eden/`), newest
+ * List open pull requests harnesst opened for this repo (head branches under `harnesst/`), newest
  * first, each enriched with mergeability and its changed-file summary. This is the Changes
  * review inbox — the in-app surface that replaces bouncing to github.com to see/merge a PR.
  */
@@ -221,9 +221,9 @@ export async function listOpenChanges(
     direction: "desc",
     per_page: 50,
   });
-  // Only harnesst-authored change-sets (our editors/assistant all branch under `eden/`).
+  // Only harnesst-authored change-sets (our editors/assistant all branch under `harnesst/`).
   const authoredPrs = list.data
-    .filter((pr) => pr.head.ref.startsWith("eden/"))
+    .filter((pr) => pr.head.ref.startsWith("harnesst/"))
     .slice(0, limit);
 
   return Promise.all(
@@ -303,7 +303,7 @@ export async function findOpenChangeForFile(
     direction: "desc",
     per_page: 50,
   });
-  for (const pr of list.data.filter((p) => p.head.ref.startsWith("eden/"))) {
+  for (const pr of list.data.filter((p) => p.head.ref.startsWith("harnesst/"))) {
     const files = await octokit.rest.pulls.listFiles({
       owner,
       repo,

@@ -51,7 +51,7 @@
  *      to un-set/re-set this around merges that touch `AGENTS.md`).
  *   4. Clones the canonical Postgres dev DB into a per-worktree copy so
  *      destructive `db:push` in the worktree doesn't affect main. All Postgres
- *      operations run inside the `eden-postgres` docker container via
+ *      operations run inside the `harnesst-postgres` docker container via
  *      `docker exec`; no host-side psql / pg_dump / createdb is required.
  *
  * Idempotent: running twice on the same feature reuses the allocated ports
@@ -99,7 +99,7 @@ const FEATURE_RE = new RegExp(
 const DEV_PORT_START = 5273; // main dev server uses vite's default 5173
 const SPLITTER_PORT_START = 8887; // main splitter uses 8787
 const INSTANCE_PORT_START = 3100; // main deployed instances allocate from 3000
-const PG_CONTAINER = "eden-postgres";
+const PG_CONTAINER = "harnesst-postgres";
 const WORKTREE_ROOT_DIR = process.env.AGENT_WORKTREE_DIR ?? ".worktrees";
 
 function die(message) {
@@ -457,8 +457,8 @@ This worktree's branch was created from \`${baseBranch}\`. Any PR opened from th
 - **Local app**: http://localhost:${ports.dev}
 - **Public app**: https://${ports.tunnelHost}${tunnelActive ? "" : " (reserved; run `npm run tunnel:init` once from the main checkout to activate)"}
 - Dev server port: \`${ports.dev}\` (via \`PORT\` in this worktree's \`.env.local\`)
-- Traffic splitter port: \`${ports.splitter}\` (\`EDEN_SPLITTER_PORT\`)
-- Deployed-instance base port: \`${ports.instance}\` (\`EDEN_INSTANCE_PORT\`)
+- Traffic splitter port: \`${ports.splitter}\` (\`HARNESST_SPLITTER_PORT\`)
+- Deployed-instance base port: \`${ports.instance}\` (\`HARNESST_INSTANCE_PORT\`)
 
 ## How to start the dev server
 
@@ -730,9 +730,9 @@ function main() {
     BETTER_AUTH_URL: `http://localhost:${ports.dev}`,
     BETTER_AUTH_SECRET: betterAuthSecret,
     DATABASE_URL: withDatabaseName(mainDbUrl, targetDb),
-    EDEN_SPLITTER_PORT: String(ports.splitter),
-    EDEN_INSTANCE_PORT: String(ports.instance),
-    EDEN_TUNNEL_URL: `https://${ports.tunnelHost}`,
+    HARNESST_SPLITTER_PORT: String(ports.splitter),
+    HARNESST_INSTANCE_PORT: String(ports.instance),
+    HARNESST_TUNNEL_URL: `https://${ports.tunnelHost}`,
   });
 
   const worktreeMd = worktreeMdTemplate(

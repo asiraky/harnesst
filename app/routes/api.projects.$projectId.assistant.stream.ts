@@ -137,7 +137,7 @@ export async function action(args: ActionFunctionArgs) {
   }
   if (ensured.note) prefixParts.push(`[harnesst] ${ensured.note}`);
   // Last sync's policy notes: edits harnesst stripped or skipped (assistant.json, .ts under
-  // .eden/assistant, binary/oversize files, symlinks). Without this the model would believe a
+  // .harnesst/assistant, binary/oversize files, symlinks). Without this the model would believe a
   // stripped edit landed.
   for (const warning of checkoutRow?.warnings ?? []) {
     prefixParts.push(`[harnesst] From your last sync: ${warning}`);
