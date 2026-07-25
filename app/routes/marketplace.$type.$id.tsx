@@ -264,7 +264,7 @@ export default function TemplateDetail({ loaderData }: Route.ComponentProps) {
             <CardHeader>
               <CardTitle className="text-base">npm dependencies</CardTitle>
               <CardDescription>
-                Merged into the target agent&rsquo;s package.json at install.
+                Added to the target agent&rsquo;s package.json at install.
               </CardDescription>
             </CardHeader>
             <CardContent>

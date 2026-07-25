@@ -58,15 +58,15 @@ export function ProductMockup() {
             <p className="mt-3 text-sm leading-relaxed">
               Drafted{" "}
               <span className="font-mono text-eden-band-fg">tools/refund.ts</span>{" "}
-              — looks up the order and refunds it. Opened a pull request for your
-              review.
+              — looks up the order and refunds it. Saved it for your review —
+              publish when you&rsquo;re ready.
             </p>
             <div className="mt-4 flex flex-wrap gap-2 text-xs">
               <span className="rounded-full border border-eden-panel-line px-3 py-1 text-eden-band-muted">
                 + refund.ts
               </span>
               <span className="rounded-full bg-eden-band-fg px-3 py-1 font-medium text-eden-band-bg">
-                Review &amp; merge
+                Review &amp; publish
               </span>
             </div>
           </div>

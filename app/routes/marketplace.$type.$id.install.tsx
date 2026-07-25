@@ -873,7 +873,7 @@ export default function InstallWizard({
 
       {actionData?.error && (
         <Alert variant="destructive" className="mb-6">
-          <AlertTitle>Couldn&rsquo;t stage the install</AlertTitle>
+          <AlertTitle>Couldn&rsquo;t save the install</AlertTitle>
           <AlertDescription className="whitespace-pre-wrap">
             {actionData.error}
           </AlertDescription>

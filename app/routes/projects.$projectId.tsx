@@ -901,7 +901,7 @@ function AgentSurface({
     () =>
       instructionsStaged ? (
         <Badge variant="outline" className="text-xs">
-          staged
+          saved
         </Badge>
       ) : null,
     [instructionsStaged],
@@ -916,7 +916,7 @@ function AgentSurface({
     () =>
       sandboxStaged ? (
         <Badge variant="outline" className="text-xs">
-          staged
+          saved
         </Badge>
       ) : null,
     [sandboxStaged],
@@ -1018,7 +1018,7 @@ function AgentSurface({
                           )}
                           {drafted.has(item.path) && (
                             <Badge variant="outline" className="text-xs">
-                              staged
+                              saved
                             </Badge>
                           )}
                         </li>

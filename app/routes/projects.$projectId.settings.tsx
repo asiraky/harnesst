@@ -1240,7 +1240,7 @@ function ModelSection({
       <>
         {modelStaged && (
           <Badge variant="outline" className="text-xs">
-            staged
+            saved
           </Badge>
         )}
         {modelInherited && (
@@ -1498,7 +1498,7 @@ function IngestSection({
     <section>
       <SectionHeader icon={KeyRound} accent="amber" title="Run ingestion" />
       <p className="mb-3 text-sm text-muted-foreground">
-        BYO instances ship telemetry to{" "}
+        BYO instances send telemetry to{" "}
         <span className="font-mono">/api/ingest/runs</span> with one of these
         tokens.
       </p>

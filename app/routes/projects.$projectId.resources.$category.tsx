@@ -346,7 +346,7 @@ export default function ResourceCategory({
           <AlertTitle>Draft discarded</AlertTitle>
           <AlertDescription>
             <span className="font-mono">{actionData.discarded}</span> was only
-            staged — it never reached the repository, so discarding the draft
+            a saved draft — it never reached the repository, so discarding it
             removed it entirely.
           </AlertDescription>
         </Alert>
