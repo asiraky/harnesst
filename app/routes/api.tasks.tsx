@@ -25,7 +25,7 @@ export const loader = (args: LoaderFunctionArgs) =>
           kind: t.kind,
           subjectKey: t.subjectKey,
           label: t.label,
-          stage: t.stage,
+          steps: t.steps,
           status: t.status,
           originUrl: t.originUrl,
           resultUrl: t.resultUrl,

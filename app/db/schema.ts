@@ -16,6 +16,8 @@
  */
 import { sql } from "drizzle-orm";
 
+// Type-only (erased at runtime, so no import cycle): the publish pipeline's step shape.
+import type { PipelineStep } from "~/data/ports";
 import { newId } from "~/lib/id";
 import { organization, session as authSession, team, user } from "./auth-schema";
 import {
@@ -308,6 +310,12 @@ export const projects = pgTable(
     repoName: text("repo_name"),
     repoInstallationId: text("repo_installation_id"),
     defaultBranch: text("default_branch").notNull().default("main"),
+    /**
+     * The environment Publish deploys into (§2.8: never ask which environment more than once).
+     * Null until first resolved — a single-env project persists its only env name on first
+     * publish; a multi-env project persists the user's one-time answer from the publish panel.
+     */
+    liveEnvironmentName: text("live_environment_name"),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
@@ -967,12 +975,12 @@ export const jobs = pgTable(
 /**
  * User-facing projection of long-running workspace work (issue #142). The `jobs` table above stays
  * the ops primitive — durable queue, retries, worker claim; this table is the small, project-scoped
- * record the persistent task-progress indicator reads and polls. One row per triggered action
- * (a merge, a publish): the runner streams a human `stage` into it and resolves it to a terminal
+ * record the publish control and task indicator read and poll. One row per triggered action
+ * (a publish): the runner records its structured `steps` here and resolves the row to a terminal
  * `status` (succeeded|failed) with a `resultUrl`/`error`. The indicator renders running + recent
  * terminal rows for the current project until the user dismisses a terminal one. Kept separate from
  * `jobs` so the queue can carry ops concerns (retry/backoff, arbitrary kinds) without leaking them
- * into the UI, and so a job that internally treats a build-gate failure as a *successful* run (the
+ * into the UI, and so a job that internally treats a build failure as a *successful* run (the
  * user's change simply didn't build) can still surface that as a `failed` task.
  */
 export const workspaceTasks = pgTable(
@@ -982,14 +990,18 @@ export const workspaceTasks = pgTable(
     projectId: text("project_id")
       .notNull()
       .references(() => projects.id, { onDelete: "cascade" }),
-    // merge_change | publish_change (extensible)
+    // publish (extensible)
     kind: text("kind").notNull(),
-    // Dedupe/running-state key for the trigger surface, e.g. "merge:12", "publish".
+    // Dedupe/running-state key for the trigger surface, e.g. "publish" (one per project).
     subjectKey: text("subject_key").notNull(),
-    // Human title, e.g. `Merging change #12`
+    // Human title, e.g. `Publishing 3 changes`
     label: text("label").notNull(),
-    // Current step streamed into the indicator ("Checking the build for agents/ivy/agent (2/3)…")
-    stage: text("stage"),
+    /**
+     * The pipeline's ordered step list (check → build → commit → version → deploy), updated in
+     * place as it runs. ONE source of truth for progress: the compact header control derives its
+     * one-liner from the running step, the publish panel renders the full stepper.
+     */
+    steps: jsonb("steps").$type<PipelineStep[]>(),
     // running | succeeded | failed
     status: text("status").notNull().default("running"),
     originUrl: text("origin_url").notNull(),
@@ -1248,10 +1260,10 @@ export const playgroundEvents = pgTable(
  * Assistant coding-agent checkouts. One row per
  * assistant conversation (a `playground_sessions` row on the assistant channel) that has grown a
  * repo checkout. The assistant edits a per-conversation git checkout on the shared home volume;
- * after each turn the control plane mirrors that checkout onto the branch `eden/conv-<id>` and
- * (on first non-empty sync) opens a PR. This table is the only durable link from a conversation to
- * its branch/PR — the checkout itself is ephemeral (volume/instance loss is recovered by re-cloning
- * the remote branch). `lastSyncedHash` lets the sync engine skip a no-op turn (tree unchanged).
+ * after each turn the control plane mirrors that checkout onto the branch `eden/conv-<id>` — an
+ * internal durability mechanism only (volume/instance loss is recovered by re-cloning the remote
+ * branch). This table is the only durable link from a conversation to its branch.
+ * `lastSyncedHash` lets the sync engine skip a no-op turn (tree unchanged).
  */
 export const assistantCheckouts = pgTable(
   "assistant_checkouts",
@@ -1268,16 +1280,12 @@ export const assistantCheckouts = pgTable(
     branch: text("branch").notNull(),
     /** Base branch the working branch is cut from (the project default at first sync). */
     baseBranch: text("base_branch").notNull(),
-    /** Open PR number for the branch, or null before the first non-empty sync. */
-    prNumber: integer("pr_number"),
-    /** Whether the open PR is still a draft/WIP (false once marked ready-for-review). */
-    prDraft: boolean("pr_draft").notNull().default(true),
     /** Content hash of the last mirrored tree state — a matching hash means "skip, no change". */
     lastSyncedHash: text("last_synced_hash"),
     /**
      * Human-readable notes from the last sync (paths stripped by the path policy, binary/oversize
-     * skips, symlinks refused). Injected into the model's next turn and shown in the PR body, so a
-     * silently-excluded edit is never mistaken for a landed one.
+     * skips, symlinks refused). Injected into the model's next turn and surfaced on the assistant
+     * page, so a silently-excluded edit is never mistaken for a landed one.
      */
     warnings: jsonb("warnings").$type<string[]>(),
     createdAt: createdAt(),

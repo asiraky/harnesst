@@ -69,7 +69,7 @@ vi.mock("node:fs/promises", async (importOriginal) => {
   };
 });
 
-describe("checkEveBuild", () => {
+describe("buildStagedTree", () => {
   beforeEach(() => {
     execFile.mockClear();
     execFile.mockImplementation(defaultExecFile);
@@ -179,7 +179,7 @@ describe("checkEveBuild", () => {
     // legacy builder: build-step output — including the compiler's error — streams to
     // STDOUT, while stderr carries only the deprecation banner and the exit-code line.
     // Reading error.message alone reported "returned a non-zero code: 1" with no cause.
-    const { checkEveBuild } = await import("~/deploy/eve-image.server");
+    const { buildStagedTree } = await import("~/deploy/eve-image.server");
 
     const stdout = [
       "Step 7/7 : RUN npm exec -- eve build",
@@ -211,7 +211,7 @@ describe("checkEveBuild", () => {
       },
     );
 
-    const result = await checkEveBuild({
+    const result = await buildStagedTree({
       projectId: "proj_1",
       repo: { owner: "acme", repo: "agents" },
       ref: "abc123",
@@ -226,7 +226,7 @@ describe("checkEveBuild", () => {
   });
 
   it("surfaces typecheck/lint failures, which tsc and eslint print on stdout", async () => {
-    const { checkEveBuild } = await import("~/deploy/eve-image.server");
+    const { buildStagedTree } = await import("~/deploy/eve-image.server");
 
     const tscOutput = "agent/agent.ts(4,10): error TS2305: Module 'eve' has no exported member 'defineDynamic'.";
     execFile.mockImplementation(
@@ -249,7 +249,7 @@ describe("checkEveBuild", () => {
       },
     );
 
-    const result = await checkEveBuild({
+    const result = await buildStagedTree({
       projectId: "proj_1",
       repo: { owner: "acme", repo: "agents" },
       ref: "abc123",
@@ -264,7 +264,7 @@ describe("checkEveBuild", () => {
   it("skips publish checks when the Docker daemon is unavailable", async () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     try {
-      const { checkEveBuild } = await import("~/deploy/eve-image.server");
+      const { buildStagedTree } = await import("~/deploy/eve-image.server");
 
       execFile.mockImplementationOnce(
         (
@@ -295,7 +295,7 @@ describe("checkEveBuild", () => {
       );
 
       await expect(
-        checkEveBuild({
+        buildStagedTree({
           projectId: "proj_1",
           repo: { owner: "acme", repo: "agents" },
           ref: "abc123",
@@ -309,10 +309,10 @@ describe("checkEveBuild", () => {
   });
 
   it("creates a missing new-member package directory before adding the Dockerfile", async () => {
-    const { checkEveBuild } = await import("~/deploy/eve-image.server");
+    const { buildStagedTree } = await import("~/deploy/eve-image.server");
 
     await expect(
-      checkEveBuild({
+      buildStagedTree({
         projectId: "proj_1",
         repo: { owner: "acme", repo: "agents" },
         ref: "abc123",
@@ -329,7 +329,10 @@ describe("checkEveBuild", () => {
           },
         ],
       }),
-    ).resolves.toEqual({ ok: true });
+    ).resolves.toEqual({
+      ok: true,
+      provisionalTag: "eden/publish-check:proj-proj_1-cloudflare-dev",
+    });
 
     expect(execFile).toHaveBeenCalledWith(
       "docker",

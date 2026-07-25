@@ -182,6 +182,11 @@ export interface ProjectRepo {
     repoInstallationId?: string | null;
     defaultBranch?: string;
   }): Promise<Project>;
+  /**
+   * Persist the environment Publish deploys into (§2.8: resolved once — from the only env name,
+   * or the user's one-time answer — and never asked again).
+   */
+  setLiveEnvironmentName(id: string, name: string): Promise<void>;
   /** Delete the project row — the FK cascade takes every dependent row with it (M5.8). */
   deleteById(id: string): Promise<void>;
 }
@@ -204,10 +209,28 @@ export interface JobRepo {
   statsByStatus(): Promise<Record<string, number>>;
 }
 
+export type PipelineStepStatus = "pending" | "running" | "succeeded" | "failed" | "skipped";
+
+/**
+ * One step of the publish pipeline (check → build → commit → version → deploy), stored on the
+ * workspace task's `steps` jsonb. The single source of truth for publish progress: the compact
+ * header control derives its one-liner from the running step's label + detail, the publish panel
+ * renders the full stepper.
+ */
+export interface PipelineStep {
+  key: "check" | "build" | "commit" | "version" | "deploy";
+  label: string; // "Building your agents"
+  status: PipelineStepStatus;
+  detail?: string; // "Ivy (2 of 3)"
+  reason?: string; // why skipped
+  error?: string; // full failure output, preserving newlines
+  substeps?: { label: string; status: PipelineStepStatus; error?: string }[];
+}
+
 /**
  * The user-facing task projection the workspace indicator reads (issue #142). Separate from
  * JobRepo: `jobs` is the ops queue (retry/claim), this is the small per-project record a running
- * merge/publish streams its progress into and resolves to a terminal state.
+ * publish records its steps into and resolves to a terminal state.
  */
 export interface WorkspaceTaskRepo {
   insert(input: {
@@ -216,14 +239,14 @@ export interface WorkspaceTaskRepo {
     subjectKey: string;
     label: string;
     originUrl: string;
-    stage?: string | null;
+    steps?: PipelineStep[] | null;
     jobId?: string | null;
     createdBy?: string | null;
   }): Promise<WorkspaceTask>;
   update(
     id: string,
     patch: Partial<
-      Pick<WorkspaceTask, "stage" | "status" | "resultUrl" | "error" | "jobId" | "dismissedAt">
+      Pick<WorkspaceTask, "steps" | "status" | "resultUrl" | "error" | "jobId" | "dismissedAt">
     >,
   ): Promise<void>;
   findById(id: string): Promise<WorkspaceTask | null>;
@@ -234,7 +257,7 @@ export interface WorkspaceTaskRepo {
    * stable as rows resolve.
    */
   listActive(projectId: string, terminalSince: Date): Promise<WorkspaceTask[]>;
-  /** The running task for a trigger surface, for dedupe (one merge:12 / publish at a time). */
+  /** The running task for a trigger surface, for dedupe (one publish per project at a time). */
   findRunningBySubject(projectId: string, subjectKey: string): Promise<WorkspaceTask | null>;
 }
 

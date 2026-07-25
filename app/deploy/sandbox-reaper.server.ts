@@ -58,6 +58,20 @@ const HOME_VOLUME_PREFIX = "eden-home-";
 /** Docker's zero value for an unset FinishedAt — treat as "never finished". */
 const DOCKER_ZERO_TIME = "0001-01-01T00:00:00Z";
 
+/**
+ * Provisional publish-image namespace (issue #225 §3.2): the pipeline builds under
+ * `eden/publish-<taskId>:…` tags and removes them in a `finally` — but a crashed process
+ * strands them, so this sweep prunes any old enough that no publish can still be using them.
+ * The whole `eden/publish-` reference namespace belongs to the pipeline; promoted images live
+ * under `eden/proj-…` and are never matched.
+ */
+const PROVISIONAL_IMAGE_REFERENCE = "eden/publish-*";
+
+/** Age past which a leaked provisional publish image is pruned (publishes take minutes). */
+export const PUBLISH_IMAGE_PRUNE_CEILING_MS = Number(
+  process.env.EDEN_PUBLISH_IMAGE_PRUNE_CEILING_MS || 6 * 60 * 60 * 1000,
+);
+
 /** The subset of `docker inspect` fields the sweep reads. */
 interface InspectedContainer {
   Id: string;
@@ -269,6 +283,75 @@ export async function sweepLeakedSandboxes(
   return { scanned: inspected.length, reaped: toReap.length, recorded, spared };
 }
 
+export interface ProvisionalImageSweepDeps {
+  runDocker: DockerRunner;
+  now?: () => Date;
+}
+
+export interface ProvisionalImageSweepResult {
+  scanned: number;
+  pruned: number;
+  /** Set when docker was unavailable / the sweep soft-failed; nothing was pruned. */
+  error?: string;
+}
+
+/**
+ * One sweep of leaked provisional publish images: list every `eden/publish-*` tag, inspect its
+ * creation time, and untag the ones older than the ceiling. Same soft-fail discipline as the
+ * sandbox sweep — docker being unavailable must never break the interval.
+ */
+export async function sweepStaleProvisionalImages(
+  deps: ProvisionalImageSweepDeps = { runDocker: realDocker },
+): Promise<ProvisionalImageSweepResult> {
+  const now = (deps.now ?? (() => new Date()))().getTime();
+
+  let refs: string[];
+  try {
+    const out = await deps.runDocker([
+      "images",
+      "--filter",
+      `reference=${PROVISIONAL_IMAGE_REFERENCE}`,
+      "--format",
+      "{{.Repository}}:{{.Tag}}",
+    ]);
+    refs = out.split("\n").map((s) => s.trim()).filter(Boolean);
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error);
+    console.warn(`[reaper] provisional image sweep skipped: docker images failed: ${msg}`);
+    return { scanned: 0, pruned: 0, error: msg };
+  }
+  if (refs.length === 0) return { scanned: 0, pruned: 0 };
+
+  let createdAts: string[];
+  try {
+    const out = await deps.runDocker(["inspect", "--format", "{{.Created}}", ...refs]);
+    createdAts = out.split("\n").map((s) => s.trim());
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error);
+    console.warn(`[reaper] provisional image sweep skipped: docker inspect failed: ${msg}`);
+    return { scanned: refs.length, pruned: 0, error: msg };
+  }
+
+  const stale = refs.filter((_, i) => {
+    const age = ageMs(createdAts[i], now);
+    return age != null && age > PUBLISH_IMAGE_PRUNE_CEILING_MS;
+  });
+
+  let pruned = 0;
+  for (const ref of stale) {
+    try {
+      // rmi untags; layers shared with a promoted `eden/proj-…` tag survive.
+      await deps.runDocker(["rmi", ref]);
+      console.log(`[reaper] pruned stale provisional publish image ${ref}`);
+      pruned++;
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      console.warn(`[reaper] couldn't prune provisional image ${ref}: ${msg}`);
+    }
+  }
+  return { scanned: refs.length, pruned };
+}
+
 function startSandboxReaper(): { stop: () => void } {
   let running = false;
   const interval = setInterval(async () => {
@@ -276,9 +359,10 @@ function startSandboxReaper(): { stop: () => void } {
     running = true;
     try {
       await sweepLeakedSandboxes();
+      await sweepStaleProvisionalImages();
     } catch (err) {
-      // sweepLeakedSandboxes soft-fails internally; this only catches an unexpected programming error.
-      console.error("[reaper] sandbox sweep threw:", err);
+      // Both sweeps soft-fail internally; this only catches an unexpected programming error.
+      console.error("[reaper] sweep threw:", err);
     } finally {
       running = false;
     }

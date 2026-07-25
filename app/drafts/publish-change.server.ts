@@ -15,7 +15,7 @@
 import type { DataStore } from "~/data/ports";
 import { publishDrafts } from "~/drafts/drafts.server";
 import { getRuntime } from "~/seams/index.server";
-import { completeTask, failTask, updateTaskStage } from "~/tasks/tasks.server";
+import { completeTask, failTask } from "~/tasks/tasks.server";
 
 export interface PublishChangePayload {
   projectId: string;
@@ -40,8 +40,6 @@ export async function runPublishChange(
   const task = await store.workspaceTasks.findById(taskId);
   if (!task) throw new Error(`publish_change: task ${taskId} not found`);
 
-  await updateTaskStage(taskId, "Preparing…", store);
-
   try {
     await publishDrafts(
       {
@@ -55,7 +53,6 @@ export async function runPublishChange(
         paths,
         title,
         createdBy,
-        onStage: (stage) => updateTaskStage(taskId, stage, store),
       },
       store,
     );

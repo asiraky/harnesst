@@ -123,6 +123,7 @@ export function makeFakeStore(): FakeStore {
         repoName: p.repoName ?? null,
         repoInstallationId: p.repoInstallationId ?? null,
         defaultBranch: p.defaultBranch ?? "main",
+        liveEnvironmentName: p.liveEnvironmentName ?? null,
         createdAt: new Date(0),
         updatedAt: new Date(0),
       };
@@ -555,11 +556,16 @@ export function makeFakeStore(): FakeStore {
           repoName: input.repoName ?? null,
           repoInstallationId: input.repoInstallationId ?? null,
           defaultBranch: input.defaultBranch ?? "main",
+          liveEnvironmentName: null,
           createdAt: new Date(++seq),
           updatedAt: new Date(seq),
         };
         projects.set(row.id, row);
         return row;
+      },
+      async setLiveEnvironmentName(pid, name) {
+        const p = projects.get(pid);
+        if (p) projects.set(pid, { ...p, liveEnvironmentName: name, updatedAt: new Date(++seq) });
       },
       async deleteById(pid) {
         projects.delete(pid);
@@ -636,7 +642,7 @@ export function makeFakeStore(): FakeStore {
           kind: input.kind,
           subjectKey: input.subjectKey,
           label: input.label,
-          stage: input.stage ?? null,
+          steps: input.steps ?? null,
           status: "running",
           originUrl: input.originUrl,
           resultUrl: null,

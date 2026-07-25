@@ -372,6 +372,12 @@ export const drizzleDataStore: DataStore = {
       const [row] = await db.insert(projects).values(input).returning();
       return row;
     },
+    async setLiveEnvironmentName(id, name) {
+      await db
+        .update(projects)
+        .set({ liveEnvironmentName: name, updatedAt: new Date() })
+        .where(eq(projects.id, id));
+    },
     async deleteById(id) {
       await db.delete(projects).where(eq(projects.id, id));
     },
@@ -440,7 +446,7 @@ export const drizzleDataStore: DataStore = {
           subjectKey: input.subjectKey,
           label: input.label,
           originUrl: input.originUrl,
-          stage: input.stage ?? null,
+          steps: input.steps ?? null,
           jobId: input.jobId ?? null,
           createdBy: input.createdBy ?? null,
         })

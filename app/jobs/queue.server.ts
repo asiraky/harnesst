@@ -20,6 +20,8 @@ export type JobKind =
   | "assistant_restart"
   | "cleanup_deployment_container"
   | "drain_deployment"
+  // issue #225: the whole publish pipeline (check → build → commit → version → deploy).
+  | "publish"
   // issue #142: the merge/publish build gates, moved off the HTTP request onto the queue.
   | "merge_change"
   | "publish_change";

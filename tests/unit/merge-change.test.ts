@@ -121,7 +121,7 @@ describe("runMergeChange", () => {
     expect(row?.resultUrl).toBe("/repos/proj_1/agents/x/deployment?released=v3");
   });
 
-  it("builds every affected member root on a team layout and streams a per-root stage", async () => {
+  it("builds every affected member root on a team layout", async () => {
     store.seedProject({
       id: "team_1",
       orgId: "org_1",
@@ -141,11 +141,7 @@ describe("runMergeChange", () => {
       },
       store,
     );
-    const stages: string[] = [];
-    const checkBuild = vi.fn().mockImplementation(async () => {
-      stages.push((await store.workspaceTasks.findById(task.id))!.stage!);
-      return { ok: true };
-    });
+    const checkBuild = vi.fn().mockResolvedValue({ ok: true });
     const deps = makeDeps({
       checkBuild,
       listPullRequestFilePaths: vi
@@ -163,15 +159,11 @@ describe("runMergeChange", () => {
       store,
     );
 
-    // One build per member root the PR spans (`.eden/**` maps to none), each streamed as (i/n).
+    // One build per member root the PR spans (`.eden/**` maps to none).
     expect(checkBuild).toHaveBeenCalledTimes(2);
     expect(checkBuild.mock.calls.map((c) => c[0].agentRoot)).toEqual([
       "agents/pm/agent",
       "agents/reviewer/agent",
-    ]);
-    expect(stages).toEqual([
-      "Checking the build for agents/pm/agent (1/2)…",
-      "Checking the build for agents/reviewer/agent (2/2)…",
     ]);
     expect((await store.workspaceTasks.findById(task.id))?.status).toBe("succeeded");
   });

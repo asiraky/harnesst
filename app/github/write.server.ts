@@ -138,6 +138,93 @@ export async function commitFiles(
 }
 
 /**
+ * The base branch moved between our head read and the ref update — someone else pushed while we
+ * were committing. The publish pipeline catches this, rebuilds against the new head, and retries
+ * exactly once before giving up with a user-facing message.
+ */
+export class NonFastForwardError extends Error {
+  constructor(branch: string) {
+    super(`The branch "${branch}" advanced while the commit was being written.`);
+    this.name = "NonFastForwardError";
+  }
+}
+
+/**
+ * Commit `files` directly to `branch` (the default branch) as ONE compare-and-swap fast-forward
+ * commit: blobs upload concurrently, then a single tree (base_tree = the head commit's tree, with
+ * null-content entries as deletions) + commit + `updateRef` WITHOUT force. GitHub rejects a
+ * non-fast-forward update with a 422, which surfaces here as `NonFastForwardError` — the CAS
+ * failure the caller resolves by rebuilding against the new head and retrying.
+ */
+export async function commitToDefaultBranch(
+  installationId: string | number,
+  { owner, repo }: RepoRef,
+  input: { branch: string; files: FileChange[]; message: string },
+): Promise<{ sha: string }> {
+  const octokit = await getInstallationOctokit(installationId);
+  const writes = input.files.filter(
+    (f): f is FileChange & { content: string } => f.content !== null,
+  );
+  const deletes = input.files.filter((f) => f.content === null);
+  const [blobs, head] = await Promise.all([
+    Promise.all(
+      writes.map((f) =>
+        octokit.rest.git.createBlob({
+          owner,
+          repo,
+          content: Buffer.from(f.content, "utf8").toString("base64"),
+          encoding: "base64",
+        }),
+      ),
+    ),
+    octokit.rest.git.getRef({ owner, repo, ref: `heads/${input.branch}` }),
+  ]);
+  const headSha = head.data.object.sha;
+  const headCommit = await octokit.rest.git.getCommit({ owner, repo, commit_sha: headSha });
+  const tree = await octokit.rest.git.createTree({
+    owner,
+    repo,
+    base_tree: headCommit.data.tree.sha,
+    tree: [
+      ...writes.map((f, i) => ({
+        path: f.path,
+        mode: "100644" as const,
+        type: "blob" as const,
+        sha: blobs[i].data.sha,
+      })),
+      // sha: null in a tree entry removes the path from the base tree.
+      ...deletes.map((f) => ({
+        path: f.path,
+        mode: "100644" as const,
+        type: "blob" as const,
+        sha: null,
+      })),
+    ],
+  });
+  const commit = await octokit.rest.git.createCommit({
+    owner,
+    repo,
+    message: input.message,
+    tree: tree.data.sha,
+    parents: [headSha],
+  });
+  try {
+    // force defaults to false — this IS the compare-and-swap: GitHub only fast-forwards.
+    await octokit.rest.git.updateRef({
+      owner,
+      repo,
+      ref: `heads/${input.branch}`,
+      sha: commit.data.sha,
+    });
+  } catch (error) {
+    if (statusOf(error) === 422) throw new NonFastForwardError(input.branch);
+    throw error;
+  }
+  invalidateRepoSource(installationId, { owner, repo });
+  return { sha: commit.data.sha };
+}
+
+/**
  * Create a working branch, commit `files` (one commit), and open (or reuse) a PR back to the
  * base branch. Idempotent per branch name: calling again with the same branch stacks commits
  * and reuses the open PR.

@@ -137,12 +137,25 @@ function orphanedMemberName(path: string): string | null {
   return path.match(/^agents\/([^/]+)\//)?.[1] ?? null;
 }
 
+/** The user-facing failure for orphaned drafts: name the dead member(s), list the paths. */
+export function orphanedDraftsMessage(orphaned: DraftChange[]): string {
+  const names = [...new Set(orphaned.map((d) => orphanedMemberName(d.path)).filter(Boolean))];
+  const plural = orphaned.length === 1 ? "" : "s";
+  return `Can't publish — ${orphaned.length} saved change${plural} ${
+    orphaned.length === 1 ? "belongs" : "belong"
+  } to ${
+    names.length === 1 ? `"${names[0]}"` : `agents (${names.map((n) => `"${n}"`).join(", ")})`
+  }, which is no longer part of this team. Discard ${
+    orphaned.length === 1 ? "it" : "them"
+  }, then publish again:\n\n${orphaned.map((d) => `- \`${d.path}\``).join("\n")}`;
+}
+
 /**
- * The member roots a selection spans — the gate builds each one. `undefined` means the
- * selection touches a truly shared file (e.g. the root package.json), where only a repo-root
- * check can see the effect.
+ * The member roots a change-set spans — the publish build runs once per root. `undefined` means
+ * the set touches a truly shared file (e.g. the root package.json), where only a repo-root
+ * build can see the effect.
  */
-function inferBuildRoots(
+export function inferBuildRoots(
   agents: { id: string; root: string }[],
   drafts: DraftChange[],
 ): string[] | undefined {
@@ -267,7 +280,7 @@ const runtimeListRepoPaths: ListRepoPathsFn = async ({ installationId, owner, re
   }
 };
 
-type PublishFile = { path: string; content: string | null };
+export type PublishFile = { path: string; content: string | null };
 
 function packageJsonPathForAgentRoot(root: string): string {
   if (root === "agent") return "package.json";
@@ -295,7 +308,7 @@ function usesOpenRouter(source: string | null | undefined): boolean {
   );
 }
 
-async function normalizeOpenRouterPackageDrafts(input: {
+export async function normalizeOpenRouterPackageDrafts(input: {
   project: {
     repoInstallationId: string;
     repoOwner: string;
@@ -428,17 +441,7 @@ export async function publishDrafts(
   });
   const orphaned = findOrphanedDrafts(agents, repoPaths, selected);
   if (orphaned.length > 0) {
-    const names = [...new Set(orphaned.map((d) => orphanedMemberName(d.path)).filter(Boolean))];
-    const plural = orphaned.length === 1 ? "" : "s";
-    throw new Error(
-      `Can't publish — ${orphaned.length} staged change${plural} ${
-        orphaned.length === 1 ? "belongs" : "belong"
-      } to ${
-        names.length === 1 ? `"${names[0]}"` : `agents (${names.map((n) => `"${n}"`).join(", ")})`
-      }, which is no longer part of this team. Discard ${
-        orphaned.length === 1 ? "it" : "them"
-      } below, then publish again:\n\n${orphaned.map((d) => `- \`${d.path}\``).join("\n")}`,
-    );
+    throw new Error(orphanedDraftsMessage(orphaned));
   }
 
   // Publish gate: the change-set must compile against the branch it targets. A failed check
@@ -461,7 +464,7 @@ export async function publishDrafts(
   const assistantConfigOnly = selected.every((d) => isAssistantConfigPath(d.path));
   if (!assistantConfigOnly) {
     // A lock-only selection has no member root; fall through to the repo-root check rather
-    // than silently skipping the gate. Sequential on purpose: checkEveBuild reuses one
+    // than silently skipping the gate. Sequential on purpose: buildStagedTree reuses one
     // docker tag per project, so concurrent checks would race on it.
     const buildRoots = !roots || roots.length === 0 ? [undefined] : roots;
     for (const [i, agentRoot] of buildRoots.entries()) {

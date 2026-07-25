@@ -77,6 +77,14 @@ async function execute(job: Job): Promise<void> {
       console.log(`[jobs] drain_deployment ${p.deploymentId}: ${detail}`);
       return;
     }
+    case "publish": {
+      // issue #225: the publish pipeline (check → build → commit → version → deploy). Progress and
+      // failures surface through the workspace task's steps, not queue retries (maxAttempts:1).
+      const { runPublish } = await import("~/publish/pipeline.server");
+      const p = job.payload as import("~/publish/pipeline.server").PublishPayload;
+      await runPublish(p);
+      return;
+    }
     case "merge_change": {
       // issue #142: the merge build gate + GitHub merge, moved off the HTTP request. Progress and
       // a build-gate failure surface through the workspace task, not a queue retry (maxAttempts:1).

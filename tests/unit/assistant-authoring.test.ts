@@ -22,6 +22,7 @@ const project: AuthoringProject = {
   repoName: "repo",
   repoInstallationId: "inst",
   defaultBranch: "main",
+  liveEnvironmentName: null,
   createdAt: new Date(),
   updatedAt: new Date(),
 };

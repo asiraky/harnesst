@@ -1,7 +1,7 @@
 /**
  * Workspace task projection (issue #142) — pins tasks.server.ts and the WorkspaceTaskRepo contract
  * behind the persistent task-progress indicator. A task is the small, project-scoped, user-facing
- * record a runner streams its human-readable stage into and resolves to a terminal state; the
+ * record a runner records its pipeline steps into and resolves to a terminal state; the
  * indicator polls listActive for it. These tests run entirely against the in-memory fake store.
  *
  * Note on the window test: the fake timestamps rows with a tiny seq-based epoch (~0), so going
@@ -11,13 +11,14 @@
  */
 import { beforeEach, describe, expect, it } from "vitest";
 
+import type { PipelineStep } from "~/data/ports";
 import {
   completeTask,
   createTask,
   dismissTask,
   failTask,
   findRunningTask,
-  updateTaskStage,
+  updateTaskSteps,
 } from "~/tasks/tasks.server";
 import { makeFakeStore, type FakeStore } from "../fakes/store";
 
@@ -26,11 +27,15 @@ const PROJECT = "proj_1";
 
 const base = {
   projectId: PROJECT,
-  kind: "merge_change",
-  subjectKey: "merge:1",
-  label: "Merging change #1",
+  kind: "publish",
+  subjectKey: "publish",
+  label: "Publishing 1 change",
   originUrl: "/repos/proj_1",
 };
+
+const steps = (status: PipelineStep["status"]): PipelineStep[] => [
+  { key: "check", label: "Checking your changes", status },
+];
 
 beforeEach(() => {
   store = makeFakeStore();
@@ -38,39 +43,43 @@ beforeEach(() => {
 });
 
 describe("task lifecycle", () => {
-  it("createTask starts a task running", async () => {
-    const task = await createTask(base, store);
+  it("createTask starts a task running with its initial steps", async () => {
+    const task = await createTask({ ...base, steps: steps("pending") }, store);
     expect(task.status).toBe("running");
     expect(task.projectId).toBe(PROJECT);
-    expect(task.subjectKey).toBe("merge:1");
+    expect(task.subjectKey).toBe("publish");
+    expect(task.steps?.[0]).toMatchObject({ key: "check", status: "pending" });
     expect(task.resultUrl).toBeNull();
     expect(task.dismissedAt).toBeNull();
   });
 
-  it("updateTaskStage streams the current step", async () => {
+  it("updateTaskSteps records the pipeline's current step list", async () => {
     const task = await createTask(base, store);
-    await updateTaskStage(task.id, "Merging…", store);
-    expect((await store.workspaceTasks.findById(task.id))?.stage).toBe("Merging…");
+    await updateTaskSteps(task.id, steps("running"), store);
+    expect((await store.workspaceTasks.findById(task.id))?.steps?.[0]).toMatchObject({
+      key: "check",
+      status: "running",
+    });
   });
 
-  it("completeTask resolves succeeded, clears the stage, records the result URL", async () => {
-    const task = await createTask({ ...base, stage: "Merging…" }, store);
+  it("completeTask resolves succeeded, keeps the steps, records the result URL", async () => {
+    const task = await createTask({ ...base, steps: steps("succeeded") }, store);
     await completeTask(task.id, { resultUrl: "/repos/proj_1?released=v3" }, store);
 
     const row = await store.workspaceTasks.findById(task.id);
     expect(row?.status).toBe("succeeded");
-    expect(row?.stage).toBeNull();
+    expect(row?.steps?.[0]).toMatchObject({ key: "check", status: "succeeded" });
     expect(row?.resultUrl).toBe("/repos/proj_1?released=v3");
     expect(row?.error).toBeNull();
   });
 
-  it("failTask resolves failed with the error and clears the stage", async () => {
-    const task = await createTask({ ...base, stage: "Checking the build…" }, store);
+  it("failTask resolves failed with the error and keeps the steps", async () => {
+    const task = await createTask({ ...base, steps: steps("failed") }, store);
     await failTask(task.id, "This change doesn't build yet", store);
 
     const row = await store.workspaceTasks.findById(task.id);
     expect(row?.status).toBe("failed");
-    expect(row?.stage).toBeNull();
+    expect(row?.steps?.[0]).toMatchObject({ key: "check", status: "failed" });
     expect(row?.error).toBe("This change doesn't build yet");
   });
 });
@@ -97,14 +106,14 @@ describe("dismissTask", () => {
 describe("findRunningTask", () => {
   it("matches only a running task with the same project and subjectKey", async () => {
     const task = await createTask(base, store);
-    expect((await findRunningTask(PROJECT, "merge:1", store))?.id).toBe(task.id);
+    expect((await findRunningTask(PROJECT, "publish", store))?.id).toBe(task.id);
 
     // Different subject / project / terminal state → no match.
-    expect(await findRunningTask(PROJECT, "merge:2", store)).toBeNull();
-    expect(await findRunningTask("other_proj", "merge:1", store)).toBeNull();
+    expect(await findRunningTask(PROJECT, "other", store)).toBeNull();
+    expect(await findRunningTask("other_proj", "publish", store)).toBeNull();
 
     await completeTask(task.id, { resultUrl: "/x" }, store);
-    expect(await findRunningTask(PROJECT, "merge:1", store)).toBeNull();
+    expect(await findRunningTask(PROJECT, "publish", store)).toBeNull();
   });
 });
 

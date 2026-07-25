@@ -3,8 +3,7 @@
  * synchronous deployments route onto the durable job queue. publishDrafts (directly imported) is
  * mocked; progress and outcome are read back off the fake store's workspace task. Contract:
  *   - success completes the task with resultUrl = the task's originUrl and hands publishDrafts the
- *     project fields, paths, title, createdBy and an onStage callback;
- *   - the captured onStage streams stages into the task;
+ *     project fields, paths, title and createdBy;
  *   - ANY publishDrafts throw (gate failure or GitHub error) fails the task and resolves WITHOUT
  *     rethrowing, since a gate failure is the user's outcome, not a queue error;
  *   - a missing task or unconnected project is a real infrastructure error (rethrow).
@@ -77,31 +76,10 @@ describe("runPublishChange", () => {
     expect(input.paths).toEqual(["agent/a.md"]);
     expect(input.title).toBe("Update agent files");
     expect(input.createdBy).toBe("user_1");
-    expect(typeof input.onStage).toBe("function");
 
     const row = await store.workspaceTasks.findById(task.id);
     expect(row?.status).toBe("succeeded");
     expect(row?.resultUrl).toBe("/repos/proj_1/agents/x/deployment");
-  });
-
-  it("streams stages via the captured onStage callback", async () => {
-    let onStage: ((s: string) => void | Promise<void>) | undefined;
-    publishDraftsMock.mockImplementation(async (input) => {
-      onStage = input.onStage;
-      return {} as never;
-    });
-    const task = await seedTask();
-
-    await runPublishChange(
-      { projectId: PROJECT, taskId: task.id, paths: ["agent/a.md"] },
-      store,
-    );
-
-    await onStage?.("Checking the build for the repository…");
-    // onStage streamed after completion here; assert it reached the row (stage last-write-wins).
-    expect((await store.workspaceTasks.findById(task.id))?.stage).toBe(
-      "Checking the build for the repository…",
-    );
   });
 
   it("fails the task and does not rethrow when publishDrafts rejects", async () => {

@@ -29,7 +29,7 @@ import {
 } from "~/assistant/checkout-sync.server";
 import { getRuntime } from "~/seams/index.server";
 import type { BuildCheckRequest, BuildCheckResult } from "~/seams/types";
-import { completeTask, failTask, updateTaskStage } from "~/tasks/tasks.server";
+import { completeTask, failTask } from "~/tasks/tasks.server";
 
 export interface MergeChangePayload {
   projectId: string;
@@ -89,7 +89,6 @@ export async function runMergeChange(
   //    exactly as it will exist after merge (NO draft overlay), one build per affected member
   //    root recomputed from the PR's changed files (issue #137). A failure is the task's
   //    outcome — nothing merges, and the job completes normally.
-  await updateTaskStage(taskId, "Checking the build…", store);
   if (conversation && deps.checkBuild) {
     const paths = await deps.listPullRequestFilePaths(
       project.repoInstallationId,
@@ -105,7 +104,6 @@ export async function runMergeChange(
       teamLayout: project.layout === "team",
       paths,
       checkBuild: deps.checkBuild,
-      onStage: (stage) => updateTaskStage(taskId, stage, store),
     });
     if (!gate.ok) {
       await failTask(taskId, gate.error, store);
@@ -115,7 +113,6 @@ export async function runMergeChange(
 
   try {
     // 2. Merge → one commit on the default branch (the version identity).
-    await updateTaskStage(taskId, "Merging…", store);
     const { mergeSha } = await deps.mergePullRequest(
       project.repoInstallationId,
       repo,
@@ -125,7 +122,6 @@ export async function runMergeChange(
 
     // 3. Roster sync is best-effort (warn-only, exactly as the inline action was): a merged commit
     //    must still cut releases even if the tree read hiccups.
-    await updateTaskStage(taskId, "Creating versions…", store);
     try {
       const source = await deps.fetchAgentSource(project.repoInstallationId, {
         ...repo,
