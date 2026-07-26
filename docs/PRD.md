@@ -22,9 +22,9 @@ embedded coding assistant, so a non-developer can:
 1. **Connect or create** the eve project (via a GitHub App) and initialize it.
 2. **Author every part of an eve agent** through the UI — including generating the TypeScript for
    tools with the help of an in-app coding agent.
-3. **Ship it** through a git-native review flow (branch → pull request → merge) that triggers a
-   **deployment** to a running instance — with the option for harnesst to fully host and operate that
-   instance on the customer's behalf.
+3. **Publish it** — one explicit action that checks and builds the saved changes, lands them as
+   one commit on the default branch, cuts a version, and **deploys** it to a running instance —
+   with the option for harnesst to fully host and operate that instance on the customer's behalf.
 
 harnesst ships as an **open-source product anyone can self-host**, and as a **commercial managed
 service** where harnesst runs the infrastructure, meters usage, and bills the customer. Both are the
@@ -58,8 +58,9 @@ pool, metering, and billing.
   git repo (eve's source of truth).
 - Let a PM **create a working, deployed agent end-to-end** without hand-writing code, including
   AI-assisted authoring of TypeScript tools.
-- Make change management **git-native**: every edit is a branch + pull request; merge triggers
-  deploy. This gives review, history, rollback, and CI for free.
+- Keep change management **git-backed**: every save is a whole-file draft over the repo, and
+  Publish lands the whole set as one commit on the default branch. The repo stays the source of
+  truth, and history, rollback, and CI come for free.
 - Provide **one-click deployment and lifecycle management** for one or many instances of an agent,
   via a pluggable `DeployTarget` adapter. Default target is a **portable container image + Postgres
   Workflow World**.
@@ -127,8 +128,9 @@ harnesst has seven pillars. v1 delivers the first five; **Recruit** and **Teams*
    `eve init`; detect and parse the agent structure.
 2. **Author** — the full visual config surface of §5, backed by files, with an embedded **Pi-based
    coding assistant** that writes/edits the code parts (tools, connections, `agent.ts`) for PMs.
-3. **Review & version** — git-native change flow: edits accumulate on a branch and open a **pull
-   request**; merge is the ship signal.
+3. **Review & version** — edits accumulate as **saved drafts** in one shared staging area; the
+   publish panel shows every change with a diff, and **Publish** is the ship signal (Save &
+   Publish cutover, M8.6).
 4. **Deploy & operate** — one-click deploy through a `DeployTarget` adapter (default: container +
    Postgres World); manage multiple instances/environments; **managed mode** where harnesst runs it and
    bills usage.
@@ -197,22 +199,27 @@ The assistant:
 name; the PM sets the value in harnesst's secrets manager (per environment), never in code. Values are
 encrypted at rest and injected at deploy time.
 
-### 7.3 Review & version — git-native flow
+### 7.3 Review & version — Save & Publish (revised, M8.6 / issue #225)
 
-- All harnesst edits (form changes and assistant code changes) land as commits on a **working branch**
-  per change-set ("Add order-lookup tool").
-- Publishing a change-set opens a **pull request** with a human-readable summary of what changed
-  (diff of files + a plain-language changelog harnesst generates).
-- **Merge = ship.** Merging the PR (in harnesst or on GitHub) triggers the deploy pipeline (§7.4).
-- Benefits inherited for free: review, approvals, history, blame, rollback (revert PR),
-  branch previews, and CI hooks (evals as a gate — later phase).
-- **Preview environments:** a PR can optionally deploy a preview instance so a PM can try the change
-  before merge (maps to eve preview deployments / a Postgres-World preview instance).
+- All harnesst edits (form changes and assistant code changes) land as **saved drafts** in one shared
+  staging area — every editor has a Save button, and an assistant turn saves its file diff the
+  same way. Saving never touches git.
+- **Publish = ship.** One button in the workspace header shows every pending change (diff, owning
+  member, who saved it), then runs the pipeline: **check → build → commit → version → deploy**.
+  A failed build means nothing lands — the drafts stay saved, and the failure names the step and
+  the member and shows the compiler's own output.
+- The commit is one compare-and-swap fast-forward onto the default branch; the commit history
+  **is** the audit trail. harnesst authors no branches and no pull requests. Developers can still
+  push or merge PRs directly on GitHub — harnesst cuts Releases for merges to the default branch via
+  webhook (and never auto-deploys them).
+- Benefits inherited for free: history, blame, rollback (§7.7), and CI hooks (evals as a gate —
+  later phase).
 
 ### 7.4 Deploy & operate — `DeployTarget` adapter
 
-**Build:** on merge, harnesst runs `eve build` to produce `.eve/` + the Nitro `.output/`, then packages a
-**container image** of the host.
+**Build:** at publish, harnesst builds the staged tree **before** the commit lands (nothing broken
+ever reaches the default branch) — `eve build` produces `.eve/` + the Nitro `.output/`, packaged
+as a **container image** of the host; the deploy step reuses that image rather than rebuilding.
 
 **`DeployTarget` adapter interface** — one seam, multiple providers. Each adapter knows how to:
 
@@ -252,27 +259,25 @@ Vercel Sandbox, AI Gateway auto-wire) and additional Worlds (Redis/Turso/Cloudfl
 - Per-instance: status, logs, runs/observability, secrets, scaling knobs, start/stop, rollback,
   and the channel endpoints (HTTP URL, Slack install, cron status).
 
-**Deploy UX (M5.6, vocabulary revised in M5.7) — Ship and Deploy.** Two verbs cover the whole
-deploy surface for a PM: _Ship makes versions; Deploy places them._ A version is **running on**
+**Deploy UX (M5.6/M5.7, revised by M8.6) — Publish and Deploy.** Two verbs cover the whole
+deploy surface for a PM: _Publish makes versions; Deploy places them._ A version is **running on**
 zero or more environments (never globally "live" — with peer environments there is no single
 live slot); each environment runs exactly one version.
 
-- **Ship** — the one-click path, on the agent's Overview (where the edit was just made): one
-  dialog confirms the target environment (the member's first preselected), then a single
-  action publishes all
-  staged drafts, merges the change request, cuts the Release, and queues a **cutover deploy** —
-  the current version keeps serving until the new one is healthy. With nothing staged, Ship offers
-  "ship latest from `main`" (absorbing the old "cut release" button). On team repos a Ship deploys
-  every member whose files the change touched. A DB-state-driven progress banner (Published →
-  vN created → Building → Running) survives refresh; a failed build leaves the previous version
-  serving and offers Retry. The careful path (Changes → review → merge → Versions) is unchanged.
-- **Deploy** — the **Deployment** tab (Changes + Versions consolidated, M5.8) tells the
-  pipeline top-to-bottom: staged changes → change requests → environments as equal rows
-  (each: running version, in-flight progress, latest failure with retry, rename/delete) →
-  version history, whose rows are badged with the environment names they run on. Any
-  version — new or old — deploys to any environment in one confirmed click (image reused —
-  seconds, no rebuild), replacing that environment's current version on health. Deploy is
-  deliberately direction-neutral: rollback is just deploying an older version again.
+- **Publish** — the one action, in the workspace header on every back-of-house page (§7.3): every
+  saved draft goes through check → build → commit → version → **cutover deploy** into the
+  project's live environment — the current version keeps serving until the new one is healthy.
+  The environment is asked at most once (single-env projects never ask; the answer persists as
+  `liveEnvironmentName`). The pipeline's five steps render live in the publish panel and, in
+  compact form, in the header control; a failed step names the member, shows the error, and
+  leaves nothing landed. With nothing saved, Publish deploys HEAD.
+- **Deploy** — the **Deployment** tab is the advanced, mostly read-only surface: environments as
+  equal rows (each: running version, in-flight progress, latest failure with retry,
+  rename/delete) over version history, whose rows are badged with the environment names they run
+  on. Any version — new or old — deploys to any environment in one confirmed click (image
+  reused — seconds, no rebuild), replacing that environment's current version on health. Deploy
+  is deliberately direction-neutral: **Roll back** — a primary action in version history — is
+  just deploying an older version again.
 
 ### 7.5 Managed commercial offering (v1)
 
@@ -340,21 +345,22 @@ eve has **no built-in agent-versioning primitive** (validated against source): i
 (`init` initializes git) and relies on **immutable deployments**. harnesst builds a thin product layer
 over that — it does _not_ invent a parallel versioning system.
 
-**A Release = an immutable build of an agent at a git commit.** Because we are already
-branch → PR → merge → deploy, the **merge commit SHA is the canonical, immutable version identity**,
-and the container image built from it is content-addressed. Immutability is therefore inherited from
-git + image digests, not engineered. A Release carries: a friendly label (auto-incremented
-`v1, v2, …` / release #N), the commit SHA, the image digest, the plain-language changelog harnesst
-already generates for the PR, author, and timestamp. Environments/deployments point at a Release.
+**A Release = an immutable build of an agent at a git commit.** Because every publish lands one
+commit on the default branch, the **publish commit SHA is the canonical, immutable version
+identity**, and the container image built from it is content-addressed. Immutability is therefore
+inherited from git + image digests, not engineered. A Release carries: a friendly label
+(auto-incremented `v1, v2, …` / release #N), the commit SHA, the image digest, the commit's
+changelog, author, and timestamp. Environments/deployments point at a Release.
 
 **Why it matters (three payoffs):**
 
 1. **Observability linkage.** Every Run is tagged with its Release/commit (§7.6). A run from two weeks
    ago reconstructs its _exact_ system prompt, tools, and skills from the repo at that commit —
    immutable versioning is what makes the observability system-prompt link truthful.
-2. **Safe iteration / revert.** _Fast rollback_ re-points an environment at a previous Release (its
-   image is retained) — near-instant, no rebuild. _Git revert_ opens an undo PR so the repo stays
-   honest. PMs can be cavalier because undo is one click.
+2. **Safe iteration / rollback.** _Roll back_ re-points an environment at a previous Release (its
+   image is retained) — near-instant, no rebuild, direction-neutral. PMs can be cavalier because
+   rollback is one click; there is no per-change undo machinery, because a failed build never
+   lands in the first place (§7.3).
 3. **Run multiple versions at once (data-plane primitive; product surface deferred in M5.6).** The
    deploy plane can run **more than one Release of the same agent concurrently** behind a
    **weighted, session-sticky traffic splitter** at ingress (a conversation stays pinned to one
@@ -405,7 +411,7 @@ exists — a template is a shortcut for creating the same files a customer could
 
 **Dependencies are npm-resolvable, full stop.** Every agent is already a complete npm project
 (scaffold ships a per-agent `package.json`; teams are npm workspaces) and every release build runs
-`npm install` in the image build — so anything in the target's `package.json` at merge time is
+`npm install` in the image build — so anything in the target's `package.json` at publish time is
 present at runtime. Template dependencies ride that machinery in two tiers:
 
 - **Light (in-repo files):** multi-file templates land under a directory the template _owns_
@@ -423,17 +429,17 @@ present at runtime. Template dependencies ride that machinery in two tiers:
 System-level dependencies (apt packages, non-npm binaries) are **out of scope** — templates run in
 the standard eve runtime image and may not mutate it. Most infra CLIs (wrangler included) are npm
 packages, so the realistic cases fit tier one. Uninstall removes the template's files but _leaves_
-npm packages (they may be shared with hand-written code); the uninstall PR lists them so the
-reviewer can prune.
+npm packages (they may be shared with hand-written code); the uninstall's saved changes list them
+so the user can prune.
 
-**Install = a change-set.** Installing an item:
+**Install = saved changes.** Installing an item:
 
-1. harnesst materializes the template's files into the right location on a **working branch** (the
-   normal §7.3 flow — review, history, rollback for free).
+1. harnesst materializes the template's files into the right location as **saved drafts** (the normal
+   §7.3 flow — visible in the publish panel, history and rollback for free).
 2. An **onboarding wizard** walks the customer through the manifest's requirements: "this agent
    needs `CLOUDFLARE_API_TOKEN` — set it now." Secret _values_ go to the secrets store (§7.2), never
    the repo; the wizard creates the per-environment placeholders.
-3. The change-set opens a PR; merge ships it like any other edit.
+3. Publish ships the install like any other edit.
 
 For agent templates the wizard first asks the **install target**: _new top-level agent_ or
 _subagent of an existing agent_. This one question is how customers choose between the two team
@@ -646,9 +652,9 @@ two-source-of-truth reconciliation problem.
 ## 10. Success metrics
 
 - **Activation:** % of connected repos that reach a first successful deploy.
-- **PM autonomy:** % of tools created via the assistant with no manual code edit before merge.
+- **PM autonomy:** % of tools created via the assistant with no manual code edit before publish.
 - **Time-to-first-agent:** median time from connect → deployed working agent.
-- **Iteration velocity:** PRs merged per agent per week.
+- **Iteration velocity:** publishes per agent per week.
 - **Managed conversion (commercial):** OSS → managed upgrade rate; usage-based revenue per account.
 
 ---
@@ -665,7 +671,7 @@ two-source-of-truth reconciliation problem.
 **Milestone 1 — Author (no deploy yet)**
 
 - Structured editors for all §5 concepts (write path).
-- Working-branch + PR flow (branch → commit edits → open PR → merge).
+- Working-branch + PR flow (branch → commit edits → open PR → merge; retired by Save & Publish, M8.6).
 - Embedded Pi assistant: generate/edit tool TypeScript; sandbox test-run; secrets UI.
 - `eve init` for new-repo creation.
 
@@ -680,7 +686,7 @@ two-source-of-truth reconciliation problem.
   plane retained).
 - Environments (dev/preview/prod seeded; superseded by user-defined environments in M5.7),
   instance status/logs.
-- Merge-triggers-deploy pipeline; optional PR preview instances.
+- Merge-triggers-deploy pipeline; optional PR preview instances (both retired by Save & Publish, M8.6).
 
 **Milestone 3 — Observe (run observability, §7.6)**
 
@@ -727,7 +733,9 @@ two-source-of-truth reconciliation problem.
   environments that had accumulated multiple live versions (newest kept at weight 100, rest
   stopped). The splitter/`trafficWeight` data model is retained without a product surface
   (§7.7 revision).
-- **Ship:** the one-click deploy (originally on the agent Overview; now the team-level Quick deploy in the tab row) — staged drafts → publish → merge →
+- **Ship:** the one-click deploy (originally on the agent Overview; later the team-level Quick
+  deploy in the tab row; **superseded by Publish in M8.6** — Ship, Quick deploy, and the
+  branch/PR/merge chain no longer exist) — staged drafts → publish → merge →
   Release → cutover deploy — with an environment picker (production default; the member's
   first environment since M5.7), team fan-out to
   affected members, "ship latest from `main`" when nothing is staged, and a refresh-proof
@@ -790,6 +798,8 @@ two-source-of-truth reconciliation problem.
   environments → version history. Team repos additionally get a repo-level Deployment
   rollup: drafts grouped by member, merge, and each member's latest version. Ship stays on
   the Overview (owner decision — the quick path lives where the edit just happened).
+  (**Superseded in M8.6:** the tab is now environments + version history only; pending changes
+  live in the publish panel.)
 - **Settings tab** (member level; merged with repo sections on single-agent repos): Model
   (moved off the Overview), Secrets (the former tab, env scoping intact), danger zone with
   Remove agent (moved off the Overview header). Repo level: General (GitHub connection),
@@ -1066,6 +1076,27 @@ two-source-of-truth reconciliation problem.
   `input.requested` (ask_question, tool approvals — previously silently dropped) is now structured
   end-to-end (live NDJSON stream, done payload, Eve history replay, runs recording) and rendered as
   callouts with clickable option buttons.
+
+**Milestone 8.6 — Save & Publish (shipped, issue #225)**
+
+- The stage → publish → change-request → merge → deploy pipeline is replaced by **two user
+  actions**: **Save** (every editor stages a whole-file draft; unchanged) and **Publish** (one
+  header control that shows every pending change with a diff and runs
+  **check → build → commit → version → deploy** as a single pipeline). A failed build lands
+  nothing; the failure names the step and member and shows the compiler's own output.
+- harnesst **authors no branches and no pull requests**: the commit is a compare-and-swap
+  fast-forward onto the default branch (an external push mid-publish triggers one
+  rebuild-and-retry). Each change is Docker-built **once** — the publish build's image is
+  promoted and the deploy reuses it.
+- The **assistant stages drafts** like everything else: a turn's file diff lands in the same
+  staging area, and nothing deploys until Publish is clicked. The `harnesst/conv-*` mirror branch
+  survives as an internal durability mechanism only.
+- The **Deployment tab** shrinks to environments + version history, with **Roll back** promoted
+  to a primary action. The environment question is asked at most once (persisted as
+  `liveEnvironmentName`); Quick deploy, the staged-count pill, per-file publish selection, and
+  the `merge_change`/`publish_change` jobs are gone.
+- The GitHub webhook's cut-Releases-on-merged-PR path survives unchanged — it serves developers
+  pushing to the repo directly, not the harnesst UI.
 
 ---
 

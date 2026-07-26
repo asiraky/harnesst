@@ -8,7 +8,6 @@ import type {
 } from "~/data/ports";
 import {
   discardDrafts as discardDraftsDirect,
-  publishDrafts as publishDraftsDirect,
   stageDraft as stageDraftDirect,
 } from "~/drafts/drafts.server";
 import {
@@ -25,11 +24,8 @@ import {
   type ShipResult,
 } from "~/deploy/ship.server";
 import { getBranchHead as getBranchHeadDirect } from "~/github/repo.server";
-import {
-  listOpenChanges as listOpenChangesDirect,
-  mergePullRequest as mergePullRequestDirect,
-} from "~/github/write.server";
 import { normalizeAgentPath } from "~/project/guard.server";
+import { publishNow, type PublishOutcome } from "~/publish/pipeline.server";
 import { getRuntime } from "~/seams/index.server";
 
 export type McpScope = "read" | "deploy" | "author";
@@ -46,9 +42,13 @@ type DeployTeamVersionResult = Pick<ShipResult, "deployed" | "skipped">;
 export interface McpToolDeps {
   store: DataStore;
   stageDraft: typeof stageDraftDirect;
-  publishDrafts: typeof publishDraftsDirect;
-  listOpenChanges: typeof listOpenChangesDirect;
-  mergePullRequest: typeof mergePullRequestDirect;
+  /** Runs the full publish pipeline (check → build → commit → version → deploy) in-request. */
+  publish(input: {
+    projectId: string;
+    originUrl: string;
+    createdBy: string;
+    envName?: string | null;
+  }): Promise<PublishOutcome>;
   discardDrafts: typeof discardDraftsDirect;
   getBranchHead: typeof getBranchHeadDirect;
   deployTeamVersion(input: {
@@ -119,16 +119,7 @@ export interface McpToolService {
   }): Promise<Record<string, unknown>>;
   publishChanges(input: {
     projectId: string;
-    paths: string[];
-    title?: string;
-  }): Promise<Record<string, unknown>>;
-  listOpenChanges(input: {
-    projectId: string;
-    limit?: number;
-  }): Promise<Record<string, unknown>>;
-  mergeChange(input: {
-    projectId: string;
-    pullRequestNumber: number;
+    environment?: string;
   }): Promise<Record<string, unknown>>;
   discardChanges(input: {
     projectId: string;
@@ -255,10 +246,8 @@ export function createMcpToolService(
     store,
     stageDraft:
       overrides.stageDraft ?? ((input) => stageDraftDirect(input, store)),
-    publishDrafts:
-      overrides.publishDrafts ?? ((input) => publishDraftsDirect(input, store)),
-    listOpenChanges: overrides.listOpenChanges ?? listOpenChangesDirect,
-    mergePullRequest: overrides.mergePullRequest ?? mergePullRequestDirect,
+    publish:
+      overrides.publish ?? ((input) => publishNow(input, undefined, store)),
     discardDrafts:
       overrides.discardDrafts ??
       ((projectId, paths) => discardDraftsDirect(projectId, paths, store)),
@@ -648,131 +637,54 @@ export function createMcpToolService(
       };
     },
 
-    async publishChanges({ projectId, paths: rawPaths, title }) {
+    async publishChanges({ projectId, environment }) {
       requireAuthor(identity);
       const project = await authorizeProject(projectId);
-      const repo = projectRepo(project);
-      const paths = normalizePathBatch(rawPaths);
-      let change;
+      projectRepo(project); // asserts a connected repository before running the pipeline
+      let outcome: PublishOutcome;
       try {
-        change = await deps.publishDrafts({
-          project: repo,
-          paths,
-          title,
+        // Runs the WHOLE pipeline in-request (check → build → commit → version → deploy) so
+        // the audit entry below can record what actually landed. The run is recorded on a
+        // workspace task exactly like a UI publish; the header control shows its progress.
+        outcome = await deps.publish({
+          projectId,
+          originUrl: `/repos/${projectId}`,
           createdBy: identity.userId,
+          envName: environment ?? null,
         });
       } catch (error) {
+        // Pre-pipeline refusals (a publish already running, nothing saved) — safe to surface.
         if (error instanceof McpToolError) throw error;
         throw new McpToolError(
-          "Unable to publish the staged changes. Review the staged paths and connected repository, then try again.",
+          error instanceof Error
+            ? error.message
+            : "Unable to publish the saved changes.",
           "invalid_state",
         );
       }
+      // Audit success AND failure: a failed run may still have committed (a deploy-step
+      // failure lands after the commit), so record exactly what exists.
       await audit("publish_changes", projectId, {
         projectId,
-        paths,
-        pullRequestNumber: change.pullRequestNumber,
-        branch: change.branch,
-        base: change.base,
+        taskId: outcome.taskId,
+        status: outcome.status,
+        commitSha: outcome.commitSha,
+        releaseIds: outcome.releaseIds,
+        deploymentIds: outcome.deploymentIds,
+        ...(outcome.failedStep ? { failedStep: outcome.failedStep } : {}),
       });
-      return { projectId, change };
-    },
-
-    async listOpenChanges({ projectId, limit = 20 }) {
-      requireAuthor(identity);
-      const project = await authorizeProject(projectId);
-      const repo = projectRepo(project);
-      if (!Number.isInteger(limit) || limit < 1 || limit > 50) {
+      if (outcome.status === "failed") {
         throw new McpToolError(
-          "The open-change limit must be an integer from 1 to 50.",
-          "invalid_input",
-        );
-      }
-      let changes;
-      try {
-        changes = await deps.listOpenChanges(
-          repo.repoInstallationId,
-          { owner: repo.repoOwner, repo: repo.repoName },
-          limit,
-        );
-      } catch (error) {
-        if (error instanceof McpToolError) throw error;
-        throw new McpToolError(
-          "Unable to list open changes for the connected repository.",
+          outcome.error ?? "The publish failed. Fix the reported problem and publish again.",
           "invalid_state",
         );
       }
-      await audit("list_open_changes", projectId, { projectId, limit });
-      return { changes };
-    },
-
-    async mergeChange({ projectId, pullRequestNumber }) {
-      requireAuthor(identity);
-      const project = await authorizeProject(projectId);
-      const repo = projectRepo(project);
-      if (!Number.isInteger(pullRequestNumber) || pullRequestNumber < 1) {
-        throw new McpToolError(
-          "The pull request number must be a positive integer.",
-          "invalid_input",
-        );
-      }
-      let changes;
-      try {
-        changes = await deps.listOpenChanges(
-          repo.repoInstallationId,
-          { owner: repo.repoOwner, repo: repo.repoName },
-          50,
-        );
-      } catch {
-        throw new McpToolError(
-          "Unable to resolve the requested open change.",
-          "invalid_state",
-        );
-      }
-      const change = changes.find(
-        (candidate) => candidate.number === pullRequestNumber,
-      );
-      if (!change) {
-        throw new McpToolError("Open change not found.", "not_found");
-      }
-      if (change.base !== project.defaultBranch) {
-        throw new McpToolError(
-          "The open change does not target this project's default branch.",
-          "invalid_state",
-        );
-      }
-      let merge;
-      try {
-        merge = await deps.mergePullRequest(
-          repo.repoInstallationId,
-          { owner: repo.repoOwner, repo: repo.repoName },
-          pullRequestNumber,
-          change.branch,
-        );
-      } catch (error) {
-        if (error instanceof McpToolError) throw error;
-        throw new McpToolError(
-          "Unable to merge the requested open change.",
-          "invalid_state",
-        );
-      }
-      await audit("merge_change", projectId, {
-        projectId,
-        pullRequestNumber,
-        branch: change.branch,
-        base: change.base,
-        mergeSha: merge.mergeSha,
-        method: merge.method,
-      });
       return {
-        change: {
-          number: change.number,
-          title: change.title,
-          url: change.url,
-          branch: change.branch,
-          base: change.base,
-        },
-        merge,
+        projectId,
+        taskId: outcome.taskId,
+        commitSha: outcome.commitSha,
+        releaseIds: outcome.releaseIds,
+        deploymentIds: outcome.deploymentIds,
       };
     },
 

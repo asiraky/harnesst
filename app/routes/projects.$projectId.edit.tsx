@@ -2,10 +2,10 @@
  * File editor (Author pillar, M1) — CodeMirror-backed, for any file under `agent/`.
  *
  * Reached from a resource link or the "New <kind>" dialog on the Overview. A file that exists
- * nowhere yet (no repo content, no draft, no pending change) starts from its category's
- * starter template (~/eve/templates). Save formats code files with Prettier, then STAGES a
- * draft (refresh-proof, no git write); the Changes tab publishes staged drafts as one PR
- * (PRD §7.3).
+ * nowhere yet (no repo content, no draft) starts from its category's starter template
+ * (~/eve/templates). Save formats code files with Prettier, then writes a draft
+ * (refresh-proof, no git write); the header Publish control takes every saved change live
+ * (issue #225).
  */
 import { getSessionAuth, sessionLoader } from "~/auth/session.server";
 import { Pencil } from "lucide-react";
@@ -60,7 +60,6 @@ interface FileEditView {
   /** Content came from a category starter template (brand-new resource). */
   isNew: boolean;
   source: FileView["source"];
-  change: FileView["change"];
   stagedDeletion: boolean;
 }
 
@@ -131,7 +130,6 @@ export const loader = (args: LoaderFunctionArgs) =>
         exists: view.existsInRepo,
         isNew: template !== null,
         source: view.source,
-        change: view.change,
         stagedDeletion: view.stagedDeletion,
       };
     },
@@ -221,7 +219,6 @@ function Editor({
     }
   };
 
-  const base = `/repos/${project.id}`;
   const ctx = contextPath(project.id, isTeam ? activeAgent : null);
 
   return (
@@ -251,22 +248,20 @@ function Editor({
         }
         description={
           isNew
-            ? "Starting from a template — edit it, then Save to stage the new file."
-            : "Saving stages the change — publish staged changes as one pull request from the Changes tab."
+            ? "Starting from a template — edit it, then Save to keep the new file until you publish."
+            : "Save keeps the change here until you publish — the Publish button in the header takes everything you've saved live."
         }
       />
 
       {actionData?.error && (
         <Alert variant="destructive" className="mb-6">
-          <AlertTitle>Couldn&rsquo;t stage the change</AlertTitle>
+          <AlertTitle>Couldn&rsquo;t save the change</AlertTitle>
           <AlertDescription>{actionData.error}</AlertDescription>
         </Alert>
       )}
       <FileStateBanner
         saved={!!actionData?.ok}
         source={loaderData.source}
-        change={loaderData.change}
-        base={base}
         stagedDeletion={loaderData.stagedDeletion}
       />
 

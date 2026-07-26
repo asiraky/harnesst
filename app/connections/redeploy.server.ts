@@ -18,8 +18,8 @@
  *  - agent not currently deployed → connect only, no redeploy ("not-deployed").
  *  - the redeploy queue itself fails → surface it ("error"); the grant is already saved regardless.
  *  - staged drafts affecting this agent exist → do NOT silently redeploy the old committed version;
- *    return "staged" so the UI prompts the user to deliberately ship/redeploy. (Queueing an existing
- *    release never publishes drafts, but honoring the guard keeps the user in control of what ships.)
+ *    return "staged" so the UI prompts the user to deliberately publish/redeploy. (Queueing an existing
+ *    release never publishes drafts, but honoring the guard keeps the user in control of what goes live.)
  *
  * Deps are injected so the decision logic is unit-testable with fakes; `defaultDeps()` wires the
  * real server modules.
@@ -85,7 +85,7 @@ export async function redeployAfterConnect(
   if (live.length === 0) return { status: "not-deployed" };
 
   // 3. Staged-changes guard: a draft affecting this agent (its own, or a shared/null-agent file)
-  //    means redeploying the old committed version would ignore work the user hasn't shipped —
+  //    means redeploying the old committed version would ignore work the user hasn't published —
   //    hand it back to the UI to prompt, rather than silently redeploying.
   const drafts = await deps.listDrafts(input.projectId);
   const affectsAgent = drafts.some(

@@ -6,7 +6,8 @@
  * frontmatter keys are preserved verbatim. Advanced modes stay available: "edit raw markdown"
  * opens the code editor on the same file (?raw=1 skips the redirect back here), and
  * TypeScript schedules (`<name>.ts`, defineSchedule with a run() handler) always open in the
- * code editor. Save stages a draft like every other editor.
+ * code editor. Save writes a draft like every other editor; publishing is the header
+ * Publish control's job.
  */
 import { getSessionAuth, sessionLoader } from "~/auth/session.server";
 import { CalendarClock } from "lucide-react";
@@ -102,7 +103,6 @@ export const loader = (args: LoaderFunctionArgs) =>
         exists: view.existsInRepo,
         isNew: view.content === null,
         source: view.source,
-        change: view.change,
         stagedDeletion: view.stagedDeletion,
       };
     },
@@ -191,7 +191,6 @@ function ScheduleForm({
     setMessage(loaderData.message);
   }
 
-  const base = `/repos/${project.id}`;
   const ctx = contextPath(project.id, isTeam ? activeAgent : null);
   const name = path.split("/").pop()!.replace(/\.md$/, "");
 
@@ -225,15 +224,13 @@ function ScheduleForm({
 
       {actionData?.error && (
         <Alert variant="destructive" className="mb-6">
-          <AlertTitle>Couldn&rsquo;t stage the change</AlertTitle>
+          <AlertTitle>Couldn&rsquo;t save the change</AlertTitle>
           <AlertDescription>{actionData.error}</AlertDescription>
         </Alert>
       )}
       <FileStateBanner
         saved={!!actionData?.ok}
         source={loaderData.source}
-        change={loaderData.change}
-        base={base}
         stagedDeletion={loaderData.stagedDeletion}
       />
 

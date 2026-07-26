@@ -1,8 +1,8 @@
 /**
- * Staged change-sets (PRD §7.3): saving an editor STAGES a draft (Postgres, refresh-proof);
- * PUBLISHING turns the selected drafts into one working branch + one PR via proposeChange.
- * The product analogue of git's staging area — per-file rows so a change can be unchecked at
- * publish time, which a working-branch-of-commits couldn't do without history rewriting.
+ * Saved drafts (PRD §7.3): saving an editor writes a draft row (Postgres, refresh-proof) and
+ * does nothing else. Publishing — the pipeline in app/publish/pipeline.server.ts — takes EVERY
+ * saved draft through check → build → commit → version → deploy in one action (issue #225).
+ * Per-file rows so the publish panel can show and discard individual files.
  *
  * Drafts are in-flight edits only; the repo remains the source of truth for published config.
  */
@@ -14,14 +14,8 @@ import {
   LEGACY_OPENROUTER_PROVIDER_PACKAGE,
   OPENROUTER_PROVIDER_PACKAGE,
 } from "~/eve/agentModule";
-import { getAgentSource } from "~/github/cached.server";
+import { EMPTY_TEAM_MARKER } from "~/eve/parse";
 import { readAgentFile } from "~/github/repo.server";
-import {
-  findOpenChangeForFile,
-  proposeChange,
-  type ProposedChange,
-} from "~/github/write.server";
-import { newId } from "~/lib/id";
 import { isAssistantConfigPath } from "~/project/guard.server";
 import { getRuntime } from "~/seams/index.server";
 import type { BuildCheckRequest, BuildCheckResult } from "~/seams/types";
@@ -51,9 +45,9 @@ export async function stageDraft(
 }
 
 /**
- * Stage DELETIONS: one null-content draft per path. Deletes stack in the same change-set as
- * edits — nothing touches git until the user publishes or ships from the Deployment tab.
- * Any staged edit on the same path is superseded (the upsert overwrites it).
+ * Save DELETIONS: one null-content draft per path. Deletes ride in the same change-set as
+ * edits — nothing touches git until the user publishes. Any saved edit on the same path is
+ * superseded (the upsert overwrites it).
  */
 export async function stageDeletions(
   input: { projectId: string; paths: string[]; createdBy?: string | null },
@@ -67,7 +61,7 @@ export async function stageDeletions(
   }
 }
 
-/** All staged drafts for a project, oldest first. */
+/** All saved drafts for a project, oldest first. */
 export function listDrafts(
   projectId: string,
   store: DataStore = getRuntime().data,
@@ -75,7 +69,7 @@ export function listDrafts(
   return store.drafts.listByProject(projectId);
 }
 
-/** The staged draft for one file, if any (editors overlay this over the repo content). */
+/** The saved draft for one file, if any (editors overlay this over the repo content). */
 export function getDraft(
   projectId: string,
   path: string,
@@ -84,7 +78,7 @@ export function getDraft(
   return store.drafts.get(projectId, path);
 }
 
-/** Discard staged drafts without publishing. */
+/** Discard saved drafts without publishing. */
 export function discardDrafts(
   projectId: string,
   paths: string[],
@@ -137,17 +131,35 @@ function orphanedMemberName(path: string): string | null {
   return path.match(/^agents\/([^/]+)\//)?.[1] ?? null;
 }
 
+/** The user-facing failure for orphaned drafts: name the dead member(s), list the paths. */
+export function orphanedDraftsMessage(orphaned: DraftChange[]): string {
+  const names = [...new Set(orphaned.map((d) => orphanedMemberName(d.path)).filter(Boolean))];
+  const plural = orphaned.length === 1 ? "" : "s";
+  return `Can't publish — ${orphaned.length} saved change${plural} ${
+    orphaned.length === 1 ? "belongs" : "belong"
+  } to ${
+    names.length === 1 ? `"${names[0]}"` : `agents (${names.map((n) => `"${n}"`).join(", ")})`
+  }, which is no longer part of this team. Discard ${
+    orphaned.length === 1 ? "it" : "them"
+  }, then publish again:\n\n${orphaned.map((d) => `- \`${d.path}\``).join("\n")}`;
+}
+
 /**
- * The member roots a selection spans — the gate builds each one. `undefined` means the
- * selection touches a truly shared file (e.g. the root package.json), where only a repo-root
- * check can see the effect.
+ * The member roots a change-set spans — the publish build runs once per root. `undefined` means
+ * the set touches a truly shared file (e.g. the root package.json), where only a repo-root
+ * build can see the effect.
  */
-function inferBuildRoots(
+export function inferBuildRoots(
   agents: { id: string; root: string }[],
   drafts: DraftChange[],
 ): string[] | undefined {
   const roots = new Set<string>();
   for (const draft of drafts) {
+    // Assistant config (`.harnesst/assistant/**`) compiles into nothing — the pipeline restarts the
+    // assistant instead of building. Skip it BEFORE the agentId lookup: these drafts carry the
+    // internal assistant row's id, whose `.harnesst/assistant` root is not a buildable eve project,
+    // and a mixed set (member edit + assistant config) must build exactly the member roots.
+    if (isAssistantConfigPath(draft.path)) continue;
     const agentRoot =
       (draft.agentId
         ? agents.find((a) => a.id === draft.agentId)?.root
@@ -156,9 +168,10 @@ function inferBuildRoots(
       roots.add(agentRoot);
       continue;
     }
-    // Marketplace provenance is repo-level but should not force a whole-repo build when
-    // selected with member install/update drafts.
-    if (draft.path === "harnesst-lock.json") continue;
+    // Repo-level harnesst metadata should not force a whole-repo build: marketplace provenance
+    // (harnesst-lock.json) and the team-layout marker README (saved by a remove-member so an
+    // emptied team stays detectable) have no build of their own.
+    if (draft.path === "harnesst-lock.json" || draft.path === EMPTY_TEAM_MARKER) continue;
     return undefined;
   }
   return [...roots];
@@ -166,29 +179,24 @@ function inferBuildRoots(
 
 /**
  * What an editor should show for a file, and where that value comes from. The editor always
- * displays the user's LATEST intended value, walking back through the change lifecycle:
- *   staged draft → open change request → default branch.
- * Without the middle step, publishing made an edit invisible in the editors (the draft is
- * deleted, main still has the old value) until the change request merged — "I set the model
- * yesterday, why does the editor show the old one?".
+ * displays the user's LATEST intended value: a saved draft wins over the default branch —
+ * without that, an unpublished save would be invisible in the editors ("I set the model
+ * yesterday, why does the editor show the old one?").
  */
 export interface FileView {
   /** Content to show; null when the file exists nowhere yet. */
   content: string | null;
-  source: "draft" | "change-request" | "repo";
-  /** The file exists on the default branch (vs. being newly created by a draft/change). */
+  source: "draft" | "repo";
+  /** The file exists on the default branch (vs. being newly created by a draft). */
   existsInRepo: boolean;
-  /** Set when source is "change-request": the open change holding the pending value. */
-  change: { number: number; title: string } | null;
-  /** A deletion is staged for this path (editors show the repo content plus a banner;
-   * saving stages new content, which un-deletes). */
+  /** A deletion is saved for this path (editors show the repo content plus a banner;
+   * saving new content un-deletes). */
   stagedDeletion: boolean;
 }
 
 /** GitHub reads injected so unit tests run without a repo. */
 export interface FileViewDeps {
   readFile: typeof readAgentFile;
-  findOpenChange: typeof findOpenChangeForFile;
 }
 
 export async function resolveFileView(
@@ -200,54 +208,29 @@ export async function resolveFileView(
   },
   path: string,
   store: DataStore = getRuntime().data,
-  deps: FileViewDeps = { readFile: readAgentFile, findOpenChange: findOpenChangeForFile },
+  deps: FileViewDeps = { readFile: readAgentFile },
 ): Promise<FileView> {
   const repo = { owner: project.repoOwner, repo: project.repoName };
-  const [repoContent, draft, pending] = await Promise.all([
+  const [repoContent, draft] = await Promise.all([
     deps.readFile(project.repoInstallationId, repo, path),
     store.drafts.get(project.id, path),
-    deps.findOpenChange(project.repoInstallationId, repo, path),
   ]);
   const existsInRepo = repoContent !== null;
 
-  // A staged draft is the newest edit — it wins even over an open change request. A
-  // deletion draft (null content) still shows the repo content so there's something to
-  // look at; the flag drives a "staged for deletion" banner.
+  // A saved draft is the newest edit — it wins over the repo. A deletion draft (null content)
+  // still shows the repo content so there's something to look at; the flag drives the
+  // "will be deleted" banner.
   if (draft) {
     return draft.content === null
-      ? { content: repoContent, source: "draft", existsInRepo, change: null, stagedDeletion: true }
-      : { content: draft.content, source: "draft", existsInRepo, change: null, stagedDeletion: false };
+      ? { content: repoContent, source: "draft", existsInRepo, stagedDeletion: true }
+      : { content: draft.content, source: "draft", existsInRepo, stagedDeletion: false };
   }
 
-  if (pending) {
-    const pendingContent = await deps.readFile(
-      project.repoInstallationId,
-      { ...repo, ref: pending.branch },
-      path,
-    );
-    return {
-      content: pendingContent ?? repoContent,
-      source: "change-request",
-      existsInRepo,
-      change: { number: pending.number, title: pending.title },
-      stagedDeletion: false,
-    };
-  }
-
-  return { content: repoContent, source: "repo", existsInRepo, change: null, stagedDeletion: false };
+  return { content: repoContent, source: "repo", existsInRepo, stagedDeletion: false };
 }
 
-/** Injected so unit tests exercise selection/cleanup without GitHub. */
-export type ProposeFn = typeof proposeChange;
-
-/** Publish gate: compile-check the drafts against the target branch (injectable in tests). */
+/** Publish build check: compile-check the drafts against the target branch (injectable in tests). */
 export type CheckBuildFn = (req: BuildCheckRequest) => Promise<BuildCheckResult>;
-
-/** Default gate: the runtime DeployTarget's checkBuild, or skip when it has none. */
-const runtimeCheckBuild: CheckBuildFn = async (req) => {
-  const target = getRuntime().deployTarget;
-  return target.checkBuild ? target.checkBuild(req) : { ok: true, skipped: true };
-};
 
 /** Repo tree reader for the orphan check (injectable in tests). */
 export type ListRepoPathsFn = (input: {
@@ -256,18 +239,7 @@ export type ListRepoPathsFn = (input: {
   repo: string;
 }) => Promise<string[]>;
 
-/** Default: the cached repo source's paths; on any failure, fall back to an empty tree so the
- *  orphan check degrades to roster + selection rather than blocking a publish on a GitHub hiccup. */
-const runtimeListRepoPaths: ListRepoPathsFn = async ({ installationId, owner, repo }) => {
-  try {
-    const source = await getAgentSource(installationId, { owner, repo });
-    return source.paths;
-  } catch {
-    return [];
-  }
-};
-
-type PublishFile = { path: string; content: string | null };
+export type PublishFile = { path: string; content: string | null };
 
 function packageJsonPathForAgentRoot(root: string): string {
   if (root === "agent") return "package.json";
@@ -295,7 +267,7 @@ function usesOpenRouter(source: string | null | undefined): boolean {
   );
 }
 
-async function normalizeOpenRouterPackageDrafts(input: {
+export async function normalizeOpenRouterPackageDrafts(input: {
   project: {
     repoInstallationId: string;
     repoOwner: string;
@@ -382,142 +354,3 @@ async function normalizeOpenRouterPackageDrafts(input: {
   return [...byPath.values()];
 }
 
-/**
- * Publish the SELECTED staged drafts as one change-set: one branch, one commit per file, one
- * PR. Published drafts are deleted (they're now on the branch); unselected drafts stay staged
- * for a later publish. Paths not actually staged are ignored.
- */
-export async function publishDrafts(
-  input: {
-    project: {
-      id: string;
-      repoInstallationId: string;
-      repoOwner: string;
-      repoName: string;
-      defaultBranch: string;
-    };
-    /** Paths the human left checked in the staging list. */
-    paths: string[];
-    title?: string;
-    createdBy?: string | null;
-    /**
-     * Progress callback (issue #142): invoked before each member root's build check with a human
-     * stage label, so a queued publish can stream "Checking the build for … (i/n)…" into the
-     * workspace task indicator. Absent for the synchronous callers that don't render progress.
-     */
-    onStage?: (stage: string) => void | Promise<void>;
-  },
-  store: DataStore = getRuntime().data,
-  propose: ProposeFn = proposeChange,
-  checkBuild: CheckBuildFn = runtimeCheckBuild,
-  listRepoPaths: ListRepoPathsFn = runtimeListRepoPaths,
-): Promise<ProposedChange> {
-  const staged = await store.drafts.listByProject(input.project.id);
-  const selected = staged.filter((d) => input.paths.includes(d.path));
-  if (selected.length === 0) {
-    throw new Error("No staged changes selected to publish.");
-  }
-
-  const agents = await store.agents.listByProject(input.project.id);
-
-  // Orphan gate (issue #67): a draft stranded under a member root that the roster, repo tree, and
-  // selection no longer back would reach the build gate as a package.json with no agent code — eve
-  // fails opaquely ("Could not resolve an eve agent root"). Detect it first and attribute the
-  // blocking member so the user can discard instead of being permanently bricked.
-  const repoPaths = await listRepoPaths({
-    installationId: input.project.repoInstallationId,
-    owner: input.project.repoOwner,
-    repo: input.project.repoName,
-  });
-  const orphaned = findOrphanedDrafts(agents, repoPaths, selected);
-  if (orphaned.length > 0) {
-    const names = [...new Set(orphaned.map((d) => orphanedMemberName(d.path)).filter(Boolean))];
-    const plural = orphaned.length === 1 ? "" : "s";
-    throw new Error(
-      `Can't publish — ${orphaned.length} staged change${plural} ${
-        orphaned.length === 1 ? "belongs" : "belong"
-      } to ${
-        names.length === 1 ? `"${names[0]}"` : `agents (${names.map((n) => `"${n}"`).join(", ")})`
-      }, which is no longer part of this team. Discard ${
-        orphaned.length === 1 ? "it" : "them"
-      } below, then publish again:\n\n${orphaned.map((d) => `- \`${d.path}\``).join("\n")}`,
-    );
-  }
-
-  // Publish gate: the change-set must compile against the branch it targets. A failed check
-  // creates NOTHING (no branch, no PR) and keeps the drafts staged so they can be fixed and
-  // republished — broken code never becomes a change request. The gate builds each member
-  // directory the selection touches (a multi-member publish — e.g. installing a channel on
-  // several agents — checks every affected member; in a team repo the root is not an eve
-  // project, so collapsing to one whole-repo build would always fail). For staged new members,
-  // there is no agent row yet, so the root is inferred from `agents/<name>/...`. Selections
-  // touching truly shared files check the repo root.
-  const roots = inferBuildRoots(agents, selected);
-  const files = await normalizeOpenRouterPackageDrafts({
-    project: input.project,
-    files: selected.map((d) => ({ path: d.path, content: d.content })),
-  });
-
-  // The built-in assistant's config (.harnesst/assistant/** markdown + JSON) is not part of any eve
-  // build, so a changeset of ONLY those files has nothing to compile — skip the gate. Any member
-  // file in the selection still triggers the normal build check.
-  const assistantConfigOnly = selected.every((d) => isAssistantConfigPath(d.path));
-  if (!assistantConfigOnly) {
-    // A lock-only selection has no member root; fall through to the repo-root check rather
-    // than silently skipping the gate. Sequential on purpose: checkEveBuild reuses one
-    // docker tag per project, so concurrent checks would race on it.
-    const buildRoots = !roots || roots.length === 0 ? [undefined] : roots;
-    for (const [i, agentRoot] of buildRoots.entries()) {
-      await input.onStage?.(
-        `Checking the build for ${agentRoot ?? "the repository"}${
-          buildRoots.length > 1 ? ` (${i + 1}/${buildRoots.length})` : ""
-        }…`,
-      );
-      const check = await checkBuild({
-        projectId: input.project.id,
-        repo: { owner: input.project.repoOwner, repo: input.project.repoName },
-        ref: input.project.defaultBranch,
-        installationId: input.project.repoInstallationId,
-        overlay: files,
-        agentRoot,
-      });
-      if (!check.ok) {
-        const scope = buildRoots.length > 1 && agentRoot ? ` for \`${agentRoot}\`` : "";
-        throw new Error(
-          `Build check failed${scope} — no change request was created. Fix this and publish again:\n\n${check.output}`,
-        );
-      }
-    }
-  }
-
-  const deletions = selected.filter((d) => d.content === null).length;
-  const title =
-    input.title?.trim() ||
-    (files.length === 1
-      ? `${deletions === 1 ? "Remove" : "Update"} ${selected[0].path}`
-      : `Update ${files.length} agent files`);
-  const body = [
-    "Published from harnesst's staged changes:",
-    ...files.map((d) => `- ${d.content === null ? "delete " : ""}\`${d.path}\``),
-  ].join("\n");
-
-  const change = await propose(
-    input.project.repoInstallationId,
-    { owner: input.project.repoOwner, repo: input.project.repoName },
-    {
-      base: input.project.defaultBranch,
-      branch: `harnesst/publish-${newId()}`,
-      files,
-      title,
-      body,
-      commitMessage: title,
-    },
-  );
-
-  // Only after the PR exists: the published drafts now live on the branch.
-  await store.drafts.deleteByPaths(
-    input.project.id,
-    selected.map((d) => d.path),
-  );
-  return change;
-}

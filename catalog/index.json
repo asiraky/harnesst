@@ -133,8 +133,8 @@
       "type": "skill",
       "name": "Authoring eve agents with harnesst MCP",
       "version": "0.1.0",
-      "description": "End-to-end guidance for authoring eve agents through harnesst's MCP server: stage complete files, publish one reviewable PR, merge after review, deploy the exact merge, and poll every deployment until live.",
-      "hash": "37ee01b0b60ec087e797d960f86cb553a97e5052"
+      "description": "End-to-end guidance for authoring eve agents through harnesst's MCP server: save complete files, review every pending change, publish once, and poll every deployment until live.",
+      "hash": "2aec95b425003fa028e0a3f0346b1d4b2a0d4adf"
     },
     {
       "id": "legal-advisor",

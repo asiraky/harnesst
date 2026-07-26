@@ -75,11 +75,13 @@ describe("deleteRepository", () => {
     expect(await store.environments.listByProject(project.id)).toHaveLength(0);
     expect(await store.deployments.listByEnvironment(env.id)).toHaveLength(0);
     expect(await store.releases.listByProject(project.id)).toHaveLength(0);
-    expect(store.auditEntries).toContainEqual({
-      action: "repository.delete",
-      target: "Doomed",
-      orgId: ORG,
-    });
+    expect(store.auditEntries).toContainEqual(
+      expect.objectContaining({
+        action: "repository.delete",
+        target: "Doomed",
+        orgId: ORG,
+      }),
+    );
   });
 
   it("falls back to stop() when the target has no destroy()", async () => {

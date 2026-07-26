@@ -70,8 +70,13 @@ export interface FakeStore extends DataStore {
   getConversationRead(sessionId: string, userId: string): ConversationRead | null;
   /** Force the next N release inserts to raise a version-collision (exercises retry). */
   forceReleaseCollisions(n: number): void;
-  /** Inspect recorded audit entries. */
-  readonly auditEntries: { action: string; target?: string | null; orgId: string }[];
+  /** Inspect recorded audit entries (meta included — pipeline audits assert on it). */
+  readonly auditEntries: {
+    action: string;
+    target?: string | null;
+    orgId: string;
+    meta?: Record<string, unknown> | null;
+  }[];
 }
 
 export function makeFakeStore(): FakeStore {
@@ -91,7 +96,12 @@ export function makeFakeStore(): FakeStore {
   const runs = new Map<string, Run>();
   const inboxItems = new Map<string, InboxItem>();
   const conversationReads = new Map<string, ConversationRead>(); // key: sessionId|userId
-  const auditEntries: { action: string; target?: string | null; orgId: string }[] = [];
+  const auditEntries: {
+    action: string;
+    target?: string | null;
+    orgId: string;
+    meta?: Record<string, unknown> | null;
+  }[] = [];
   let forcedCollisions = 0;
 
   const cascadeAgent = (agentId: string) => {
@@ -123,6 +133,7 @@ export function makeFakeStore(): FakeStore {
         repoName: p.repoName ?? null,
         repoInstallationId: p.repoInstallationId ?? null,
         defaultBranch: p.defaultBranch ?? "main",
+        liveEnvironmentName: p.liveEnvironmentName ?? null,
         createdAt: new Date(0),
         updatedAt: new Date(0),
       };
@@ -555,11 +566,16 @@ export function makeFakeStore(): FakeStore {
           repoName: input.repoName ?? null,
           repoInstallationId: input.repoInstallationId ?? null,
           defaultBranch: input.defaultBranch ?? "main",
+          liveEnvironmentName: null,
           createdAt: new Date(++seq),
           updatedAt: new Date(seq),
         };
         projects.set(row.id, row);
         return row;
+      },
+      async setLiveEnvironmentName(pid, name) {
+        const p = projects.get(pid);
+        if (p) projects.set(pid, { ...p, liveEnvironmentName: name, updatedAt: new Date(++seq) });
       },
       async deleteById(pid) {
         projects.delete(pid);
@@ -619,6 +635,17 @@ export function makeFakeStore(): FakeStore {
         }
         return n;
       },
+      async failRunningByKind(kind, error) {
+        const failed: Job[] = [];
+        for (const [jid, j] of jobs) {
+          if (j.status === "running" && j.kind === kind) {
+            const row = { ...j, status: "failed", error, updatedAt: new Date(++seq) };
+            jobs.set(jid, row);
+            failed.push(row);
+          }
+        }
+        return failed;
+      },
       async statsByStatus() {
         const out: Record<string, number> = {};
         for (const j of jobs.values()) out[j.status] = (out[j.status] ?? 0) + 1;
@@ -628,6 +655,21 @@ export function makeFakeStore(): FakeStore {
 
     workspaceTasks: {
       async insert(input) {
+        // Model workspace_tasks_running_subject_uq: at most one running task per
+        // (project, subjectKey) — the §2.9 gate two concurrent publish triggers race on.
+        if (
+          [...workspaceTasks.values()].some(
+            (t) =>
+              t.projectId === input.projectId &&
+              t.subjectKey === input.subjectKey &&
+              t.status === "running",
+          )
+        ) {
+          throw Object.assign(new Error("duplicate key value violates unique constraint"), {
+            code: "23505",
+            constraint_name: "workspace_tasks_running_subject_uq",
+          });
+        }
         const tid = id("wtask");
         const now = new Date(++seq);
         const row: WorkspaceTask = {
@@ -636,7 +678,7 @@ export function makeFakeStore(): FakeStore {
           kind: input.kind,
           subjectKey: input.subjectKey,
           label: input.label,
-          stage: input.stage ?? null,
+          steps: input.steps ?? null,
           status: "running",
           originUrl: input.originUrl,
           resultUrl: null,
@@ -678,6 +720,11 @@ export function makeFakeStore(): FakeStore {
           ) ?? null
         );
       },
+      async listRunningByKind(kind) {
+        return [...workspaceTasks.values()].filter(
+          (t) => t.kind === kind && t.status === "running",
+        );
+      },
     },
 
     drafts: {
@@ -709,11 +756,24 @@ export function makeFakeStore(): FakeStore {
       async deleteByPaths(projectId, paths) {
         for (const p of paths) drafts.delete(`${projectId}|${p}`);
       },
+      async deletePublished(projectId, entries) {
+        for (const e of entries) {
+          const key = `${projectId}|${e.path}`;
+          const row = drafts.get(key);
+          // A row re-saved after the pipeline captured it (newer updatedAt) stays saved.
+          if (row && row.updatedAt.getTime() <= e.updatedAt.getTime()) drafts.delete(key);
+        }
+      },
     },
 
     audit: {
       async record(input) {
-        auditEntries.push({ action: input.action, target: input.target, orgId: input.orgId });
+        auditEntries.push({
+          action: input.action,
+          target: input.target,
+          orgId: input.orgId,
+          meta: input.meta,
+        });
       },
     },
 

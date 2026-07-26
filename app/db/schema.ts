@@ -16,6 +16,8 @@
  */
 import { sql } from "drizzle-orm";
 
+// Type-only (erased at runtime, so no import cycle): the publish pipeline's step shape.
+import type { PipelineStep } from "~/data/ports";
 import { newId } from "~/lib/id";
 import { organization, session as authSession, team, user } from "./auth-schema";
 import {
@@ -308,6 +310,12 @@ export const projects = pgTable(
     repoName: text("repo_name"),
     repoInstallationId: text("repo_installation_id"),
     defaultBranch: text("default_branch").notNull().default("main"),
+    /**
+     * The environment Publish deploys into (§2.8: never ask which environment more than once).
+     * Null until first resolved — a single-env project persists its only env name on first
+     * publish; a multi-env project persists the user's one-time answer from the publish panel.
+     */
+    liveEnvironmentName: text("live_environment_name"),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
@@ -338,13 +346,13 @@ export const agents = pgTable(
     name: text("name").notNull(),
     root: text("root").notNull(),
     /**
-     * A rename in flight (team members): the roster name the open `harnesst/rename-member-*` PR will
-     * land. Set the moment the rename change-set is opened; the roster sync maps the old row to
-     * this name IN PLACE when the merge is detected (the new `agents/<pendingName>/` directory
-     * appears and the old one is gone), then clears it — so the row id, and every FK to it
-     * (environments, releases, secrets, drafts, …), survives the rename. Null when no rename is
-     * pending. Root single-agent renames are instant (name is decoupled from the directory) and
-     * never set this.
+     * A rename in flight (team members): the roster name the saved directory move will land.
+     * Set the moment the rename's file set is saved as drafts (settings.tsx); the roster sync
+     * maps the old row to this name IN PLACE once the published tree shows the new
+     * `agents/<pendingName>/` directory and the old one gone, then clears it — so the row id,
+     * and every FK to it (environments, releases, secrets, drafts, …), survives the rename.
+     * Null when no rename is pending. Root single-agent renames are instant (name is decoupled
+     * from the directory) and never set this.
      */
     pendingName: text("pending_name"),
     /**
@@ -448,12 +456,12 @@ export const deployments = pgTable(
 );
 
 /**
- * Staged, unpublished edits — the product's "git staging area" (PRD §7.3: edits accumulate
- * per change-set; PUBLISHING opens the PR). One row per (project, path), latest content wins.
- * Saving an editor stages a draft here (no git write); the Changes tab lists drafts with
- * checkboxes and Publish turns the selected ones into one branch + one PR, then deletes them.
- * The repo stays the source of truth for published config — this table only ever holds
- * in-flight edits, and rows are short-lived.
+ * Saved, unpublished edits (issue #225). One row per (project, path), latest content wins.
+ * Saving an editor (or an assistant turn's sync) writes a draft here — no git write. The header
+ * Publish control lists every saved draft; Publish takes ALL of them through the pipeline
+ * (check → build → commit → version → deploy) and deletes the published rows. The repo stays
+ * the source of truth for published config — this table only ever holds in-flight edits, and
+ * rows are short-lived.
  */
 export const draftChanges = pgTable(
   "draft_changes",
@@ -472,9 +480,9 @@ export const draftChanges = pgTable(
     /** Repo-relative path under the agent's root (e.g. "agent/instructions.md"). */
     path: text("path").notNull(),
     /**
-     * Full new file contents (drafts are whole-file, like the editors). NULL stages a
-     * DELETION of the path — deletes ride the same stage → publish/ship rails as edits
-     * instead of opening their own change request on the spot.
+     * Full new file contents (drafts are whole-file, like the editors). NULL saves a
+     * DELETION of the path — deletes ride the same save → publish rails as edits instead
+     * of landing on the spot.
      */
     content: text("content"),
     /** Blob sha of the file when the edit was made (null = new file); future conflict hints. */
@@ -967,12 +975,12 @@ export const jobs = pgTable(
 /**
  * User-facing projection of long-running workspace work (issue #142). The `jobs` table above stays
  * the ops primitive — durable queue, retries, worker claim; this table is the small, project-scoped
- * record the persistent task-progress indicator reads and polls. One row per triggered action
- * (a merge, a publish): the runner streams a human `stage` into it and resolves it to a terminal
+ * record the publish control and task indicator read and poll. One row per triggered action
+ * (a publish): the runner records its structured `steps` here and resolves the row to a terminal
  * `status` (succeeded|failed) with a `resultUrl`/`error`. The indicator renders running + recent
  * terminal rows for the current project until the user dismisses a terminal one. Kept separate from
  * `jobs` so the queue can carry ops concerns (retry/backoff, arbitrary kinds) without leaking them
- * into the UI, and so a job that internally treats a build-gate failure as a *successful* run (the
+ * into the UI, and so a job that internally treats a build failure as a *successful* run (the
  * user's change simply didn't build) can still surface that as a `failed` task.
  */
 export const workspaceTasks = pgTable(
@@ -982,14 +990,18 @@ export const workspaceTasks = pgTable(
     projectId: text("project_id")
       .notNull()
       .references(() => projects.id, { onDelete: "cascade" }),
-    // merge_change | publish_change (extensible)
+    // publish (extensible)
     kind: text("kind").notNull(),
-    // Dedupe/running-state key for the trigger surface, e.g. "merge:12", "publish".
+    // Dedupe/running-state key for the trigger surface, e.g. "publish" (one per project).
     subjectKey: text("subject_key").notNull(),
-    // Human title, e.g. `Merging change #12`
+    // Human title, e.g. `Publishing 3 changes`
     label: text("label").notNull(),
-    // Current step streamed into the indicator ("Checking the build for agents/ivy/agent (2/3)…")
-    stage: text("stage"),
+    /**
+     * The pipeline's ordered step list (check → build → commit → version → deploy), updated in
+     * place as it runs. ONE source of truth for progress: the compact header control derives its
+     * one-liner from the running step, the publish panel renders the full stepper.
+     */
+    steps: jsonb("steps").$type<PipelineStep[]>(),
     // running | succeeded | failed
     status: text("status").notNull().default("running"),
     originUrl: text("origin_url").notNull(),
@@ -1003,6 +1015,12 @@ export const workspaceTasks = pgTable(
   },
   (t) => [
     index("workspace_tasks_project_status_idx").on(t.projectId, t.status),
+    // §2.9's one-publish-per-project gate, enforced where it must be: two concurrent triggers
+    // (double-submit, UI + MCP) can both pass the find-running read, and only the database can
+    // make the insert atomic. Terminal rows are unconstrained.
+    uniqueIndex("workspace_tasks_running_subject_uq")
+      .on(t.projectId, t.subjectKey)
+      .where(sql`${t.status} = 'running'`),
   ],
 );
 
@@ -1248,10 +1266,10 @@ export const playgroundEvents = pgTable(
  * Assistant coding-agent checkouts. One row per
  * assistant conversation (a `playground_sessions` row on the assistant channel) that has grown a
  * repo checkout. The assistant edits a per-conversation git checkout on the shared home volume;
- * after each turn the control plane mirrors that checkout onto the branch `harnesst/conv-<id>` and
- * (on first non-empty sync) opens a PR. This table is the only durable link from a conversation to
- * its branch/PR — the checkout itself is ephemeral (volume/instance loss is recovered by re-cloning
- * the remote branch). `lastSyncedHash` lets the sync engine skip a no-op turn (tree unchanged).
+ * after each turn the control plane mirrors that checkout onto the branch `harnesst/conv-<id>` — an
+ * internal durability mechanism only (volume/instance loss is recovered by re-cloning the remote
+ * branch). This table is the only durable link from a conversation to its branch.
+ * `lastSyncedHash` lets the sync engine skip a no-op turn (tree unchanged).
  */
 export const assistantCheckouts = pgTable(
   "assistant_checkouts",
@@ -1268,16 +1286,12 @@ export const assistantCheckouts = pgTable(
     branch: text("branch").notNull(),
     /** Base branch the working branch is cut from (the project default at first sync). */
     baseBranch: text("base_branch").notNull(),
-    /** Open PR number for the branch, or null before the first non-empty sync. */
-    prNumber: integer("pr_number"),
-    /** Whether the open PR is still a draft/WIP (false once marked ready-for-review). */
-    prDraft: boolean("pr_draft").notNull().default(true),
     /** Content hash of the last mirrored tree state — a matching hash means "skip, no change". */
     lastSyncedHash: text("last_synced_hash"),
     /**
      * Human-readable notes from the last sync (paths stripped by the path policy, binary/oversize
-     * skips, symlinks refused). Injected into the model's next turn and shown in the PR body, so a
-     * silently-excluded edit is never mistaken for a landed one.
+     * skips, symlinks refused). Injected into the model's next turn and surfaced on the assistant
+     * page, so a silently-excluded edit is never mistaken for a landed one.
      */
     warnings: jsonb("warnings").$type<string[]>(),
     createdAt: createdAt(),

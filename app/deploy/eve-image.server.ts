@@ -35,7 +35,7 @@
  * real Docker sandbox backend — no change to customer repos required.
  */
 import { execFile } from "node:child_process";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, rmdir, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -379,51 +379,105 @@ export async function buildAssistantImage(input: {
 }
 
 /**
- * Publish gate: compile-check repo@ref with `overlay` files (the staged drafts being
- * published) written over the source, running only the build stage — same builder as a real
- * deploy, so "passes the check" means "will build when merged". One reused tag per project;
- * failures return the compiler's own lines, not the docker wall of text.
+ * The provisional tag pair a publish builds under before its commit exists: the runtime image
+ * and its `-build` stage, namespaced by the publish task so concurrent projects never collide
+ * and a leaked tag is attributable. Old ids can be mixed-case; docker repositories can't.
  */
-export async function checkEveBuild(
+function provisionalTags(input: {
+  taskId?: string;
+  projectId: string;
+  member: string | null;
+}): { runtime: string; buildStage: string } {
+  const repository = input.taskId
+    ? `harnesst/publish-${lowercaseLegacyId(input.taskId)}`
+    : // No task (a direct call outside the pipeline): fall back to one reused per-project tag.
+      "harnesst/publish-check";
+  const suffix = input.member
+    ? `-${input.member.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`
+    : "";
+  const runtime = `${repository}:proj-${lowercaseLegacyId(input.projectId.slice(0, 8))}${suffix}`;
+  return { runtime, buildStage: `${runtime}-build` };
+}
+
+/** Best-effort `docker rmi` — untags; layers shared with promoted tags survive. Never throws. */
+async function untagQuietly(tags: string[]): Promise<void> {
+  for (const tag of tags) {
+    try {
+      await exec("docker", ["rmi", tag]);
+    } catch {
+      // Already gone, never built, or docker is down — the reaper prunes stragglers.
+    }
+  }
+}
+
+/**
+ * The publish build (§3.2, one build not two): build repo@ref with `overlay` files (the staged
+ * drafts being published) written over the source — BOTH stages, under provisional tags — and run
+ * the repo's typecheck/lint inside the build stage. The same builder as a deploy, so "ok" means
+ * "this exact tree runs": after the commit lands, the pipeline promotes the provisional image to
+ * the commit's runtime tag and the deploy skips its own build. Failures return the compiler's own
+ * lines, not the docker wall of text; an unavailable docker daemon degrades to `skipped` so the
+ * control plane works end-to-end without infra.
+ */
+export async function buildStagedTree(
   input: EveImageBuildInput & {
     overlay: { path: string; content: string | null }[];
+    /** Publish task namespacing the provisional tag (`harnesst/publish-<taskId>:…`). */
+    taskId?: string;
   },
-): Promise<{ ok: true; skipped?: boolean } | { ok: false; output: string }> {
+): Promise<
+  { ok: true; skipped?: boolean; provisionalTag?: string } | { ok: false; output: string }
+> {
   try {
-    await assertDockerDaemonReady("check this agent build");
+    await assertDockerDaemonReady("build this change");
   } catch (error) {
     if (isDockerUnavailableError(error)) {
       console.warn(
-        `[publish-check] ${error instanceof Error ? error.message : String(error)}`,
+        `[publish-build] ${error instanceof Error ? error.message : String(error)}`,
       );
       return { ok: true, skipped: true };
     }
     throw error;
   }
 
-  const workDir = await mkdtemp(path.join(tmpdir(), "harnesst-check-"));
+  const workDir = await mkdtemp(path.join(tmpdir(), "harnesst-publish-"));
   try {
     const srcDir = await fetchSource(input, workDir);
 
     for (const file of input.overlay) {
       const target = path.join(srcDir, file.path);
-      // Overlay paths come from harnesst's own staging (already normalized under agent/), but
+      // Overlay paths come from harnesst's own saved drafts (already normalized under agent/), but
       // never write outside the checkout regardless.
       if (!target.startsWith(srcDir + path.sep)) continue;
       if (file.content === null) {
-        // Staged deletion — check the tree as it will exist after the change merges.
+        // Saved deletion — build the tree as it will exist after the commit lands. Prune
+        // now-empty parent directories too: a member removal or rename deletes EVERY file
+        // under `agents/<name>/agent`, and the root-existence check below must see that root
+        // as gone, not as an empty directory left behind by the tarball extraction.
         await rm(target, { force: true });
+        for (
+          let dir = path.dirname(target);
+          dir.startsWith(srcDir + path.sep);
+          dir = path.dirname(dir)
+        ) {
+          try {
+            await rmdir(dir); // ENOTEMPTY on a dir that still has content — stop pruning.
+          } catch {
+            break;
+          }
+        }
         continue;
       }
       await exec("mkdir", ["-p", path.dirname(target)]);
       await writeFile(target, file.content);
     }
 
-    // A member root that doesn't exist at this ref (the change deletes the member) has nothing
-    // to build — the post-merge roster sync handles removal; failing here would block the merge
-    // with an opaque eve error (issue #137). Runs AFTER the overlay loop so a publish overlay that
-    // creates a brand-new member's files still builds (fetchSource mkdir's only the parent package
-    // dir, never `…/agent`, so this existence check is authoritative).
+    // A member root that doesn't exist after the overlay (the change deletes or moves the whole
+    // member) has nothing to build — the post-commit roster sync handles removal; failing here
+    // would block the publish with an opaque eve error (issue #137). Runs AFTER the overlay
+    // loop so an overlay that creates a brand-new member's files still builds, and the deletion
+    // pruning above means a fully-deleted root really is absent (fetchSource mkdir's only the
+    // parent package dir, never `…/agent`, so this existence check is authoritative).
     if (
       input.agentRoot &&
       input.agentRoot !== "agent" &&
@@ -432,20 +486,18 @@ export async function checkEveBuild(
       return { ok: true, skipped: true };
     }
 
-    const { dir } = projectDirOf(input.agentRoot);
+    const { dir, member } = projectDirOf(input.agentRoot);
     const buildDir = path.join(srcDir, dir);
-    // Repository name must be lowercase (see imageTags / lowercaseLegacyId).
-    const tag = `harnesst/publish-check:proj-${lowercaseLegacyId(input.projectId.slice(0, 8))}`;
+    const tags = provisionalTags({ taskId: input.taskId, projectId: input.projectId, member });
+    const opts = { maxBuffer: 64 * 1024 * 1024 };
     try {
       await exec(
         "docker",
-        ["build", "--target", "build", "-t", tag, buildDir],
-        {
-          maxBuffer: 64 * 1024 * 1024,
-        },
+        ["build", "--target", "build", "-t", tags.buildStage, buildDir],
+        opts,
       );
       // Beyond compiling: run the repo's own typecheck/lint scripts (when defined) inside
-      // the built image — `--if-present` makes repos without them pass trivially.
+      // the built stage — `--if-present` makes repos without them pass trivially.
       try {
         await exec(
           "docker",
@@ -454,7 +506,7 @@ export async function checkEveBuild(
             "--rm",
             "--entrypoint",
             "sh",
-            tag,
+            tags.buildStage,
             "-lc",
             "npm run typecheck --if-present && npm run lint --if-present",
           ],
@@ -464,9 +516,12 @@ export async function checkEveBuild(
         // commandErrorText, not error.message: tsc/eslint report errors on STDOUT, and an
         // execFile error's message carries only the command line + stderr.
         const raw = commandErrorText(error);
+        await untagQuietly([tags.buildStage]);
         return { ok: false, output: raw.split("\n").slice(-30).join("\n") };
       }
-      return { ok: true };
+      // The runtime stage inherits the build stage, so this is cheap (cache hits + tiny layers).
+      await exec("docker", ["build", "-t", tags.runtime, buildDir], opts);
+      return { ok: true, provisionalTag: tags.runtime };
     } catch (error) {
       // commandErrorText again: a docker CLI without buildx falls back to the legacy builder,
       // which streams build-step output (the compiler's own lines) to STDOUT — error.message
@@ -474,10 +529,11 @@ export async function checkEveBuild(
       const raw = commandErrorText(error);
       if (isDockerUnavailableError(error)) {
         console.warn(
-          `[publish-check] ${normalizeDockerCliError(error, "check this agent build").message}`,
+          `[publish-build] ${normalizeDockerCliError(error, "build this change").message}`,
         );
         return { ok: true, skipped: true };
       }
+      await untagQuietly([tags.runtime, tags.buildStage]);
       return { ok: false, output: extractBuildError(raw) };
     }
   } finally {
@@ -486,11 +542,49 @@ export async function checkEveBuild(
 }
 
 /**
+ * Promote a publish build's provisional image to a commit's real tags (§3.2): after the commit
+ * lands and Releases are cut, `docker tag` the provisional runtime + `-build` pair onto
+ * `harnesst/proj-<id8>[-member]:<sha12>` (+`-build` — the suffix convention is load-bearing, see
+ * `buildStageTagFor`). The Release then carries the runtime tag as its `imageRef`, so the deploy
+ * (`rebuild: false`) skips its own build — each change is Docker-built once.
+ */
+export async function promoteProvisionalImage(input: {
+  provisionalTag: string;
+  projectId: string;
+  gitSha: string;
+  /** The built root ("agent" | "agents/<member>/agent") — selects the member tag suffix. */
+  agentRoot?: string;
+}): Promise<BuiltArtifact> {
+  const { member } = projectDirOf(input.agentRoot);
+  const tags = imageTags(input.projectId, input.gitSha, member);
+  await exec("docker", ["tag", input.provisionalTag, tags.runtime]);
+  await exec("docker", ["tag", buildStageTagFor(input.provisionalTag), tags.buildStage]);
+  const { stdout: digest } = await exec("docker", [
+    "inspect",
+    "--format",
+    "{{.Id}}",
+    tags.runtime,
+  ]);
+  return { imageRef: tags.runtime, digest: digest.trim() };
+}
+
+/**
+ * Drop provisional publish tags (and their `-build` stages) once a publish is over — promoted
+ * images keep their real tags; a failed publish leaves nothing behind. Best-effort by design:
+ * the sandbox reaper prunes any stragglers a crash strands.
+ */
+export async function removeProvisionalImages(provisionalTags: string[]): Promise<void> {
+  await untagQuietly(
+    provisionalTags.flatMap((tag) => [tag, buildStageTagFor(tag)]),
+  );
+}
+
+/**
  * Pull the tool/compiler output out of buildkit's progress stream: the step-output lines
  * (`#N <seconds> <message>`), which is what a human needs to fix the code. Falls back to the
  * error's tail when nothing matches.
  */
-function extractBuildError(raw: string): string {
+export function extractBuildError(raw: string): string {
   const stepLines = [...raw.matchAll(/^#\d+ \d+\.\d+ (.*)$/gm)].map(
     (m) => m[1],
   );

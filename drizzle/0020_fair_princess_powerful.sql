@@ -1,0 +1,1 @@
+CREATE UNIQUE INDEX "workspace_tasks_running_subject_uq" ON "workspace_tasks" USING btree ("project_id","subject_key") WHERE "workspace_tasks"."status" = 'running';

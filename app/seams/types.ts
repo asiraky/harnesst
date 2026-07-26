@@ -64,23 +64,29 @@ export interface DeployRequest {
   worldKey: string;
 }
 
-/** Compile-check request: repo@ref with the staged drafts overlaid (publish gate). */
+/** Publish-build request: repo@ref with the staged drafts overlaid. */
 export interface BuildCheckRequest {
   projectId: string;
   repo: { owner: string; repo: string };
-  /** Ref to base the check on — the default branch the change request targets. */
+  /** Ref to base the build on — the default branch the publish commits to. */
   ref: string;
   installationId?: string | null;
   /** Draft files being published, overlaid on the source before building. Null content
-   * removes the file — the gate checks the tree as it will exist after the change merges. */
+   * removes the file — the build sees the tree as it will exist after the commit lands. */
   overlay: { path: string; content: string | null }[];
-  /** Agent directory to check when all drafts belong to one member (team repos, §7.9). */
+  /** Agent directory to build when all drafts belong to one member (team repos, §7.9). */
   agentRoot?: string;
+  /** Publish task id namespacing the provisional image tag (`harnesst/publish-<taskId>:…`). */
+  taskId?: string;
+  /** Bake the generated ask-teammate tool in, exactly as the deploy-time build would (D2) —
+   * required for the built image to be promotable to the deployed image. */
+  injectTeammateTool?: boolean;
 }
 
 export type BuildCheckResult =
-  /** Build compiles (or the target has no toolchain and the gate was skipped). */
-  | { ok: true; skipped?: boolean }
+  /** Build passed (or the target has no toolchain and the build was skipped). When the target
+   * built a real image, `provisionalTag` names it for post-commit promotion (§3.2). */
+  | { ok: true; skipped?: boolean; provisionalTag?: string }
   /** Build failed — `output` is the compiler/tool error, human-readable. */
   | { ok: false; output: string };
 
@@ -112,9 +118,9 @@ export interface DeployTarget {
   readonly name: string;
   build(req: BuildRequest): Promise<BuiltArtifact>;
   /**
-   * Compile-check source + overlay without deploying — the publish gate that keeps a
-   * change request from being created for code that can't build. Optional: targets
-   * without a local toolchain simply skip the gate.
+   * Build source + overlay without deploying — the publish build that keeps broken code from
+   * ever landing, and whose image is promoted at deploy time (§3.2). Optional: targets
+   * without a local toolchain simply skip it.
    */
   checkBuild?(req: BuildCheckRequest): Promise<BuildCheckResult>;
   deploy(req: DeployRequest): Promise<InstanceHealth>;

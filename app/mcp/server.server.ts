@@ -172,7 +172,7 @@ export function createHarnesstMcpServer(service: McpToolService): McpServer {
     "stage_changes",
     {
       description:
-        "Stage one or more agent edits in harnesst's draft area. This is the first step of the authoring flow: stage changes, publish them as one branch and one pull request, then optionally merge that reviewed harnesst PR. This tool never writes to the default branch.",
+        "Save one or more agent edits as drafts in harnesst's shared staging area. This is the first step of the authoring flow: save changes, then publish_changes takes EVERY saved draft live through harnesst's pipeline (check, build, commit, version, deploy). This tool only writes drafts — it never touches GitHub.",
       inputSchema: {
         ...projectInput,
         edits: z
@@ -212,17 +212,16 @@ export function createHarnesstMcpServer(service: McpToolService): McpServer {
     "publish_changes",
     {
       description:
-        "Publish selected staged drafts through harnesst's enforced review path: exactly one fresh harnesst/publish-* branch, one commit, and one pull request targeting the project's default branch. It never commits directly to the default branch; use merge_change later only if review is complete.",
+        "Publish EVERY saved draft through harnesst's full pipeline: check, build, commit to the default branch, cut a version per agent, and deploy the whole team into the project's live environment. A failed build lands nothing and keeps the drafts saved. Runs synchronously and returns the commit sha, release ids, and queued deployment ids; poll get_deploy_status for the deploys.",
       inputSchema: {
         ...projectInput,
-        paths: z
-          .array(z.string().min(1).describe("Staged repo-relative agent path"))
-          .min(1),
-        title: z
+        environment: z
           .string()
           .min(1)
           .optional()
-          .describe("Optional pull request title"),
+          .describe(
+            "Target environment name — required only when the project has several environments and no live environment recorded yet; the answer is remembered",
+          ),
       },
       annotations: {
         destructiveHint: true,
@@ -234,52 +233,10 @@ export function createHarnesstMcpServer(service: McpToolService): McpServer {
   );
 
   server.registerTool(
-    "list_open_changes",
-    {
-      description:
-        "List open harnesst-authored pull requests for a project's connected repository. Use this after publish_changes to review the one-PR change set before optionally calling merge_change; no direct default-branch write tool exists.",
-      inputSchema: {
-        ...projectInput,
-        limit: z
-          .number()
-          .int()
-          .min(1)
-          .max(50)
-          .optional()
-          .describe("Maximum open harnesst pull requests to return (default 20)"),
-      },
-      annotations: { readOnlyHint: true, openWorldHint: true },
-    },
-    async (input) => toolResult(await service.listOpenChanges(input)),
-  );
-
-  server.registerTool(
-    "merge_change",
-    {
-      description:
-        "Merge an already-open harnesst pull request only after harnesst resolves its server-side branch and confirms it targets this project's default branch. This optional review step is the only authoring tool that can land changes on the default branch; there is no direct-commit surface.",
-      inputSchema: {
-        ...projectInput,
-        pullRequestNumber: z
-          .number()
-          .int()
-          .positive()
-          .describe("Open harnesst pull request number to merge"),
-      },
-      annotations: {
-        destructiveHint: true,
-        idempotentHint: false,
-        openWorldHint: true,
-      },
-    },
-    async (input) => toolResult(await service.mergeChange(input)),
-  );
-
-  server.registerTool(
     "discard_changes",
     {
       description:
-        "Discard selected staged drafts from harnesst without publishing or touching GitHub. This removes only unpublished staging-area edits and never closes a pull request or writes to the default branch.",
+        "Discard selected saved drafts from harnesst without publishing. This removes only unpublished drafts from the staging area and never touches GitHub.",
       inputSchema: {
         ...projectInput,
         paths: z

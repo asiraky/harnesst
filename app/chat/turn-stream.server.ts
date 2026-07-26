@@ -514,25 +514,25 @@ export function streamTurnResponse(input: {
                 console.error(`${tag} recordTurnFinish failed`, e);
               }
             }
-            // Assistant coding-agent sync: after the turn settles, mirror the
-            // conversation's checkout to its PR. Runs regardless of turn success — a failed turn may
-            // still have edited files; the sync hashes the tree and no-ops when nothing changed.
-            // The outcome is emitted to a still-attached client (`sync` event) and failures are
-            // recorded on the checkout row — a swallowed failure here left users staring at an
-            // empty Changes tab while the model reported success.
+            // Assistant coding-agent sync: after the turn settles, stage the conversation
+            // checkout's changes as drafts and mirror them to its durability branch. Runs
+            // regardless of turn success — a failed turn may still have edited files; the sync
+            // hashes the tree and no-ops when nothing changed. The outcome is emitted to a
+            // still-attached client (`sync` event) and failures are recorded on the checkout
+            // row — a swallowed failure here left users believing changes were saved while
+            // nothing ever reached the staging area.
             if (channel === "assistant" && target.deploymentId) {
               try {
                 const sync = await syncConversationCheckout({
                   projectId,
                   conversationId: activeSession.id,
                   deploymentId: target.deploymentId,
-                  title: activeSession.title,
                 });
                 if (sync.kind === "synced") {
                   send({
                     type: "sync",
                     synced: true,
-                    prNumber: sync.prNumber ?? null,
+                    stagedCount: sync.stagedCount,
                     error: null,
                   });
                 } else if (sync.kind === "failed") {
@@ -542,7 +542,7 @@ export function streamTurnResponse(input: {
                   send({
                     type: "sync",
                     synced: false,
-                    prNumber: null,
+                    stagedCount: 0,
                     error: sync.reason ?? "the checkout sync failed",
                   });
                 }
@@ -556,7 +556,7 @@ export function streamTurnResponse(input: {
                 send({
                   type: "sync",
                   synced: false,
-                  prNumber: null,
+                  stagedCount: 0,
                   error:
                     e instanceof Error ? e.message : "the checkout sync failed",
                 });

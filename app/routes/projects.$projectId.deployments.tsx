@@ -1,8 +1,8 @@
 /**
- * Deployment — the whole pipeline on one tab (M5.8; Deploy + Review pillars, PRD §7.3/§7.4/§7.7).
- *
- * SHIP makes versions (Overview); this tab is everything after an edit exists:
- *   staged changes → change request → merge (cuts a version) → environments running versions.
+ * Deployment — the advanced, mostly read-only operations surface (issue #225). Publishing lives
+ * in the header Publish control; this tab is what's RUNNING: environments (with team CRUD), each
+ * environment's running version, version history with Roll back as the primary action, deploy
+ * failure detail with retry/dismiss, and the per-member channel/connection setup cards.
  *
  * The TEAM is the deployment unit. Deploys ACT on an ENVIRONMENT and move the whole roster; the
  * only question a user answers is "which environment", never "which agent". Env CRUD and
@@ -11,36 +11,31 @@
  *
  * Two layouts over one module (route ids `deployment` + `member-deployment`), gated by a `canAct`
  * flag = the team-level acting surface:
- *  - REPO / TEAM view (team repos at /repos/:id/deployment): the acting surface — staged drafts
- *    grouped by member, change requests + Merge, an Environments card (one row per team env NAME
- *    with each member's running version) with team CRUD, and a Version history of TEAM versions
- *    (grouped by commit) with a per-environment Deploy that moves the whole team.
+ *  - REPO / TEAM view (team repos at /repos/:id/deployment): the acting surface — an
+ *    Environments card (one row per team env NAME with each member's running version) with team
+ *    CRUD, and a Version history of TEAM versions (grouped by commit) with a per-environment
+ *    Roll back / Deploy that moves the whole team.
  *  - MEMBER view (team members at /repos/:id/agents/:name/deployment): OBSERVE-only for deploy
- *    concerns — the member's running versions and version history, no deploy/CRUD buttons (staged
- *    changes + change requests stay actionable everywhere; they're edit flow, not deploy flow).
+ *    concerns — the member's running versions and version history, no deploy/CRUD buttons.
  *  - SINGLE (single-agent repos at /repos/:id/deployment, level 'single'): a team of one, so it
  *    renders the member layout with canAct=true — the same team-scoped intents, roster of one.
  */
 import { getSessionAuth, sessionLoader } from "~/auth/session.server";
 import {
   Cable,
-  FileStack,
-  GitPullRequest,
   History,
   MessageSquare,
   Rocket,
   Server,
   type LucideIcon,
 } from "lucide-react";
-import { useRef, useState } from "react";
+import { useState } from "react";
 import {
   Form,
   Link,
   redirect,
   useFetcher,
-  useNavigation,
   useSearchParams,
-  useSubmit,
   type ActionFunctionArgs,
   type LoaderFunctionArgs,
 } from "react-router";
@@ -109,13 +104,8 @@ import {
   listEnvironments,
   listReleases,
 } from "~/db/queries.server";
-import {
-  discardDrafts,
-  findOrphanedDrafts,
-  listDrafts,
-  stageDraft,
-} from "~/drafts/drafts.server";
-import { getAgentSource, getOpenChanges } from "~/github/cached.server";
+import { listDrafts, stageDraft } from "~/drafts/drafts.server";
+import { getAgentSource } from "~/github/cached.server";
 import { fetchAgentSource } from "~/github/repo.server";
 import {
   findStoredAppCredentialConflict,
@@ -123,7 +113,6 @@ import {
   listAppInstallations,
   type AppInstallation,
 } from "~/github/app-manifest.server";
-import { closePullRequest } from "~/github/write.server";
 import { getDiscordAppConfig } from "~/discord/config.server";
 import { listConnectionsForAgent } from "~/discord/connections.server";
 import {
@@ -138,19 +127,8 @@ import {
 } from "~/connections/oauth.server";
 import { getProvider } from "~/connections/providers.server";
 import { listGrantsForAgent } from "~/connections/grants.server";
-import {
-  discardConversationCheckoutByBranch,
-  isConversationBranch,
-} from "~/assistant/checkout-sync.server";
 import { getRuntime } from "~/seams/index.server";
 import { ensureWorkerStarted } from "~/jobs/worker.server";
-import { enqueue } from "~/jobs/queue.server";
-import {
-  createTask,
-  findRunningTask,
-  listWorkspaceTasks,
-  setTaskJob,
-} from "~/tasks/tasks.server";
 import { contextPath } from "~/lib/paths";
 import { useLiveRevalidate } from "~/lib/use-live-revalidate";
 import { cn } from "~/lib/utils";
@@ -162,11 +140,7 @@ import {
   setSelectedGroups,
   type ScopeGroupChoice,
 } from "~/marketplace/lock";
-import {
-  agentRequiredSecretState,
-  cleanupOrphanedPendingSecrets,
-} from "~/project/secrets.server";
-import { listAgents } from "~/db/queries.server";
+import { agentRequiredSecretState } from "~/project/secrets.server";
 import { listSharedSecrets } from "~/seams/oss/secret-store";
 import {
   DeploySecretsGuardDialog,
@@ -176,20 +150,16 @@ import { RelativeTime } from "~/components/localized-values";
 import {
   agentFromParams,
   agentParamRedirect,
-  memberFromPath,
   requireActiveAgent,
   resolveSyncedAgentContext,
 } from "~/project/agent-context.server";
 import { requireProject, requireRepo } from "~/project/guard.server";
 import type {
   DeploymentWithRelease,
-  DraftChange,
   Environment,
   Release,
 } from "~/data/ports";
 import type { ConnectedProject } from "~/project/guard.server";
-import type { OpenChange } from "~/github/write.server";
-import { DiffView } from "~/components/diff-view";
 import type { Route } from "./+types/projects.$projectId.deployments";
 
 /** One member's cell inside a team environment row: its env id + what's running there. */
@@ -224,17 +194,8 @@ interface DeploymentData {
   view: "repo" | "member";
   /** True where deploys/CRUD are acted on: the team (repo) view and single-agent repos. */
   canAct: boolean;
-  /**
-   * subjectKeys of this project's currently-running workspace tasks (issue #142) — e.g.
-   * `["publish", "merge:12"]`. Drives the disabled "Publishing…/Merging…" button states without
-   * threading full task rows; the persistent indicator (AppShell) shows the detail + progress.
-   */
-  runningTaskSubjects: string[];
-  drafts: (DraftChange & { shared: boolean; orphaned: boolean })[];
-  changes: OpenChange[];
   releases: Release[];
   envs: { env: Environment; deployments: DeploymentWithRelease[] }[];
-  draftGroups: { owner: string; drafts: (DraftChange & { orphaned: boolean })[] }[];
   members: {
     name: string;
     latest: { version: string; gitSha: string; createdAt: Date } | null;
@@ -343,17 +304,10 @@ export const loader = (args: LoaderFunctionArgs) =>
         const legacy = agentParamRedirect(args.request, project.id);
         if (legacy) throw legacy;
       }
-      // issue #142: which merge/publish tasks are running now, so the buttons can show their
-      // accepted/running state. The persistent indicator (AppShell) renders the full progress.
-      const runningTaskSubjects = (await listWorkspaceTasks(project.id))
-        .filter((t) => t.status === "running")
-        .map((t) => t.subjectKey);
-      const [allDrafts, changes, releaseRows, source] = await Promise.all([
+      // Drafts feed only the effective-lock overlay + channel detection here — the publish
+      // panel (header control) is the one place drafts are reviewed and published.
+      const [allDrafts, releaseRows, source] = await Promise.all([
         listDrafts(project.id),
-        getOpenChanges(project.repoInstallationId, {
-          owner: project.repoOwner,
-          repo: project.repoName,
-        }),
         listReleases(project.id),
         getAgentSource(project.repoInstallationId, {
           owner: project.repoOwner,
@@ -365,27 +319,14 @@ export const loader = (args: LoaderFunctionArgs) =>
         agentName,
         source.paths,
       );
-      // Drafts stranded under a member root the roster/repo/selection no longer back (issue #67):
-      // surfaced as orphaned (unchecked, discardable) and blocked at publish with attribution.
-      const orphanedPaths = new Set(
-        findOrphanedDrafts(roster, source.paths, allDrafts).map((d) => d.path),
-      );
       const level: NavLevel = agentName ? "member" : isTeam ? "repo" : "single";
       const view = level === "repo" ? ("repo" as const) : ("member" as const);
       // The acting surface: the team (repo) view, and single-agent repos (a team of one).
       const canAct = level !== "member";
 
       if (view === "repo") {
-        // Team acting surface: staged drafts grouped by member, plus the team's environments
-        // (one NAME, every member's running status) and version history (grouped by commit).
-        const nameById = new Map(roster.map((a) => [a.id, a.name]));
-        const groups = new Map<string, typeof allDrafts>();
-        for (const d of allDrafts) {
-          const key = d.agentId
-            ? (nameById.get(d.agentId) ?? memberFromPath(d.path) ?? "shared")
-            : (memberFromPath(d.path) ?? "shared");
-          groups.set(key, [...(groups.get(key) ?? []), d]);
-        }
+        // Team acting surface: the team's environments (one NAME, every member's running
+        // status) and version history (grouped by commit).
         const members = roster.map((a) => {
           const latest = releaseRows.find((r) => r.agentId === a.id);
           return {
@@ -447,8 +388,14 @@ export const loader = (args: LoaderFunctionArgs) =>
           }
         }
         // Version history grouped by commit (releaseRows are newest-first; first per sha wins).
+        // Members only: the built-in assistant has its own release stream (t1, t2, … at
+        // `tmpl-*` shas), and rolling back to one can only fail — deployTeamVersion looks the
+        // sha up against each ROSTER member and finds nothing. §2.10 makes rollback the only
+        // safety net, so it must never offer a version it cannot restore.
+        const memberIds = new Set(roster.map((a) => a.id));
         const versionByCommit = new Map<string, TeamVersionRow>();
         for (const r of releaseRows) {
+          if (!memberIds.has(r.agentId)) continue;
           if (versionByCommit.has(r.gitSha)) continue;
           versionByCommit.set(r.gitSha, {
             gitSha: r.gitSha,
@@ -500,17 +447,7 @@ export const loader = (args: LoaderFunctionArgs) =>
           level,
           view,
           canAct,
-          runningTaskSubjects,
-          draftGroups: [...groups.entries()].map(([owner, drafts]) => ({
-            owner,
-            drafts: drafts.map((d) => ({
-              ...d,
-              orphaned: orphanedPaths.has(d.path),
-            })),
-          })),
-          changes,
           members,
-          drafts: [],
           releases: [],
           envs: [],
           teamEnvNames,
@@ -534,13 +471,8 @@ export const loader = (args: LoaderFunctionArgs) =>
         };
       }
 
-      // Member pipeline: this member's drafts + shared ones, its envs + versions.
+      // Member view: this member's envs + versions.
       requireActiveAgent(active, project.id);
-      const drafts = allDrafts.flatMap((d) =>
-        d.agentId === active.id || d.agentId === null
-          ? [{ ...d, shared: d.agentId === null, orphaned: orphanedPaths.has(d.path) }]
-          : [],
-      );
       const envRows = await listAgentEnvironments(active.id);
       const envs = await Promise.all(
         envRows.map(async (env) => ({
@@ -755,12 +687,8 @@ export const loader = (args: LoaderFunctionArgs) =>
         level,
         view,
         canAct,
-        runningTaskSubjects,
-        drafts,
-        changes,
         releases: releaseRows.filter((r) => r.agentId === active.id),
         envs,
-        draftGroups: [],
         members: [],
         teamEnvNames: [],
         teamEnvs: [],
@@ -787,23 +715,6 @@ export const loader = (args: LoaderFunctionArgs) =>
     { ensureSignedIn: true },
   );
 
-/** §4.4 abandonment sweep: drop held pending secrets whose install can no longer ship. */
-async function sweepPendingSecrets(projectId: string): Promise<void> {
-  try {
-    const [roster, drafts] = await Promise.all([
-      listAgents(projectId),
-      listDrafts(projectId),
-    ]);
-    await cleanupOrphanedPendingSecrets({
-      projectId,
-      rosterNames: roster.map((a) => a.name),
-      draftPaths: drafts.map((d) => d.path),
-    });
-  } catch (error) {
-    console.warn("[secrets] pending-secret sweep failed:", error);
-  }
-}
-
 export async function action(args: ActionFunctionArgs) {
   const auth = await getSessionAuth(args);
   if (!auth.user) throw redirect("/login");
@@ -816,112 +727,11 @@ export async function action(args: ActionFunctionArgs) {
   const repo = { owner: project.repoOwner, repo: project.repoName };
 
   try {
-    // ── Change-set intents (repo-scoped; from either view) ──
-    if (intent === "publish") {
-      const paths = form.getAll("path").map(String);
-      const title = String(form.get("title") ?? "");
-      // Cheap synchronous validation stays inline; the build gate + PR run on the queue (issue #142)
-      // so the request returns immediately and progress streams into the workspace indicator.
-      if (paths.length === 0) {
-        return { error: "No staged changes selected to publish." };
-      }
-      ensureWorkerStarted();
-      // Dedupe: one publish task at a time per project (a second click re-attaches to the first).
-      const existing = await findRunningTask(project.id, "publish");
-      if (existing) return { ok: true as const, taskId: existing.id };
-      const plural = paths.length === 1 ? "" : "s";
-      const task = await createTask({
-        projectId: project.id,
-        kind: "publish_change",
-        subjectKey: "publish",
-        label: title.trim()
-          ? `Publishing “${title.trim()}”`
-          : `Publishing ${paths.length} staged change${plural}`,
-        originUrl: back,
-        createdBy: auth.user.id,
-      });
-      const jobId = await enqueue(
-        "publish_change",
-        {
-          projectId: project.id,
-          taskId: task.id,
-          paths,
-          title,
-          createdBy: auth.user.id,
-        },
-        { maxAttempts: 1 },
-      );
-      await setTaskJob(task.id, jobId);
-      return { ok: true as const, taskId: task.id };
-    }
-    if (intent === "discard") {
-      await discardDrafts(project.id, [String(form.get("path"))]);
-      // Install abandonment (§4.4): a discarded new-member install can leave held pending
-      // secrets orphaned — sweep names with no roster row and no remaining member drafts.
-      await sweepPendingSecrets(project.id);
-      throw redirect(back);
-    }
-    if (intent === "delete-change") {
-      const pullNumber = Number(form.get("pullNumber"));
-      const branch = String(form.get("branch") ?? "") || undefined;
-      if (!pullNumber) return { error: "Missing change to delete." };
-      await closePullRequest(
-        project.repoInstallationId,
-        repo,
-        pullNumber,
-        branch,
-      );
-      // An assistant conversation branch is discarded with its PR — drop the checkout link row.
-      if (isConversationBranch(branch))
-        await discardConversationCheckoutByBranch(branch!);
-      // Closing an unmerged change is the other abandonment path — same sweep (§4.4).
-      await sweepPendingSecrets(project.id);
-      throw redirect(back);
-    }
-    if (intent === "merge") {
-      const pullNumber = Number(form.get("pullNumber"));
-      const branch = String(form.get("branch") ?? "") || undefined;
-      const title = String(form.get("title") ?? "");
-      if (!pullNumber) return { error: "Missing change to merge." };
-      // The pre-merge build gate + GitHub merge + roster sync now run on the queue (issue #142) so
-      // the request returns at once; the workspace indicator streams progress and surfaces a
-      // build-gate failure (nothing merges) rather than blocking the HTTP request on docker. The
-      // gate builds EVERY affected member root, recomputed SERVER-side in the runner from the PR's
-      // changed files (issue #137) — no client-posted root.
-      ensureWorkerStarted();
-      const subjectKey = `merge:${pullNumber}`;
-      const existing = await findRunningTask(project.id, subjectKey);
-      if (existing) return { ok: true as const, taskId: existing.id };
-      const task = await createTask({
-        projectId: project.id,
-        kind: "merge_change",
-        subjectKey,
-        label: `Merging change #${pullNumber}`,
-        originUrl: back,
-        createdBy: auth.user.id,
-      });
-      const jobId = await enqueue(
-        "merge_change",
-        {
-          projectId: project.id,
-          taskId: task.id,
-          pullNumber,
-          branch,
-          title,
-          createdBy: auth.user.id,
-          backUrl: back,
-        },
-        { maxAttempts: 1 },
-      );
-      await setTaskJob(task.id, jobId);
-      return { ok: true as const, taskId: task.id };
-    }
-
     // ── Connection permissions (issue #165): rewrite the lock's scope-group selection ──
-    // The selection is CONFIG living in harnesst-lock.json, so editing it stages a draft of the lock
-    // (published/merged with the pipeline like any install). Widening flips the Connections row
-    // to needs-reconnect via the existing scope-coverage state; narrowing keeps the row connected
-    // but the redirect carries a hint to reconnect for a freshly narrowed grant.
+    // The selection is CONFIG living in harnesst-lock.json, so editing it saves a draft of the lock
+    // (published with everything else through the header Publish control). Widening flips the
+    // Connections row to needs-reconnect via the existing scope-coverage state; narrowing keeps
+    // the row connected but the redirect carries a hint to reconnect for a freshly narrowed grant.
     if (intent === "connection-permissions") {
       const provider = String(form.get("provider") ?? "");
       const selected = form.getAll("group").map(String);
@@ -1108,8 +918,6 @@ type Env = LoaderData["envs"][number]["env"];
 type DeploymentRow = LoaderData["envs"][number]["deployments"][number];
 type ReleaseRow = LoaderData["releases"][number];
 type EnvState = { env: Env; deployments: DeploymentRow[] };
-type DraftRow = LoaderData["drafts"][number];
-type ChangeRow = LoaderData["changes"][number];
 
 const IN_FLIGHT = new Set(["queued", "pending", "building"]);
 const DISCORD_SECRET_NAMES = new Set([
@@ -1129,24 +937,6 @@ function isDiscordSecretRequirement(secret: { name: string }): boolean {
 
 function isGitHubSecretRequirement(secret: { name: string }): boolean {
   return GITHUB_SECRET_NAMES.has(secret.name);
-}
-
-function PublishStatus({ active }: { active: boolean }) {
-  if (!active) return null;
-  return (
-    <div
-      className="mt-3 rounded-md border bg-muted/30 px-3 py-2 text-sm text-muted-foreground"
-      role="status"
-      aria-live="polite"
-    >
-      Publishing in the background — checking the build and opening a change
-      request. Progress shows in the task bar at the top of the page; you can
-      keep working.
-      <div className="mt-2 h-1 overflow-hidden rounded-full bg-border">
-        <div className="harnesst-loading-line bg-primary/60" />
-      </div>
-    </div>
-  );
 }
 
 /** The deployment an environment is currently running (post-M5.6 there is at most one). */
@@ -1178,13 +968,12 @@ export default function Deployment({
   loaderData,
   actionData,
 }: Route.ComponentProps) {
-  const { project, roster, activeAgent, isTeam, level, view } = loaderData;
+  const { project, roster, activeAgent, level, view } = loaderData;
   const memberBase = contextPath(
     project.id,
     level === "member" ? activeAgent : null,
   );
   const [params] = useSearchParams();
-  const justReleased = params.get("released");
   const justInstalled = params.get("installed");
   // Connection connect/reconnect outcome (issue #69): the Google callback redirects back here with
   // `connected` and, when the agent was live, a `redeploy` result the auto-redeploy produced.
@@ -1221,13 +1010,11 @@ export default function Deployment({
   // A draining sibling (a superseded version finishing in-flight turns after a redeploy — issue
   // #81) keeps the page revalidating too, so the "winding down" note clears once the drain stops.
   // Kept separate from IN_FLIGHT, whose other call sites mean specifically "pending/building".
+  const walking = (deployments: DeploymentRow[]) =>
+    deployments.some((d) => IN_FLIGHT.has(d.status) || d.status === "draining");
   const inFlight =
-    loaderData.envs.some(({ deployments }) =>
-      deployments.some((d) => IN_FLIGHT.has(d.status) || d.status === "draining"),
-    ) ||
-    // A running merge/publish task (issue #142) keeps the page polling so drafts/change requests
-    // and the button states walk to their resolved values as the queued job finishes.
-    loaderData.runningTaskSubjects.length > 0;
+    loaderData.envs.some(({ deployments }) => walking(deployments)) ||
+    loaderData.teamEnvs.some((te) => te.members.some((m) => walking(m.deployments)));
   useLiveRevalidate({ active: inFlight });
 
   return (
@@ -1254,39 +1041,17 @@ export default function Deployment({
         }
         description={
           view === "repo"
-            ? "The team's pipeline: staged changes by agent, change requests (merging cuts a version for every agent), and each agent's latest version."
-            : "The pipeline for this agent: staged changes become a change request; merging cuts a version; each environment runs one version. Rollback is just deploying an older version again."
+            ? "What the team is running: environments, running versions, and the version history. Roll back by deploying an older version — the whole team moves together."
+            : "What this agent is running: its environments and version history. Each environment runs one version; rolling back is just deploying an older version again."
         }
       />
 
-      {justReleased &&
-        (view === "repo" ? (
-          <PostMergeDeployBanner
-            version={justReleased}
-            teamVersions={loaderData.teamVersions}
-            teamEnvNames={loaderData.teamEnvNames}
-            guard={{
-              missing: loaderData.missingSecrets,
-              activeAgent: loaderData.guardAgent,
-              settingsAction: loaderData.guardSettingsAction,
-            }}
-          />
-        ) : (
-          <Alert className="mb-6">
-            <AlertTitle>{justReleased} is ready</AlertTitle>
-            <AlertDescription>
-              {loaderData.canAct
-                ? `Your change was merged and cut as version ${justReleased}. Deploy it to an environment from the version history below.`
-                : `Your change was merged and cut as version ${justReleased}. Deploy it to the whole team from the repo's Deployment tab.`}
-            </AlertDescription>
-          </Alert>
-        ))}
-
       {justInstalled && (
         <Alert className="mb-6">
-          <AlertTitle>{justInstalled} install staged</AlertTitle>
+          <AlertTitle>{justInstalled} install saved</AlertTitle>
           <AlertDescription>
-            Review and publish it with your other staged changes below.
+            Review and publish it with your other saved changes — the Publish
+            button in the header.
           </AlertDescription>
         </Alert>
       )}
@@ -1314,8 +1079,8 @@ export default function Deployment({
           <Alert className="mb-6">
             <AlertTitle>{connectedLabel} connected</AlertTitle>
             <AlertDescription>
-              You have staged changes, so the running version wasn&apos;t redeployed automatically.
-              Ship your staged changes to deploy them with the new credentials, or redeploy the
+              You have saved changes, so the running version wasn&apos;t redeployed automatically.
+              Publish your saved changes to deploy them with the new credentials, or redeploy the
               current version from the version history below.
             </AlertDescription>
           </Alert>
@@ -1334,7 +1099,7 @@ export default function Deployment({
           <Alert className="mb-6">
             <AlertTitle>{permissionsLabel} permissions reduced</AlertTitle>
             <AlertDescription>
-              The selection is staged to harnesst-lock.json — publish it with your
+              The selection is saved to harnesst-lock.json — publish it with your
               other changes. The existing grant still covers the smaller set,
               so nothing breaks; reconnect from the Connections card to
               re-issue the grant with only the selected permissions.
@@ -1344,7 +1109,7 @@ export default function Deployment({
           <Alert className="mb-6">
             <AlertTitle>{permissionsLabel} permissions updated</AlertTitle>
             <AlertDescription>
-              The selection is staged to harnesst-lock.json — publish it with your
+              The selection is saved to harnesst-lock.json — publish it with your
               other changes. If permissions were added, the connection needs a
               reconnect (see the Connections card below) before it covers the
               new set.
@@ -1356,9 +1121,9 @@ export default function Deployment({
         <Alert className="mb-6">
           <AlertTitle>{operationsLabel} operations updated</AlertTitle>
           <AlertDescription>
-            The selection is staged to harnesst-lock.json and harnesst enforces it on
+            The selection is saved to harnesst-lock.json and harnesst enforces it on
             every call, so it already applies — the agent&rsquo;s next call
-            sees the new list. Publish the staged change with your other edits
+            sees the new list. Publish the saved change with your other edits
             to make it permanent.
           </AlertDescription>
         </Alert>
@@ -1378,49 +1143,25 @@ export default function Deployment({
           {roster.length === 0 && (
             <EmptyTeamState overviewHref={`/repos/${project.id}`} />
           )}
-          {(roster.length > 0 ||
-            loaderData.changes.length > 0 ||
-            loaderData.draftGroups.length > 0) && (
-            <TeamRollup loaderData={loaderData} />
-          )}
+          {roster.length > 0 && <TeamRollup loaderData={loaderData} />}
         </>
       ) : (
-        <MemberPipeline loaderData={loaderData} />
+        <MemberView loaderData={loaderData} />
       )}
     </AppShell>
   );
 }
 
-/* ────────────────────────────── member pipeline ────────────────────────────── */
+/* ────────────────────────────── member view ────────────────────────────── */
 
-function MemberPipeline({ loaderData }: { loaderData: LoaderData }) {
-  const {
-    project,
-    drafts,
-    changes,
-    releases,
-    envs,
-    activeAgent,
-    isTeam,
-    canAct,
-    runningTaskSubjects,
-  } = loaderData;
+function MemberView({ loaderData }: { loaderData: LoaderData }) {
+  const { project, releases, envs, activeAgent, isTeam, canAct } = loaderData;
   // Where "open" on a running deployment points: the agent's playground, not the instance's
   // internal URL (a 127.0.0.1:<port> that's unreachable from a browser).
   const playgroundPath = `${contextPath(project.id, isTeam ? activeAgent : null)}/playground`;
 
   return (
     <>
-      <StagedChangesCard
-        drafts={drafts}
-        isTeam={isTeam}
-        publishRunning={runningTaskSubjects.includes("publish")}
-      />
-      <ChangeRequests
-        changes={changes}
-        isTeam={isTeam}
-        runningTaskSubjects={runningTaskSubjects}
-      />
       <EnvironmentsCard
         envs={envs}
         canAct={canAct}
@@ -1721,496 +1462,13 @@ function ConnectionsCard({
   );
 }
 
-/** Stage 1: this member's unpublished drafts (+ shared files, which affect everyone). */
-function StagedChangesCard({
-  drafts,
-  isTeam,
-  publishRunning,
-}: {
-  drafts: DraftRow[];
-  isTeam: boolean;
-  /** issue #142: a queued publish task is running — disable the button and show the note. */
-  publishRunning: boolean;
-}) {
-  const navigation = useNavigation();
-  const submit = useSubmit();
-  const busy = navigation.state !== "idle" && navigation.formData != null;
-  const activeIntent = busy
-    ? String(navigation.formData!.get("intent") ?? "")
-    : null;
-  const publishing = activeIntent === "publish" || publishRunning;
-
-  return (
-    <Card className="mb-6">
-      <CardHeader className="pb-3">
-        <div className="flex items-center gap-2">
-          <CardGlyph icon={FileStack} accent="amber" />
-          <CardTitle className="text-base">Staged changes</CardTitle>
-          <Badge variant="secondary">{drafts.length}</Badge>
-        </div>
-      </CardHeader>
-      <CardContent>
-        {drafts.length === 0 ? (
-          <p className="text-sm text-muted-foreground">
-            Nothing staged. Edits you save — instructions, model, any agent file
-            — collect here until you publish them (or ship them with the Quick
-            deploy button in the tab row).
-          </p>
-        ) : (
-          <Form method="post">
-            <input type="hidden" name="intent" value="publish" />
-            <ul className="divide-y rounded-lg border text-sm">
-              {drafts.map((d) => (
-                <li key={d.id} className="flex items-center gap-3 px-3 py-2">
-                  <input
-                    type="checkbox"
-                    name="path"
-                    value={d.path}
-                    defaultChecked={!d.orphaned}
-                    className="size-4 accent-primary"
-                    aria-label={`Include ${d.path}`}
-                  />
-                  <span
-                    className={`min-w-0 flex-1 truncate font-mono text-xs ${
-                      d.content === null
-                        ? "line-through decoration-destructive/60"
-                        : ""
-                    }`}
-                  >
-                    {d.path}
-                  </span>
-                  {d.orphaned && <Badge variant="destructive">orphaned</Badge>}
-                  {d.content === null && (
-                    <Badge
-                      variant="outline"
-                      className="text-destructive border-destructive/40"
-                    >
-                      delete
-                    </Badge>
-                  )}
-                  {d.shared && isTeam && (
-                    <Badge variant="outline">
-                      shared · affects all agents
-                    </Badge>
-                  )}
-                  <span className="shrink-0 text-xs text-muted-foreground">
-                    <RelativeTime value={d.updatedAt} />
-                  </span>
-                  <ConfirmDialog
-                    trigger={
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        type="button"
-                        disabled={busy}
-                      >
-                        Discard
-                      </Button>
-                    }
-                    title={`Discard staged change to ${d.path}?`}
-                    description={
-                      d.content === null
-                        ? "Undoes the staged deletion — the file stays in the repository."
-                        : "The unpublished edit is deleted. The file itself is untouched — only the staged draft is lost."
-                    }
-                    confirmLabel="Discard"
-                    onConfirm={() =>
-                      submit(
-                        { intent: "discard", path: d.path },
-                        { method: "post" },
-                      )
-                    }
-                  />
-                </li>
-              ))}
-            </ul>
-            {drafts.some((d) => d.orphaned) && (
-              <p className="mt-2 text-xs text-muted-foreground">
-                Orphaned changes belong to an agent that&rsquo;s no longer on the
-                team. They&rsquo;re unchecked and can&rsquo;t be published —
-                discard them.
-              </p>
-            )}
-            <div className="mt-4 flex flex-wrap items-center gap-3">
-              <Input
-                name="title"
-                placeholder="Change title (optional)"
-                className="h-9 w-full sm:w-72"
-              />
-              <Button type="submit" disabled={busy || publishRunning}>
-                {publishing
-                  ? "Publishing…"
-                  : "Publish selected as change request"}
-              </Button>
-            </div>
-            <PublishStatus active={publishing} />
-          </Form>
-        )}
-      </CardContent>
-    </Card>
-  );
-}
-
-/** Stage 2: open change requests (repo-wide — a merge cuts a version for every member). */
-function ChangeRequests({
-  changes,
-  isTeam,
-  runningTaskSubjects = [],
-}: {
-  changes: ChangeRow[];
-  isTeam: boolean;
-  /** subjectKeys of running workspace tasks — a `merge:<n>` here keeps that card's button busy. */
-  runningTaskSubjects?: string[];
-}) {
-  const navigation = useNavigation();
-  const busy = navigation.state !== "idle" && navigation.formData != null;
-  const activeIntent = busy
-    ? String(navigation.formData!.get("intent") ?? "")
-    : null;
-  const mergingNumber =
-    activeIntent === "merge"
-      ? Number(navigation.formData!.get("pullNumber"))
-      : null;
-  const deletingNumber =
-    activeIntent === "delete-change"
-      ? Number(navigation.formData!.get("pullNumber"))
-      : null;
-
-  if (changes.length === 0) return null;
-  return (
-    <div className="mb-6">
-      <div className="mb-3 flex items-center gap-2">
-        <CardGlyph icon={GitPullRequest} accent="brand" />
-        <h2 className="text-lg font-semibold">Open change requests</h2>
-        {isTeam && (
-          <span className="text-xs text-muted-foreground">
-            repo-wide — merging cuts a version for every agent
-          </span>
-        )}
-      </div>
-      <div className="space-y-4">
-        {changes.map((c) => (
-          <ChangeCard
-            key={c.number}
-            change={c}
-            busy={busy}
-            merging={
-              mergingNumber === c.number ||
-              runningTaskSubjects.includes(`merge:${c.number}`)
-            }
-            deleting={deletingNumber === c.number}
-          />
-        ))}
-      </div>
-    </div>
-  );
-}
-
-function ChangeCard({
-  change,
-  busy,
-  merging,
-  deleting,
-}: {
-  change: ChangeRow;
-  busy: boolean;
-  merging: boolean;
-  deleting: boolean;
-}) {
-  const submit = useSubmit();
-  const conflicted = change.mergeable === false;
-  const checking = change.mergeable === null;
-
-  return (
-    <Card>
-      <CardHeader className="pb-3">
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <div className="min-w-0">
-            <CardTitle className="text-base">
-              {change.title}{" "}
-              <span className="font-mono text-sm font-normal text-muted-foreground">
-                #{change.number}
-              </span>
-            </CardTitle>
-            {change.body && (
-              <p className="mt-1 whitespace-pre-wrap text-sm text-muted-foreground">
-                {change.body}
-              </p>
-            )}
-          </div>
-          <div className="flex shrink-0 items-center gap-2">
-            <MergeabilityBadge conflicted={conflicted} checking={checking} />
-            <ConfirmDialog
-              trigger={
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="ghost"
-                  className="text-destructive hover:text-destructive"
-                  disabled={busy}
-                >
-                  {deleting ? "Deleting…" : "Delete"}
-                </Button>
-              }
-              title={`Delete change request #${change.number}?`}
-              description="It will be closed without merging and its staged edits discarded. GitHub keeps the closed change request, so this can be restored there if needed."
-              confirmLabel="Delete"
-              onConfirm={() =>
-                submit(
-                  {
-                    intent: "delete-change",
-                    pullNumber: String(change.number),
-                    branch: change.branch,
-                  },
-                  { method: "post" },
-                )
-              }
-            />
-            <Form method="post">
-              <input type="hidden" name="intent" value="merge" />
-              <input type="hidden" name="pullNumber" value={change.number} />
-              <input type="hidden" name="branch" value={change.branch} />
-              <input type="hidden" name="title" value={change.title} />
-              <Button
-                type="submit"
-                size="sm"
-                disabled={busy || conflicted || merging}
-              >
-                {merging ? "Merging…" : "Merge"}
-              </Button>
-            </Form>
-          </div>
-        </div>
-      </CardHeader>
-      <CardContent>
-        {change.files.length === 0 ? (
-          <p className="text-sm text-muted-foreground">No file changes.</p>
-        ) : (
-          <ul className="divide-y rounded-lg border text-sm">
-            {change.files.map((f) => (
-              <li key={f.path} className="px-3 py-1.5">
-                {f.patch ? (
-                  <details className="group">
-                    <summary className="flex cursor-pointer items-center justify-between gap-3 [&::-webkit-details-marker]:hidden">
-                      <span className="truncate font-mono text-xs group-open:font-medium">
-                        {f.path}
-                      </span>
-                      <span className="flex shrink-0 items-center gap-2 font-mono text-xs">
-                        <span className="text-emerald-600 dark:text-emerald-400">
-                          +{f.additions}
-                        </span>
-                        <span className="text-destructive">−{f.deletions}</span>
-                      </span>
-                    </summary>
-                    <div className="mt-2">
-                      <DiffView patch={f.patch} />
-                    </div>
-                  </details>
-                ) : (
-                  <div className="flex items-center justify-between gap-3">
-                    <span className="truncate font-mono text-xs">{f.path}</span>
-                    <span className="flex shrink-0 items-center gap-2 font-mono text-xs">
-                      <span className="text-emerald-600 dark:text-emerald-400">
-                        +{f.additions}
-                      </span>
-                      <span className="text-destructive">−{f.deletions}</span>
-                    </span>
-                  </div>
-                )}
-              </li>
-            ))}
-          </ul>
-        )}
-        {conflicted && (
-          <p className="mt-3 text-xs text-destructive">
-            Conflicts with the current default branch — re-stage the files from
-            a fresh edit.
-          </p>
-        )}
-      </CardContent>
-    </Card>
-  );
-}
-
-function MergeabilityBadge({
-  conflicted,
-  checking,
-}: {
-  conflicted: boolean;
-  checking: boolean;
-}) {
-  if (checking) return <Badge variant="warning">checking…</Badge>;
-  if (conflicted) return <Badge variant="destructive">conflicts</Badge>;
-  return <Badge variant="success">ready</Badge>;
-}
-
 /* ────────────────────────────── team rollup ────────────────────────────── */
 
 function TeamRollup({ loaderData }: { loaderData: LoaderData }) {
-  const {
-    project,
-    draftGroups,
-    changes,
-    members,
-    teamEnvs,
-    teamVersions,
-    runningTaskSubjects,
-  } = loaderData;
-  const navigation = useNavigation();
-  const submit = useSubmit();
-  const anyOrphaned = draftGroups.some((g) => g.drafts.some((d) => d.orphaned));
-  const totalDrafts = draftGroups.reduce((n, g) => n + g.drafts.length, 0);
-  const memberNames = new Set(members.map((m) => m.name));
-  const busy = navigation.state !== "idle" && navigation.formData != null;
-  const activeIntent = busy
-    ? String(navigation.formData!.get("intent") ?? "")
-    : null;
-  const publishRunning = runningTaskSubjects.includes("publish");
-  const publishing = activeIntent === "publish" || publishRunning;
+  const { project, teamEnvs, teamVersions } = loaderData;
 
   return (
     <>
-      <Card className="mb-6">
-        <CardHeader className="pb-3">
-          <div className="flex items-center gap-2">
-            <CardGlyph icon={FileStack} accent="amber" />
-            <CardTitle className="text-base">Staged changes</CardTitle>
-            <Badge variant="secondary">{totalDrafts}</Badge>
-          </div>
-        </CardHeader>
-        <CardContent>
-          {totalDrafts === 0 ? (
-            <p className="text-sm text-muted-foreground">
-              Nothing staged anywhere. Agents' edits collect here until
-              published.
-            </p>
-          ) : (
-            <Form method="post" className="space-y-4">
-              <input type="hidden" name="intent" value="publish" />
-              {draftGroups.map((g) => (
-                <div key={g.owner}>
-                  <p className="mb-1 text-sm font-medium">
-                    {g.owner === "shared" ? (
-                      <>
-                        shared{" "}
-                        <span className="font-normal text-muted-foreground">
-                          · affects all agents
-                        </span>
-                      </>
-                    ) : memberNames.has(g.owner) ? (
-                      <Link
-                        to={`${contextPath(project.id, g.owner)}/deployment`}
-                        className="underline-offset-4 hover:underline"
-                      >
-                        {g.owner}
-                      </Link>
-                    ) : (
-                      <>
-                        {g.owner}{" "}
-                        <Badge variant="outline" className="align-middle">
-                          new agent
-                        </Badge>
-                      </>
-                    )}
-                  </p>
-                  <ul className="divide-y rounded-lg border text-sm">
-                    {g.drafts.map((d) => (
-                      <li
-                        key={d.id}
-                        className="flex items-center gap-3 px-3 py-1.5"
-                      >
-                        <input
-                          type="checkbox"
-                          name="path"
-                          value={d.path}
-                          defaultChecked={!d.orphaned}
-                          className="size-4 accent-primary"
-                          aria-label={`Include ${d.path}`}
-                        />
-                        <span
-                          className={`min-w-0 flex-1 truncate font-mono text-xs ${
-                            d.content === null
-                              ? "line-through decoration-destructive/60"
-                              : ""
-                          }`}
-                        >
-                          {d.path}
-                        </span>
-                        {d.orphaned && (
-                          <Badge variant="destructive">orphaned</Badge>
-                        )}
-                        {d.content === null && (
-                          <Badge
-                            variant="outline"
-                            className="text-destructive border-destructive/40"
-                          >
-                            delete
-                          </Badge>
-                        )}
-                        <span className="shrink-0 text-xs text-muted-foreground">
-                          <RelativeTime value={d.updatedAt} />
-                        </span>
-                        <ConfirmDialog
-                          trigger={
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              type="button"
-                              disabled={busy}
-                            >
-                              Discard
-                            </Button>
-                          }
-                          title={`Discard staged change to ${d.path}?`}
-                          description={
-                            d.content === null
-                              ? "Undoes the staged deletion — the file stays in the repository."
-                              : "The unpublished edit is deleted. The file itself is untouched — only the staged draft is lost."
-                          }
-                          confirmLabel="Discard"
-                          onConfirm={() =>
-                            submit(
-                              { intent: "discard", path: d.path },
-                              { method: "post" },
-                            )
-                          }
-                        />
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              ))}
-              {anyOrphaned && (
-                <p className="text-xs text-muted-foreground">
-                  Orphaned changes belong to an agent that&rsquo;s no longer on
-                  the team. They&rsquo;re unchecked and can&rsquo;t be published
-                  — discard them.
-                </p>
-              )}
-              <div className="flex flex-wrap items-center gap-3">
-                <Input
-                  name="title"
-                  placeholder="Change title (optional)"
-                  className="h-9 w-full sm:w-72"
-                />
-                <Button type="submit" disabled={busy || publishRunning}>
-                  {publishing
-                    ? "Publishing…"
-                    : "Publish selected as change request"}
-                </Button>
-              </div>
-              <PublishStatus active={publishing} />
-            </Form>
-          )}
-        </CardContent>
-      </Card>
-
-      <ChangeRequests
-        changes={changes}
-        isTeam
-        runningTaskSubjects={runningTaskSubjects}
-      />
-
       <TeamEnvironmentsCard teamEnvs={teamEnvs} project={project} />
       <TeamVersionHistory
         teamVersions={teamVersions}
@@ -2443,9 +1701,9 @@ function TeamEnvMemberRow({
 
 /**
  * The team's version history: versions grouped by commit, newest first, badged with the
- * environments running them. "Deploy" per environment moves the WHOLE team to that version —
- * direction-neutral (deploying an older version IS the rollback). The deploy guard triggers when
- * ANY member has missing required secrets.
+ * environments running them. Moving the WHOLE team to an older version is Roll back — the
+ * PRIMARY action on every past version (§2.10: rollback is the safety net; there is no undo).
+ * The deploy guard triggers when ANY member has missing required secrets.
  */
 function TeamVersionHistory({
   teamVersions,
@@ -2477,19 +1735,20 @@ function TeamVersionHistory({
               Some agents stayed on their current version
             </AlertTitle>
             <AlertDescription>
-              {skipped.join(", ")} had no build at this commit, so they were
-              left behind. Ship them a version to bring the team back in sync.
+              {skipped.join(", ")} had no version at this commit, so they were
+              left behind. Publish again to bring the whole team to one
+              version.
             </AlertDescription>
           </Alert>
         )}
         {teamVersions.length === 0 ? (
           <p className="text-sm text-muted-foreground">
-            No versions yet. Use Quick deploy in the tab row to deploy the
-            repository, or merge a change request above.
+            No versions yet. Use the Publish button in the header to deploy the
+            repository.
           </p>
         ) : (
           <ul className="divide-y rounded-lg border text-sm">
-            {teamVersions.map((v) => (
+            {teamVersions.map((v, i) => (
               <li key={v.gitSha} className="flex items-center gap-2 px-4 py-2">
                 <span className="w-10 shrink-0 font-semibold">{v.version}</span>
                 <span className="flex shrink-0 items-center gap-1">
@@ -2513,6 +1772,7 @@ function TeamVersionHistory({
                   teamEnvNames={teamEnvNames}
                   busy={busy}
                   guard={guard}
+                  rollback={i > 0}
                   onDeploy={(env, gitSha, rebuild) =>
                     fetcher.submit(
                       {
@@ -2535,31 +1795,27 @@ function TeamVersionHistory({
 }
 
 /**
- * The per-version team deploy affordance: pick an environment (a menu when >1) and move the whole
- * team there. Confirm copy says "moves the whole team to <version> in <env>". Redeploy (fresh
- * build) when the version already runs in that env; deploy otherwise — both are the same move.
+ * The per-version team move affordance: pick an environment (a menu when >1) and move the whole
+ * team there. Three shapes, one mechanism (deploy-team-version):
+ *  - Redeploy (fresh build) when the version already runs in that env;
+ *  - Deploy for the newest version not yet running there;
+ *  - Roll back — the PRIMARY action on every older version (§2.10). Same move, honest name.
  */
-export function TeamDeployControl({
+function TeamDeployControl({
   version,
   teamEnvNames,
   busy,
   guard,
+  rollback,
   onDeploy,
-  primary,
-  deployLabel,
-  redeployLabel,
 }: {
   version: TeamVersionRow;
   teamEnvNames: string[];
   busy: boolean;
   guard: DeployGuard;
+  /** True for a past version — renders Roll back as the primary (filled) action. */
+  rollback?: boolean;
   onDeploy: (envName: string, gitSha: string, rebuild: boolean) => void;
-  /** Render a filled, larger primary CTA (issue #147 post-merge banner) instead of the compact secondary control. */
-  primary?: boolean;
-  /** Override the "Deploy" label (e.g. "Deploy version v7"). */
-  deployLabel?: string;
-  /** Override the "Redeploy" label when the version already runs in the target env. */
-  redeployLabel?: string;
 }) {
   const [target, setTarget] = useState<string | null>(null);
   const [guardEnv, setGuardEnv] = useState<string | null>(null);
@@ -2567,6 +1823,8 @@ export function TeamDeployControl({
   const runningHere = (name: string) => version.runningEnvNames.includes(name);
   const run = (name: string) =>
     onDeploy(name, version.gitSha, runningHere(name));
+  const actionFor = (name: string) =>
+    runningHere(name) ? "Redeploy" : rollback ? "Roll back" : "Deploy";
 
   const confirmFor = (name: string) =>
     runningHere(name)
@@ -2575,8 +1833,8 @@ export function TeamDeployControl({
           description: `Rebuilds a fresh image from this version's commit and moves the whole team's ${name} over once healthy. The current instances keep serving until then.`,
         }
       : {
-          title: `Deploy ${version.version} to ${name}?`,
-          description: `Moves the whole team to ${version.version} in ${name}. Each agent's ${name} switches over once healthy; the current version keeps serving until then. To switch back, deploy the previous version again.`,
+          title: `${actionFor(name)} to ${version.version} in ${name}?`,
+          description: `Moves the whole team to ${version.version} in ${name}. Each agent's ${name} switches over once healthy; the current version keeps serving until then. To switch back, deploy the other version again.`,
         };
 
   const pick = (name: string) =>
@@ -2589,28 +1847,28 @@ export function TeamDeployControl({
     <>
       {single ? (
         <Button
-          size={primary ? "default" : "sm"}
+          size="sm"
           variant={
-            primary ? "default" : runningHere(single) ? "outline" : "secondary"
+            runningHere(single)
+              ? "outline"
+              : rollback
+                ? "default"
+                : "secondary"
           }
           disabled={busy}
           onClick={() => pick(single)}
         >
-          {primary && <Rocket className="h-4 w-4" aria-hidden />}
-          {runningHere(single)
-            ? (redeployLabel ?? "Redeploy")
-            : (deployLabel ?? "Deploy")}
+          {actionFor(single)}
         </Button>
       ) : (
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button
-              size={primary ? "default" : "sm"}
-              variant={primary ? "default" : "secondary"}
+              size="sm"
+              variant={rollback ? "default" : "secondary"}
               disabled={busy}
             >
-              {primary && <Rocket className="h-4 w-4" aria-hidden />}
-              {`${primary ? (deployLabel ?? "Deploy") : "Deploy"} ▾`}
+              {`${rollback ? "Roll back" : "Deploy"} ▾`}
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end">
@@ -2618,7 +1876,7 @@ export function TeamDeployControl({
               <DropdownMenuItem key={name} onSelect={() => pick(name)}>
                 {runningHere(name)
                   ? `Redeploy in ${name}`
-                  : `Deploy to ${name}`}
+                  : `${actionFor(name)} in ${name}`}
               </DropdownMenuItem>
             ))}
           </DropdownMenuContent>
@@ -2632,7 +1890,7 @@ export function TeamDeployControl({
           }}
           title={confirmFor(target).title}
           description={confirmFor(target).description}
-          confirmLabel={runningHere(target) ? "Redeploy" : "Deploy"}
+          confirmLabel={actionFor(target)}
           variant="default"
           onConfirm={() => {
             run(target);
@@ -2649,7 +1907,7 @@ export function TeamDeployControl({
           missing={guard.missing}
           activeAgent={guard.activeAgent}
           settingsAction={guard.settingsAction}
-          deployLabel={runningHere(guardEnv) ? "Redeploy" : "Deploy"}
+          deployLabel={actionFor(guardEnv)}
           onDeploy={() => {
             run(guardEnv);
             setGuardEnv(null);
@@ -2657,64 +1915,6 @@ export function TeamDeployControl({
         />
       )}
     </>
-  );
-}
-
-/**
- * Post-merge "ready" banner on the repo (team) view (issue #147): merging a change request cuts a
- * version for the whole team, so the banner offers a one-click deploy of that version instead of
- * making the user hunt through version history. It reuses {@link TeamDeployControl} verbatim for env
- * selection, the deploy guard, and confirm dialogs — no new env logic here. When there's no
- * environment to deploy to (`teamEnvNames` empty), it degrades to text only.
- */
-export function PostMergeDeployBanner({
-  version,
-  teamVersions,
-  teamEnvNames,
-  guard,
-}: {
-  version: string;
-  teamVersions: TeamVersionRow[];
-  teamEnvNames: string[];
-  guard: DeployGuard;
-}) {
-  const fetcher = useFetcher<typeof action>();
-  const busy = fetcher.state !== "idle";
-  const target =
-    teamVersions.find((v) => v.version === version) ?? teamVersions[0] ?? null;
-
-  return (
-    <Alert className="mb-6">
-      <AlertTitle>{version} is ready</AlertTitle>
-      <AlertDescription>
-        The merge cut version {version} for every agent — deploy the whole team
-        in one click.
-      </AlertDescription>
-      {target && teamEnvNames.length > 0 && (
-        <div className="mt-2">
-          <TeamDeployControl
-            version={target}
-            teamEnvNames={teamEnvNames}
-            busy={busy}
-            guard={guard}
-            primary
-            deployLabel={`Deploy version ${target.version}`}
-            redeployLabel={`Redeploy version ${target.version}`}
-            onDeploy={(env, gitSha, rebuild) =>
-              fetcher.submit(
-                {
-                  intent: "deploy-team-version",
-                  env,
-                  gitSha,
-                  ...(rebuild ? { rebuild: "1" } : {}),
-                },
-                { method: "post" },
-              )
-            }
-          />
-        </div>
-      )}
-    </Alert>
   );
 }
 
@@ -2822,8 +2022,8 @@ function EnvironmentsCard({
                     </>
                   ) : (
                     <span className="text-muted-foreground">
-                      Nothing deployed — use Quick deploy in the tab row, or
-                      Deploy a version below.
+                      Nothing deployed — use the Publish button in the header,
+                      or Deploy a version below.
                     </span>
                   )}
                   {canAct && (
@@ -3207,9 +2407,9 @@ function GitHubChannelRow({
 }
 
 /**
- * Every version, newest first, badged with the environments it's running on. "Deploy" is
- * deliberately direction-neutral — deploying an older version IS the rollback (cutover on
- * health; a built image starts in seconds).
+ * Every version, newest first, badged with the environments it's running on. Roll back is the
+ * PRIMARY action on every past version (§2.10) — the same move as a deploy (cutover on health;
+ * a built image starts in seconds), under its honest name.
  */
 /** Deploy-guard context threaded to each version's deploy control (§9). */
 interface DeployGuard {
@@ -3269,8 +2469,8 @@ function VersionHistory({
         )}
         {releases.length === 0 ? (
           <p className="text-sm text-muted-foreground">
-            No versions yet. Use Quick deploy in the tab row to deploy the
-            repository, or merge a change request above.
+            No versions yet. Use the Publish button in the header to deploy the
+            repository.
           </p>
         ) : (
           <ul className="divide-y rounded-lg border text-sm">
@@ -3300,6 +2500,7 @@ function VersionHistory({
                     envs={envs}
                     busy={busy}
                     guard={guard}
+                    rollback={i > 0}
                     onDeploy={deploy}
                     onRedeploy={redeploy}
                   />
@@ -3314,16 +2515,18 @@ function VersionHistory({
 }
 
 /**
- * The per-version deploy affordance. One environment: a plain Deploy button, or Redeploy
- * when the version is already running there. Several: one menu with deploy/redeploy actions
- * per environment. Every deploy confirms — the dialog names the target (the realistic
- * multi-env mistake) and teaches that switching back is just another deploy.
+ * The per-version deploy affordance. One environment: a plain button — Redeploy when the
+ * version is already running there, Roll back (primary) for past versions, Deploy otherwise.
+ * Several: one menu with an action per environment. Every move confirms — the dialog names the
+ * target (the realistic multi-env mistake) and teaches that switching back is just another
+ * deploy.
  */
 function DeployControl({
   release,
   envs,
   busy,
   guard,
+  rollback,
   onDeploy,
   onRedeploy,
 }: {
@@ -3331,9 +2534,12 @@ function DeployControl({
   envs: EnvState[];
   busy: boolean;
   guard: DeployGuard;
+  /** True for a past version — renders Roll back as the primary (filled) action. */
+  rollback?: boolean;
   onDeploy: (envName: string, gitSha: string) => void;
   onRedeploy: (envName: string, gitSha: string) => void;
 }) {
+  const deployWord = rollback ? "Roll back" : "Deploy";
   type DeployMode = "deploy" | "redeploy";
   const [target, setTarget] = useState<{
     envState: EnvState;
@@ -3362,7 +2568,7 @@ function DeployControl({
       };
     }
     return {
-      title: `Deploy ${release.version} to ${s.env.name}?`,
+      title: `${deployWord} to ${release.version} in ${s.env.name}?`,
       description: current
         ? `${s.env.name} switches to ${release.version} once it's healthy; ${current.version} keeps serving until then. To switch back, deploy ${current.version} again.`
         : `${release.version} will start running on ${s.env.name}.`,
@@ -3378,11 +2584,17 @@ function DeployControl({
         <>
           <Button
             size="sm"
-            variant={mode === "redeploy" ? "outline" : "secondary"}
+            variant={
+              mode === "redeploy"
+                ? "outline"
+                : rollback
+                  ? "default"
+                  : "secondary"
+            }
             disabled={busy}
             onClick={() => setGuardTarget({ envState: only, mode })}
           >
-            {mode === "redeploy" ? "Redeploy" : "Deploy"}
+            {mode === "redeploy" ? "Redeploy" : deployWord}
           </Button>
           {guardTarget && (
             <DeploySecretsGuardDialog
@@ -3394,7 +2606,7 @@ function DeployControl({
               activeAgent={guard.activeAgent}
               settingsAction={guard.settingsAction}
               deployLabel={
-                guardTarget.mode === "redeploy" ? "Redeploy" : "Deploy"
+                guardTarget.mode === "redeploy" ? "Redeploy" : deployWord
               }
               onDeploy={() => {
                 run(guardTarget.envState, guardTarget.mode);
@@ -3410,15 +2622,21 @@ function DeployControl({
         trigger={
           <Button
             size="sm"
-            variant={mode === "redeploy" ? "outline" : "secondary"}
+            variant={
+              mode === "redeploy"
+                ? "outline"
+                : rollback
+                  ? "default"
+                  : "secondary"
+            }
             disabled={busy}
           >
-            {mode === "redeploy" ? "Redeploy" : "Deploy"}
+            {mode === "redeploy" ? "Redeploy" : deployWord}
           </Button>
         }
         title={copy.title}
         description={copy.description}
-        confirmLabel={mode === "redeploy" ? "Redeploy" : "Deploy"}
+        confirmLabel={mode === "redeploy" ? "Redeploy" : deployWord}
         variant="default"
         onConfirm={() => run(only, mode)}
       />
@@ -3430,8 +2648,12 @@ function DeployControl({
     <>
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
-          <Button size="sm" variant="secondary" disabled={busy}>
-            {everywhere ? "Redeploy" : "Deploy"} ▾
+          <Button
+            size="sm"
+            variant={rollback && !everywhere ? "default" : "secondary"}
+            disabled={busy}
+          >
+            {everywhere ? "Redeploy" : deployWord} ▾
           </Button>
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end">
@@ -3450,7 +2672,7 @@ function DeployControl({
               >
                 {mode === "redeploy"
                   ? `Redeploy in ${s.env.name}`
-                  : `Deploy to ${s.env.name}`}
+                  : `${deployWord} in ${s.env.name}`}
               </DropdownMenuItem>
             );
           })}
@@ -3464,7 +2686,7 @@ function DeployControl({
           }}
           title={confirmFor(target.envState, target.mode).title}
           description={confirmFor(target.envState, target.mode).description}
-          confirmLabel={target.mode === "redeploy" ? "Redeploy" : "Deploy"}
+          confirmLabel={target.mode === "redeploy" ? "Redeploy" : deployWord}
           variant="default"
           onConfirm={() => {
             run(target.envState, target.mode);
@@ -3481,7 +2703,7 @@ function DeployControl({
           missing={guard.missing}
           activeAgent={guard.activeAgent}
           settingsAction={guard.settingsAction}
-          deployLabel={guardTarget.mode === "redeploy" ? "Redeploy" : "Deploy"}
+          deployLabel={guardTarget.mode === "redeploy" ? "Redeploy" : deployWord}
           onDeploy={() => {
             run(guardTarget.envState, guardTarget.mode);
             setGuardTarget(null);

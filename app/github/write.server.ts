@@ -1,13 +1,13 @@
 /**
- * Git write layer (Author pillar, M1) — the one primitive every editor and the Pi assistant
- * use to ship a change.
+ * Git write layer (Author pillar) — how harnesst lands changes in the user's repo.
  *
- * D3 is git-native: harnesst never mutates the default branch directly. A change becomes a working
- * branch off the default branch, one or more file commits, and a pull request. Merging the PR
- * is the ship signal (later wired to deploy). The eve repo stays the single source of truth —
- * we persist nothing about the change locally; its state lives in GitHub.
+ * The publish pipeline commits saved drafts straight onto the default branch as one
+ * compare-and-swap fast-forward commit (commitToDefaultBranch, issue #225). The eve repo stays
+ * the single source of truth — we persist nothing about the change locally. harnesst authors no
+ * branches and no pull requests; the conversation-checkout mirror (checkout-sync.server.ts) is
+ * the only other ref harnesst writes, and it is an internal durability mechanism.
  */
-import { invalidateRepoChanges, invalidateRepoSource } from "./cached.server";
+import { invalidateRepoSource } from "./cached.server";
 import { getInstallationOctokit } from "./client.server";
 
 export interface FileChange {
@@ -17,33 +17,10 @@ export interface FileChange {
   content: string | null;
 }
 
-export interface ProposeChangeInput {
-  /** Base branch to branch from and target the PR at; defaults to the repo default branch. */
-  base?: string;
-  /** Working branch name to create/reuse (e.g. "harnesst/edit-instructions-abc"). */
-  branch: string;
-  files: FileChange[];
-  title: string;
-  body?: string;
-  /** Commit message; defaults to `title`. */
-  commitMessage?: string;
-}
-
-export interface ProposedChange {
-  branch: string;
-  base: string;
-  pullRequestUrl: string;
-  pullRequestNumber: number;
-  /** True when we reused an already-open PR for this branch rather than creating one. */
-  reusedPullRequest: boolean;
-}
-
 interface RepoRef {
   owner: string;
   repo: string;
 }
-
-type InstallationOctokit = Awaited<ReturnType<typeof getInstallationOctokit>>;
 
 /** HTTP status of an Octokit request error, if present. */
 function statusOf(error: unknown): number | undefined {
@@ -52,30 +29,20 @@ function statusOf(error: unknown): number | undefined {
     : undefined;
 }
 
-/** Create the working branch off `baseSha`, tolerating "already exists". */
-async function ensureBranch(
-  octokit: InstallationOctokit,
-  { owner, repo }: RepoRef,
-  branch: string,
-  baseSha: string,
-): Promise<void> {
-  try {
-    await octokit.rest.git.createRef({
-      owner,
-      repo,
-      ref: `refs/heads/${branch}`,
-      sha: baseSha,
-    });
-  } catch (error) {
-    // 422 == ref already exists; reuse it so repeated saves stack on one branch/PR.
-    if (statusOf(error) !== 422) throw error;
-  }
+/** Human message of an Octokit request error (the GitHub API's own words), if present. */
+function messageOf(error: unknown): string {
+  return typeof error === "object" && error !== null && "message" in error
+    ? String((error as { message?: unknown }).message ?? "")
+    : String(error);
 }
+
+type InstallationOctokit = Awaited<ReturnType<typeof getInstallationOctokit>>;
 
 /**
  * Commit `files` to `branch` as ONE commit via the Git Data API: blobs upload concurrently
- * (independent), then a single tree + commit + ref update. One change-set == one commit, and
- * no per-file sequential round-trips. A null-content entry deletes that path (tree sha null).
+ * (independent), then a single tree + commit + ref update. Used by repo scaffolding (a brand-new
+ * repo's skeleton commit — see create.server.ts); publishes go through `commitToDefaultBranch`,
+ * which adds the compare-and-swap contract. A null-content entry deletes that path.
  */
 export async function commitFiles(
   octokit: InstallationOctokit,
@@ -138,386 +105,128 @@ export async function commitFiles(
 }
 
 /**
- * Create a working branch, commit `files` (one commit), and open (or reuse) a PR back to the
- * base branch. Idempotent per branch name: calling again with the same branch stacks commits
- * and reuses the open PR.
+ * The base branch moved between the head the build was based on and the ref update — someone
+ * else pushed while we were publishing. The publish pipeline catches this, rebuilds against the
+ * new head, and retries exactly once before giving up with a user-facing message.
  */
-export async function proposeChange(
-  installationId: string | number,
-  { owner, repo }: RepoRef,
-  input: ProposeChangeInput,
-): Promise<ProposedChange> {
-  const octokit = await getInstallationOctokit(installationId);
-  const ref: RepoRef = { owner, repo };
-
-  const base =
-    input.base ??
-    (await octokit.rest.repos.get({ owner, repo })).data.default_branch;
-
-  const baseRef = await octokit.rest.git.getRef({
-    owner,
-    repo,
-    ref: `heads/${base}`,
-  });
-  await ensureBranch(octokit, ref, input.branch, baseRef.data.object.sha);
-  await commitFiles(octokit, ref, input.branch, input.files, input.commitMessage ?? input.title);
-
-  const result = await openOrReusePullRequest(octokit, ref, {
-    base,
-    branch: input.branch,
-    title: input.title,
-    body: input.body,
-  });
-  invalidateRepoChanges(installationId, ref);
-  return result;
-}
-
-/** A file touched by a change, with line deltas for a PM-readable diff summary. */
-export interface ChangedFile {
-  path: string;
-  /** GitHub file status: added | modified | removed | renamed. */
-  status: string;
-  additions: number;
-  deletions: number;
-  /** Unified-diff hunks GitHub computed for the file (absent for binary/too-large files). */
-  patch?: string;
-}
-
-/** An open change-set (PR) awaiting review, with enough to review + merge it in-app. */
-export interface OpenChange {
-  number: number;
-  title: string;
-  /** PR body — the plain-language changelog harnesst wrote. */
-  body: string;
-  url: string;
-  branch: string;
-  base: string;
-  createdAt: string;
-  /** null while GitHub is still computing mergeability. */
-  mergeable: boolean | null;
-  /** e.g. "clean", "dirty" (conflicts), "blocked", "unknown". */
-  mergeableState: string;
-  /** True while the PR is still a draft/WIP (assistant conversation PRs open as drafts). */
-  draft: boolean;
-  files: ChangedFile[];
-}
-
-/**
- * List open pull requests harnesst opened for this repo (head branches under `harnesst/`), newest
- * first, each enriched with mergeability and its changed-file summary. This is the Changes
- * review inbox — the in-app surface that replaces bouncing to github.com to see/merge a PR.
- */
-export async function listOpenChanges(
-  installationId: string | number,
-  { owner, repo }: RepoRef,
-  limit = 20,
-): Promise<OpenChange[]> {
-  const octokit = await getInstallationOctokit(installationId);
-  const list = await octokit.rest.pulls.list({
-    owner,
-    repo,
-    state: "open",
-    sort: "created",
-    direction: "desc",
-    per_page: 50,
-  });
-  // Only harnesst-authored change-sets (our editors/assistant all branch under `harnesst/`).
-  const authoredPrs = list.data
-    .filter((pr) => pr.head.ref.startsWith("harnesst/"))
-    .slice(0, limit);
-
-  return Promise.all(
-    authoredPrs.map(async (pr) => {
-      // pulls.get returns the computed `mergeable`/`mergeable_state` the list omits.
-      const [detail, files] = await Promise.all([
-        octokit.rest.pulls.get({ owner, repo, pull_number: pr.number }),
-        octokit.rest.pulls.listFiles({ owner, repo, pull_number: pr.number, per_page: 100 }),
-      ]);
-      return {
-        number: pr.number,
-        title: pr.title,
-        body: pr.body ?? "",
-        url: pr.html_url,
-        branch: pr.head.ref,
-        base: pr.base.ref,
-        createdAt: pr.created_at,
-        mergeable: detail.data.mergeable,
-        mergeableState: detail.data.mergeable_state,
-        draft: detail.data.draft ?? false,
-        files: files.data.map((f) => ({
-          path: f.filename,
-          status: f.status,
-          additions: f.additions,
-          deletions: f.deletions,
-          patch: f.patch,
-        })),
-      } satisfies OpenChange;
-    }),
-  );
-}
-
-/**
- * Every changed file path of one PR (paginated past 100 files). The conversation-branch
- * merge gate recomputes build roots from these SERVER-side — a client-posted root could
- * under-specify a multi-member change (issue #137).
- */
-export async function listPullRequestFilePaths(
-  installationId: string | number,
-  { owner, repo }: RepoRef,
-  pullNumber: number,
-): Promise<string[]> {
-  const octokit = await getInstallationOctokit(installationId);
-  const files = await octokit.paginate(octokit.rest.pulls.listFiles, {
-    owner,
-    repo,
-    pull_number: pullNumber,
-    per_page: 100,
-  });
-  return files.map((f) => f.filename);
-}
-
-/** The newest open harnesst change request touching a given file. */
-export interface PendingFileChange {
-  number: number;
-  title: string;
-  branch: string;
-  url: string;
-}
-
-/**
- * Find the newest open harnesst change request that touches `path`. Editors use this to surface a
- * published-but-unmerged value — without it, a file "loses" its latest edit the moment the
- * staged draft is published, until the change request merges.
- */
-export async function findOpenChangeForFile(
-  installationId: string | number,
-  { owner, repo }: RepoRef,
-  path: string,
-): Promise<PendingFileChange | null> {
-  const octokit = await getInstallationOctokit(installationId);
-  const list = await octokit.rest.pulls.list({
-    owner,
-    repo,
-    state: "open",
-    sort: "created",
-    direction: "desc",
-    per_page: 50,
-  });
-  for (const pr of list.data.filter((p) => p.head.ref.startsWith("harnesst/"))) {
-    const files = await octokit.rest.pulls.listFiles({
-      owner,
-      repo,
-      pull_number: pr.number,
-      per_page: 100,
-    });
-    if (files.data.some((f) => f.filename === path)) {
-      return { number: pr.number, title: pr.title, branch: pr.head.ref, url: pr.html_url };
-    }
+export class NonFastForwardError extends Error {
+  constructor(branch: string) {
+    super(`The branch "${branch}" advanced while the commit was being written.`);
+    this.name = "NonFastForwardError";
   }
-  return null;
 }
 
-/**
- * Delete a change request: comment (so the PR trail says why it closed), close without
- * merging, and remove the working branch. Recoverable at the source — GitHub can restore the
- * branch from the closed PR — so the UI can treat this as delete without it being data loss.
- */
-export async function closePullRequest(
+/** The current head sha of `branch` — captured before a publish build so the commit can CAS on it. */
+export async function getBranchHead(
   installationId: string | number,
   { owner, repo }: RepoRef,
-  pullNumber: number,
-  branch?: string,
-): Promise<void> {
+  branch: string,
+): Promise<string> {
   const octokit = await getInstallationOctokit(installationId);
-  // Comment before closing so the trail exists even if a later step fails.
-  await octokit.rest.issues.createComment({
-    owner,
-    repo,
-    issue_number: pullNumber,
-    body: "Change request deleted from harnesst — closed without merging.",
-  });
-  await octokit.rest.pulls.update({ owner, repo, pull_number: pullNumber, state: "closed" });
-
-  const head =
-    branch ??
-    (await octokit.rest.pulls.get({ owner, repo, pull_number: pullNumber })).data.head.ref;
-  if (head) {
-    try {
-      await octokit.rest.git.deleteRef({ owner, repo, ref: `heads/${head}` });
-    } catch {
-      // protected or already-deleted branch — the close already succeeded
-    }
-  }
-  invalidateRepoChanges(installationId, { owner, repo });
-}
-
-export interface MergeResult {
-  /** The commit SHA on the base branch after merge — the canonical version identity (D9). */
-  mergeSha: string;
-  method: "squash" | "merge";
+  const head = await octokit.rest.git.getRef({ owner, repo, ref: `heads/${branch}` });
+  return head.data.object.sha;
 }
 
 /**
- * Merge a change-set in-app (PRD §7.3: "merge in harnesst or on GitHub"). Squash by default so
- * each change-set becomes exactly one commit on the default branch == one Release; falls back
- * to a merge commit if the repo disallows squash. Deletes the working branch on success.
+ * Commit `files` directly to `branch` (the default branch) as ONE compare-and-swap fast-forward
+ * commit: blobs upload concurrently, then a single tree (base_tree = `expectedHeadSha`'s tree,
+ * with null-content entries as deletions) + commit parented on `expectedHeadSha` + `updateRef`
+ * WITHOUT force.
  *
- * Throws a human-readable error when GitHub refuses the merge (conflicts / not mergeable) so
- * the Changes UI can tell the PM why rather than surfacing a raw 405/409.
+ * `expectedHeadSha` is the head the caller's build was based on — parenting on it (rather than
+ * re-reading the head here) means an external push ANYWHERE in the build→commit window makes the
+ * ref update non-fast-forward, so nothing that wasn't build-checked can land. GitHub rejects that
+ * update with a 422, which surfaces as `NonFastForwardError` — the CAS failure the caller
+ * resolves by rebuilding against the new head and retrying.
  */
-export async function mergePullRequest(
+export async function commitToDefaultBranch(
   installationId: string | number,
   { owner, repo }: RepoRef,
-  pullNumber: number,
-  branch?: string,
-): Promise<MergeResult> {
+  input: { branch: string; expectedHeadSha: string; files: FileChange[]; message: string },
+): Promise<{ sha: string }> {
   const octokit = await getInstallationOctokit(installationId);
-
-  let method: "squash" | "merge" = "squash";
-  let merged;
-  try {
-    merged = await octokit.rest.pulls.merge({
-      owner,
-      repo,
-      pull_number: pullNumber,
-      merge_method: method,
-    });
-  } catch (error) {
-    const status = statusOf(error);
-    // 405 with squash disabled on the repo — retry as a merge commit.
-    if (status === 405) {
-      method = "merge";
-      try {
-        merged = await octokit.rest.pulls.merge({
+  const writes = input.files.filter(
+    (f): f is FileChange & { content: string } => f.content !== null,
+  );
+  let deletes = input.files.filter((f) => f.content === null);
+  const [blobs, headCommit] = await Promise.all([
+    Promise.all(
+      writes.map((f) =>
+        octokit.rest.git.createBlob({
           owner,
           repo,
-          pull_number: pullNumber,
-          merge_method: method,
-        });
-      } catch (retryError) {
-        throw mergeError(retryError);
-      }
-    } else {
-      throw mergeError(error);
+          content: Buffer.from(f.content, "utf8").toString("base64"),
+          encoding: "base64",
+        }),
+      ),
+    ),
+    octokit.rest.git.getCommit({ owner, repo, commit_sha: input.expectedHeadSha }),
+  ]);
+  if (deletes.length > 0) {
+    // The Git Data API 422s on a tree entry that deletes a path absent from base_tree, so a
+    // deletion staged for a file an external push already removed would block the whole publish
+    // with a raw GitHub error. Filter to paths that actually exist at the base; a truncated
+    // (giant-repo) listing degrades to sending everything, exactly as before.
+    const headTree = await octokit.rest.git.getTree({
+      owner,
+      repo,
+      tree_sha: headCommit.data.tree.sha,
+      recursive: "1",
+    });
+    if (!headTree.data.truncated) {
+      const present = new Set(headTree.data.tree.map((e) => e.path));
+      deletes = deletes.filter((f) => present.has(f.path));
     }
   }
-
-  // Best-effort branch cleanup; a failure here must not fail the (already-done) merge.
-  const head = branch ?? (await octokit.rest.pulls.get({ owner, repo, pull_number: pullNumber })).data.head.ref;
-  if (head) {
-    try {
-      await octokit.rest.git.deleteRef({ owner, repo, ref: `heads/${head}` });
-    } catch {
-      // ignore — protected/already-deleted branch
-    }
+  // Everything already true at the base (only already-gone deletions): nothing to commit.
+  if (writes.length === 0 && deletes.length === 0) {
+    return { sha: input.expectedHeadSha };
   }
-
-  // A merge lands on the default branch AND closes the PR — drop both source and changes caches.
-  invalidateRepoChanges(installationId, { owner, repo });
-  invalidateRepoSource(installationId, { owner, repo });
-  return { mergeSha: merged.data.sha, method };
-}
-
-/** Turn an Octokit merge failure into a PM-readable message. */
-function mergeError(error: unknown): Error {
-  const status = statusOf(error);
-  if (status === 409 || status === 405) {
-    return new Error(
-      "This change can't be merged automatically — it conflicts with the current default branch. Re-open the change from a fresh edit, or resolve it in GitHub.",
-    );
-  }
-  return error instanceof Error ? error : new Error(String(error));
-}
-
-/** A GitHub error whose 422 is specifically "this plan/repo can't create draft PRs". */
-function isDraftUnsupported(error: unknown): boolean {
-  if (statusOf(error) !== 422) return false;
-  const message =
-    typeof error === "object" && error !== null && "message" in error
-      ? String((error as { message?: unknown }).message ?? "")
-      : String(error);
-  return /draft/i.test(message);
-}
-
-/** Whether an open PR opened for this branch is still a draft (extends ProposedChange). */
-export interface OpenedPullRequest extends ProposedChange {
-  draft: boolean;
-}
-
-async function openOrReusePullRequest(
-  octokit: InstallationOctokit,
-  { owner, repo }: RepoRef,
-  {
-    base,
-    branch,
-    title,
-    body,
-    draft,
-  }: { base: string; branch: string; title: string; body?: string; draft?: boolean },
-): Promise<OpenedPullRequest> {
+  const tree = await octokit.rest.git.createTree({
+    owner,
+    repo,
+    base_tree: headCommit.data.tree.sha,
+    tree: [
+      ...writes.map((f, i) => ({
+        path: f.path,
+        mode: "100644" as const,
+        type: "blob" as const,
+        sha: blobs[i].data.sha,
+      })),
+      // sha: null in a tree entry removes the path from the base tree.
+      ...deletes.map((f) => ({
+        path: f.path,
+        mode: "100644" as const,
+        type: "blob" as const,
+        sha: null,
+      })),
+    ],
+  });
+  const commit = await octokit.rest.git.createCommit({
+    owner,
+    repo,
+    message: input.message,
+    tree: tree.data.sha,
+    parents: [input.expectedHeadSha],
+  });
   try {
-    const created = await octokit.rest.pulls.create({
+    // force defaults to false — this IS the compare-and-swap: GitHub only fast-forwards, and
+    // the commit's parent is the build's base, so any head move since the build rejects here.
+    await octokit.rest.git.updateRef({
       owner,
       repo,
-      base,
-      head: branch,
-      title,
-      body,
-      draft: draft ?? false,
+      ref: `heads/${input.branch}`,
+      sha: commit.data.sha,
     });
-    return {
-      branch,
-      base,
-      pullRequestUrl: created.data.html_url,
-      pullRequestNumber: created.data.number,
-      reusedPullRequest: false,
-      draft: created.data.draft ?? false,
-    };
   } catch (error) {
-    // Free-plan private repos reject draft PRs with a 422 — retry as a regular PR tagged [WIP].
-    if (draft && isDraftUnsupported(error)) {
-      return openOrReusePullRequest(octokit, { owner, repo }, {
-        base,
-        branch,
-        title: title.startsWith("[WIP]") ? title : `[WIP] ${title}`,
-        body,
-        draft: false,
-      });
+    // Only a genuine non-fast-forward is the CAS miss the pipeline retries. Every other 422
+    // (a protected branch above all — "Changes must be made through a pull request") can never
+    // succeed on retry, so surface GitHub's own message instead of a misleading race error.
+    if (statusOf(error) === 422 && /fast.forward/i.test(messageOf(error))) {
+      throw new NonFastForwardError(input.branch);
     }
-    // 422 == a PR for this head already exists; find and return it.
-    if (statusOf(error) !== 422) throw error;
-    const existing = await octokit.rest.pulls.list({
-      owner,
-      repo,
-      base,
-      head: `${owner}:${branch}`,
-      state: "open",
-    });
-    const pr = existing.data[0];
-    if (!pr) throw error;
-    return {
-      branch,
-      base,
-      pullRequestUrl: pr.html_url,
-      pullRequestNumber: pr.number,
-      reusedPullRequest: true,
-      draft: pr.draft ?? false,
-    };
+    throw error;
   }
-}
-
-/**
- * Open (or reuse) a PR for a branch, optionally as a DRAFT — the assistant coding-agent sync
- * engine's entry. Thin installation-scoped wrapper over the internal
- * open/reuse logic (which already falls back from an unsupported draft to a `[WIP]` regular PR).
- */
-export async function openPullRequest(
-  installationId: string | number,
-  { owner, repo }: RepoRef,
-  input: { base: string; branch: string; title: string; body?: string; draft?: boolean },
-): Promise<OpenedPullRequest> {
-  const octokit = await getInstallationOctokit(installationId);
-  const result = await openOrReusePullRequest(octokit, { owner, repo }, input);
-  invalidateRepoChanges(installationId, { owner, repo });
-  return result;
+  invalidateRepoSource(installationId, { owner, repo });
+  return { sha: commit.data.sha };
 }

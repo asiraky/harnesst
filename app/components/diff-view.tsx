@@ -1,7 +1,7 @@
 /**
  * Unified-diff renderer for a single file's GitHub `patch` (the hunk text `pulls.listFiles`
- * returns). Used to review assistant conversation PRs as real per-file line diffs on the Changes
- * tab. Pure presentation: it parses the `@@ … @@` hunks and colours added/removed/context lines.
+ * returns). Used to review pending changes as real per-file line diffs in the publish panel.
+ * Pure presentation: it parses the `@@ … @@` hunks and colours added/removed/context lines.
  * Binary or too-large files have no patch — the caller renders the add/delete counts instead.
  */
 import { cn } from "~/lib/utils";

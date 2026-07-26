@@ -372,7 +372,7 @@ describe("MCP deployment tools", () => {
   });
 });
 
-describe("MCP PR-enforced authoring tools", () => {
+describe("MCP authoring tools", () => {
   let store: FakeStore;
   let deps: Partial<McpToolDeps>;
 
@@ -390,23 +390,6 @@ describe("MCP PR-enforced authoring tools", () => {
     store.seedAgent({ id: "agent_1", projectId: "project_1", name: "alpha" });
     deps = { store };
   });
-
-  function openChange(overrides: Record<string, unknown> = {}) {
-    return {
-      number: 12,
-      title: "Update instructions",
-      body: "",
-      url: "https://github.example/acme/agents/pull/12",
-      branch: "harnesst/publish-123",
-      base: "trunk",
-      createdAt: "2026-07-14T00:00:00Z",
-      mergeable: true,
-      mergeableState: "clean",
-      draft: false,
-      files: [],
-      ...overrides,
-    };
-  }
 
   it("stages normalized edits sequentially with the caller identity and audits no content", async () => {
     const recordAudit = vi.spyOn(store.audit, "record");
@@ -502,131 +485,117 @@ describe("MCP PR-enforced authoring tools", () => {
     expect(stageDraft).not.toHaveBeenCalled();
   });
 
-  it("publishes selected drafts through the connected project and default branch", async () => {
-    const publishDrafts = vi.fn(async () => ({
-      branch: "harnesst/publish-123",
-      base: "trunk",
-      pullRequestUrl: "https://github.example/acme/agents/pull/12",
-      pullRequestNumber: 12,
-      reusedPullRequest: false,
+  it("runs the full pipeline and audits the commit sha, release ids, and deployment ids", async () => {
+    const publish = vi.fn(async () => ({
+      taskId: "task_1",
+      status: "succeeded" as const,
+      commitSha: "commit_sha",
+      releaseIds: ["release_1", "release_2"],
+      deploymentIds: ["dep_1", "dep_2"],
     }));
-    const tools = createMcpToolService(authorIdentity, {
-      ...deps,
-      publishDrafts,
-    });
+    const tools = createMcpToolService(authorIdentity, { ...deps, publish });
 
     await expect(
-      tools.publishChanges({
-        projectId: "project_1",
-        paths: ["/agent/instructions.md"],
-        title: "Update instructions",
-      }),
-    ).resolves.toMatchObject({
+      tools.publishChanges({ projectId: "project_1" }),
+    ).resolves.toEqual({
       projectId: "project_1",
-      change: {
-        branch: "harnesst/publish-123",
-        base: "trunk",
-        pullRequestNumber: 12,
-      },
+      taskId: "task_1",
+      commitSha: "commit_sha",
+      releaseIds: ["release_1", "release_2"],
+      deploymentIds: ["dep_1", "dep_2"],
     });
-    expect(publishDrafts).toHaveBeenCalledWith({
-      project: {
-        id: "project_1",
-        repoInstallationId: "42",
-        repoOwner: "acme",
-        repoName: "agents",
-        defaultBranch: "trunk",
-      },
-      paths: ["agent/instructions.md"],
-      title: "Update instructions",
+    expect(publish).toHaveBeenCalledWith({
+      projectId: "project_1",
+      originUrl: "/repos/project_1",
       createdBy: "user_1",
+      envName: null,
     });
-    expect(store.auditEntries.map((entry) => entry.action)).toEqual([
-      "mcp.publish_changes",
+    expect(store.auditEntries).toEqual([
+      expect.objectContaining({
+        action: "mcp.publish_changes",
+        meta: expect.objectContaining({
+          status: "succeeded",
+          commitSha: "commit_sha",
+          releaseIds: ["release_1", "release_2"],
+          deploymentIds: ["dep_1", "dep_2"],
+        }),
+      }),
     ]);
   });
 
-  it("forwards bounded open-change listing to the connected repository", async () => {
-    const listOpenChanges = vi.fn(async () => [openChange()]);
-    const tools = createMcpToolService(authorIdentity, {
-      ...deps,
-      listOpenChanges,
-    });
-
-    await expect(
-      tools.listOpenChanges({ projectId: "project_1", limit: 7 }),
-    ).resolves.toEqual({ changes: [openChange()] });
-    expect(listOpenChanges).toHaveBeenCalledWith(
-      "42",
-      { owner: "acme", repo: "agents" },
-      7,
-    );
-    expect(store.auditEntries.map((entry) => entry.action)).toEqual([
-      "mcp.list_open_changes",
-    ]);
-  });
-
-  it("merges only the server-resolved harnesst branch targeting the default branch", async () => {
-    const listOpenChanges = vi.fn(async () => [openChange()]);
-    const mergePullRequest = vi.fn(async () => ({
-      mergeSha: "merge_sha",
-      method: "squash" as const,
+  it("passes the one-time environment answer through to the pipeline", async () => {
+    const publish = vi.fn(async () => ({
+      taskId: "task_1",
+      status: "succeeded" as const,
+      commitSha: "sha",
+      releaseIds: [],
+      deploymentIds: [],
     }));
-    const tools = createMcpToolService(authorIdentity, {
-      ...deps,
-      listOpenChanges,
-      mergePullRequest,
-    });
+    const tools = createMcpToolService(authorIdentity, { ...deps, publish });
+
+    await tools.publishChanges({ projectId: "project_1", environment: "prod" });
+    expect(publish).toHaveBeenCalledWith(
+      expect.objectContaining({ envName: "prod" }),
+    );
+  });
+
+  it("surfaces a failed pipeline as an error AND still audits what landed", async () => {
+    const publish = vi.fn(async () => ({
+      taskId: "task_1",
+      status: "failed" as const,
+      failedStep: "deploy" as const,
+      error: "No \"production\" environment found to deploy into.",
+      commitSha: "commit_sha",
+      releaseIds: ["release_1"],
+      deploymentIds: [],
+    }));
+    const tools = createMcpToolService(authorIdentity, { ...deps, publish });
 
     await expect(
-      tools.mergeChange({ projectId: "project_1", pullRequestNumber: 12 }),
-    ).resolves.toMatchObject({
-      change: {
-        number: 12,
-        branch: "harnesst/publish-123",
-        base: "trunk",
-      },
-      merge: { mergeSha: "merge_sha", method: "squash" },
+      tools.publishChanges({ projectId: "project_1" }),
+    ).rejects.toMatchObject({
+      code: "invalid_state",
+      message: expect.stringContaining("environment"),
     });
-    expect(listOpenChanges).toHaveBeenCalledWith(
-      "42",
-      { owner: "acme", repo: "agents" },
-      50,
-    );
-    expect(mergePullRequest).toHaveBeenCalledWith(
-      "42",
-      { owner: "acme", repo: "agents" },
-      12,
-      "harnesst/publish-123",
-    );
-    expect(store.auditEntries.map((entry) => entry.action)).toEqual([
-      "mcp.merge_change",
+    // A deploy-step failure lands AFTER the commit — the audit records what exists.
+    expect(store.auditEntries).toEqual([
+      expect.objectContaining({
+        action: "mcp.publish_changes",
+        meta: expect.objectContaining({
+          status: "failed",
+          failedStep: "deploy",
+          commitSha: "commit_sha",
+          releaseIds: ["release_1"],
+        }),
+      }),
     ]);
   });
 
-  it.each([
-    { label: "is absent", changes: [], code: "not_found" },
-    {
-      label: "targets another base",
-      changes: [openChange({ base: "release" })],
-      code: "invalid_state",
-    },
-  ])(
-    "refuses to merge when the requested PR $label",
-    async ({ changes, code }) => {
-      const mergePullRequest = vi.fn();
-      const tools = createMcpToolService(authorIdentity, {
-        ...deps,
-        listOpenChanges: vi.fn(async () => changes),
-        mergePullRequest,
-      });
+  it("wraps pre-pipeline refusals (nothing saved, publish already running) as invalid_state", async () => {
+    const publish = vi.fn(async () => {
+      throw new Error("Nothing to publish — no saved changes.");
+    });
+    const tools = createMcpToolService(authorIdentity, { ...deps, publish });
 
-      await expect(
-        tools.mergeChange({ projectId: "project_1", pullRequestNumber: 12 }),
-      ).rejects.toMatchObject({ code });
-      expect(mergePullRequest).not.toHaveBeenCalled();
-    },
-  );
+    await expect(
+      tools.publishChanges({ projectId: "project_1" }),
+    ).rejects.toMatchObject({
+      code: "invalid_state",
+      message: expect.stringContaining("Nothing to publish"),
+    });
+    expect(store.auditEntries).toEqual([]);
+  });
+
+  it("refuses to publish a project owned by another organization", async () => {
+    store.seedProject({ id: "project_other", orgId: "org_2" });
+    const publish = vi.fn();
+    const tools = createMcpToolService(authorIdentity, { ...deps, publish });
+
+    await expect(
+      tools.publishChanges({ projectId: "project_other" }),
+    ).rejects.toMatchObject({ code: "not_found" });
+    expect(publish).not.toHaveBeenCalled();
+  });
 
   it("discards only normalized staged drafts and audits the operation", async () => {
     await store.drafts.upsert({
@@ -666,17 +635,7 @@ describe("MCP PR-enforced authoring tools", () => {
     [
       "publish_changes",
       (tools: ReturnType<typeof createMcpToolService>) =>
-        tools.publishChanges({ projectId: "project_1", paths: ["agent/a.md"] }),
-    ],
-    [
-      "list_open_changes",
-      (tools: ReturnType<typeof createMcpToolService>) =>
-        tools.listOpenChanges({ projectId: "project_1" }),
-    ],
-    [
-      "merge_change",
-      (tools: ReturnType<typeof createMcpToolService>) =>
-        tools.mergeChange({ projectId: "project_1", pullRequestNumber: 12 }),
+        tools.publishChanges({ projectId: "project_1" }),
     ],
     [
       "discard_changes",
@@ -688,7 +647,7 @@ describe("MCP PR-enforced authoring tools", () => {
     await expect(call(tools)).rejects.toMatchObject({ code: "forbidden" });
   });
 
-  it("offers no direct-commit or direct-default-branch method", () => {
+  it("offers no raw-commit method beyond the pipeline", () => {
     const tools = createMcpToolService(authorIdentity, deps);
     expect(Object.keys(tools)).not.toContain("commitFiles");
     expect(Object.keys(tools)).not.toContain("commitToDefaultBranch");

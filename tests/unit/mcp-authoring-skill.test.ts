@@ -22,9 +22,7 @@ const contracts = {
   list_releases: "{ projectId, agentId? }",
   list_environments: "{ projectId, agentId? }",
   stage_changes: "{ projectId, edits: [{ path, content, baseSha? }] }",
-  publish_changes: "{ projectId, paths, title? }",
-  list_open_changes: "{ projectId, limit? }",
-  merge_change: "{ projectId, pullRequestNumber }",
+  publish_changes: "{ projectId, environment? }",
   discard_changes: "{ projectId, paths }",
   deploy_team_version: "{ projectId, gitSha, environment, rebuild? }",
   deploy_head: "{ projectId, environment }",
@@ -39,9 +37,7 @@ const required = {
   list_releases: ["projectId"],
   list_environments: ["projectId"],
   stage_changes: ["edits", "projectId"],
-  publish_changes: ["paths", "projectId"],
-  list_open_changes: ["projectId"],
-  merge_change: ["projectId", "pullRequestNumber"],
+  publish_changes: ["projectId"],
   discard_changes: ["paths", "projectId"],
   deploy_team_version: ["environment", "gitSha", "projectId"],
   deploy_head: ["environment", "projectId"],
@@ -56,9 +52,7 @@ const properties = {
   list_releases: ["agentId", "projectId"],
   list_environments: ["agentId", "projectId"],
   stage_changes: ["edits", "projectId"],
-  publish_changes: ["paths", "projectId", "title"],
-  list_open_changes: ["limit", "projectId"],
-  merge_change: ["projectId", "pullRequestNumber"],
+  publish_changes: ["environment", "projectId"],
   discard_changes: ["paths", "projectId"],
   deploy_team_version: ["environment", "gitSha", "projectId", "rebuild"],
   deploy_head: ["environment", "projectId"],
@@ -108,16 +102,14 @@ describe("harnesst MCP authoring catalog skill", () => {
     }
   });
 
-  it("teaches the enforced PR path and asynchronous exact-SHA deploy", async () => {
+  it("teaches the pipeline path and asynchronous deployment confirmation", async () => {
     const skill = await readSkill();
 
+    expect(skill).toMatch(/stage_changes[\s\S]*publish_changes/);
+    expect(skill).toMatch(/one call runs harnesst's whole pipeline/i);
+    expect(skill).toMatch(/a failed build lands nothing/i);
     expect(skill).toMatch(
-      /stage_changes[\s\S]*publish_changes[\s\S]*list_open_changes[\s\S]*merge_change/,
-    );
-    expect(skill).toMatch(/publish exactly one pull request/i);
-    expect(skill).toMatch(/merge\.mergeSha[\s\S]*deploy_team_version/);
-    expect(skill).toMatch(
-      /every entry in `deployed`[\s\S]*get_deploy_status[\s\S]*`live` or `failed`/,
+      /`deploymentIds`[\s\S]*get_deploy_status[\s\S]*`live` or\s+`failed`/,
     );
     expect(skill).toMatch(/does not expose repository file contents/i);
     expect(skill).toMatch(/do not commit or push directly/i);

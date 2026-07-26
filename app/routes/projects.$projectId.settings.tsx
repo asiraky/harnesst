@@ -3,9 +3,9 @@
  *
  * Two levels share this module (route ids `settings` + `member-settings`):
  *  - MEMBER sections (team members at /agents/:name/settings; included for single-agent
- *    repos): Model (staged into agent.ts like any edit), Secrets (per-member + per-
+ *    repos): Model (saved into agent.ts like any edit), Secrets (per-member + per-
  *    environment, write-only values), Marketplace installs, and the member danger zone
- *    (remove agent — a change-set PR deleting its directory).
+ *    (remove agent — saves the deletion of its directory for the next publish).
  *  - REPO sections (team repos at /repos/:id/settings; appended for single-agent repos):
  *    Marketplace installs, General (the GitHub connection), Run ingestion tokens, and the repo
  *    danger zone — Delete repository, a FULL harnesst-side teardown (instances stopped and
@@ -36,6 +36,7 @@ import {
 import semver from "semver";
 
 import { ConfirmDialog } from "~/components/confirm-dialog";
+import { usePublishHref } from "~/components/publish";
 import { EmptyTeamState } from "~/components/empty-team-state";
 import { LocalizedDate } from "~/components/localized-values";
 import { ModelSelection } from "~/components/model-select";
@@ -80,7 +81,6 @@ import { listDrafts, stageDeletions, stageDraft } from "~/drafts/drafts.server";
 import { EMPTY_TEAM_MARKER } from "~/eve/parse";
 import { getAgentSource } from "~/github/cached.server";
 import { fetchAgentSource, readAgentFile } from "~/github/repo.server";
-import { proposeChange, type FileChange } from "~/github/write.server";
 import { contextPath } from "~/lib/paths";
 import {
   catalogLocator,
@@ -158,7 +158,7 @@ interface SettingsView {
   canRemoveMember: boolean;
   /** Member: whether the active agent can be renamed (any member/single-agent, self view). */
   canRenameMember: boolean;
-  /** Member: an in-flight rename target (open PR), or null. */
+  /** Member: a saved-but-unpublished rename target, or null. */
   pendingName: string | null;
   /** Member: current model (staged draft wins) + staging state. */
   model: string | null;
@@ -804,7 +804,10 @@ export async function action(args: ActionFunctionArgs) {
       return { ok: true as const };
     }
 
-    // ── Member danger zone: remove agent (change-set PR deleting its directory) ──
+    // ── Member danger zone: remove agent (saves the deletion of its directory) ──
+    // The deletion is SAVED as drafts (§2.4: structural operations save their full file set in
+    // one action); the header Publish control takes it live, and the roster row goes when the
+    // publish's roster sync sees the directory gone.
     if (intent === "remove-member") {
       const name = String(form.get("name") ?? "");
       const { roster } = await resolveAgentContext(project.id, null);
@@ -814,38 +817,34 @@ export async function action(args: ActionFunctionArgs) {
       }
       const source = await fetchAgentSource(project.repoInstallationId, repo);
       const memberDir = `agents/${name}/`;
-      const files: FileChange[] = source.paths.flatMap((p) =>
-        p.startsWith(memberDir) ? [{ path: p, content: null }] : [],
-      );
-      if (files.length === 0)
+      const paths = source.paths.filter((p) => p.startsWith(memberDir));
+      if (paths.length === 0)
         return { error: `No files found under ${memberDir}.` };
+      await stageDeletions({
+        projectId: project.id,
+        paths,
+        createdBy: auth.user.id,
+      });
+      // Keep the team layout detectable when the last member goes: the marker README says
+      // "this repo is a team" even with zero agents/ directories.
       if (!source.paths.includes(EMPTY_TEAM_MARKER)) {
-        files.push({
+        await stageDraft({
+          projectId: project.id,
           path: EMPTY_TEAM_MARKER,
           content:
             "# Agents\n\nAdd each agent under `agents/<name>/` as a complete eve project.\n",
+          createdBy: auth.user.id,
         });
       }
-      const change = await proposeChange(project.repoInstallationId, repo, {
-        base: project.defaultBranch,
-        branch: `harnesst/remove-member-${name}`,
-        files,
-        title: `Remove agent: ${name}`,
-        body:
-          `Deletes \`agents/${name}/\` (${files.length} files). Merging removes the agent; ` +
-          `its releases and run history remain until then.`,
-      });
-      return {
-        ok: true as const,
-        changeUrl: change.pullRequestUrl,
-        member: name,
-      };
+      return { ok: true as const, removalSaved: name };
     }
 
     // ── Member: rename agent ──
     // Root single-agent: the name is decoupled from the directory, so the rename is INSTANT (a
-    // DB update, no PR). Team member: the name IS the `agents/<name>/` directory, so it lands as
-    // a change-set that moves the directory; the row is renamed in place on merge (pendingName).
+    // DB update, no repo change). Team member: the name IS the `agents/<name>/` directory, so
+    // the rename SAVES the full directory move as drafts (§2.4: structural operations save
+    // their file set in one action) and the Publish pipeline lands it; the roster sync maps the
+    // row in place (pendingName) once the published tree shows the new directory.
     if (intent === "rename-member") {
       const newName = slugifyResourceName(String(form.get("name") ?? ""));
       if (!newName) return { error: "New name is required." };
@@ -871,10 +870,21 @@ export async function action(args: ActionFunctionArgs) {
       if (taken) {
         return { error: `An agent named "${newName}" already exists.` };
       }
+      const drafts = await listDrafts(project.id);
       if (active.pendingName) {
-        return {
-          error: `A rename to "${active.pendingName}" is already in flight — merge or close it first.`,
-        };
+        // A saved rename is still waiting to publish. If its saved files were discarded, the
+        // mark is stale — clear it and let this rename proceed; otherwise the earlier rename
+        // must publish (or be discarded) first.
+        const pendingDir = `agents/${active.pendingName}/`;
+        const stillSaved = drafts.some(
+          (d) => d.path.startsWith(pendingDir) && d.content !== null,
+        );
+        if (stillSaved) {
+          return {
+            error: `A rename to "${active.pendingName}" is already saved — publish it, or discard its saved changes, then rename again.`,
+          };
+        }
+        await getRuntime().data.agents.setPendingName(active.id, null);
       }
 
       // Root single-agent: rename in place, no repo change.
@@ -886,25 +896,38 @@ export async function action(args: ActionFunctionArgs) {
         return { ok: true as const, renamed: newName };
       }
 
-      // Team member: move `agents/<old>/` → `agents/<new>/` as a change-set.
+      // Team member: save the whole `agents/<old>/` → `agents/<new>/` move as drafts. A saved
+      // edit under the old directory rides along (its content moves, its old path deletes) —
+      // the publish must land the tree the user last saw, not the repo's stale copy.
       const oldName = active.name;
       const source = await fetchAgentSource(project.repoInstallationId, repo);
       const oldDir = `agents/${oldName}/`;
       const newDir = `agents/${newName}/`;
-      const memberPaths = source.paths.filter((p) => p.startsWith(oldDir));
-      if (memberPaths.length === 0) {
+      const draftByPath = new Map(drafts.map((d) => [d.path, d]));
+      const oldPaths = new Set(
+        source.paths.filter((p) => p.startsWith(oldDir)),
+      );
+      for (const d of drafts) {
+        if (!d.path.startsWith(oldDir)) continue;
+        // A saved deletion stays a deletion at the old path; everything else moves.
+        if (d.content === null) oldPaths.delete(d.path);
+        else oldPaths.add(d.path);
+      }
+      if (oldPaths.size === 0) {
         return { error: `No files found under ${oldDir}.` };
       }
+      const paths = [...oldPaths];
       const contents = await Promise.all(
-        memberPaths.map((p) =>
-          readAgentFile(project.repoInstallationId, repo, p),
+        paths.map(
+          (p) =>
+            draftByPath.get(p)?.content ??
+            readAgentFile(project.repoInstallationId, repo, p),
         ),
       );
-      const files: FileChange[] = [];
-      memberPaths.forEach((p, i) => {
+      const moves: { from: string; content: string }[] = [];
+      paths.forEach((p, i) => {
         const content = contents[i];
-        if (content === null) return; // unreadable/binary — skip, leave it for the reviewer.
-        const destPath = `${newDir}${p.slice(oldDir.length)}`;
+        if (content === null) return; // unreadable/binary — leave it in place.
         // The member package.json carries `"name": "<member>"` — retarget it to the new name.
         let destContent = content;
         if (p === `${oldDir}package.json`) {
@@ -913,58 +936,48 @@ export async function action(args: ActionFunctionArgs) {
             pkg.name = newName;
             destContent = JSON.stringify(pkg, null, 2) + "\n";
           } catch {
-            // Leave a malformed package.json as-is; the reviewer sees it in the change-set.
+            // Leave a malformed package.json as-is; it shows in the publish panel's diff.
           }
         }
-        files.push({ path: destPath, content: destContent });
-        files.push({ path: p, content: null });
+        moves.push({ from: p, content: destContent });
       });
 
-      // harnesst-lock.json lives at the repo root: retag this member's installs old → new.
-      const lockRaw = source.files["harnesst-lock.json"] ?? null;
+      // Mark the rename in-flight BEFORE saving the file set: if saving dies halfway, the mark
+      // plus the partial drafts are recoverable (publish the rest, or discard — the stale-mark
+      // self-heal above clears a mark whose saved files are gone).
+      await getRuntime().data.agents.setPendingName(active.id, newName);
+      for (const move of moves) {
+        await stageDraft({
+          projectId: project.id,
+          path: `${newDir}${move.from.slice(oldDir.length)}`,
+          content: move.content,
+          createdBy: auth.user.id,
+        });
+      }
+      await stageDeletions({
+        projectId: project.id,
+        paths: moves.map((m) => m.from),
+        createdBy: auth.user.id,
+      });
+
+      // harnesst-lock.json lives at the repo root: retag this member's installs old → new. Overlay
+      // any saved lock draft so an unpublished install/uninstall isn't clobbered.
+      const lockRaw =
+        draftByPath.get("harnesst-lock.json")?.content ??
+        source.files["harnesst-lock.json"] ??
+        null;
       if (lockRaw) {
-        const rewritten = renameMember(
-          overlayLock(lockRaw, []),
-          oldName,
-          newName,
-        );
+        const rewritten = renameMember(overlayLock(lockRaw, []), oldName, newName);
         if (rewritten.changed) {
-          files.push({
+          await stageDraft({
+            projectId: project.id,
             path: "harnesst-lock.json",
             content: serializeLock(rewritten.lock),
+            createdBy: auth.user.id,
           });
         }
       }
-
-      // Mark the rename in-flight BEFORE opening the PR. If we opened the PR first and this DB
-      // write then failed, the PR could still merge with no pending mark — planPendingRenames would
-      // skip the row and syncRoster would cascade-delete its environments/releases/secrets/drafts.
-      // Marking first is safe: a stale mark left by a failed proposeChange (below) is rolled back.
-      await getRuntime().data.agents.setPendingName(active.id, newName);
-      let change;
-      try {
-        change = await proposeChange(project.repoInstallationId, repo, {
-          base: project.defaultBranch,
-          branch: `harnesst/rename-member-${oldName}-${newName}`,
-          files,
-          title: `Rename agent: ${oldName} → ${newName}`,
-          body:
-            `Moves \`agents/${oldName}/\` to \`agents/${newName}/\` (${memberPaths.length} files) ` +
-            `and retargets its package.json and marketplace installs. harnesst renames the agent in ` +
-            `place on merge — its environments, versions, secrets and run history are preserved.\n\n` +
-            `Note: mentions of \`${oldName}\` in other agents' instructions or tools are not ` +
-            `rewritten automatically — update those separately if needed.`,
-        });
-      } catch (err) {
-        // No PR was opened, so drop the pending mark to avoid soft-locking future renames.
-        await getRuntime().data.agents.setPendingName(active.id, null);
-        throw err;
-      }
-      return {
-        ok: true as const,
-        changeUrl: change.pullRequestUrl,
-        member: newName,
-      };
+      return { ok: true as const, renameSaved: newName };
     }
 
     // ── Repo: ingest tokens ──
@@ -1018,6 +1031,7 @@ export default function Settings({
     canRenameMember,
     pendingName,
   } = loaderData;
+  const publishHref = usePublishHref();
   const base = contextPath(project.id, level === "member" ? activeAgent : null);
   const [params] = useSearchParams();
   const justUpdated = params.get("updated");
@@ -1027,9 +1041,13 @@ export default function Settings({
     actionData && "token" in actionData
       ? (actionData.token as string | null)
       : null;
-  const changeUrl =
-    actionData && "changeUrl" in actionData
-      ? (actionData.changeUrl as string)
+  const renameSaved =
+    actionData && "renameSaved" in actionData
+      ? (actionData.renameSaved as string)
+      : null;
+  const removalSaved =
+    actionData && "removalSaved" in actionData
+      ? (actionData.removalSaved as string)
       : null;
   const renamed =
     actionData && "renamed" in actionData
@@ -1094,12 +1112,33 @@ export default function Settings({
           </AlertDescription>
         </Alert>
       )}
-      {changeUrl && !renamed && (
+      {renameSaved && (
         <Alert className="mb-6">
-          <AlertTitle>Change request opened</AlertTitle>
+          <AlertTitle>Rename to {renameSaved} saved</AlertTitle>
           <AlertDescription>
-            Review and merge it on the Deployment tab — nothing changes until it
-            does.
+            The directory move is saved with your other changes — nothing is
+            renamed until you publish.{" "}
+            <Link
+              to={publishHref}
+              className="font-medium underline underline-offset-4"
+            >
+              Review &amp; publish →
+            </Link>
+          </AlertDescription>
+        </Alert>
+      )}
+      {removalSaved && (
+        <Alert className="mb-6">
+          <AlertTitle>Removal of {removalSaved} saved</AlertTitle>
+          <AlertDescription>
+            The deletion is saved with your other changes — nothing is removed
+            until you publish.{" "}
+            <Link
+              to={publishHref}
+              className="font-medium underline underline-offset-4"
+            >
+              Review &amp; publish →
+            </Link>
           </AlertDescription>
         </Alert>
       )}
@@ -1107,13 +1146,13 @@ export default function Settings({
         <Alert className="mb-6">
           <AlertTitle>
             {justUpdated
-              ? `${justUpdated} update staged`
+              ? `${justUpdated} update saved`
               : justRepaired
-                ? `${justRepaired} repair staged`
-                : `${justUninstalled} uninstall staged`}
+                ? `${justRepaired} repair saved`
+                : `${justUninstalled} uninstall saved`}
           </AlertTitle>
           <AlertDescription>
-            Review and publish it from the Deployment tab.
+            Review and publish it with the Publish button in the header.
           </AlertDescription>
         </Alert>
       )}
@@ -1213,7 +1252,7 @@ function ModelSection({
       <>
         {modelStaged && (
           <Badge variant="outline" className="text-xs">
-            staged
+            saved
           </Badge>
         )}
         {modelInherited && (
@@ -1261,7 +1300,7 @@ function ModelSection({
         <p className="mt-2 text-sm text-muted-foreground">
           {fetcher.data.mode === "applied"
             ? "Saved — the agent picks this up on its next step, no redeploy needed."
-            : "Staged — ship or publish it from the Deployment tab."}
+            : "Saved — publish it with the Publish button in the header."}
         </p>
       )}
     </section>
@@ -1269,8 +1308,8 @@ function ModelSection({
 }
 
 /**
- * Marketplace provenance from harnesst-lock.json. Updates and uninstalls stage normal repo changes;
- * Deployment remains the review/publish surface for those staged files.
+ * Marketplace provenance from harnesst-lock.json. Updates and uninstalls save normal repo changes;
+ * the header Publish control is the review/publish surface for those saved files.
  */
 function MarketplaceInstallsSection({
   loaderData,
@@ -1391,7 +1430,7 @@ function MarketplaceInstallsSection({
                     }
                     title={`Uninstall ${install.name}?`}
                     description={
-                      `Stages a change-set deleting ${install.files.length} file${install.files.length === 1 ? "" : "s"}:\n` +
+                      `Saves the deletion of ${install.files.length} file${install.files.length === 1 ? "" : "s"}:\n` +
                       install.files.join("\n") +
                       (install.depsLeft.length > 0
                         ? `\n\nnpm packages left for review: ${install.depsLeft.join(", ")}`
@@ -1471,7 +1510,7 @@ function IngestSection({
     <section>
       <SectionHeader icon={KeyRound} accent="amber" title="Run ingestion" />
       <p className="mb-3 text-sm text-muted-foreground">
-        BYO instances ship telemetry to{" "}
+        BYO instances send telemetry to{" "}
         <span className="font-mono">/api/ingest/runs</span> with one of these
         tokens.
       </p>
@@ -1516,8 +1555,9 @@ function IngestSection({
 
 /**
  * Rename this agent. Root single-agent repos rename instantly (the name is decoupled from the
- * directory); team members open a change-set that moves `agents/<name>/`, and the row is renamed
- * in place on merge — so environments, versions, secrets and history are preserved either way.
+ * directory); a team member's rename saves the `agents/<name>/` directory move with the other
+ * changes, and the row is renamed in place when the publish lands — so environments, versions,
+ * secrets and history are preserved either way.
  */
 function RenameSection({
   activeAgent,
@@ -1538,10 +1578,11 @@ function RenameSection({
       {pendingName ? (
         <Card>
           <CardContent className="py-4 text-sm">
-            <p className="font-medium">Rename to {pendingName} pending</p>
+            <p className="font-medium">Rename to {pendingName} saved</p>
             <p className="text-muted-foreground">
-              A change request that renames this agent is open. Merge or close
-              it from the Deployment tab; the rename applies on merge.
+              The directory move is saved with your other changes. The rename
+              applies when you publish; discarding its saved changes cancels
+              it.
             </p>
           </CardContent>
         </Card>
@@ -1565,7 +1606,7 @@ function RenameSection({
             </Form>
             <p className="text-sm text-muted-foreground">
               {isTeam
-                ? `Opens a change request that moves agents/${activeAgent}/ to the new name. Environments, versions, secrets and history are preserved on merge. Mentions of "${activeAgent}" in other agents' instructions or tools are not rewritten automatically.`
+                ? `Saves a move of agents/${activeAgent}/ to the new name with your other changes — nothing is renamed until you publish. Environments, versions, secrets and history are preserved. Mentions of "${activeAgent}" in other agents' instructions or tools are not rewritten automatically.`
                 : "Applies immediately across harnesst. The agent's repository directory is unaffected."}
             </p>
           </CardContent>
@@ -1607,10 +1648,10 @@ function DangerSection({
                   Remove {activeAgent} from the team
                 </p>
                 <p className="text-sm text-muted-foreground">
-                  Opens a change request deleting{" "}
-                  <span className="font-mono">agents/{activeAgent}/</span>.
-                  Nothing is removed until it merges, and git can restore it
-                  after.
+                  Saves the deletion of{" "}
+                  <span className="font-mono">agents/{activeAgent}/</span> with
+                  your other changes. Nothing is removed until you publish, and
+                  git can restore it after.
                 </p>
               </div>
               <ConfirmDialog
@@ -1620,8 +1661,8 @@ function DangerSection({
                   </Button>
                 }
                 title={`Remove ${activeAgent} from the team?`}
-                description={`Opens a change request deleting agents/${activeAgent}/. Nothing is removed until it merges, and git can restore it after.`}
-                confirmLabel="Open change request"
+                description={`Saves the deletion of agents/${activeAgent}/. Nothing is removed until you publish, and git can restore it after.`}
+                confirmLabel="Save removal"
                 onConfirm={() =>
                   submit(
                     { intent: "remove-member", name: activeAgent },

@@ -19,8 +19,6 @@ function serviceMock(): McpToolService {
     clearFailed: vi.fn(result),
     stageChanges: vi.fn(result),
     publishChanges: vi.fn(result),
-    listOpenChanges: vi.fn(result),
-    mergeChange: vi.fn(result),
     discardChanges: vi.fn(result),
   };
 }
@@ -46,7 +44,7 @@ describe("harnesst MCP server", () => {
     return client;
   }
 
-  it("exposes the slice-one tools plus exactly five PR-enforced authoring tools", async () => {
+  it("exposes the slice-one tools plus exactly three authoring tools", async () => {
     const client = await connected(serviceMock());
 
     const result = await client.listTools();
@@ -63,8 +61,6 @@ describe("harnesst MCP server", () => {
       "clear_failed",
       "stage_changes",
       "publish_changes",
-      "list_open_changes",
-      "merge_change",
       "discard_changes",
     ]);
   });
@@ -123,22 +119,8 @@ describe("harnesst MCP server", () => {
       ],
       [
         "publish_changes",
-        {
-          projectId: "project_1",
-          paths: ["agent/instructions.md"],
-          title: "Update instructions",
-        },
+        { projectId: "project_1", environment: "production" },
         "publishChanges",
-      ],
-      [
-        "list_open_changes",
-        { projectId: "project_1", limit: 10 },
-        "listOpenChanges",
-      ],
-      [
-        "merge_change",
-        { projectId: "project_1", pullRequestNumber: 12 },
-        "mergeChange",
       ],
       [
         "discard_changes",
@@ -178,12 +160,12 @@ describe("harnesst MCP server", () => {
     expect(invalidWrite.isError).toBe(true);
     expect(service.stageChanges).not.toHaveBeenCalled();
 
-    const invalidMerge = await client.callTool({
-      name: "merge_change",
-      arguments: { projectId: "project_1", pullRequestNumber: 0 },
+    const invalidPublish = await client.callTool({
+      name: "publish_changes",
+      arguments: { projectId: "project_1", environment: "" },
     });
 
-    expect(invalidMerge.isError).toBe(true);
-    expect(service.mergeChange).not.toHaveBeenCalled();
+    expect(invalidPublish.isError).toBe(true);
+    expect(service.publishChanges).not.toHaveBeenCalled();
   });
 });

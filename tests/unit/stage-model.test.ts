@@ -57,7 +57,6 @@ export default defineAgent({
 function fakeDeps(files: Record<string, string>): StageModelDeps {
   return {
     readFile: async (_installationId, _repo, path) => files[path] ?? null,
-    findOpenChange: async () => null,
     lookupModel: async (_orgId, model) =>
       model.startsWith("openrouter/") || model.startsWith("openai/")
         ? {

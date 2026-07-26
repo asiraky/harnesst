@@ -424,9 +424,9 @@ export interface PendingCleanupDeps {
 }
 
 /**
- * Abandonment cleanup (§4.4, §11.8): drop held secrets whose install can no longer ship —
- * the member name has no roster row AND no staged draft under `agents/<name>/` remains.
- * Called after draft discards and change-request deletions (the two abandonment paths).
+ * Abandonment cleanup (§4.4, §11.8): drop held secrets whose install can no longer go live —
+ * the member name has no roster row AND no saved draft under `agents/<name>/` remains.
+ * Called after draft discards (the abandonment path).
  */
 export async function cleanupOrphanedPendingSecrets(
   input: {

@@ -5,9 +5,11 @@
  *   ensureConversationCheckout  — before a turn: tell the instance sidecar to clone/fetch the
  *                                 conversation's checkout and report whether the base branch moved.
  *   syncConversationCheckout    — after a turn: pull the checkout's full tree state from the
- *                                 sidecar, apply the path policy, and mirror it onto `harnesst/conv-<id>`
- *                                 as one snapshot commit (force-updated ref), opening a PR on
- *                                 the first non-empty sync. Skips when the tree is unchanged.
+ *                                 sidecar, apply the path policy, stage every change as a draft
+ *                                 in the shared staging area (what the Publish button takes live), and
+ *                                 mirror the tree onto `harnesst/conv-<id>` as one snapshot commit
+ *                                 (force-updated ref) — an internal durability branch only.
+ *                                 Skips when the tree is unchanged.
  *
  * The pure diff→commit mapping + policy live in `checkout-sync.ts` (unit-tested); this module owns
  * the I/O (sidecar HTTP via the DeployTarget seam, GitHub Git Data API, the `assistant_checkouts`
@@ -17,8 +19,8 @@ import { eq } from "drizzle-orm";
 
 import { db } from "~/db/client.server";
 import { assistantCheckouts } from "~/db/schema";
+import { stageDraft } from "~/drafts/drafts.server";
 import { getInstallationOctokit } from "~/github/client.server";
-import { openPullRequest } from "~/github/write.server";
 import { getRuntime } from "~/seams/index.server";
 import type { DataStore } from "~/data/ports";
 import {
@@ -86,8 +88,6 @@ async function upsertCheckoutRow(input: {
   projectId: string;
   branch: string;
   baseBranch: string;
-  prNumber: number | null;
-  prDraft: boolean;
   lastSyncedHash: string;
   warnings: string[];
 }): Promise<void> {
@@ -99,8 +99,6 @@ async function upsertCheckoutRow(input: {
       projectId: input.projectId,
       branch: input.branch,
       baseBranch: input.baseBranch,
-      prNumber: input.prNumber,
-      prDraft: input.prDraft,
       lastSyncedHash: input.lastSyncedHash,
       warnings,
     })
@@ -109,8 +107,6 @@ async function upsertCheckoutRow(input: {
       set: {
         branch: input.branch,
         baseBranch: input.baseBranch,
-        prNumber: input.prNumber,
-        prDraft: input.prDraft,
         lastSyncedHash: input.lastSyncedHash,
         warnings,
         updatedAt: new Date(),
@@ -194,22 +190,27 @@ export async function ensureConversationCheckout(input: {
 export interface SyncResult {
   synced: boolean;
   /**
-   * "synced" — the checkout was mirrored to its PR. "noop" — legitimately nothing to do (no
-   * edits, unchanged tree, checkouts unsupported). "failed" — the checkout could not be read or
-   * mirrored: the model's edits (if any) did NOT reach GitHub, which callers must surface — a
-   * swallowed failure here is exactly how "the assistant said it made changes but the Changes tab
-   * is empty" happens.
+   * "synced" — the checkout's changes were staged as drafts and mirrored to its branch. "noop" —
+   * legitimately nothing to do (no edits, unchanged tree, checkouts unsupported). "failed" — the
+   * checkout could not be read, mirrored, or staged: the model's edits (if any) did NOT land
+   * anywhere, which callers must surface — a swallowed failure here is exactly how "the assistant
+   * said it made changes but nothing shows up" happens.
    */
   kind: "synced" | "noop" | "failed";
   reason?: string;
-  prNumber?: number | null;
+  /**
+   * Files whose SAVED draft this sync actually changed (new content, or a path not saved
+   * before) — 0 unless `kind` is "synced". The sync re-saves the checkout's whole diff, so
+   * this deliberately excludes files re-saved with identical content.
+   */
+  stagedCount: number;
   warnings?: string[];
 }
 
 /**
  * Persist a sync failure onto the checkout link row as a warning. Two consumers: the next turn's
  * messagePrefix reads it (so the model knows its last edits never landed and can say so), and the
- * turn stream's `sync` event surfaces it to the user immediately. Preserves the row's PR/hash
+ * turn stream's `sync` event surfaces it to the user immediately. Preserves the row's hash
  * state; the next successful sync clears it. Best-effort — never throws.
  */
 export async function recordSyncFailure(input: {
@@ -225,11 +226,9 @@ export async function recordSyncFailure(input: {
       projectId: input.projectId,
       branch: conversationBranch(input.conversationId),
       baseBranch: input.baseBranch ?? row?.baseBranch ?? "main",
-      prNumber: row?.prNumber ?? null,
-      prDraft: row?.prDraft ?? false,
       lastSyncedHash: row?.lastSyncedHash ?? "",
       warnings: [
-        `The previous turn's auto-sync failed (${input.reason}). Edits in this conversation's checkout are safe on disk but have NOT reached the pull request yet — they'll be picked up after your next turn completes.`,
+        `The previous turn's auto-sync failed (${input.reason}). Edits in this conversation's checkout are safe on disk but have NOT landed yet — they'll be picked up after your next turn completes.`,
       ],
     });
   } catch (e) {
@@ -237,18 +236,60 @@ export async function recordSyncFailure(input: {
   }
 }
 
+/** Injected I/O seams for the sync engine (production defaults below) — keeps unit tests off
+ * the sidecar, GitHub, and the checkout-row table entirely. */
+export interface SyncEngineDeps {
+  auxBase: (deploymentId: string) => Promise<AuxBase>;
+  /** Read the checkout's full tree state from the instance sidecar. Throws on any failure. */
+  readTree: (
+    base: string,
+    conversationId: string,
+  ) => Promise<TreeState & { missing?: boolean }>;
+  getRow: typeof getCheckoutRow;
+  upsertRow: typeof upsertCheckoutRow;
+  mirror: typeof mirrorSnapshot;
+  stage: typeof stageDraft;
+  recordFailure: typeof recordSyncFailure;
+}
+
+function defaultSyncDeps(): SyncEngineDeps {
+  return {
+    auxBase,
+    readTree: async (base, conversationId) => {
+      const res = await fetch(
+        `${base}/tree?conversationId=${encodeURIComponent(conversationId)}`,
+        { signal: AbortSignal.timeout(120_000) },
+      );
+      const body = (await res.json().catch(() => null)) as
+        (TreeState & { ok?: boolean; missing?: boolean }) | null;
+      if (!res.ok || !body?.ok)
+        throw new Error(`sidecar tree read returned ${res.status}`);
+      return body;
+    },
+    getRow: getCheckoutRow,
+    upsertRow: upsertCheckoutRow,
+    mirror: mirrorSnapshot,
+    stage: stageDraft,
+    recordFailure: recordSyncFailure,
+  };
+}
+
 /**
- * Pull the conversation checkout's tree state from the instance sidecar and mirror it onto its
- * working branch, opening a PR on the first non-empty sync. A no-op (tree unchanged since the
- * last sync, or nothing committable) returns `{ synced: false }` without touching GitHub.
+ * Pull the conversation checkout's tree state from the instance sidecar, stage every planned
+ * change as a draft (§2.7 — the assistant feeds the same staging area the editors do; the user's
+ * Publish button takes them live), and mirror the tree onto its working branch (the durability
+ * mechanism `ensureConversationCheckout` recovers from). A no-op (tree unchanged since the last
+ * sync, or nothing committable) returns `{ synced: false }` without touching GitHub.
  */
-export async function syncConversationCheckout(input: {
-  projectId: string;
-  conversationId: string;
-  deploymentId: string;
-  title?: string | null;
-  store?: DataStore;
-}): Promise<SyncResult> {
+export async function syncConversationCheckout(
+  input: {
+    projectId: string;
+    conversationId: string;
+    deploymentId: string;
+    store?: DataStore;
+  },
+  deps: SyncEngineDeps = defaultSyncDeps(),
+): Promise<SyncResult> {
   const store = input.store ?? getRuntime().data;
   const ctx = await repoCtx(input.projectId, store);
   if (!ctx)
@@ -256,40 +297,33 @@ export async function syncConversationCheckout(input: {
       synced: false,
       kind: "noop",
       reason: "project has no connected repo",
+      stagedCount: 0,
     };
 
   const failed = async (reason: string): Promise<SyncResult> => {
-    await recordSyncFailure({
+    await deps.recordFailure({
       conversationId: input.conversationId,
       projectId: input.projectId,
       baseBranch: ctx.defaultBranch,
       reason,
     });
-    return { synced: false, kind: "failed", reason };
+    return { synced: false, kind: "failed", reason, stagedCount: 0 };
   };
 
-  const aux = await auxBase(input.deploymentId);
+  const aux = await deps.auxBase(input.deploymentId);
   if (!aux.supported)
     return {
       synced: false,
       kind: "noop",
       reason: "checkouts unsupported on this deploy target",
+      stagedCount: 0,
     };
   if (!aux.base)
     return failed("couldn't resolve the checkout sidecar endpoint");
-  const base = aux.base;
 
-  let tree: (TreeState & { missing?: boolean }) | null = null;
+  let tree: TreeState & { missing?: boolean };
   try {
-    const res = await fetch(
-      `${base}/tree?conversationId=${encodeURIComponent(input.conversationId)}`,
-      { signal: AbortSignal.timeout(120_000) },
-    );
-    const body = (await res.json().catch(() => null)) as
-      (TreeState & { ok?: boolean; missing?: boolean }) | null;
-    if (!res.ok || !body?.ok)
-      return failed(`sidecar tree read returned ${res.status}`);
-    tree = body;
+    tree = await deps.readTree(aux.base, input.conversationId);
   } catch (error) {
     return failed(error instanceof Error ? error.message : String(error));
   }
@@ -297,23 +331,21 @@ export async function syncConversationCheckout(input: {
     return failed("checkout missing on the instance");
 
   const plan = planCommit(tree);
-  const row = await getCheckoutRow(input.conversationId);
+  const row = await deps.getRow(input.conversationId);
   const branch = conversationBranch(input.conversationId);
   const warnings = policyWarnings(plan);
 
-  // Nothing committable and no PR yet → nothing to mirror. But the warnings must still land on the
+  // Nothing committable → nothing to stage or mirror. But the warnings must still land on the
   // row: a turn whose ONLY edits were stripped (e.g. the model touched assistant.json) would
   // otherwise be totally silent, and the model/user would believe the change stuck. The next turn's
   // messagePrefix reads them from the row.
-  if (plan.files.length === 0 && !row?.prNumber) {
+  if (plan.files.length === 0) {
     if (warnings.length > 0) {
-      await upsertCheckoutRow({
+      await deps.upsertRow({
         conversationId: input.conversationId,
         projectId: input.projectId,
         branch,
         baseBranch: ctx.defaultBranch,
-        prNumber: null,
-        prDraft: false,
         lastSyncedHash: plan.hash,
         warnings,
       });
@@ -322,56 +354,54 @@ export async function syncConversationCheckout(input: {
       synced: false,
       kind: "noop",
       reason: "no committable changes",
+      stagedCount: 0,
       warnings: warnings.length > 0 ? warnings : undefined,
     };
   }
-  // Unchanged since the last mirror → skip.
+  // Unchanged since the last sync → skip (the drafts were already staged then).
   if (row?.lastSyncedHash === plan.hash) {
-    return {
-      synced: false,
-      kind: "noop",
-      reason: "unchanged",
-      prNumber: row?.prNumber ?? null,
-    };
+    return { synced: false, kind: "noop", reason: "unchanged", stagedCount: 0 };
   }
 
-  let prNumber = row?.prNumber ?? null;
-  let prDraft = row?.prDraft ?? false;
   try {
-    await mirrorSnapshot(ctx, branch, tree.baseSha, plan, input.conversationId);
-
-    if (!prNumber && plan.files.length > 0) {
-      const opened = await openPullRequest(
-        ctx.installationId,
-        { owner: ctx.owner, repo: ctx.repo },
-        {
-          base: ctx.defaultBranch,
-          branch,
-          title: prTitle(input.title, input.conversationId),
-          body: prBody(input.title, warnings),
-          draft: false,
-        },
-      );
-      prNumber = opened.pullRequestNumber;
-      prDraft = opened.draft;
-    } else if (prNumber && !sameWarnings(row?.warnings ?? null, warnings)) {
-      // The PR already exists but this sync's notes differ (a new stripped path, or a previous
-      // warning cleared) — keep the PR body honest.
-      await updatePullRequestBody(ctx, prNumber, prBody(input.title, warnings));
-    }
+    await deps.mirror(ctx, branch, tree.baseSha, plan, input.conversationId);
   } catch (error) {
     return failed(
       `mirroring to GitHub failed: ${error instanceof Error ? error.message : String(error)}`,
     );
   }
 
-  await upsertCheckoutRow({
+  // Save the plan as drafts (§2.7): every write and deletion (a content:null draft) lands in
+  // the same staging area the editors feed, and the same Publish button takes them live. `createdBy`
+  // is deliberately absent — human saves always carry a user id, so a null author is what marks
+  // a draft assistant-saved in the publish panel. A failure here is a sync failure: the hash is
+  // NOT advanced, so the next turn retries both the mirror (an idempotent force-update) and the
+  // saving. `stagedCount` counts only files whose SAVED state this sync actually changed: the
+  // plan is the checkout's whole diff against base, so re-saving twelve unchanged files after a
+  // one-line turn must read as one change, not thirteen.
+  let stagedCount = 0;
+  try {
+    const before = new Map(
+      (await store.drafts.listByProject(input.projectId)).map((d) => [d.path, d.content]),
+    );
+    for (const file of plan.files) {
+      if (!before.has(file.path) || before.get(file.path) !== file.content) stagedCount++;
+      await deps.stage(
+        { projectId: input.projectId, path: file.path, content: file.content },
+        store,
+      );
+    }
+  } catch (error) {
+    return failed(
+      `saving the changes failed: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+
+  await deps.upsertRow({
     conversationId: input.conversationId,
     projectId: input.projectId,
     branch,
     baseBranch: ctx.defaultBranch,
-    prNumber,
-    prDraft,
     lastSyncedHash: plan.hash,
     warnings,
   });
@@ -379,33 +409,9 @@ export async function syncConversationCheckout(input: {
   return {
     synced: true,
     kind: "synced",
-    prNumber,
+    stagedCount,
     warnings: warnings.length > 0 ? warnings : undefined,
   };
-}
-
-function sameWarnings(a: string[] | null, b: string[]): boolean {
-  const left = a ?? [];
-  return left.length === b.length && left.every((w, i) => w === b[i]);
-}
-
-/** Rewrite a conversation PR's body (warnings changed after the PR was opened). Best-effort. */
-async function updatePullRequestBody(
-  ctx: RepoCtx,
-  pullNumber: number,
-  body: string,
-): Promise<void> {
-  try {
-    const octokit = await getInstallationOctokit(ctx.installationId);
-    await octokit.rest.pulls.update({
-      owner: ctx.owner,
-      repo: ctx.repo,
-      pull_number: pullNumber,
-      body,
-    });
-  } catch (error) {
-    console.warn("[assistant-sync] couldn't update PR body:", error);
-  }
 }
 
 /** HTTP status of an Octokit request error, if present. */
@@ -418,8 +424,8 @@ function statusOf(error: unknown): number | undefined {
 /**
  * Write ONE snapshot commit that makes `branch` exactly `baseSha` + the checkout's full diff, then
  * force-update the ref (creating it if absent). Parenting on `baseSha` (the merge-base the diff was
- * computed against) keeps the branch a single commit ahead of base — a clean PR — regardless of how
- * many turns synced, and avoids stacked-delta drift (a file added then reverted never lingers).
+ * computed against) keeps the branch a single commit ahead of base regardless of how many turns
+ * synced, and avoids stacked-delta drift (a file added then reverted never lingers).
  */
 async function mirrorSnapshot(
   ctx: RepoCtx,
@@ -497,36 +503,26 @@ async function mirrorSnapshot(
   return commit.data.sha;
 }
 
-function prTitle(
-  title: string | null | undefined,
-  conversationId: string,
-): string {
-  const clean = (title ?? "").replace(/\s+/g, " ").trim();
-  return `Assistant: ${clean || `conversation ${conversationId}`}`.slice(
-    0,
-    120,
-  );
-}
-
-function prBody(title: string | null | undefined, warnings: string[]): string {
-  const lines = [
-    "Changes proposed by the harnesst assistant while working on this conversation.",
-    "",
-    "This PR auto-updates after each assistant turn; review and merge it on the Changes tab when you're happy.",
-  ];
-  if (title) lines.push("", `Conversation: ${title}`);
-  if (warnings.length > 0)
-    lines.push("", "**Notes:**", ...warnings.map((w) => `- ${w}`));
-  return lines.join("\n");
-}
-
-/** Drop the checkout link row for a branch (called when its PR merges or is discarded). */
+/** Drop the checkout link row for a branch (called when its work lands or is discarded). */
 export async function discardConversationCheckoutByBranch(
   branch: string,
 ): Promise<void> {
   await db
     .delete(assistantCheckouts)
     .where(eq(assistantCheckouts.branch, branch));
+}
+
+/**
+ * Drop every checkout link row for a project — called by the publish pipeline after a successful
+ * commit. Publish always lands EVERY staged draft, so any conversation whose synced work was
+ * staged has just been published; its next turn re-ensures a fresh checkout against the new head.
+ */
+export async function discardConversationCheckoutsForProject(
+  projectId: string,
+): Promise<void> {
+  await db
+    .delete(assistantCheckouts)
+    .where(eq(assistantCheckouts.projectId, projectId));
 }
 
 /** Whether a branch is an assistant conversation branch (so callers can gate conv-only behaviour). */

@@ -77,7 +77,7 @@ export const COPY = {
     `${n} agents use this secret. The new value applies to all of them on their next deploy.`,
   deployDialogTitle: "Missing required secrets",
   installDeferral:
-    "Values are held securely and attached when the agent ships. Held values are discarded if the install is cancelled.",
+    "Values are held securely and attached when the agent goes live. Held values are discarded if the install is cancelled.",
   detachWarning: (agent: string, name: string) =>
     `${agent}'s template requires ${name}. Detaching will mark it missing.`,
 } as const;

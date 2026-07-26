@@ -1,9 +1,9 @@
 /**
  * Resource category list — the management surface behind each overview card. Every file in
- * the category (repo + staged-new drafts) with last-commit metadata, open-in-editor, and a
- * git-native delete: removing a resource STAGES a deletion draft that stacks with every
- * other staged change (one publish/ship = one change request; a staged-only draft is just
- * discarded). Member-scoped (M5.8): team members' lists live at
+ * the category (repo + saved-new drafts) with last-commit metadata, open-in-editor, and a
+ * git-native delete: removing a resource SAVES a deletion draft that rides with every other
+ * saved change (one Publish takes them all live; a saved-only draft is just discarded).
+ * Member-scoped (M5.8): team members' lists live at
  * /repos/:id/agents/:name/resources/:category; single-agent repos at the repo level.
  */
 import { getSessionAuth, sessionLoader } from "~/auth/session.server";
@@ -19,6 +19,7 @@ import {
 } from "react-router";
 
 import { ConfirmDialog } from "~/components/confirm-dialog";
+import { usePublishHref } from "~/components/publish";
 import { RelativeTime } from "~/components/localized-values";
 import { NewResourceDialog } from "~/components/new-resource-dialog";
 import { categoryMeta } from "~/components/resource-category";
@@ -84,9 +85,9 @@ interface ResourceRow {
   path: string;
   isDirectory: boolean;
   staged: boolean;
-  /** A deletion is staged (removed when the change-set publishes/ships). */
+  /** A deletion is saved (removed when the next publish lands). */
   stagedDelete: boolean;
-  /** Exists in the repo (false == staged-new, not merged anywhere yet). */
+  /** Exists in the repo (false == saved-new, not published anywhere yet). */
   inRepo: boolean;
   lastCommit: LastCommitInfo | null;
 }
@@ -122,7 +123,7 @@ export const loader = (args: LoaderFunctionArgs) =>
       const config = buildAgentConfig(source, active.root);
       const repoItems = config[cat.key];
       const draftPaths = new Set(drafts.map((d) => d.path));
-      // Paths with a staged DELETION (content null) — directory resources stage one per file.
+      // Paths with a saved DELETION (content null) — directory resources save one per file.
       const deletionPaths = new Set(
         drafts.filter((d) => d.content === null).map((d) => d.path),
       );
@@ -147,7 +148,7 @@ export const loader = (args: LoaderFunctionArgs) =>
         repoItems.map((i) => i.path),
       );
 
-      // A directory resource is "staged for deletion" when any file under it is.
+      // A directory resource is "saved for deletion" when any file under it is.
       const deletionStaged = (item: { path: string; isDirectory: boolean }) =>
         item.isDirectory
           ? [...deletionPaths].some((p) => p.startsWith(`${item.path}/`))
@@ -233,15 +234,15 @@ export async function action(args: ActionFunctionArgs) {
     }
 
     if (repoFiles.length === 0) {
-      // Staged-new only — never merged; discarding the draft is the whole delete.
+      // Saved-new only — never published; discarding the draft is the whole delete.
       if (stagedHere.length > 0) await discardDrafts(project.id, stagedHere);
       return { ok: true as const, discarded: name };
     }
 
-    // Stage the deletion (null-content drafts, one per file). It stacks with every other
-    // staged change and goes out in ONE change request — publish or Ship from the
-    // Deployment tab decides when. Staged edits on these paths are superseded; staged-new
-    // files that never reached the repo are simply discarded.
+    // Save the deletion (null-content drafts, one per file). It rides with every other
+    // saved change — the header Publish control decides when it goes live. Saved edits on
+    // these paths are superseded; saved-new files that never reached the repo are simply
+    // discarded.
     const stagedNewHere = stagedHere.filter((p) => !repoFiles.includes(p));
     if (stagedNewHere.length > 0)
       await discardDrafts(project.id, stagedNewHere);
@@ -279,6 +280,7 @@ export default function ResourceCategory({
   const { project, category, roster, activeAgent, activeRoot, isTeam, rows } =
     loaderData;
   const ctx = contextPath(project.id, isTeam ? activeAgent : null);
+  const publishHref = usePublishHref();
   const submit = useSubmit();
   const navigation = useNavigation();
   const busy = navigation.state !== "idle";
@@ -318,16 +320,16 @@ export default function ResourceCategory({
       )}
       {actionData?.ok && "staged" in actionData && (
         <Alert className="mb-6">
-          <AlertTitle>Deletion staged</AlertTitle>
+          <AlertTitle>Deletion saved</AlertTitle>
           <AlertDescription>
             <span className="font-mono">{actionData.staged}</span> is marked for
-            deletion — it stacks with your other staged changes and nothing
-            touches the repository until you publish or ship.{" "}
+            deletion — it rides with your other saved changes and nothing
+            touches the repository until you publish.{" "}
             <Link
-              to={`${ctx}/deployment`}
+              to={publishHref}
               className="font-medium underline underline-offset-4"
             >
-              Review staged changes on the Deployment tab →
+              Review &amp; publish →
             </Link>
           </AlertDescription>
         </Alert>
@@ -337,7 +339,7 @@ export default function ResourceCategory({
           <AlertTitle>Deletion undone</AlertTitle>
           <AlertDescription>
             <span className="font-mono">{actionData.restored}</span> is no
-            longer staged for deletion.
+            longer marked for deletion.
           </AlertDescription>
         </Alert>
       )}
@@ -346,7 +348,7 @@ export default function ResourceCategory({
           <AlertTitle>Draft discarded</AlertTitle>
           <AlertDescription>
             <span className="font-mono">{actionData.discarded}</span> was only
-            staged — it never reached the repository, so discarding the draft
+            a saved draft — it never reached the repository, so discarding it
             removed it entirely.
           </AlertDescription>
         </Alert>
@@ -403,11 +405,11 @@ export default function ResourceCategory({
                     <TableCell>
                       {row.stagedDelete ? (
                         <Badge variant="destructive" className="text-xs">
-                          staged — delete
+                          saved — delete
                         </Badge>
                       ) : row.staged ? (
                         <Badge variant="warning" className="text-xs">
-                          {row.inRepo ? "staged edit" : "staged — new"}
+                          {row.inRepo ? "saved edit" : "saved — new"}
                         </Badge>
                       ) : null}
                     </TableCell>
@@ -479,12 +481,12 @@ export default function ResourceCategory({
                                 title={`Delete ${row.name}?`}
                                 description={
                                   row.inRepo
-                                    ? `Stages the deletion of ${row.path}. It stacks with your other staged changes — nothing is removed until you publish or ship, and you can undo it any time before then.`
-                                    : `${row.name} is only a staged draft — deleting discards it immediately.`
+                                    ? `Saves the deletion of ${row.path}. It rides with your other saved changes — nothing is removed until you publish, and you can undo it any time before then.`
+                                    : `${row.name} is only an unpublished draft — deleting discards it immediately.`
                                 }
                                 confirmLabel={
                                   row.inRepo
-                                    ? "Stage deletion"
+                                    ? "Save deletion"
                                     : "Discard draft"
                                 }
                                 onConfirm={() =>

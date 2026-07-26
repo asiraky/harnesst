@@ -3,17 +3,15 @@
  *
  * Single-agent repos are teams of one: no switcher, the surface reads from `agent/` exactly
  * as before the split. Team repos get a member switcher (AgentNav), per-member surfaces
- * rooted at `agents/<member>/agent/`, and roster CRUD — add/remove members land as
- * change-sets (branch → PR) like every other edit; the roster row itself syncs on merge.
+ * rooted at `agents/<member>/agent/`, and roster CRUD — add/remove members save their file
+ * set as drafts like every other edit; the roster row itself syncs when the publish lands.
  */
 import { getSessionAuth, sessionLoader } from "~/auth/session.server";
 import { Bot, Boxes, FileText, Terminal, Users, Workflow, X } from "lucide-react";
 import { useMemo, useState } from "react";
 import {
   Link,
-  data,
   redirect,
-  useFetcher,
   useNavigation,
   useSubmit,
   type ActionFunctionArgs,
@@ -21,6 +19,7 @@ import {
 } from "react-router";
 
 import { NewResourceDialog } from "~/components/new-resource-dialog";
+import { usePublishHref } from "~/components/publish";
 import { EmptyTeamState } from "~/components/empty-team-state";
 import {
   AgentNav,
@@ -56,7 +55,7 @@ import {
   releaseFreshness,
 } from "~/components/deploy-freshness";
 import { listDeployments, queueDeploy } from "~/deploy/controller.server";
-import { listDrafts } from "~/drafts/drafts.server";
+import { listDrafts, stageDraft } from "~/drafts/drafts.server";
 import { listAgentModelOverrides } from "~/models/agent-model-config.server";
 import { buildAgentConfig, buildSubagentSummaries } from "~/eve/parse";
 import {
@@ -67,10 +66,8 @@ import {
 import { AGENT_CATEGORIES, type AgentConfig, type SubagentSummary } from "~/eve/types";
 import { memberScaffold } from "~/github/create.server";
 import { getAgentSource } from "~/github/cached.server";
-import { proposeChange } from "~/github/write.server";
 import { ensureWorkerStarted } from "~/jobs/worker.server";
 import { contextPath } from "~/lib/paths";
-import { useLiveRevalidate } from "~/lib/use-live-revalidate";
 import { RelativeTime } from "~/components/localized-values";
 import { cn } from "~/lib/utils";
 import { getWorkspaceAssistantModel } from "~/org/workspace.server";
@@ -100,17 +97,6 @@ interface MemberSummary {
   subagents: SubagentSummary[];
   /** Template-required secrets still unset for this member (amber header badge, §7). */
   secretsMissing: number;
-}
-
-/** One member's deploy progress after a Ship — a ship moves the whole team (drives the banner). */
-interface ShipStatusRow {
-  agentName: string;
-  version: string;
-  status: string;
-  url: string | null;
-  errorDetail: string | null;
-  environmentId: string;
-  releaseId: string;
 }
 
 interface ProjectView {
@@ -151,8 +137,6 @@ interface ProjectView {
     /** The newest release's version label, shown when the running one is behind. */
     latestVersion: string;
   }[];
-  /** Deploy progress for a just-shipped commit (?shipped=<sha>&env=<name>&skipped=a,b). */
-  ship: { env: string; rows: ShipStatusRow[]; skipped: string[] } | null;
 }
 
 /**
@@ -188,7 +172,6 @@ export const loader = (args: LoaderFunctionArgs) =>
           needsReconnect: false,
           draftPaths: [],
           running: [],
-          ship: null,
         };
       }
 
@@ -282,14 +265,8 @@ export const loader = (args: LoaderFunctionArgs) =>
           config.hasAgentModule = true;
         }
 
-        // Deploy status: what's running per environment (member header line) and — after a
-        // Ship — per-member deploy progress for the shipped commit, so the banner survives
-        // refreshes (state lives in the DB). The "running" line is member-scoped; the ?shipped
-        // banner runs at BOTH levels, because Quick deploy ships from the team landing too and
-        // redirects back to whichever Overview it fired from.
+        // Deploy status: what's running per environment (member header line).
         let running: ProjectView["running"] = [];
-        let ship: ProjectView["ship"] = null;
-        // Cache the active member's envs so the member-scope shipped-row lookup reuses them.
         const activeEnvs =
           view === "member" && active
             ? await listAgentEnvironments(active.id)
@@ -321,48 +298,6 @@ export const loader = (args: LoaderFunctionArgs) =>
           ).filter((r) => r !== null);
         }
 
-        const url = new URL(args.request.url);
-        const shippedSha = url.searchParams.get("shipped");
-        if (shippedSha) {
-          // At team view there's no single active member to default the env from, so fall back
-          // to the ?env param (Quick deploy always sets it) or "default".
-          const shipEnv =
-            url.searchParams.get("env") ?? activeEnvs[0]?.name ?? "default";
-          const shipSkipped = (url.searchParams.get("skipped") ?? "")
-            .split(",")
-            .filter(Boolean);
-          // Members are independent — resolve their env + deployment rows concurrently.
-          const rows = (
-            await Promise.all(
-              roster.map(async (member): Promise<ShipStatusRow | null> => {
-                const memberEnvs =
-                  view === "member" && member.id === active?.id
-                    ? activeEnvs
-                    : await listAgentEnvironments(member.id);
-                const env = memberEnvs.find((e) => e.name === shipEnv);
-                if (!env) return null;
-                // Newest-first list; the first row at the shipped commit is the ship's
-                // deploy (or its retry). Members untouched by the ship have no such row.
-                const match = (await listDeployments(env.id)).find(
-                  (d) => d.gitSha === shippedSha,
-                );
-                if (!match) return null;
-                return {
-                  agentName: member.name,
-                  version: match.version,
-                  status: match.status,
-                  url: match.url,
-                  errorDetail: match.errorDetail,
-                  environmentId: env.id,
-                  releaseId: match.releaseId,
-                };
-              }),
-            )
-          ).filter((r): r is ShipStatusRow => r !== null);
-          if (rows.length > 0)
-            ship = { env: shipEnv, rows, skipped: shipSkipped };
-        }
-
         return {
           project,
           roster: roster.map((a) => ({ name: a.name })),
@@ -377,7 +312,6 @@ export const loader = (args: LoaderFunctionArgs) =>
           needsReconnect: false,
           draftPaths: drafts.map((d) => d.path),
           running,
-          ship,
         };
       } catch (error) {
         if (error instanceof Response) throw error;
@@ -395,7 +329,6 @@ export const loader = (args: LoaderFunctionArgs) =>
           needsReconnect: isGithubReauthorizationError(error),
           draftPaths: [],
           running: [],
-          ship: null,
         };
       }
     },
@@ -411,14 +344,12 @@ export async function action(args: ActionFunctionArgs) {
 
   const form = await args.request.formData();
   const intent = String(form.get("intent") ?? "");
-  const repo = { owner: project.repoOwner, repo: project.repoName };
 
   try {
-    // Ship now lives in the Quick deploy button (tab row) — the repos/<id>/quick-deploy
-    // resource route owns publish → merge → release → deploy. This route keeps retry-deploy
-    // and roster CRUD, plus the ?shipped banner its loader builds.
+    // Publishing lives in the header Publish control — the repos/<id>/publish resource route
+    // owns the pipeline. This route keeps retry-deploy and roster CRUD.
 
-    // ── Retry a failed shipped deploy (same release, same environment) ──
+    // ── Retry a failed deploy (same release, same environment) ──
     if (intent === "retry-deploy") {
       ensureWorkerStarted();
       await queueDeploy({
@@ -448,20 +379,18 @@ export async function action(args: ActionFunctionArgs) {
       // No model is baked into the scaffold: the member resolves the workspace's configured
       // model (or its own override) from harnesst at runtime, so it follows Org settings from
       // day one and model changes never touch the repo.
-      const change = await proposeChange(project.repoInstallationId, repo, {
-        base: project.defaultBranch,
-        branch: `harnesst/add-member-${name}`,
-        files: memberScaffold(name),
-        title: `Add agent: ${name}`,
-        body:
-          `Scaffolds a new eve agent at \`agents/${name}/\` (instructions, agent.ts, a ` +
-          `default sandbox, an example tool, package.json). harnesst picks the agent up on merge.`,
-      });
-      return {
-        ok: true as const,
-        changeUrl: change.pullRequestUrl,
-        member: name,
-      };
+      // The scaffold is SAVED as drafts (§2.4: structural operations save their full file set
+      // in one action) — the header Publish control takes the new agent live with everything
+      // else, and the roster picks it up when the publish lands.
+      for (const file of memberScaffold(name)) {
+        await stageDraft({
+          projectId: project.id,
+          path: file.path,
+          content: file.content,
+          createdBy: auth.user.id,
+        });
+      }
+      return { ok: true as const, member: name };
     }
 
     return { error: "Unknown action." };
@@ -493,21 +422,12 @@ export default function ProjectDetail({
     needsReconnect,
     draftPaths,
     running,
-    ship,
   } = loaderData;
+  const publishHref = usePublishHref();
   const base = `/repos/${project.id}`;
   // The page's hierarchy level decides its tab set and where its links point (M5.8).
   const level = view === "team" ? "repo" : teamLayout ? "member" : "single";
   const ctx = contextPath(project.id, level === "member" ? active?.name : null);
-
-  // Keep the deploy banner fresh without a manual refresh. Poll faster while a
-  // ship is pending/building so the banner walks to live/failed; a slower baseline
-  // poll runs regardless so a deploy STARTED after this page loaded is still
-  // picked up rather than sitting stale until a manual refresh (issue #41).
-  const shipInFlight = !!ship?.rows.some((r) =>
-    ["queued", "pending", "building"].includes(r.status),
-  );
-  useLiveRevalidate({ active: shipInFlight });
 
   const repoLine =
     project.repoOwner && project.repoName ? (
@@ -666,25 +586,16 @@ export default function ProjectDetail({
         </Alert>
       )}
 
-      {ship && (
-        <ShipProgress
-          ship={ship}
-          dismissTo={ctx}
-          projectId={project.id}
-          isTeam={isTeam}
-        />
-      )}
-
-      {actionData?.ok && "changeUrl" in actionData && (
+      {actionData?.ok && "member" in actionData && (
         <Alert className="mb-6">
-          <AlertTitle>Change request opened</AlertTitle>
+          <AlertTitle>{actionData.member} saved — not live yet</AlertTitle>
           <AlertDescription>
-            The roster updates when the change merges.{" "}
+            The new agent&rsquo;s files are saved with your other changes.{" "}
             <Link
-              to={`${ctx}/deployment`}
+              to={publishHref}
               className="font-medium underline underline-offset-4"
             >
-              Review it on the Deployment tab →
+              Review &amp; publish →
             </Link>
           </AlertDescription>
         </Alert>
@@ -693,17 +604,12 @@ export default function ProjectDetail({
       {view === "member" && draftPaths.length > 0 && (
         <Alert className="mb-6">
           <AlertTitle>
-            {draftPaths.length} staged change
-            {draftPaths.length === 1 ? "" : "s"} not shipped yet
+            {draftPaths.length} saved change
+            {draftPaths.length === 1 ? "" : "s"} not published yet
           </AlertTitle>
           <AlertDescription>
-            Ship them with the Quick deploy button in the tab row, or{" "}
-            <Link
-              to={`${ctx}/deployment`}
-              className="font-medium underline underline-offset-4"
-            >
-              review &amp; publish on the Deployment tab →
-            </Link>
+            Publish {draftPaths.length === 1 ? "it" : "them"} with the Publish button in the
+            header when you're ready.
           </AlertDescription>
         </Alert>
       )}
@@ -770,9 +676,9 @@ function TeamSurface({
               This is a{" "}
               <span className="font-medium text-foreground">team</span>: each
               one below is a complete agent with its own runtime, channels,
-              schedules, secrets, and deployments. Agents are versioned and
-              deployed independently, and changes to several agents ship
-              atomically in one change request.
+              schedules, secrets, and deployments. Agents are versioned
+              independently, and one Publish takes every saved change live
+              for the whole team at once.
             </p>
             <p className="mt-2">
               Teammates can delegate to each other: every agent gets an{" "}
@@ -894,7 +800,7 @@ function TeamSurface({
   );
 }
 
-/** "Add member" → a change-set scaffolding agents/<name>/ (git-native roster CRUD). */
+/** "Add member" → saves a scaffold of agents/<name>/ as drafts (git-native roster CRUD). */
 function AddMemberDialog() {
   const [open, setOpen] = useState(false);
   const [name, setName] = useState("");
@@ -921,8 +827,8 @@ function AddMemberDialog() {
         <DialogHeader>
           <DialogTitle>Add an agent</DialogTitle>
           <DialogDescription>
-            Scaffolds a complete eve agent and opens a change request — the
-            agent joins the roster when it merges.
+            Scaffolds a complete eve agent as saved changes — the agent joins
+            the roster when you publish.
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-1.5">
@@ -955,157 +861,11 @@ function AddMemberDialog() {
             Cancel
           </Button>
           <Button onClick={create} disabled={!slug || busy}>
-            Open change request
+            Add agent
           </Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
-  );
-}
-
-/**
- * Deploy progress for a shipped commit. Driven purely from deployment rows (via ?shipped=),
- * so it survives refreshes and walks pending → building → live/failed with the poller.
- */
-function ShipProgress({
-  ship,
-  dismissTo,
-  projectId,
-  isTeam,
-}: {
-  ship: { env: string; rows: ShipStatusRow[]; skipped: string[] };
-  dismissTo: string;
-  projectId: string;
-  isTeam: boolean;
-}) {
-  const retry = useFetcher();
-  const failed = ship.rows.filter((r) => r.status === "failed");
-  const allLive = ship.rows.every((r) => r.status === "live");
-  const version = ship.rows[0]?.version ?? "";
-  const single = ship.rows.length === 1;
-
-  return (
-    <Alert
-      variant={failed.length > 0 ? "destructive" : "default"}
-      className="mb-6"
-    >
-      <AlertTitle>
-        {allLive
-          ? `${version} is running on ${ship.env}`
-          : failed.length > 0
-            ? `${version} couldn't deploy to ${ship.env} — the previous version is still running`
-            : `Shipping ${version} to ${ship.env}…`}
-      </AlertTitle>
-      <AlertDescription>
-        <div className="mt-1 space-y-2">
-          {ship.rows.map((r) => (
-            <div
-              key={r.environmentId}
-              className="flex flex-wrap items-center gap-x-2 gap-y-1"
-            >
-              {!single && (
-                <Link
-                  to={contextPath(projectId, r.agentName)}
-                  className="font-medium underline-offset-4 hover:underline"
-                >
-                  {r.agentName}:
-                </Link>
-              )}
-              <ShipSteps status={r.status} version={r.version} />
-              {/* `url` isn't the link target (it's an instance-internal address) — its
-                  presence is the "there's a reachable instance" signal gating the
-                  playground link. */}
-              {r.status === "live" && r.url && (
-                <Link
-                  to={`${contextPath(projectId, isTeam ? r.agentName : null)}/playground`}
-                  className="underline underline-offset-4"
-                >
-                  open
-                </Link>
-              )}
-              {r.status === "failed" && (
-                <retry.Form method="post">
-                  <input type="hidden" name="intent" value="retry-deploy" />
-                  <input
-                    type="hidden"
-                    name="environmentId"
-                    value={r.environmentId}
-                  />
-                  <input type="hidden" name="releaseId" value={r.releaseId} />
-                  <Button
-                    type="submit"
-                    size="sm"
-                    variant="outline"
-                    disabled={retry.state !== "idle"}
-                  >
-                    {retry.state !== "idle" ? "Retrying…" : "Retry"}
-                  </Button>
-                </retry.Form>
-              )}
-            </div>
-          ))}
-          {ship.skipped.length > 0 && (
-            <p className="text-xs">
-              Not deployed for{" "}
-              {ship.skipped.map((name, i) => (
-                <span key={name}>
-                  {i > 0 && ", "}
-                  <Link
-                    to={contextPath(projectId, name)}
-                    className="underline underline-offset-4"
-                  >
-                    {name}
-                  </Link>
-                </span>
-              ))}{" "}
-              — no environment named{" "}
-              <span className="font-mono">{ship.env}</span>.
-            </p>
-          )}
-          {failed.map(
-            (r) =>
-              r.errorDetail && (
-                <p
-                  key={`err-${r.environmentId}`}
-                  className="whitespace-pre-wrap font-mono text-xs"
-                >
-                  {r.errorDetail}
-                </p>
-              ),
-          )}
-          {(allLive || failed.length > 0) && (
-            <p>
-              <Link
-                to={dismissTo}
-                className="text-xs underline underline-offset-4"
-              >
-                Dismiss
-              </Link>
-            </p>
-          )}
-        </div>
-      </AlertDescription>
-    </Alert>
-  );
-}
-
-/** The pipeline as PM-readable steps: the sync stages are done by construction. */
-function ShipSteps({ status, version }: { status: string; version: string }) {
-  const stage =
-    status === "live"
-      ? "Running ✓"
-      : status === "failed"
-        ? "Failed ✗"
-        : status === "building"
-          ? "Building…"
-          : status === "stopped" || status === "draining"
-            ? "Superseded"
-            : "Queued…";
-  return (
-    <span className="text-sm">
-      Published ✓ <span className="text-muted-foreground">→</span> {version}{" "}
-      created ✓ <span className="text-muted-foreground">→</span> {stage}
-    </span>
   );
 }
 
@@ -1143,7 +903,7 @@ function AgentSurface({
     () =>
       instructionsStaged ? (
         <Badge variant="outline" className="text-xs">
-          staged
+          saved
         </Badge>
       ) : null,
     [instructionsStaged],
@@ -1158,7 +918,7 @@ function AgentSurface({
     () =>
       sandboxStaged ? (
         <Badge variant="outline" className="text-xs">
-          staged
+          saved
         </Badge>
       ) : null,
     [sandboxStaged],
@@ -1260,7 +1020,7 @@ function AgentSurface({
                           )}
                           {drafted.has(item.path) && (
                             <Badge variant="outline" className="text-xs">
-                              staged
+                              saved
                             </Badge>
                           )}
                         </li>

@@ -1,18 +1,18 @@
 /**
- * GitHub App webhook receiver — keeps harnesst's Release history in sync when a change is merged
- * on github.com instead of in-app (PRD §7.3: "merge in harnesst or on GitHub").
+ * GitHub App webhook receiver — keeps harnesst's Release history in sync when a developer's PR is
+ * merged on github.com. This is the ONLY PR-shaped path that survives issue #225's cutover,
+ * and only because it serves developers pushing to the repo directly, never the harnesst UI (harnesst's
+ * own publishes commit straight to the default branch and cut their releases pipeline-side).
  *
  * On a PR merged into the default branch, find-or-create the Release at the merge commit. It
- * does NOT auto-deploy: deploying a version is a separate, explicit act on the Deployments tab
- * (the human picks environment + traffic weight — the multi-version primitive, §7.7). The
- * release create is idempotent with the in-app Merge button via `ensureReleaseForCommit`, so a
- * change merged in harnesst and echoed back by this webhook yields exactly one Release.
+ * does NOT auto-deploy: deploying a version is a separate, explicit act (the human picks the
+ * environment — the multi-version primitive, §7.7). The release create is idempotent via
+ * `ensureReleaseForCommit`, keyed on (agent, commit).
  * Resource route (action only); signature-verified.
  */
 import { data, type ActionFunctionArgs } from "react-router";
 
 import { listAgents, syncProjectAgents } from "~/db/queries.server";
-import { getRuntime } from "~/seams/index.server";
 import {
   ensureReleasesForCommit,
   findProjectByRepo,
@@ -24,11 +24,7 @@ import {
   hasTeamLayout,
 } from "~/eve/parse";
 import { enqueue } from "~/jobs/queue.server";
-import {
-  invalidateRepoChanges,
-  invalidateRepoSource,
-  warmAgentSource,
-} from "~/github/cached.server";
+import { invalidateRepoSource, warmAgentSource } from "~/github/cached.server";
 import { fetchAgentSource, listCommitFiles } from "~/github/repo.server";
 import { verifyGitHubSignature } from "~/github/webhook.server";
 
@@ -47,7 +43,6 @@ export async function action({ request }: ActionFunctionArgs) {
       title?: string;
       number?: number;
       base?: { ref?: string };
-      head?: { ref?: string };
     };
     repository?: {
       name?: string;
@@ -66,49 +61,8 @@ export async function action({ request }: ActionFunctionArgs) {
         )
       : null;
 
-  // Cache keys use harnesst's opaque grant id. The webhook's raw installation id is deliberately
-  // ignored at this browser/server boundary; resolve the repository to its project grant instead.
-  if (
-    event === "pull_request" &&
-    projectForRepo?.repoInstallationId &&
-    payload.repository?.owner?.login &&
-    payload.repository.name
-  ) {
-    invalidateRepoChanges(projectForRepo.repoInstallationId, {
-      owner: payload.repository.owner.login,
-      repo: payload.repository.name,
-    });
-  }
-
-  // A rename PR closed WITHOUT merging must drop the member's pending mark. Otherwise the row
-  // stays "rename in flight" forever — planPendingRenames only clears once the new `agents/<new>/`
-  // directory is detected, which never happens for an unmerged PR — and settings.tsx blocks any
-  // further rename ("merge or close it first") with no PR left to merge or close. Match the branch
-  // back to its row by reconstructing the branch name, so ambiguous old-vs-new name parsing (names
-  // may contain hyphens) is never needed.
-  if (
-    event === "pull_request" &&
-    payload.action === "closed" &&
-    !payload.pull_request?.merged &&
-    payload.pull_request?.head?.ref?.startsWith("harnesst/rename-member-") &&
-    payload.repository?.owner?.login &&
-    payload.repository.name
-  ) {
-    const headRef = payload.pull_request.head.ref;
-    const project = projectForRepo;
-    if (project) {
-      const agents = await listAgents(project.id);
-      const match = agents.find(
-        (a) =>
-          a.pendingName &&
-          `harnesst/rename-member-${a.name}-${a.pendingName}` === headRef,
-      );
-      if (match) await getRuntime().data.agents.setPendingName(match.id, null);
-    }
-  }
-
-  // Only act on PRs merged into the default branch — a merge into a feature branch is not
-  // a ship signal (PRD §7.3: merge-to-mainline = deploy).
+  // Only act on PRs merged into the default branch — a merge into a feature branch changes
+  // nothing harnesst serves.
   if (
     event !== "pull_request" ||
     payload.action !== "closed" ||

@@ -48,7 +48,12 @@ vi.mock("~/observability/record.server", () => ({
   recordTurnFinish: mocks.recordTurnFinish,
 }));
 vi.mock("~/assistant/checkout-sync.server", () => ({
-  syncConversationCheckout: vi.fn(async () => ({ kind: "skipped" })),
+  syncConversationCheckout: vi.fn(async () => ({
+    synced: false,
+    kind: "noop",
+    reason: "checkouts unsupported on this deploy target",
+    stagedCount: 0,
+  })),
   recordSyncFailure: vi.fn(async () => {}),
 }));
 vi.mock("~/team/resume.server", () => ({

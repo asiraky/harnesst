@@ -1,9 +1,9 @@
 /**
  * Structured editor: agent instructions (Author pillar, M1).
  *
- * Save STAGES the edit as a draft (refresh-proof, no git write); publishing the staged
- * change-set into a PR happens on the Changes tab (PRD §7.3: edits accumulate; publish opens
- * the PR). The loader overlays any staged draft over the repo content.
+ * Save writes a draft (refresh-proof, no git write) and does nothing else; the header Publish
+ * control takes every saved change live in one action (issue #225). The loader overlays any
+ * saved draft over the repo content.
  */
 import { getSessionAuth, sessionLoader } from "~/auth/session.server";
 import { FileText } from "lucide-react";
@@ -60,7 +60,7 @@ export const loader = (args: LoaderFunctionArgs) =>
       requireActiveAgent(active, project.id);
       const path = `${active.root}/instructions.md`;
 
-      // Show the latest intended value: staged draft → open change request → repo.
+      // Show the latest intended value: saved draft → repo.
       const view = await resolveFileView(
         {
           id: project.id,
@@ -79,7 +79,6 @@ export const loader = (args: LoaderFunctionArgs) =>
         isTeam,
         instructions: view.content ?? "",
         source: view.source,
-        change: view.change,
         stagedDeletion: view.stagedDeletion,
       };
     },
@@ -136,14 +135,12 @@ export default function EditInstructions({
     isTeam,
     instructions,
     source,
-    change,
   } = loaderData;
   const navigation = useNavigation();
   const submit = useSubmit();
   const saving = navigation.state !== "idle";
   const [value, setValue] = useState(instructions);
 
-  const base = `/repos/${project.id}`;
   // Back to the member's overview on teams; the repo overview on single-agent repos.
   const ctx = contextPath(project.id, isTeam ? activeAgent : null);
 
@@ -169,12 +166,12 @@ export default function EditInstructions({
         title={
           isTeam ? `Edit instructions — ${activeAgent}` : "Edit instructions"
         }
-        description="Saving stages the change — publish staged changes as one pull request from the Changes tab."
+        description="Save keeps the change here until you publish — the Publish button in the header takes everything you've saved live."
       />
 
       {actionData?.error && (
         <Alert variant="destructive" className="mb-6">
-          <AlertTitle>Couldn&rsquo;t stage the change</AlertTitle>
+          <AlertTitle>Couldn&rsquo;t save the change</AlertTitle>
           <AlertDescription>{actionData.error}</AlertDescription>
         </Alert>
       )}
@@ -182,8 +179,6 @@ export default function EditInstructions({
       <FileStateBanner
         saved={!!actionData?.ok}
         source={source}
-        change={change}
-        base={base}
         stagedDeletion={loaderData.stagedDeletion}
       />
 

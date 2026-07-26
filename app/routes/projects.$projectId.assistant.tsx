@@ -9,7 +9,7 @@
  */
 import { getSessionAuth, sessionLoader } from "~/auth/session.server";
 import {
-  GitPullRequest,
+  CheckCircle2,
   Info,
   Loader2,
   MessageSquare,
@@ -24,6 +24,7 @@ import {
   useFetcher,
   useNavigate,
   useRevalidator,
+  useSearchParams,
   type ActionFunctionArgs,
   type LoaderFunctionArgs,
 } from "react-router";
@@ -47,6 +48,7 @@ import {
   UserBubble,
 } from "~/components/chat";
 import { TurnError } from "~/components/turn-error";
+import { usePublishHref } from "~/components/publish";
 import { EmptyTeamState } from "~/components/empty-team-state";
 import { LocalizedDate } from "~/components/localized-values";
 import { AgentNav, AppShell, PageHeader, repoCrumbs } from "~/components/shell";
@@ -82,6 +84,7 @@ import {
 } from "~/playground/ownership";
 import { shouldSettleAbandonedSession } from "~/playground/settle";
 import { requireProject, requireRepo } from "~/project/guard.server";
+import { getRuntime } from "~/seams/index.server";
 import type { Route } from "./+types/projects.$projectId.assistant";
 
 export const loader = (args: LoaderFunctionArgs) =>
@@ -204,8 +207,29 @@ export const loader = (args: LoaderFunctionArgs) =>
         );
       }
 
+      // Publish-failure handoff (#225 §4.3): the publish panel's "Ask the assistant to fix
+      // this" links here with ?fix=<taskId>; the failed step's output pre-fills the composer
+      // as context for the model. The task must belong to this project and have failed.
+      let fixPrefill: string | null = null;
+      const fixTaskId = args.url.searchParams.get("fix");
+      if (fixTaskId) {
+        const fixTask = await getRuntime()
+          .data.workspaceTasks.findById(fixTaskId)
+          .catch(() => null);
+        if (fixTask && fixTask.projectId === project.id && fixTask.status === "failed") {
+          const failedStep = fixTask.steps?.find((s) => s.status === "failed");
+          const error = failedStep?.error ?? fixTask.error;
+          if (error) {
+            fixPrefill = `I tried to publish and it failed at "${
+              failedStep?.label ?? "Publish"
+            }". Please fix this so I can publish again:\n\n${error}`;
+          }
+        }
+      }
+
       return {
         project,
+        fixPrefill,
         instanceStatus: snapshot.status,
         provisionStage: snapshot.provisionStage,
         provisionStartedAt: snapshot.provisionStartedAt,
@@ -274,7 +298,7 @@ interface LiveTurn {
   /** Post-turn checkout sync outcome — arrives after `done`, absent for pure-Q&A turns. */
   sync: {
     synced: boolean;
-    prNumber: number | null;
+    stagedCount: number;
     error: string | null;
   } | null;
 }
@@ -282,6 +306,7 @@ interface LiveTurn {
 export default function Assistant({ loaderData }: Route.ComponentProps) {
   const {
     project,
+    fixPrefill,
     instanceStatus,
     provisionStage,
     provisionStartedAt,
@@ -303,6 +328,17 @@ export default function Assistant({ loaderData }: Route.ComponentProps) {
   const newSessionFetcher = useFetcher<typeof action>();
   const NewSessionForm = newSessionFetcher.Form;
   const ProvisionForm = provisionFetcher.Form;
+
+  // The ?fix= handoff is one-shot: once the composer is seeded from the loader, strip the
+  // param so a reload (or sending the message) doesn't re-fill it. The textarea is
+  // uncontrolled, so its seeded text survives the revalidation this triggers.
+  const [searchParams, setSearchParams] = useSearchParams();
+  useEffect(() => {
+    if (!searchParams.has("fix")) return;
+    const params = new URLSearchParams(searchParams);
+    params.delete("fix");
+    setSearchParams(params, { replace: true, preventScrollReset: true });
+  }, [searchParams, setSearchParams]);
 
   const [live, setLive] = useState<LiveTurn | null>(null);
   // A turn from another selected session is never rendered here. For the current session, keep a
@@ -617,7 +653,7 @@ export default function Assistant({ loaderData }: Route.ComponentProps) {
           icon={Sparkles}
           accent="brand"
           title="Assistant"
-          description="Tell it what your agents should do. It writes the code, verifies the build, and stages everything for review on the Deployment tab — you never touch git."
+          description="Tell it what your agents should do. It writes the code, verifies the build, and saves everything for you to review and publish from the header — you never touch git."
           actions={headerActions}
         />
         {statusStrip}
@@ -821,6 +857,7 @@ export default function Assistant({ loaderData }: Route.ComponentProps) {
           }
           // Not-yet-provisioned reads as unavailable (setup card explains), not as in-flight work.
           disabled={currentSessionContinuationBlocked || idle || failed}
+          initialValue={fixPrefill ?? undefined}
           onSend={send}
         />
       </div>
@@ -839,7 +876,7 @@ type StreamEvent =
   | {
       type: "sync";
       synced: boolean;
-      prNumber: number | null;
+      stagedCount: number;
       error: string | null;
     }
   | {
@@ -890,7 +927,7 @@ function reduceLive(prev: LiveTurn, evt: StreamEvent): LiveTurn {
         ...prev,
         sync: {
           synced: evt.synced,
-          prNumber: evt.prNumber,
+          stagedCount: evt.stagedCount,
           error: evt.error,
         },
       };
@@ -1063,28 +1100,37 @@ function LiveBubble({
 
 /** Post-turn checkout sync outcome as a quiet, icon-led confirmation line — not a banner. */
 function SyncNote({ sync }: { sync: NonNullable<LiveTurn["sync"]> }) {
+  const publishHref = usePublishHref();
   if (sync.error) {
     return (
       <p className="flex items-start gap-1.5 text-xs text-amber-700 dark:text-amber-400">
         <TriangleAlert className="mt-0.5 size-3.5 shrink-0" aria-hidden />
         <span>
-          harnesst couldn&apos;t sync this turn&apos;s changes to the pull
-          request ({sync.error}). They&apos;re safe in the conversation checkout
-          and will sync after the next turn.
+          harnesst couldn&apos;t save this turn&apos;s changes ({sync.error}).
+          They&apos;re safe in the conversation checkout and will be picked up
+          after the next turn.
         </span>
       </p>
     );
   }
+  const n = sync.stagedCount;
   return (
     <p className="flex items-start gap-1.5 text-xs text-muted-foreground">
-      <GitPullRequest
+      <CheckCircle2
         className="mt-0.5 size-3.5 shrink-0 text-emerald-600 dark:text-emerald-400"
         aria-hidden
       />
       <span>
-        Changes synced
-        {sync.prNumber ? ` to PR #${sync.prNumber}` : ""} — review them on the
-        Changes tab.
+        {/* n counts what this sync actually changed; 0 means everything was already saved. */}
+        {n === 0 ? "Everything from this turn was already saved" : (
+          <>Saved {n} change{n === 1 ? "" : "s"}</>
+        )}{" "}
+        —{" "}
+        {/* `?publish=1` opens the publish panel from the workspace-header Publish control. */}
+        <Link to={publishHref} className="font-medium underline underline-offset-4">
+          review and publish
+        </Link>{" "}
+        when you&apos;re ready.
       </span>
     </p>
   );

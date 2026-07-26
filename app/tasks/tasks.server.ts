@@ -3,13 +3,13 @@
  *
  * A "workspace task" is the small, project-scoped, user-facing record behind the persistent
  * task-progress indicator at the top of a workspace. The durable `jobs` queue is still the ops
- * primitive that RUNS the work (retry/claim/backoff); a runner streams its human-readable stage
- * into a task row here and resolves it to a terminal state. The indicator polls these rows.
+ * primitive that RUNS the work (retry/claim/backoff); a runner records its structured pipeline
+ * `steps` on a task row here and resolves it to a terminal state. The indicator polls these rows.
  *
  * Every function takes `store: DataStore = getRuntime().data` so runners and route actions inject a
  * fake in unit tests, mirroring drafts.server.ts.
  */
-import type { DataStore, WorkspaceTask } from "~/data/ports";
+import type { DataStore, PipelineStep, WorkspaceTask } from "~/data/ports";
 import { getRuntime } from "~/seams/index.server";
 
 /** How long a terminal (succeeded|failed) task lingers in the indicator before it ages out. */
@@ -22,7 +22,7 @@ export function createTask(
     subjectKey: string;
     label: string;
     originUrl: string;
-    stage?: string | null;
+    steps?: PipelineStep[] | null;
     jobId?: string | null;
     createdBy?: string | null;
   },
@@ -40,16 +40,17 @@ export async function setTaskJob(
   await store.workspaceTasks.update(id, { jobId });
 }
 
-/** Stream the current step into the indicator. */
-export async function updateTaskStage(
+/** Record the pipeline's current step list (the runner updates it in place as it runs). */
+export async function updateTaskSteps(
   id: string,
-  stage: string,
+  steps: PipelineStep[],
   store: DataStore = getRuntime().data,
 ): Promise<void> {
-  await store.workspaceTasks.update(id, { stage });
+  await store.workspaceTasks.update(id, { steps });
 }
 
-/** Resolve a task as succeeded, clearing the stage and recording where the result lives. */
+/** Resolve a task as succeeded, recording where the result lives. The steps stay — they ARE
+ * the record of what ran. */
 export async function completeTask(
   id: string,
   opts: { resultUrl?: string | null },
@@ -57,19 +58,19 @@ export async function completeTask(
 ): Promise<void> {
   await store.workspaceTasks.update(id, {
     status: "succeeded",
-    stage: null,
     resultUrl: opts.resultUrl ?? null,
     error: null,
   });
 }
 
-/** Resolve a task as failed, clearing the stage and recording the error for the indicator. */
+/** Resolve a task as failed, recording the error summary for the indicator (the failed step
+ * carries the full output). */
 export async function failTask(
   id: string,
   error: string,
   store: DataStore = getRuntime().data,
 ): Promise<void> {
-  await store.workspaceTasks.update(id, { status: "failed", stage: null, error });
+  await store.workspaceTasks.update(id, { status: "failed", error });
 }
 
 /** The indicator's read set for a project: running + recent terminal tasks, oldest-first. */

@@ -149,17 +149,16 @@ export default [
   route("repos/:projectId/secrets", "routes/shims.repo-tabs.tsx", {
     id: "shim-secrets",
   }),
-  // Staged-draft count for the nav pill (AgentNav); `?agent=` scopes to one member.
-  route("repos/:projectId/staged-count", "routes/api.staged-count.tsx"),
-  // Workspace task-progress indicator (issue #142): running + recent terminal merge/publish tasks
+  // The Publish control + panel (AppShell header, issue #225): GET returns the project's
+  // publish state (saved changes, live version, running/failed pipeline) — or one file's diff
+  // via `?diff=`. POST intents: publish, publish-head, discard, discard-all.
+  route("repos/:projectId/publish", "routes/api.publish.tsx"),
+  // Workspace task-progress indicator (issue #142): running + recent terminal publish tasks
   // for this project. GET polls the list; POST intent=dismiss clears a terminal row.
   route("repos/:projectId/tasks", "routes/api.tasks.tsx"),
   // Invite-to-repo (FOH invites & roles): GET lists the repo team's pending invitations,
   // POST intent=invite sends one carrying the repo's teamId.
   route("api/repos/:projectId/invite", "routes/api.repos.$projectId.invite.ts"),
-  // Quick deploy (AgentNav): GET returns the button's envs + staged count for the scope,
-  // POST runs the whole Ship pipeline. `?agent=`/`agent` field scopes to one member.
-  route("repos/:projectId/quick-deploy", "routes/api.quick-deploy.tsx"),
   // Playground streaming turn: the page POSTs here and reads an NDJSON stream of the turn.
   // Single registration — team-member selection travels as a form field, not a URL param.
   route(

@@ -45,7 +45,7 @@ import {
 import {
   buildEveImage,
   buildStageTagFor,
-  checkEveBuild,
+  buildStagedTree,
 } from "~/deploy/eve-image.server";
 import type {
   BuildRequest,
@@ -419,13 +419,15 @@ export const localDockerTarget: DeployTarget = {
     if (!req.installationId) {
       return { ok: true as const, skipped: true }; // can't fetch source — don't block publish
     }
-    return checkEveBuild({
+    return buildStagedTree({
       projectId: req.projectId,
       repo: req.repo,
       ref: req.ref,
       installationId: req.installationId,
       overlay: req.overlay,
       agentRoot: req.agentRoot,
+      taskId: req.taskId,
+      injectTeammateTool: req.injectTeammateTool,
     });
   },
 

@@ -6,8 +6,10 @@
  * startWorker() elsewhere. Concurrency 1: builds are docker-bound and serializing them keeps
  * resource use predictable on a dev box.
  */
+import type { DataStore } from "~/data/ports";
 import { deployRelease, rollbackTo } from "~/deploy/controller.server";
 import { ensureSandboxReaperStarted } from "~/deploy/sandbox-reaper.server";
+import { PUBLISH_INTERRUPTED_MESSAGE } from "~/publish/pipeline.server";
 import { getRuntime } from "~/seams/index.server";
 import type { DeployReleasePayload, Job } from "./queue.server";
 import { claimNext, markDone, markFailed } from "./queue.server";
@@ -77,18 +79,12 @@ async function execute(job: Job): Promise<void> {
       console.log(`[jobs] drain_deployment ${p.deploymentId}: ${detail}`);
       return;
     }
-    case "merge_change": {
-      // issue #142: the merge build gate + GitHub merge, moved off the HTTP request. Progress and
-      // a build-gate failure surface through the workspace task, not a queue retry (maxAttempts:1).
-      const { runMergeChange } = await import("~/deploy/merge-change.server");
-      const p = job.payload as import("~/deploy/merge-change.server").MergeChangePayload;
-      await runMergeChange(p);
-      return;
-    }
-    case "publish_change": {
-      const { runPublishChange } = await import("~/drafts/publish-change.server");
-      const p = job.payload as import("~/drafts/publish-change.server").PublishChangePayload;
-      await runPublishChange(p);
+    case "publish": {
+      // issue #225: the publish pipeline (check → build → commit → version → deploy). Progress and
+      // failures surface through the workspace task's steps, not queue retries (maxAttempts:1).
+      const { runPublish } = await import("~/publish/pipeline.server");
+      const p = job.payload as import("~/publish/pipeline.server").PublishPayload;
+      await runPublish(p);
       return;
     }
     default:
@@ -119,12 +115,44 @@ async function tick(): Promise<void> {
   }
 }
 
+/**
+ * Boot recovery for publishes, BEFORE the generic requeue: a publish stranded mid-run must be
+ * FAILED, never rerun — its task already carries progress, and a rerun could land a duplicate
+ * commit or misreport a landed publish (the drafts are gone) as "nothing to publish". Also
+ * settles running publish tasks with no live job — the MCP `publishNow` path runs in-request
+ * with no job at all, and without this a restart mid-run would leave that task `running`
+ * forever, permanently disabling Publish for the project.
+ */
+async function reconcilePublishesOnBoot(store: DataStore): Promise<void> {
+  const failedJobs = await store.jobs.failRunningByKind("publish", PUBLISH_INTERRUPTED_MESSAGE);
+  const failedJobIds = new Set(failedJobs.map((j) => j.id));
+  const running = await store.workspaceTasks.listRunningByKind("publish");
+  let settled = 0;
+  for (const task of running) {
+    // A task whose job is still QUEUED never started — leave it; the worker runs it fresh.
+    if (task.jobId !== null && !failedJobIds.has(task.jobId)) continue;
+    await store.workspaceTasks.update(task.id, {
+      status: "failed",
+      error: PUBLISH_INTERRUPTED_MESSAGE,
+    });
+    settled++;
+  }
+  if (failedJobs.length > 0 || settled > 0) {
+    console.log(
+      `[jobs] settled ${settled} publish task(s) (${failedJobs.length} job(s)) stranded by a restart`,
+    );
+  }
+}
+
 function startWorker(): { stop: () => void } {
   // Boot recovery: a process restart (dev HMR, redeploy, crash) kills in-flight jobs, leaving
   // them stranded as `running` — and their deployment rows stuck at pending/building forever.
-  // This worker is the only one per box (ARCH §2), so requeueing all `running` jobs is safe.
-  getRuntime()
-    .data.jobs.requeueRunning()
+  // This worker is the only one per box (ARCH §2), so requeueing `running` jobs is safe —
+  // except publishes, which are settled as failed first (see reconcilePublishesOnBoot).
+  const data = getRuntime().data;
+  reconcilePublishesOnBoot(data)
+    .catch((err) => console.error("[jobs] publish boot reconciliation failed:", err))
+    .then(() => data.jobs.requeueRunning())
     .then((n) => {
       if (n > 0) console.log(`[jobs] requeued ${n} job(s) stranded by a restart`);
     })
