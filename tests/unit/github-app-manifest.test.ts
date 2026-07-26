@@ -29,22 +29,22 @@ describe("buildAppManifest", () => {
   it("emits exactly the channel's grant — nothing wider", () => {
     const manifest = buildAppManifest({
       name: "triage-acme",
-      homepageUrl: "https://eden.example/repos/p1/deployment",
-      webhookUrl: "https://eden.example/e/envabcdefghij/eve/v1/github",
-      redirectUrl: "https://eden.example/github/apps/callback",
-      setupUrl: "https://eden.example/repos/p1/deployment",
-      description: "triage — an Eden agent.",
+      homepageUrl: "https://harnesst.example/repos/p1/deployment",
+      webhookUrl: "https://harnesst.example/e/envabcdefghij/eve/v1/github",
+      redirectUrl: "https://harnesst.example/github/apps/callback",
+      setupUrl: "https://harnesst.example/repos/p1/deployment",
+      description: "triage — a harnesst agent.",
     });
     expect(manifest).toEqual({
       name: "triage-acme",
-      url: "https://eden.example/repos/p1/deployment",
+      url: "https://harnesst.example/repos/p1/deployment",
       hook_attributes: {
-        url: "https://eden.example/e/envabcdefghij/eve/v1/github",
+        url: "https://harnesst.example/e/envabcdefghij/eve/v1/github",
         active: true,
       },
-      redirect_url: "https://eden.example/github/apps/callback",
-      setup_url: "https://eden.example/repos/p1/deployment",
-      description: "triage — an Eden agent.",
+      redirect_url: "https://harnesst.example/github/apps/callback",
+      setup_url: "https://harnesst.example/repos/p1/deployment",
+      description: "triage — a harnesst agent.",
       // Always public: one App installs across the owner's personal account and any org, each
       // installation still scoped to the repos its installer picks.
       public: true,

@@ -22,7 +22,7 @@ export async function loader(args: Route.LoaderArgs) {
 }
 
 export function meta() {
-  return [{ title: "Sign in · eden" }, ...noindexMeta];
+  return [{ title: "Sign in · harnesst" }, ...noindexMeta];
 }
 
 export default function Login({ loaderData }: Route.ComponentProps) {
@@ -85,12 +85,12 @@ export default function Login({ loaderData }: Route.ComponentProps) {
       title="Sign in"
       description={
         step === "email"
-          ? "Continue to your Eden workspace."
+          ? "Continue to your harnesst workspace."
           : "Enter your password."
       }
       footer={
         <>
-          New to Eden?{" "}
+          New to harnesst?{" "}
           <AuthLink
             to={`/signup?returnTo=${encodeURIComponent(loaderData.returnTo)}`}
           >

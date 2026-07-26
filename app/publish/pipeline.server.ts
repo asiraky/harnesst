@@ -8,7 +8,7 @@
  * release, no deploy, and every draft still saved.
  *
  * One build, not two (§3.2): the build step produces real images under provisional tags
- * (`eden/publish-<taskId>:…`). After the commit lands and Releases are cut, the images are
+ * (`harnesst/publish-<taskId>:…`). After the commit lands and Releases are cut, the images are
  * promoted to the commit's runtime tags and each touched member's Release gets its `imageRef`,
  * so the queued deploys (`rebuild: false`) skip their own build. Untouched members (the team is
  * the deployment unit — everyone deploys) get a Release with no imageRef and build at deploy
@@ -146,7 +146,7 @@ const CAS_FAILED_MESSAGE =
 
 /** The outcome of a publish whose process died mid-run (boot reconciliation / rerun guard). */
 export const PUBLISH_INTERRUPTED_MESSAGE =
-  "Eden restarted while this publish was running. Nothing you saved was lost — publish again.";
+  "harnesst restarted while this publish was running. Nothing you saved was lost — publish again.";
 
 /**
  * The `workspace_tasks_running_subject_uq` partial unique violation: another request created the
@@ -535,7 +535,7 @@ export async function runPublish(
         await failAt("check", orphanedDraftsMessage(orphaned));
         return outcome;
       }
-      // Coherence pass (§2.4): Eden never publishes an incoherent change-set.
+      // Coherence pass (§2.4): harnesst never publishes an incoherent change-set.
       files = await deps.normalizeDrafts({
         project: connected,
         files: drafts.map((d) => ({ path: d.path, content: d.content })),

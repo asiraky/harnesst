@@ -1,7 +1,7 @@
-# Eden — Managed Service Architecture
+# harnesst — Managed Service Architecture
 
-> Companion to [`PRD.md`](./PRD.md). Covers the **commercial managed offering**: how Eden runs,
-> isolates, meters, and bills customer eve agents on infrastructure Eden owns.
+> Companion to [`PRD.md`](./PRD.md). Covers the **commercial managed offering**: how harnesst runs,
+> isolates, meters, and bills customer eve agents on infrastructure harnesst owns.
 > **Status:** Draft v0.1 · **Last updated:** 2026-07-01
 
 ---
@@ -12,9 +12,9 @@ These hold no matter what we run on — a cloud provider, a Kubernetes cluster, 
 box. They are what keep the managed service and the OSS product **one codebase**.
 
 1. **Control plane vs. data plane are separate.**
-   - _Control plane_ = the Eden web app + APIs (GitHub, authoring, PRs, deploy controller,
+   - _Control plane_ = the harnesst web app + APIs (GitHub, authoring, PRs, deploy controller,
      scheduler, model gateway, metering, billing, tenancy). It **never runs customer agent code**.
-   - _Data plane_ = the fleet of running eve instances. In managed mode Eden owns it.
+   - _Data plane_ = the fleet of running eve instances. In managed mode harnesst owns it.
 
 2. **The tenancy unit is one isolated instance per deployed agent — not per customer.**
    In eve, a tool's `execute()` runs **in the host Nitro process** (only `bash`/model-generated code
@@ -142,10 +142,10 @@ name only.
 
 ### 3.6 Ingress / routing
 
-A reverse proxy (**Caddy or Traefik**) on the box with **wildcard TLS** (`*.eden.app`), routing
-`agent-<id>.eden.app` → the instance container, integrated with the wake-proxy (§2.3). Also terminates
+A reverse proxy (**Caddy or Traefik**) on the box with **wildcard TLS** (`*.harnesst.app`), routing
+`agent-<id>.harnesst.app` → the instance container, integrated with the wake-proxy (§2.3). Also terminates
 channel webhooks (Slack/HTTP) per instance. **Discord (issue #32)** is the exception: one
-Eden-owned Discord app serves the whole installation, so its single Interactions Endpoint URL
+harnesst-owned Discord app serves the whole installation, so its single Interactions Endpoint URL
 points at the **control plane** (`/api/discord/interactions`), which verifies the signature and
 relays each interaction to the bound agent instance's Discord channel — the shared bot token
 never reaches an instance.
@@ -163,22 +163,22 @@ rest), so the splitter trivially routes to one instance until a multi-version su
 ### 3.7 Observability / run-observability subsystem
 
 First-class subsystem (PRD pillar §7.6), not an afterthought — teams must be able to open any agent
-and inspect any execution in full. Vercel's Agent Runs is Vercel-only, so Eden ships its own on
+and inspect any execution in full. Vercel's Agent Runs is Vercel-only, so harnesst ships its own on
 **every** deploy target.
 
 **Two ingestion sources (complementary):**
 
 - **eve OpenTelemetry** — `agent/instrumentation.ts` emits AI-SDK spans (tokens, model, latency,
-  model/tool I/O). Instances export **OTLP** to an Eden **collector**.
+  model/tool I/O). Instances export **OTLP** to a harnesst **collector**.
 - **Workflow event log** — the durable, replayable per-turn/per-step record in the instance's
   Postgres World. Read by an event-log reader for structure + durability (survives, replayable).
-  Eden merges both into a normalized **runs store**.
+  harnesst merges both into a normalized **runs store**.
 
 **Ingestion path differs by mode (important):**
 
 - **Managed:** instance and collector are co-located on the box; OTLP is local, cheap.
 - **BYO / self-host:** the instance runs in the _customer's_ account, so it must **ship telemetry to
-  Eden's collector over an authenticated OTLP endpoint** (per-instance ingest token). This is the one
+  harnesst's collector over an authenticated OTLP endpoint** (per-instance ingest token). This is the one
   genuinely new architectural surface observability adds — a public, authenticated OTLP receiver +
   per-instance credentials.
 
@@ -197,7 +197,7 @@ Session(id, agent_id, tenant/org_id, trigger, started_at, ...)
 ```
 
 - **System prompt = link, not (only) snapshot.** Each Run stores the **deployed `git_sha`/build id**;
-  Eden reconstructs the exact system prompt (`instructions.md` + tools + skills) from the repo at that
+  harnesst reconstructs the exact system prompt (`instructions.md` + tools + skills) from the repo at that
   commit. Optional resolved-prompt snapshot for immutability. **User input, tool I/O, tokens, timing
   are runtime data and are always recorded.**
 - **UI:** _Agent → Run list_ (summary metrics) → _Run transcript_ (progressive-disclosure timeline).
@@ -214,7 +214,7 @@ Session(id, agent_id, tenant/org_id, trigger, started_at, ...)
 ### 3.8 Tenancy & auth (Better Auth)
 
 Authentication is self-hosted with **Better Auth** and its React Router handler at `/api/auth/*`.
-Eden enables email/password authentication and the Better Auth organization plugin; the same
+harnesst enables email/password authentication and the Better Auth organization plugin; the same
 Postgres database holds the canonical `user`, `session`, `account`, `verification`, `organization`,
 `member`, and `invitation` records. There is no hosted auth dashboard or external OAuth callback in
 this flow. Signup auto-signs in after name/email/password and does not require email verification.
@@ -230,13 +230,13 @@ redacting request logger. nginx uses the same policy and suppresses raw request-
 so password-reset, email-verification, and invitation credentials are not persisted in container or
 proxy logs.
 
-- **A Better Auth organization = an Eden tenant/workspace.** Eden uses the plugin's APIs for
+- **A Better Auth organization = a harnesst tenant/workspace.** harnesst uses the plugin's APIs for
   organization creation, membership, invitations, roles, and the active organization rather than
   maintaining parallel identity tables.
 - The plugin's standard `owner`, `admin`, and `member` roles govern organization-management
-  operations. Eden's project surfaces require membership in the active organization; they do not
+  operations. harnesst's project surfaces require membership in the active organization; they do not
   bypass the plugin by writing membership or invitation rows directly.
-- Eden's application tables hold operational data such as projects, spend limits, deployment and
+- harnesst's application tables hold operational data such as projects, spend limits, deployment and
   billing metadata, and audit entries, keyed by Better Auth organization/user IDs.
 - Password resets, invitation delivery, and invitation-recipient verification use React Email
   templates and Postmark
@@ -266,7 +266,7 @@ administration is limited by the plugin's default roles.
 
 ### 3.9 Release registry & versioning (PRD §7.7)
 
-eve has no native versioning; Eden layers one over git. A **Release = an immutable build at a
+eve has no native versioning; harnesst layers one over git. A **Release = an immutable build at a
 default-branch commit** — `{ label (v1/v2…), commit_sha, image_digest, changelog, author, created_at }`. Immutability
 is inherited: git commits + content-addressed images, nothing engineered.
 
@@ -274,7 +274,7 @@ is inherited: git commits + content-addressed images, nothing engineered.
   for rollback). **Roll back** = re-point an environment/split to a prior Release's image (no
   rebuild) — the safety net; there is no per-change undo.
 - An **environment maps to one or more active Releases with weights** (the split config the ingress
-  proxy §3.6 enforces). Running multiple versions live is the core product primitive — Eden does
+  proxy §3.6 enforces). Running multiple versions live is the core product primitive — harnesst does
   _not_ ship an automated A/B/experimentation engine; per-version telemetry (§3.7) is how humans judge.
 - **Immutability caveat:** a Release pins repo state (config/tools/skills/instructions), **not**
   secrets/env (they live outside git). Version secret _metadata/generation_ only — never values — for
@@ -284,15 +284,15 @@ is inherited: git commits + content-addressed images, nothing engineered.
 
 A playground conversation has two homes. The **eve session** lives inside the agent container — it
 holds the runtime context (the agent's working memory for the thread) and is owned by the exact
-deployment that created it (`playground_sessions.last_deployment_id`). Eden's **`playground_events`**
+deployment that created it (`playground_sessions.last_deployment_id`). harnesst's **`playground_events`**
 table is the durable transcript cache in Postgres: the turn-stream drain persists every raw eve
 event as it arrives, and it is the source of truth for rendering the conversation.
 
 A redeploy destroys the container and with it the eve session; the cache survives untouched. So a
 follow-up to a conversation whose owning deployment was replaced can't reach the original eve
-session. Instead of dead-ending, Eden **reseeds** (#71): the next turn transparently starts a fresh
+session. Instead of dead-ending, harnesst **reseeds** (#71): the next turn transparently starts a fresh
 eve session on the replacement deployment, seeded from the cached transcript via a strippable
-`eden:context` block prepended to the sent message (invisible in the rendered transcript, like the
+`harnesst:context` block prepended to the sent message (invisible in the rendered transcript, like the
 model directive). `playground_sessions.cache_index_offset` shifts the fresh session's stream indices
 (which restart at 1) above the preserved history so its events append after it on the
 `(session, stream_index)` PK instead of colliding. The assistant surface keeps its 409 block instead
@@ -404,12 +404,12 @@ lives.
 ┌──────────────────────────  ONE BARE-METAL BOX (v1)  ──────────────────────────┐
 │                                                                                │
 │  CONTROL PLANE (containers — never runs agent code)                            │
-│  ┌──────────────────────────────────────────────────────────────────────┐     │
-│  │ Eden web/API · Deploy Controller (DeployTarget=BareMetalDocker/Nomad)  │     │
-│  │ Scheduler (wakes instances for crons) · Model Gateway (keys/meter/caps)│     │
-│  │ Metering→Billing(Stripe) · Secrets(KMS/Vault) · OTel collector/Runs    │     │
-│  │ Local image registry · Tenancy(org/roles/audit)                        │     │
-│  └──────────────┬──────────────────────────────┬────────────────────────┘     │
+│  ┌────────────────────────────────────────────────────────────────────────────┐ │
+│  │ harnesst web/API · Deploy Controller (DeployTarget=BareMetalDocker/Nomad)  │ │
+│  │ Scheduler (wakes instances for crons) · Model Gateway (keys/meter/caps)    │ │
+│  │ Metering→Billing(Stripe) · Secrets(KMS/Vault) · OTel collector/Runs        │ │
+│  │ Local image registry · Tenancy(org/roles/audit)                            │ │
+│  └──────────────┬──────────────────────────────┬──────────────────────────────┘ │
 │      provision/ │ start·stop (scale-to-zero)    │ meter                        │
 │      wake       ▼                                ▼                             │
 │  DATA PLANE (one gVisor/Kata container per deployed agent)                      │
@@ -419,7 +419,7 @@ lives.
 │  │  [ACTIVE]     │ │  [ACTIVE]     │ │   0 cpu/ram)  │   │  DB-per-instance,│ │
 │  └───────┬───────┘ └───────┬───────┘ └───────────────┘   │  durable log)    │ │
 │          │                 │                             └──────────────────┘ │
-│  Caddy/Traefik + wake-proxy (Sablier) ── *.eden.app ── Slack/HTTP webhooks     │
+│  Caddy/Traefik + wake-proxy (Sablier) ── *.harnesst.app ── Slack/HTTP webhooks     │
 │                                                                                │
 └────────────────────────────────────────────────────────────────────────────────┘
    Backups (WAL + snapshots) ──► object storage (S3/B2)   [protect Postgres first]

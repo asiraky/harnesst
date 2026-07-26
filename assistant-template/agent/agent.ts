@@ -3,7 +3,7 @@ import { createOpenAI } from "@ai-sdk/openai";
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 import { defineAgent } from "eve";
 
-// Eden's built-in project assistant. This is the FIXED, Eden-owned layer — do not edit it in a
+// harnesst's built-in project assistant. This is the FIXED, harnesst-owned layer — do not edit it in a
 // user repo; the user layer arrives as instructions/skills/schedules materialized by the
 // container entrypoint before `eve build`. The model is env-driven so a
 // per-project override needs only a restart, not a rebuilt image.
@@ -12,15 +12,15 @@ const openrouter = createOpenAICompatible({
   baseURL: "https://openrouter.ai/api/v1",
   apiKey: process.env.OPENROUTER_API_KEY ?? "",
 });
-// Eden's model gateway is Codex-OAuth-only. API-key providers connect directly below.
-const edenGateway = createOpenAICompatible({
-  name: "eden",
-  baseURL: process.env.EDEN_MODEL_GATEWAY_URL ?? "",
-  apiKey: process.env.EDEN_MODEL_GATEWAY_TOKEN ?? "",
+// harnesst's model gateway is Codex-OAuth-only. API-key providers connect directly below.
+const harnesstGateway = createOpenAICompatible({
+  name: "harnesst",
+  baseURL: process.env.HARNESST_MODEL_GATEWAY_URL ?? "",
+  apiKey: process.env.HARNESST_MODEL_GATEWAY_TOKEN ?? "",
 });
 
 // Keep the fixed template build-safe; assistantEnv/entrypoint injects the configured model at runtime.
-const assistantModelId = process.env.EDEN_ASSISTANT_MODEL ?? "z-ai/glm-5.2";
+const assistantModelId = process.env.HARNESST_ASSISTANT_MODEL ?? "z-ai/glm-5.2";
 const assistantEffort = [
   "none",
   "minimal",
@@ -28,8 +28,8 @@ const assistantEffort = [
   "medium",
   "high",
   "xhigh",
-].includes(process.env.EDEN_ASSISTANT_EFFORT ?? "")
-  ? (process.env.EDEN_ASSISTANT_EFFORT as
+].includes(process.env.HARNESST_ASSISTANT_EFFORT ?? "")
+  ? (process.env.HARNESST_ASSISTANT_EFFORT as
       "none" | "minimal" | "low" | "medium" | "high" | "xhigh")
   : undefined;
 
@@ -42,9 +42,9 @@ function assistantModel(id: string) {
   const provider = qualified[1];
   const connectionId = qualified[2];
   const upstreamModelId = qualified[3];
-  if (provider === "codex") return edenGateway.chatModel(id);
+  if (provider === "codex") return harnesstGateway.chatModel(id);
   const envName =
-    "EDEN_PROVIDER_" +
+    "HARNESST_PROVIDER_" +
     provider.toUpperCase() +
     "_" +
     connectionId.toUpperCase() +

@@ -1,13 +1,13 @@
 /**
  * Deployment-scoped run reconciliation against REAL Postgres (issue #83). The in-memory fake
  * covers orchestration; this opt-in smoke proves the guarded SQL update, duration expression, and
- * returned affected-row count (`EDEN_DB_SMOKE=1 npx vitest run
+ * returned affected-row count (`HARNESST_DB_SMOKE=1 npx vitest run
  * tests/integration/run-repository.db.test.ts` with `.env.local` sourced).
  */
 import { eq } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 
-const LIVE = process.env.EDEN_DB_SMOKE === "1";
+const LIVE = process.env.HARNESST_DB_SMOKE === "1";
 
 describe.runIf(LIVE)("run repository against real Postgres", () => {
   it("fails only running rows owned by one deployment", async () => {
@@ -261,7 +261,7 @@ describe.runIf(LIVE)("run repository against real Postgres", () => {
 });
 
 describe.runIf(!LIVE)("run repository db smoke (skipped)", () => {
-  it("runs only with EDEN_DB_SMOKE=1 against a live database", () => {
+  it("runs only with HARNESST_DB_SMOKE=1 against a live database", () => {
     expect(LIVE).toBe(false);
   });
 });

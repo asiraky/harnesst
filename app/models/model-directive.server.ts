@@ -10,8 +10,8 @@ import { decodeKey } from "~/seams/oss/secretbox";
 
 /** Per-deployment secret: one leaked signature cannot be replayed against another instance. */
 export function modelDirectiveSecret(deploymentId: string): string {
-  return createHmac("sha256", decodeKey(process.env.EDEN_SECRETS_KEY))
-    .update(`eden:model-directive\0${deploymentId}`)
+  return createHmac("sha256", decodeKey(process.env.HARNESST_SECRETS_KEY))
+    .update(`harnesst:model-directive\0${deploymentId}`)
     .digest("hex");
 }
 

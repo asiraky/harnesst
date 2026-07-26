@@ -8,7 +8,7 @@
  */
 import type { DataStore, DraftChange } from "~/data/ports";
 import { agentForPath } from "~/db/queries.server";
-import { EDEN_EVE_DOCKERFILE } from "~/deploy/eve-image.server";
+import { HARNESST_EVE_DOCKERFILE } from "~/deploy/eve-image.server";
 import {
   ensureOpenRouterDependency,
   LEGACY_OPENROUTER_PROVIDER_PACKAGE,
@@ -155,9 +155,9 @@ export function inferBuildRoots(
 ): string[] | undefined {
   const roots = new Set<string>();
   for (const draft of drafts) {
-    // Assistant config (`.eden/assistant/**`) compiles into nothing — the pipeline restarts the
+    // Assistant config (`.harnesst/assistant/**`) compiles into nothing — the pipeline restarts the
     // assistant instead of building. Skip it BEFORE the agentId lookup: these drafts carry the
-    // internal assistant row's id, whose `.eden/assistant` root is not a buildable eve project,
+    // internal assistant row's id, whose `.harnesst/assistant` root is not a buildable eve project,
     // and a mixed set (member edit + assistant config) must build exactly the member roots.
     if (isAssistantConfigPath(draft.path)) continue;
     const agentRoot =
@@ -168,10 +168,10 @@ export function inferBuildRoots(
       roots.add(agentRoot);
       continue;
     }
-    // Repo-level Eden metadata should not force a whole-repo build: marketplace provenance
-    // (eden-lock.json) and the team-layout marker README (saved by a remove-member so an
+    // Repo-level harnesst metadata should not force a whole-repo build: marketplace provenance
+    // (harnesst-lock.json) and the team-layout marker README (saved by a remove-member so an
     // emptied team stays detectable) have no build of their own.
-    if (draft.path === "eden-lock.json" || draft.path === EMPTY_TEAM_MARKER) continue;
+    if (draft.path === "harnesst-lock.json" || draft.path === EMPTY_TEAM_MARKER) continue;
     return undefined;
   }
   return [...roots];
@@ -312,10 +312,10 @@ export async function normalizeOpenRouterPackageDrafts(input: {
     }
   }
 
-  // An Eden dependency rewrite makes the repo's committed package-lock.json stale, and both
+  // A harnesst dependency rewrite makes the repo's committed package-lock.json stale, and both
   // the build gate and the deployed image run `npm ci`, which hard-fails on any lock mismatch.
   // Stage the lock's deletion alongside the changed package.json so the build falls back to
-  // `npm install` (Eden never authors lockfiles, so it can't regenerate one).
+  // `npm install` (harnesst never authors lockfiles, so it can't regenerate one).
   for (const file of [...byPath.values()]) {
     if (!file.path.endsWith("package.json") || typeof file.content !== "string") continue;
     if (!file.content.includes(OPENROUTER_PROVIDER_PACKAGE)) continue;
@@ -327,11 +327,12 @@ export async function normalizeOpenRouterPackageDrafts(input: {
     if (lock === null) continue;
     byPath.set(lockPath, { path: lockPath, content: null });
 
-    // Repos scaffolded by older Edens carry a committed copy of Eden's reference Dockerfile
-    // that COPYs package-lock.json explicitly and runs a bare `npm ci` — deleting the lock
-    // would break it at COPY. That file is Eden-authored (its header says so), so heal it to
-    // the current reference image, which tolerates a missing lock. A user-authored Dockerfile
-    // (no Eden header) is never touched — the repo stays theirs (D3).
+    // Repos scaffolded by older harnesst releases carry a committed copy of harnesst's reference
+    // Dockerfile that COPYs package-lock.json explicitly and runs a bare `npm ci` — deleting the
+    // lock would break it at COPY. That file is ours (its header says so — either the current
+    // "harnesst" marker or the legacy "harnesst" one), so heal it to the current reference image,
+    // which tolerates a missing lock. A user-authored Dockerfile (no such header) is never
+    // touched — the repo stays theirs (D3).
     const dockerfilePath = file.path.replace(/package\.json$/, "Dockerfile");
     if (byPath.has(dockerfilePath)) continue;
     const dockerfile = await readAgentFile(
@@ -342,9 +343,11 @@ export async function normalizeOpenRouterPackageDrafts(input: {
     if (
       dockerfile !== null &&
       dockerfile.includes("package-lock.json") &&
-      /^#.*eden.*(reference|generated)/im.test(dockerfile.split("\n", 1)[0])
+      /^#.*(harnesst|harnesst).*(reference|generated)/im.test(
+        dockerfile.split("\n", 1)[0],
+      )
     ) {
-      byPath.set(dockerfilePath, { path: dockerfilePath, content: EDEN_EVE_DOCKERFILE });
+      byPath.set(dockerfilePath, { path: dockerfilePath, content: HARNESST_EVE_DOCKERFILE });
     }
   }
 

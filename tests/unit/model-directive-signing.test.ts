@@ -10,17 +10,17 @@ import {
   verifyModelDirectiveSignature,
 } from "~/models/model-directive.server";
 
-const OLD_KEY = process.env.EDEN_SECRETS_KEY;
+const OLD_KEY = process.env.HARNESST_SECRETS_KEY;
 const DEPLOYMENT = "abcdefghijkl";
 const MODEL = "anthropic/mnopqrstuvwx/claude-sonnet-4-5";
 
 beforeEach(() => {
-  process.env.EDEN_SECRETS_KEY = "a".repeat(64);
+  process.env.HARNESST_SECRETS_KEY = "a".repeat(64);
 });
 
 afterEach(() => {
-  if (OLD_KEY === undefined) delete process.env.EDEN_SECRETS_KEY;
-  else process.env.EDEN_SECRETS_KEY = OLD_KEY;
+  if (OLD_KEY === undefined) delete process.env.HARNESST_SECRETS_KEY;
+  else process.env.HARNESST_SECRETS_KEY = OLD_KEY;
 });
 
 describe("signed model directives", () => {
@@ -32,10 +32,10 @@ describe("signed model directives", () => {
       effort: "high" as const,
     };
     const signed = signModelDirective(directive, DEPLOYMENT, body);
-    const signature = signed.match(/<!-- eden:sig ([a-f0-9]{64}) -->/)?.[1];
+    const signature = signed.match(/<!-- harnesst:sig ([a-f0-9]{64}) -->/)?.[1];
 
     expect(signed).toMatch(
-      /^<!-- eden:model anthropic\/mnopqrstuvwx\/claude-sonnet-4-5 ctx=200000 effort=high -->\n<!-- eden:sig [a-f0-9]{64} -->$/,
+      /^<!-- harnesst:model anthropic\/mnopqrstuvwx\/claude-sonnet-4-5 ctx=200000 effort=high -->\n<!-- harnesst:sig [a-f0-9]{64} -->$/,
     );
     expect(signature).toBeTruthy();
     expect(
@@ -58,7 +58,7 @@ describe("signed model directives", () => {
       `${MODEL}\n200000\n${body}`,
     );
     const signature = signModelDirective(directive, DEPLOYMENT, body).match(
-      /<!-- eden:sig ([a-f0-9]{64}) -->/,
+      /<!-- harnesst:sig ([a-f0-9]{64}) -->/,
     )?.[1];
 
     expect(signature).toBeTruthy();

@@ -4,14 +4,14 @@
  * takeover past the idle cutoff, and the claim-fenced cursor save (a superseded drain's old
  * claimId writes zero rows; the winning claimId applies).
  *
- * Opt-in: EDEN_DB_SMOKE=1 with DATABASE_URL pointing at a live dev database
- * (`set -a; source .env.local; set +a; EDEN_DB_SMOKE=1 npx vitest run
+ * Opt-in: HARNESST_DB_SMOKE=1 with DATABASE_URL pointing at a live dev database
+ * (`set -a; source .env.local; set +a; HARNESST_DB_SMOKE=1 npx vitest run
  * tests/integration/foh-claims.db.test.ts`). Seeds and removes its own rows.
  */
 import { eq } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 
-const LIVE = process.env.EDEN_DB_SMOKE === "1";
+const LIVE = process.env.HARNESST_DB_SMOKE === "1";
 
 describe.runIf(LIVE)("FOH turn claim against real Postgres", () => {
   it("claims atomically, takes over stale runs, and fences cursor writes", async () => {

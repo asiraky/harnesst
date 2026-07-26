@@ -1,11 +1,11 @@
 /**
- * Git write layer (Author pillar) — how Eden lands changes in the user's repo.
+ * Git write layer (Author pillar) — how harnesst lands changes in the user's repo.
  *
  * The publish pipeline commits saved drafts straight onto the default branch as one
  * compare-and-swap fast-forward commit (commitToDefaultBranch, issue #225). The eve repo stays
- * the single source of truth — we persist nothing about the change locally. Eden authors no
+ * the single source of truth — we persist nothing about the change locally. harnesst authors no
  * branches and no pull requests; the conversation-checkout mirror (checkout-sync.server.ts) is
- * the only other ref Eden writes, and it is an internal durability mechanism.
+ * the only other ref harnesst writes, and it is an internal durability mechanism.
  */
 import { invalidateRepoSource } from "./cached.server";
 import { getInstallationOctokit } from "./client.server";

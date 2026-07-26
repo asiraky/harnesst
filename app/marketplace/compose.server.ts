@@ -69,7 +69,7 @@ export interface ResolvedAuth {
   scopeGroups?: AuthScopeGroup[];
   /**
    * Capability operation-group ids offered by the composed templates (issue #166), unioned per
-   * provider in first-occurrence order. Ids only — the definitions live in Eden's capability
+   * provider in first-occurrence order. Ids only — the definitions live in harnesst's capability
    * registry, not in templates.
    */
   capabilityGroups?: string[];

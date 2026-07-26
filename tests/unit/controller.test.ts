@@ -29,7 +29,7 @@ import { fakeDeployTarget, fakeSecrets } from "../fakes/infra";
 import { makeFakeStore, type FakeStore } from "../fakes/store";
 
 // Team-delegation roster reads go through the cached GitHub source — stub it so the controller
-// can build EDEN_TEAMMATES without network. (Only the team-injection tests exercise this.)
+// can build HARNESST_TEAMMATES without network. (Only the team-injection tests exercise this.)
 vi.mock("~/github/cached.server", () => ({
   getAgentSource: vi.fn(async () => ({
     paths: [],
@@ -145,9 +145,9 @@ describe("deployRelease", () => {
         deployedEnvs,
       }),
       providerDeploymentEnv: async () => ({
-        EDEN_PROVIDER_OPENROUTER_ABCDEFGHIJKL_API_KEY: "sk-or-workspace",
+        HARNESST_PROVIDER_OPENROUTER_ABCDEFGHIJKL_API_KEY: "sk-or-workspace",
         OPENROUTER_API_KEY: "sk-or-workspace",
-        EDEN_PROVIDER_ANTHROPIC_MNOPQRSTUVWX_API_KEY: "sk-ant-workspace",
+        HARNESST_PROVIDER_ANTHROPIC_MNOPQRSTUVWX_API_KEY: "sk-ant-workspace",
         ANTHROPIC_API_KEY: "sk-ant-workspace",
       }),
       modelDirectiveSecret: () => "directive-secret",
@@ -167,25 +167,25 @@ describe("deployRelease", () => {
         ...base,
         secrets: fakeSecrets({
           OPENROUTER_API_KEY: "sk-or-project",
-          EDEN_PROVIDER_OPENROUTER_ABCDEFGHIJKL_API_KEY: "smuggled",
+          HARNESST_PROVIDER_OPENROUTER_ABCDEFGHIJKL_API_KEY: "smuggled",
           ANTHROPIC_API_KEY: "sk-ant-project",
-          EDEN_MODEL_DIRECTIVE_SECRET: "smuggled",
+          HARNESST_MODEL_DIRECTIVE_SECRET: "smuggled",
           SAFE_TOKEN: "safe",
         }),
         sandboxExposedNames: async () => [
-          "EDEN_PROVIDER_OPENROUTER_ABCDEFGHIJKL_API_KEY",
-          "EDEN_MODEL_DIRECTIVE_SECRET",
+          "HARNESST_PROVIDER_OPENROUTER_ABCDEFGHIJKL_API_KEY",
+          "HARNESST_MODEL_DIRECTIVE_SECRET",
           "SAFE_TOKEN",
         ],
       },
     );
     expect(deployedEnvs[1].OPENROUTER_API_KEY).toBe("sk-or-project");
-    expect(deployedEnvs[1].EDEN_PROVIDER_OPENROUTER_ABCDEFGHIJKL_API_KEY).toBe(
+    expect(deployedEnvs[1].HARNESST_PROVIDER_OPENROUTER_ABCDEFGHIJKL_API_KEY).toBe(
       "sk-or-workspace",
     );
     expect(deployedEnvs[1].ANTHROPIC_API_KEY).toBe("sk-ant-project");
-    expect(deployedEnvs[1].EDEN_SANDBOX_ENV).toBe("SAFE_TOKEN");
-    expect(deployedEnvs[1].EDEN_MODEL_DIRECTIVE_SECRET).toBe(
+    expect(deployedEnvs[1].HARNESST_SANDBOX_ENV).toBe("SAFE_TOKEN");
+    expect(deployedEnvs[1].HARNESST_MODEL_DIRECTIVE_SECRET).toBe(
       "directive-secret",
     );
   });
@@ -263,7 +263,7 @@ describe("deployRelease", () => {
     }
   });
 
-  it("joins sandbox-exposed secret names into EDEN_SANDBOX_ENV (names only, after the spread)", async () => {
+  it("joins sandbox-exposed secret names into HARNESST_SANDBOX_ENV (names only, after the spread)", async () => {
     const release = await createRelease(
       { projectId: PROJECT, agentId: AGENT, gitSha: "c3".repeat(20) },
       store,
@@ -290,7 +290,7 @@ describe("deployRelease", () => {
         sandboxExposedNames: async () => ["GH_TOKEN", "NPM_TOKEN"],
       },
     );
-    expect(deployedEnvs[0].EDEN_SANDBOX_ENV).toBe("GH_TOKEN,NPM_TOKEN");
+    expect(deployedEnvs[0].HARNESST_SANDBOX_ENV).toBe("GH_TOKEN,NPM_TOKEN");
     expect(deployedEnvs[0].PRIVATE).toBe("keep-out"); // still injected — just not allowlisted
 
     // Exposure of a name that resolved to nothing forwards nothing.
@@ -302,10 +302,10 @@ describe("deployRelease", () => {
         sandboxExposedNames: async () => ["GH_TOKEN", "DELETED_SECRET"],
       },
     );
-    expect(deployedEnvs[1].EDEN_SANDBOX_ENV).toBe("GH_TOKEN");
+    expect(deployedEnvs[1].HARNESST_SANDBOX_ENV).toBe("GH_TOKEN");
   });
 
-  it("omits EDEN_SANDBOX_ENV when nothing is exposed, and strips a user secret squatting the name", async () => {
+  it("omits HARNESST_SANDBOX_ENV when nothing is exposed, and strips a user secret squatting the name", async () => {
     const release = await createRelease(
       { projectId: PROJECT, agentId: AGENT, gitSha: "d4".repeat(20) },
       store,
@@ -327,32 +327,32 @@ describe("deployRelease", () => {
         sandboxExposedNames: async () => [],
       },
     );
-    expect(deployedEnvs[0]).not.toHaveProperty("EDEN_SANDBOX_ENV");
+    expect(deployedEnvs[0]).not.toHaveProperty("HARNESST_SANDBOX_ENV");
 
-    // The variable is Eden-owned: a user secret named EDEN_SANDBOX_ENV must never smuggle
+    // The variable is harnesst-owned: a user secret named HARNESST_SANDBOX_ENV must never smuggle
     // its own allowlist into the sandbox.
     await deployRelease(
       { environmentId: ENV, releaseId: release.id },
       {
         ...base,
         secrets: fakeSecrets({
-          EDEN_SANDBOX_ENV: "PRIVATE",
+          HARNESST_SANDBOX_ENV: "PRIVATE",
           PRIVATE: "keep-out",
         }),
         sandboxExposedNames: async () => [],
       },
     );
-    expect(deployedEnvs[1]).not.toHaveProperty("EDEN_SANDBOX_ENV");
+    expect(deployedEnvs[1]).not.toHaveProperty("HARNESST_SANDBOX_ENV");
 
     // Deps without the lookup (older callers/tests) behave as "nothing exposed".
     await deployRelease(
       { environmentId: ENV, releaseId: release.id },
       { ...base, secrets: fakeSecrets({ GH_TOKEN: "gho_x" }) },
     );
-    expect(deployedEnvs[2]).not.toHaveProperty("EDEN_SANDBOX_ENV");
+    expect(deployedEnvs[2]).not.toHaveProperty("HARNESST_SANDBOX_ENV");
   });
 
-  it("strips a SHARED secret squatting EDEN_SANDBOX_ENV after the merged resolve (§11.9)", async () => {
+  it("strips a SHARED secret squatting HARNESST_SANDBOX_ENV after the merged resolve (§11.9)", async () => {
     const crypto = await import("node:crypto");
     const { makeLocalSecretsProvider } =
       await import("~/seams/oss/secrets.local.server");
@@ -363,8 +363,8 @@ describe("deployRelease", () => {
     );
     const deployedEnvs: Record<string, string>[] = [];
 
-    // A project-level shared secret named EDEN_SANDBOX_ENV, attached to the agent, resolves
-    // through the real provider merge — and must still be deleted before Eden sets its own.
+    // A project-level shared secret named HARNESST_SANDBOX_ENV, attached to the agent, resolves
+    // through the real provider merge — and must still be deleted before harnesst sets its own.
     const kv = makeFakeSecretKV();
     const boxKey = crypto.randomBytes(32);
     const secrets = makeLocalSecretsProvider(kv, () => boxKey);
@@ -373,7 +373,7 @@ describe("deployRelease", () => {
         projectId: PROJECT,
         agentId: null,
         environmentId: null,
-        key: "EDEN_SANDBOX_ENV",
+        key: "HARNESST_SANDBOX_ENV",
       },
       "SMUGGLED",
     );
@@ -386,7 +386,7 @@ describe("deployRelease", () => {
       },
       "gho_x",
     );
-    kv.attach(AGENT, "EDEN_SANDBOX_ENV");
+    kv.attach(AGENT, "HARNESST_SANDBOX_ENV");
 
     await deployRelease(
       { environmentId: ENV, releaseId: release.id },
@@ -400,7 +400,7 @@ describe("deployRelease", () => {
         sandboxExposedNames: async () => ["GH_TOKEN"],
       },
     );
-    expect(deployedEnvs[0].EDEN_SANDBOX_ENV).toBe("GH_TOKEN"); // Eden-owned, never "SMUGGLED"
+    expect(deployedEnvs[0].HARNESST_SANDBOX_ENV).toBe("GH_TOKEN"); // harnesst-owned, never "SMUGGLED"
     expect(deployedEnvs[0].GH_TOKEN).toBe("gho_x");
   });
 
@@ -1060,9 +1060,9 @@ describe("rollbackTo", () => {
 });
 
 describe("team delegation env injection (D3)", () => {
-  const OLD_KEY = process.env.EDEN_SECRETS_KEY;
+  const OLD_KEY = process.env.HARNESST_SECRETS_KEY;
   beforeEach(() => {
-    process.env.EDEN_SECRETS_KEY = "a".repeat(64); // 32-byte key as 64 hex chars
+    process.env.HARNESST_SECRETS_KEY = "a".repeat(64); // 32-byte key as 64 hex chars
     store.seedAgent({
       id: "pm",
       projectId: PROJECT,
@@ -1083,8 +1083,8 @@ describe("team delegation env injection (D3)", () => {
     });
   });
   afterEach(() => {
-    if (OLD_KEY === undefined) delete process.env.EDEN_SECRETS_KEY;
-    else process.env.EDEN_SECRETS_KEY = OLD_KEY;
+    if (OLD_KEY === undefined) delete process.env.HARNESST_SECRETS_KEY;
+    else process.env.HARNESST_SECRETS_KEY = OLD_KEY;
   });
 
   function capturingTarget(
@@ -1111,7 +1111,7 @@ describe("team delegation env injection (D3)", () => {
     };
   }
 
-  it("bakes the tool flag and injects EDEN_TEAM_* for a team member", async () => {
+  it("bakes the tool flag and injects HARNESST_TEAM_* for a team member", async () => {
     const builtReqs: Parameters<DeployTarget["build"]>[0][] = [];
     const deployedEnvs: Record<string, string>[] = [];
     const release = await createRelease(
@@ -1129,10 +1129,10 @@ describe("team delegation env injection (D3)", () => {
     expect(dep.status).toBe("live");
     expect(builtReqs[0].injectTeammateTool).toBe(true);
     const env = deployedEnvs[0];
-    expect(env.EDEN_TEAM_URL).toBeTruthy();
-    expect(env.EDEN_TEAM_TOKEN.startsWith("ednt_")).toBe(true);
+    expect(env.HARNESST_TEAM_URL).toBeTruthy();
+    expect(env.HARNESST_TEAM_TOKEN.startsWith("ednt_")).toBe(true);
     // Roster excludes self (pm); the description blurb is the deployer's first paragraph.
-    const teammates = JSON.parse(env.EDEN_TEAMMATES) as {
+    const teammates = JSON.parse(env.HARNESST_TEAMMATES) as {
       name: string;
       role: string;
     }[];
@@ -1160,19 +1160,19 @@ describe("team delegation env injection (D3)", () => {
         secrets: fakeSecrets({ OPENROUTER_API_KEY: "k" }),
       },
     );
-    expect(deployedEnvs[0].EDEN_TEAM_URL).toBeUndefined();
-    expect(deployedEnvs[0].EDEN_TEAM_TOKEN).toBeUndefined();
+    expect(deployedEnvs[0].HARNESST_TEAM_URL).toBeUndefined();
+    expect(deployedEnvs[0].HARNESST_TEAM_TOKEN).toBeUndefined();
   });
 });
 
 describe("Codex model-gateway env injection (issue #28)", () => {
-  const OLD_KEY = process.env.EDEN_SECRETS_KEY;
+  const OLD_KEY = process.env.HARNESST_SECRETS_KEY;
   beforeEach(() => {
-    process.env.EDEN_SECRETS_KEY = "a".repeat(64); // gateway token is HMAC-minted from this
+    process.env.HARNESST_SECRETS_KEY = "a".repeat(64); // gateway token is HMAC-minted from this
   });
   afterEach(() => {
-    if (OLD_KEY === undefined) delete process.env.EDEN_SECRETS_KEY;
-    else process.env.EDEN_SECRETS_KEY = OLD_KEY;
+    if (OLD_KEY === undefined) delete process.env.HARNESST_SECRETS_KEY;
+    else process.env.HARNESST_SECRETS_KEY = OLD_KEY;
   });
 
   it("injects a verifiable gateway URL + token when the org has a Codex connection, stripping a squatter", async () => {
@@ -1190,26 +1190,26 @@ describe("Codex model-gateway env injection (issue #28)", () => {
           health: { status: "live" },
           deployedEnvs,
         }),
-        // A user secret trying to smuggle its own gateway token — Eden must strip it.
+        // A user secret trying to smuggle its own gateway token — harnesst must strip it.
         secrets: fakeSecrets({
           OPENROUTER_API_KEY: "k",
-          EDEN_MODEL_GATEWAY_TOKEN: "smuggled",
-          EDEN_MODEL_GATEWAY_URL: "http://evil",
+          HARNESST_MODEL_GATEWAY_TOKEN: "smuggled",
+          HARNESST_MODEL_GATEWAY_URL: "http://evil",
         }),
         providerDeploymentEnv: async () => ({}),
         hasCodexConnection: async () => true,
         sandboxExposedNames: async () => [
-          "EDEN_MODEL_GATEWAY_TOKEN",
-          "EDEN_MODEL_GATEWAY_URL",
+          "HARNESST_MODEL_GATEWAY_TOKEN",
+          "HARNESST_MODEL_GATEWAY_URL",
         ],
       },
     );
     expect(dep.status).toBe("live");
     const env = deployedEnvs[0];
-    expect(env.EDEN_MODEL_GATEWAY_URL).toContain("/api/gateway/v1");
-    expect(env.EDEN_MODEL_GATEWAY_URL).not.toBe("http://evil");
-    expect(verifyGatewayToken(env.EDEN_MODEL_GATEWAY_TOKEN)).toBe(ORG);
-    expect(env).not.toHaveProperty("EDEN_SANDBOX_ENV");
+    expect(env.HARNESST_MODEL_GATEWAY_URL).toContain("/api/gateway/v1");
+    expect(env.HARNESST_MODEL_GATEWAY_URL).not.toBe("http://evil");
+    expect(verifyGatewayToken(env.HARNESST_MODEL_GATEWAY_TOKEN)).toBe(ORG);
+    expect(env).not.toHaveProperty("HARNESST_SANDBOX_ENV");
   });
 
   it("lets a codex-only org (no OpenRouter key) deploy — the gateway token satisfies the credential check", async () => {
@@ -1233,7 +1233,7 @@ describe("Codex model-gateway env injection (issue #28)", () => {
     );
     expect(dep.status).toBe("live");
     expect(deployedEnvs[0].OPENROUTER_API_KEY).toBeUndefined();
-    expect(deployedEnvs[0].EDEN_MODEL_GATEWAY_TOKEN).toBeTruthy();
+    expect(deployedEnvs[0].HARNESST_MODEL_GATEWAY_TOKEN).toBeTruthy();
   });
 
   it("injects the gateway env even without a Codex connection — runtime model-config rides on it", async () => {
@@ -1252,15 +1252,15 @@ describe("Codex model-gateway env injection (issue #28)", () => {
         }),
         secrets: fakeSecrets({ OPENROUTER_API_KEY: "smuggled" }),
         providerDeploymentEnv: async () => ({
-          EDEN_PROVIDER_OPENROUTER_ABCDEFGHIJKL_API_KEY: "k",
+          HARNESST_PROVIDER_OPENROUTER_ABCDEFGHIJKL_API_KEY: "k",
           OPENROUTER_API_KEY: "k",
         }),
         hasCodexConnection: async () => false,
       },
     );
     const { verifyGatewayToken } = await import("~/gateway/token.server");
-    expect(deployedEnvs[0].EDEN_MODEL_GATEWAY_URL).toContain("/api/gateway/v1");
-    expect(verifyGatewayToken(deployedEnvs[0].EDEN_MODEL_GATEWAY_TOKEN)).toBe(
+    expect(deployedEnvs[0].HARNESST_MODEL_GATEWAY_URL).toContain("/api/gateway/v1");
+    expect(verifyGatewayToken(deployedEnvs[0].HARNESST_MODEL_GATEWAY_TOKEN)).toBe(
       ORG,
     );
   });
@@ -1327,15 +1327,15 @@ describe("setTrafficSplit", () => {
 
 describe("shared Discord app env injection (issue #32)", () => {
   const KEYS = [
-    "EDEN_SECRETS_KEY",
-    "EDEN_DISCORD_APPLICATION_ID",
-    "EDEN_DISCORD_BOT_TOKEN",
-    "EDEN_DISCORD_PUBLIC_KEY",
+    "HARNESST_SECRETS_KEY",
+    "HARNESST_DISCORD_APPLICATION_ID",
+    "HARNESST_DISCORD_BOT_TOKEN",
+    "HARNESST_DISCORD_PUBLIC_KEY",
   ] as const;
   const OLD: Record<string, string | undefined> = {};
   beforeEach(() => {
     for (const k of KEYS) OLD[k] = process.env[k];
-    process.env.EDEN_SECRETS_KEY = "a".repeat(64); // the send-proxy token is HMAC-minted
+    process.env.HARNESST_SECRETS_KEY = "a".repeat(64); // the send-proxy token is HMAC-minted
   });
   afterEach(() => {
     for (const k of KEYS) {
@@ -1345,9 +1345,9 @@ describe("shared Discord app env injection (issue #32)", () => {
   });
 
   function configureSharedApp() {
-    process.env.EDEN_DISCORD_APPLICATION_ID = "app_shared";
-    process.env.EDEN_DISCORD_BOT_TOKEN = "bot_shared";
-    process.env.EDEN_DISCORD_PUBLIC_KEY = "pub_shared";
+    process.env.HARNESST_DISCORD_APPLICATION_ID = "app_shared";
+    process.env.HARNESST_DISCORD_BOT_TOKEN = "bot_shared";
+    process.env.HARNESST_DISCORD_PUBLIC_KEY = "pub_shared";
   }
 
   it("injects the public credentials + send URL and strips the bot token, even if a user secret sets it", async () => {
@@ -1365,7 +1365,7 @@ describe("shared Discord app env injection (issue #32)", () => {
           health: { status: "live" },
           deployedEnvs,
         }),
-        // A user secret trying to smuggle a bot token — Eden must strip it.
+        // A user secret trying to smuggle a bot token — harnesst must strip it.
         secrets: fakeSecrets({
           OPENROUTER_API_KEY: "k",
           DISCORD_BOT_TOKEN: "user_bot",
@@ -1376,11 +1376,11 @@ describe("shared Discord app env injection (issue #32)", () => {
     const env = deployedEnvs[0];
     expect(env.DISCORD_APPLICATION_ID).toBe("app_shared");
     expect(env.DISCORD_PUBLIC_KEY).toBe("pub_shared");
-    expect(env.EDEN_DISCORD_SEND_URL).toMatch(/\/api\/discord\/send$/);
+    expect(env.HARNESST_DISCORD_SEND_URL).toMatch(/\/api\/discord\/send$/);
     expect(env).not.toHaveProperty("DISCORD_BOT_TOKEN");
   });
 
-  it("mints EDEN_TEAM_TOKEN for a single-agent deployment (root 'agent' — no team block) so the send proxy is reachable", async () => {
+  it("mints HARNESST_TEAM_TOKEN for a single-agent deployment (root 'agent' — no team block) so the send proxy is reachable", async () => {
     configureSharedApp();
     const { verifyDelegationToken } = await import("~/team/token.server");
     const deployedEnvs: Record<string, string>[] = [];
@@ -1402,11 +1402,11 @@ describe("shared Discord app env injection (issue #32)", () => {
       },
     );
     const env = deployedEnvs[0];
-    expect(env.EDEN_TEAM_URL).toBeUndefined(); // still not a team member…
-    expect(verifyDelegationToken(env.EDEN_TEAM_TOKEN)).toBe(dep.id); // …but the send token exists
+    expect(env.HARNESST_TEAM_URL).toBeUndefined(); // still not a team member…
+    expect(verifyDelegationToken(env.HARNESST_TEAM_TOKEN)).toBe(dep.id); // …but the send token exists
   });
 
-  it("keeps the team block's EDEN_TEAM_TOKEN for a team member (??= never clobbers)", async () => {
+  it("keeps the team block's HARNESST_TEAM_TOKEN for a team member (??= never clobbers)", async () => {
     configureSharedApp();
     const { verifyDelegationToken } = await import("~/team/token.server");
     store.seedAgent({
@@ -1438,15 +1438,15 @@ describe("shared Discord app env injection (issue #32)", () => {
       },
     );
     const env = deployedEnvs[0];
-    expect(env.EDEN_TEAM_URL).toBeTruthy(); // the team block ran and set the token first
-    expect(verifyDelegationToken(env.EDEN_TEAM_TOKEN)).toBe(dep.id);
-    expect(env.EDEN_DISCORD_SEND_URL).toMatch(/\/api\/discord\/send$/);
+    expect(env.HARNESST_TEAM_URL).toBeTruthy(); // the team block ran and set the token first
+    expect(verifyDelegationToken(env.HARNESST_TEAM_TOKEN)).toBe(dep.id);
+    expect(env.HARNESST_DISCORD_SEND_URL).toMatch(/\/api\/discord\/send$/);
   });
 
   it("leaves user-resolved Discord secrets untouched when the operator app is absent", async () => {
-    delete process.env.EDEN_DISCORD_APPLICATION_ID;
-    delete process.env.EDEN_DISCORD_BOT_TOKEN;
-    delete process.env.EDEN_DISCORD_PUBLIC_KEY;
+    delete process.env.HARNESST_DISCORD_APPLICATION_ID;
+    delete process.env.HARNESST_DISCORD_BOT_TOKEN;
+    delete process.env.HARNESST_DISCORD_PUBLIC_KEY;
     const deployedEnvs: Record<string, string>[] = [];
     const release = await createRelease(
       { projectId: PROJECT, agentId: AGENT, gitSha: "a7".repeat(20) },
@@ -1470,21 +1470,21 @@ describe("shared Discord app env injection (issue #32)", () => {
     const env = deployedEnvs[0];
     expect(env.DISCORD_BOT_TOKEN).toBe("user_bot");
     expect(env.DISCORD_APPLICATION_ID).toBe("user_app");
-    expect(env).not.toHaveProperty("EDEN_DISCORD_SEND_URL");
-    expect(env).not.toHaveProperty("EDEN_TEAM_TOKEN"); // no operator app → nothing minted
+    expect(env).not.toHaveProperty("HARNESST_DISCORD_SEND_URL");
+    expect(env).not.toHaveProperty("HARNESST_TEAM_TOKEN"); // no operator app → nothing minted
   });
 });
 
 describe("Google connection env injection (issue #30)", () => {
   // Deploys that broker an access-token-broker provider (the real mayi entry, issue #167) mint
   // a delegation token, which is HMAC-keyed by the secrets key.
-  const OLD_KEY = process.env.EDEN_SECRETS_KEY;
+  const OLD_KEY = process.env.HARNESST_SECRETS_KEY;
   beforeEach(() => {
-    process.env.EDEN_SECRETS_KEY = "a".repeat(64);
+    process.env.HARNESST_SECRETS_KEY = "a".repeat(64);
   });
   afterEach(() => {
-    if (OLD_KEY === undefined) delete process.env.EDEN_SECRETS_KEY;
-    else process.env.EDEN_SECRETS_KEY = OLD_KEY;
+    if (OLD_KEY === undefined) delete process.env.HARNESST_SECRETS_KEY;
+    else process.env.HARNESST_SECRETS_KEY = OLD_KEY;
   });
 
   it("leaves a self-hoster's manually-set GOOGLE_OAUTH_* untouched when there's no grant to broker", async () => {
@@ -1517,7 +1517,7 @@ describe("Google connection env injection (issue #30)", () => {
     expect(env.GOOGLE_OAUTH_REFRESH_TOKEN).toBe("my_token");
   });
 
-  it("replaces user-set GOOGLE_OAUTH_* with Eden's brokered creds when a grant is injected", async () => {
+  it("replaces user-set GOOGLE_OAUTH_* with harnesst's brokered creds when a grant is injected", async () => {
     const deployedEnvs: Record<string, string>[] = [];
     const release = await createRelease(
       { projectId: PROJECT, agentId: AGENT, gitSha: "d2".repeat(20) },
@@ -1531,7 +1531,7 @@ describe("Google connection env injection (issue #30)", () => {
           health: { status: "live" },
           deployedEnvs,
         }),
-        // A user secret trying to shadow the brokered token — Eden owns these keys when it brokers.
+        // A user secret trying to shadow the brokered token — harnesst owns these keys when it brokers.
         secrets: fakeSecrets({
           OPENROUTER_API_KEY: "k",
           GOOGLE_OAUTH_REFRESH_TOKEN: "user_token",
@@ -1592,7 +1592,7 @@ describe("Google connection env injection (issue #30)", () => {
     expect(env.MAYI_OAUTH_REFRESH_TOKEN).toBe("m_token");
   });
 
-  it("injects broker coordinates (EDEN_API_URL + delegation token) for an access-token-broker provider (issue #167)", async () => {
+  it("injects broker coordinates (HARNESST_API_URL + delegation token) for an access-token-broker provider (issue #167)", async () => {
     const deployedEnvs: Record<string, string>[] = [];
     const release = await createRelease(
       { projectId: PROJECT, agentId: AGENT, gitSha: "d4".repeat(20) },
@@ -1606,11 +1606,11 @@ describe("Google connection env injection (issue #30)", () => {
           health: { status: "live" },
           deployedEnvs,
         }),
-        // User secrets trying to shadow the Eden-owned broker coordinates and the provider's
+        // User secrets trying to shadow the harnesst-owned broker coordinates and the provider's
         // static deploy constant.
         secrets: fakeSecrets({
           OPENROUTER_API_KEY: "k",
-          EDEN_API_URL: "https://evil.example",
+          HARNESST_API_URL: "https://evil.example",
           MAYI_CALLBACK_STATE_KEY_ID: "user_kid",
         }),
         // Brokered delivery (real mayi entry): scopes + deployEnv constants, no OAuth trio.
@@ -1626,10 +1626,10 @@ describe("Google connection env injection (issue #30)", () => {
     // The refresh token NEVER ships for brokered providers.
     expect(env).not.toHaveProperty("MAYI_OAUTH_REFRESH_TOKEN");
     expect(env).not.toHaveProperty("MAYI_OAUTH_CLIENT_ID");
-    // Broker coordinates are Eden-owned: the user-set EDEN_API_URL is replaced, and the
+    // Broker coordinates are harnesst-owned: the user-set HARNESST_API_URL is replaced, and the
     // delegation token identifies THIS deployment (same auth story as the Discord send proxy).
-    expect(env.EDEN_API_URL).toMatch(/^http:\/\/host\.docker\.internal:/);
-    expect(verifyDelegationToken(env.EDEN_TEAM_TOKEN)).toBe(dep.id);
+    expect(env.HARNESST_API_URL).toMatch(/^http:\/\/host\.docker\.internal:/);
+    expect(verifyDelegationToken(env.HARNESST_TEAM_TOKEN)).toBe(dep.id);
   });
 
   it("strips user-set XERO_OAUTH_* for a capability provider — the marker, not <PREFIX>_OAUTH_*, names it (issue #166)", async () => {
@@ -1654,20 +1654,20 @@ describe("Google connection env injection (issue #30)", () => {
           XERO_OAUTH_CLIENT_SECRET: "user_secret",
           XERO_OAUTH_REFRESH_TOKEN: "user_token",
           XERO_OAUTH_SCOPES: "user_scopes",
-          EDEN_CAPABILITY_PROVIDERS: "user_marker",
+          HARNESST_CAPABILITY_PROVIDERS: "user_marker",
         }),
-        // Capability delivery (real xero entry): ONLY the Eden-owned marker, no OAuth vars.
-        connectionGrantEnv: async () => ({ EDEN_CAPABILITY_PROVIDERS: "xero" }),
+        // Capability delivery (real xero entry): ONLY the harnesst-owned marker, no OAuth vars.
+        connectionGrantEnv: async () => ({ HARNESST_CAPABILITY_PROVIDERS: "xero" }),
       },
     );
     const env = deployedEnvs[0];
     for (const suffix of ["CLIENT_ID", "CLIENT_SECRET", "REFRESH_TOKEN", "SCOPES"]) {
       expect(env).not.toHaveProperty(`XERO_OAUTH_${suffix}`);
     }
-    expect(env.EDEN_CAPABILITY_PROVIDERS).toBe("xero");
+    expect(env.HARNESST_CAPABILITY_PROVIDERS).toBe("xero");
     // The capability tools' coordinates ride along, same as the token broker's.
-    expect(env.EDEN_API_URL).toMatch(/^http:\/\/host\.docker\.internal:/);
-    expect(verifyDelegationToken(env.EDEN_TEAM_TOKEN)).toBe(dep.id);
+    expect(env.HARNESST_API_URL).toMatch(/^http:\/\/host\.docker\.internal:/);
+    expect(verifyDelegationToken(env.HARNESST_TEAM_TOKEN)).toBe(dep.id);
   });
 
   it("does not inject broker coordinates for refresh-token providers (google regression, issue #167)", async () => {
@@ -1695,8 +1695,8 @@ describe("Google connection env injection (issue #30)", () => {
     );
     const env = deployedEnvs[0];
     expect(env.GOOGLE_OAUTH_REFRESH_TOKEN).toBe("g_token");
-    expect(env).not.toHaveProperty("EDEN_API_URL");
-    expect(env).not.toHaveProperty("EDEN_TEAM_TOKEN");
+    expect(env).not.toHaveProperty("HARNESST_API_URL");
+    expect(env).not.toHaveProperty("HARNESST_TEAM_TOKEN");
   });
 });
 
@@ -1785,7 +1785,7 @@ describe("deploy-time scope-coverage validation (issue #69)", () => {
 });
 
 describe("generated-secret mint-once (issue #163)", () => {
-  // A lock-declared `generated` secret: nobody types it — Eden mints it at first deploy.
+  // A lock-declared `generated` secret: nobody types it — harnesst mints it at first deploy.
   const LOCK = JSON.stringify({
     version: 1,
     installs: [
@@ -1910,7 +1910,7 @@ describe("generated-secret mint-once (issue #163)", () => {
     );
     const deployedEnvs: Record<string, string>[] = [];
     // A user/shared/agent-scoped MAYI_STATE_KEY resolves from the cascade, but no exact
-    // (agent, env, name) row exists — Eden must still mint, and the mint must win.
+    // (agent, env, name) row exists — harnesst must still mint, and the mint must win.
     const { provider, setCalls } = mintingSecrets({
       OPENROUTER_API_KEY: "k",
       MAYI_STATE_KEY: "user-shadow-attempt",
@@ -1951,7 +1951,7 @@ describe("generated-secret mint-once (issue #163)", () => {
       },
     );
     expect(dep.status).toBe("failed");
-    expect(dep.errorDetail).toContain("eden-lock.json");
+    expect(dep.errorDetail).toContain("harnesst-lock.json");
     expect(dep.errorDetail).toContain("GitHub 502");
   });
 
@@ -1978,8 +1978,8 @@ describe("EVE_PUBLIC_ORIGIN injection (issue #163)", () => {
     vi.unstubAllEnvs();
   });
 
-  it("injects the per-environment ingress URL, overriding a user-set value, when EDEN_PUBLIC_ORIGIN is set", async () => {
-    vi.stubEnv("EDEN_PUBLIC_ORIGIN", "https://eden.example.com");
+  it("injects the per-environment ingress URL, overriding a user-set value, when HARNESST_PUBLIC_ORIGIN is set", async () => {
+    vi.stubEnv("HARNESST_PUBLIC_ORIGIN", "https://harnesst.example.com");
     const release = await createRelease(
       { projectId: PROJECT, agentId: AGENT, gitSha: "ee".repeat(20) },
       store,
@@ -1993,7 +1993,7 @@ describe("EVE_PUBLIC_ORIGIN injection (issue #163)", () => {
           health: { status: "live" },
           deployedEnvs,
         }),
-        // A user secret must not shadow the derived origin when Eden injects it.
+        // A user secret must not shadow the derived origin when harnesst injects it.
         secrets: fakeSecrets({
           OPENROUTER_API_KEY: "k",
           EVE_PUBLIC_ORIGIN: "https://user.example",
@@ -2001,12 +2001,12 @@ describe("EVE_PUBLIC_ORIGIN injection (issue #163)", () => {
       },
     );
     expect(deployedEnvs[0].EVE_PUBLIC_ORIGIN).toBe(
-      envIngressUrl("https://eden.example.com", ENV),
+      envIngressUrl("https://harnesst.example.com", ENV),
     );
   });
 
-  it("passes a user-set EVE_PUBLIC_ORIGIN through when EDEN_PUBLIC_ORIGIN is unset", async () => {
-    vi.stubEnv("EDEN_PUBLIC_ORIGIN", "");
+  it("passes a user-set EVE_PUBLIC_ORIGIN through when HARNESST_PUBLIC_ORIGIN is unset", async () => {
+    vi.stubEnv("HARNESST_PUBLIC_ORIGIN", "");
     const release = await createRelease(
       { projectId: PROJECT, agentId: AGENT, gitSha: "ff".repeat(20) },
       store,

@@ -21,10 +21,10 @@ describe("withDatabaseName", () => {
   test("replaces the database name, preserving auth/host/port", () => {
     expect(
       withDatabaseName(
-        "postgres://eden:eden@localhost:5442/eden",
-        "eden_feature_x",
+        "postgres://harnesst:harnesst@localhost:5442/harnesst",
+        "harnesst_feature_x",
       ),
-    ).toBe("postgres://eden:eden@localhost:5442/eden_feature_x");
+    ).toBe("postgres://harnesst:harnesst@localhost:5442/harnesst_feature_x");
   });
 
   test("accepts postgresql:// scheme", () => {
@@ -53,11 +53,11 @@ describe("withDatabaseName", () => {
 describe("parseDatabaseUrl", () => {
   test("extracts user, password, and db", () => {
     expect(
-      parseDatabaseUrl("postgres://eden:eden@localhost:5442/eden"),
+      parseDatabaseUrl("postgres://harnesst:harnesst@localhost:5442/harnesst"),
     ).toEqual({
-      user: "eden",
-      password: "eden",
-      db: "eden",
+      user: "harnesst",
+      password: "harnesst",
+      db: "harnesst",
     });
   });
 
@@ -180,7 +180,7 @@ describe("acquireSetupLock / releaseSetupLock", () => {
   }
 
   test("acquires by creating the lock dir with our pid inside", () => {
-    const base = mkdtempSync(join(tmpdir(), "eden-lock-"));
+    const base = mkdtempSync(join(tmpdir(), "harnesst-lock-"));
     const lock = lockDirIn(base);
     acquireSetupLock(lock);
     expect(existsSync(join(lock, "pid"))).toBe(true);
@@ -189,14 +189,14 @@ describe("acquireSetupLock / releaseSetupLock", () => {
   });
 
   test("release is idempotent", () => {
-    const base = mkdtempSync(join(tmpdir(), "eden-lock-"));
+    const base = mkdtempSync(join(tmpdir(), "harnesst-lock-"));
     const lock = lockDirIn(base);
     releaseSetupLock(lock);
     expect(existsSync(lock)).toBe(false);
   });
 
   test("times out while the holder is alive", () => {
-    const base = mkdtempSync(join(tmpdir(), "eden-lock-"));
+    const base = mkdtempSync(join(tmpdir(), "harnesst-lock-"));
     const lock = lockDirIn(base);
     acquireSetupLock(lock); // held by this (live) process
     expect(() =>
@@ -206,7 +206,7 @@ describe("acquireSetupLock / releaseSetupLock", () => {
   });
 
   test("steals the lock when the holder is dead", () => {
-    const base = mkdtempSync(join(tmpdir(), "eden-lock-"));
+    const base = mkdtempSync(join(tmpdir(), "harnesst-lock-"));
     const lock = lockDirIn(base);
     mkdirSync(lock);
     writeFileSync(join(lock, "pid"), String(deadPid()));
@@ -216,7 +216,7 @@ describe("acquireSetupLock / releaseSetupLock", () => {
   });
 
   test("waits (does not steal) while the pid file is missing", () => {
-    const base = mkdtempSync(join(tmpdir(), "eden-lock-"));
+    const base = mkdtempSync(join(tmpdir(), "harnesst-lock-"));
     const lock = lockDirIn(base);
     mkdirSync(lock); // holder mid-acquire: dir exists, pid not written yet
     expect(() =>
@@ -230,13 +230,13 @@ describe("withWorktreeAppendix", () => {
   const appendix = `${marker}\n\ncontext here\n`;
 
   test("appends after the base content with a blank line", () => {
-    expect(withWorktreeAppendix("# Eden\n\nbase\n", marker, appendix)).toBe(
-      `# Eden\n\nbase\n\n${appendix}`,
+    expect(withWorktreeAppendix("# harnesst\n\nbase\n", marker, appendix)).toBe(
+      `# harnesst\n\nbase\n\n${appendix}`,
     );
   });
 
   test("replaces a prior appendix instead of double-appending", () => {
-    const once = withWorktreeAppendix("# Eden\n", marker, appendix);
+    const once = withWorktreeAppendix("# harnesst\n", marker, appendix);
     const twice = withWorktreeAppendix(once, marker, appendix);
     expect(twice).toBe(once);
   });

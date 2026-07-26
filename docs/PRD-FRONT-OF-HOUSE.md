@@ -1,4 +1,4 @@
-# Eden — Front of House PRD
+# harnesst — Front of House PRD
 
 > **Working name:** Front of House (FOH).
 > Companion to [`PRD.md`](./PRD.md) (pillars 1–7) — this describes the **operate surface**:
@@ -9,7 +9,7 @@
 
 ## 1. Vision
 
-Eden today is **back of house**: authoring, shipping, deploying, observing — the console where
+harnesst today is **back of house**: authoring, shipping, deploying, observing — the console where
 agents are built. Front of House is where you **work with them**: an agency-style operating
 environment where you look at your teams, hand tasks to specific members in chat, chase them up,
 answer their questions, and watch them collaborate — the way a CTO runs a small tech team.
@@ -19,7 +19,7 @@ The premise: agents are treated as if they were human colleagues. You go to the 
 go off and do the work — delegating to teammates, creating issues, opening PRs — coming back to
 you only when you're needed.
 
-Everything here composes over machinery Eden already ships: durable playground sessions and
+Everything here composes over machinery harnesst already ships: durable playground sessions and
 transcripts, the team relay (`ask-teammate`), delegation records with linked traces, eve's
 `input.requested` HITL parking, and scale-to-zero instances.
 
@@ -45,9 +45,9 @@ These are the load-bearing UX decisions and their rationale. Revisit deliberatel
    eve source (`packages/eve/src/channel/*`): `input.requested` parks the durable session, the
    **initiating channel's** adapter owns delivery, and answers are `inputResponses` on a
    continuation send — only the holder of the session handle can answer. Therefore anything
-   that might need a human runs as an **Eden-driven session** (FOH sessions; relay-driven
-   delegations): Eden holds the handle, sees the park, routes it, answers it. The
-   generalization (other entry points routing questions to Eden) is the **mayi pattern**: a
+   that might need a human runs as a **harnesst-driven session** (FOH sessions; relay-driven
+   delegations): harnesst holds the handle, sees the park, routes it, answers it. The
+   generalization (other entry points routing questions to harnesst) is the **mayi pattern**: a
    channel that homes the session, files `input.requested` with an external surface, and
    resumes via signed callback (see `~/code/mayi/packages/eve/src/channel.ts`) — the extension
    path, spiked in §5.
@@ -55,10 +55,10 @@ These are the load-bearing UX decisions and their rationale. Revisit deliberatel
 4. **The activity feed is a projection.** Per-team, fully automatic timeline of what actually
    happened: sessions opened, messages, delegations (with the real message text passed between
    agents, expandable to the full exchange), issues/PRs/tool calls, deploys — rendered from
-   records Eden already keeps (delegations + linked runs + deployments + sessions).
+   records harnesst already keeps (delegations + linked runs + deployments + sessions).
    Observability wearing a chat UI.
 
-5. **Front of house / back of house split.** The existing Eden UI (repos, deployment,
+5. **Front of house / back of house split.** The existing harnesst UI (repos, deployment,
    settings, secrets, observability) remains as-is — back of house. FOH is a distinct surface
    in the same app. The existing **Agent Portals** (#180, guest chat at `/a/:slug`) were the
    proto-version of this idea; **FOH replaces portals**, and portal access becomes a
@@ -82,7 +82,7 @@ These are the load-bearing UX decisions and their rationale. Revisit deliberatel
 
 ```
 ┌───────────────┬─────────────────────┬──────────────────────────────────────────────┐
-│ eden      🔔2 │ Ivy — sessions      │ Portal 404 fix                    ● working  │
+│ harnesst  🔔2 │ Ivy — sessions      │ Portal 404 fix                    ● working  │
 │               │ ┌─────────────────┐ │                                              │
 │ ▾ agency-team │ │● Portal 404 fix │ │ you  Revoked users get a 404 on the share    │
 │   ⚡ activity  │ │  needs you · 2m │ │      page — fix it.                          │
@@ -125,7 +125,7 @@ These are the load-bearing UX decisions and their rationale. Revisit deliberatel
 
 ## 4. Architecture notes (what carries what)
 
-No eve changes anywhere below (hard constraint — Eden-side surfaces only).
+No eve changes anywhere below (hard constraint — harnesst-side surfaces only).
 
 | Need | Carried by |
 | --- | --- |
@@ -134,7 +134,7 @@ No eve changes anywhere below (hard constraint — Eden-side surfaces only).
 | Answering a parked question | Existing continuation path (playground option buttons today), from the session row's handle. |
 | Delegation records + agent↔agent messages | `delegations` + linked peer runs (`runs`/`run_steps` hold the ask text, reply, and tool calls). |
 | "Needs you" detection for unwatched turns | New chokepoint in the event drains: `input.requested` ⇒ inbox row; terminal event ⇒ resolve it. Relay (`runAsk`) does the same for delegation-driven peer turns instead of erroring (supersedes the M7 "parked peer = error" punt). |
-| Instance-facing auth for anything new | Existing HMAC deployment token (`EDEN_TEAM_TOKEN`) + relay pattern (`app/team/*`). |
+| Instance-facing auth for anything new | Existing HMAC deployment token (`HARNESST_TEAM_TOKEN`) + relay pattern (`app/team/*`). |
 | Presence | Deploy-target container state + active-turn state — both already known. |
 
 ---
@@ -176,7 +176,7 @@ the new host; self-host works with no marketing host configured.
 
 ### Invites & roles (portal replacement)
 
-Access to FOH is workspace membership, on Better Auth machinery Eden already runs:
+Access to FOH is workspace membership, on Better Auth machinery harnesst already runs:
 
 - **Roles gate the houses.** Org members carry a role (owner / admin / member). `member` =
   front of house only; `admin` / `owner` = front and back. Route guards on
@@ -222,9 +222,9 @@ pieces make the full loops drivable without a human:
   instances (the existing dev/test deploy path), so parks, wakes, and continuations are the
   real thing.
 
-### Follow-up spike — Eden channel
+### Follow-up spike — harnesst channel
 
-Prove/deny: an Eden-authored channel (mayi pattern, baked into the image like `ask-teammate`)
+Prove/deny: a harnesst-authored channel (mayi pattern, baked into the image like `ask-teammate`)
 homing work sessions so `input.requested` from any entry point files to the control plane and
 resumes via signed callback; whether `cross-channel-receive` lets externally triggered work
 (schedules, GitHub) be homed on it. Outcome is a design note + go/no-go. Ships separately,

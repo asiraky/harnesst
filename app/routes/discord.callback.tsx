@@ -1,8 +1,8 @@
 /**
  * Discord connect callback — step 2 of the one-click Discord flow (issue #32).
  *
- * Discord redirects here after the user authorizes Eden's shared app into a server, with the
- * signed `?state=`, the `?guild_id=`, and a `?code=` (which Eden never exchanges — the connect
+ * Discord redirects here after the user authorizes harnesst's shared app into a server, with the
+ * signed `?state=`, the `?guild_id=`, and a `?code=` (which harnesst never exchanges — the connect
  * proof is that the bot-token command registration below succeeds). The loader verifies the
  * state + tenancy, refuses a slash-command name already claimed by another agent in that guild,
  * registers the agent's guild command, records the connection, and sends the user back to the
@@ -73,7 +73,7 @@ export const loader = (args: LoaderFunctionArgs) =>
         state.sessionId !== auth.session.id
       ) {
         return fail(
-          "This Discord connection was started in a different Eden session. Start again from " +
+          "This Discord connection was started in a different harnesst session. Start again from " +
             "the agent's Deployment tab.",
         );
       }
@@ -109,8 +109,8 @@ export const loader = (args: LoaderFunctionArgs) =>
       const config = getDiscordAppConfig();
       if (!config) {
         return fail(
-          "This Eden installation no longer has a Discord app configured — ask an operator " +
-            "to set the EDEN_DISCORD_* env vars.",
+          "This harnesst installation no longer has a Discord app configured — ask an operator " +
+            "to set the HARNESST_DISCORD_* env vars.",
           backUrl,
         );
       }
@@ -168,7 +168,7 @@ export const loader = (args: LoaderFunctionArgs) =>
   );
 
 export function meta() {
-  return [{ title: "Connect Discord · eden" }, ...noindexMeta];
+  return [{ title: "Connect Discord · harnesst" }, ...noindexMeta];
 }
 
 export default function DiscordCallback({ loaderData }: Route.ComponentProps) {

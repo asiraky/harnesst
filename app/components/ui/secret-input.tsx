@@ -17,7 +17,7 @@ export interface SecretInputProps
 /**
  * Masked secret-entry field (issue #105). Browsers' password managers pattern-match a
  * text input immediately followed by a `type="password"` input inside a <form> as a login
- * form and inject saved credentials — which was leaking the user's Eden login email/password
+ * form and inject saved credentials — which was leaking the user's harnesst login email/password
  * into secret fields. `autoComplete="new-password"` makes Chrome treat this as a new/generated
  * password rather than a saved-credential target, and the data-*ignore attributes opt out of
  * 1Password / LastPass / Bitwarden. Masking stays a real `type="password"` field so it works in

@@ -1,6 +1,6 @@
 /**
  * Normalizes a settled turn's raw error text for display. Transient upstream provider errors
- * (an Azure/OpenAI 500 mid-stream, a 503, "overloaded", rate limits) reach Eden as a raw
+ * (an Azure/OpenAI 500 mid-stream, a 503, "overloaded", rate limits) reach harnesst as a raw
  * eve.mjs stack-trace blob; we map those to a short, retryable message and keep the raw text
  * for operators. Genuine config/validation errors (bad model id, missing credential, 401/403)
  * are left untouched so their specific, actionable text still reaches the user.

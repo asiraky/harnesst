@@ -1,9 +1,9 @@
 /**
- * Roster-change teammate refresh (Team delegation — D7). `EDEN_TEAMMATES` is deploy-time env, so
+ * Roster-change teammate refresh (Team delegation — D7). `HARNESST_TEAMMATES` is deploy-time env, so
  * adding or removing a member must refresh the OTHER members' running instances — otherwise a new
  * teammate never appears in their tool, and a removed one lingers. After a merge-driven roster
  * sync changes membership, this queues a same-release redeploy (image reuse — no rebuild) of every
- * live member deployment; each redeploy re-mints `EDEN_TEAMMATES` from the current roster.
+ * live member deployment; each redeploy re-mints `HARNESST_TEAMMATES` from the current roster.
  *
  * Trigger discipline (D7): called ONLY from the merge webhook — the merge-driven sync point that
  * also covers the publish pipeline's roster sync. NEVER from the loader self-heal path
@@ -34,7 +34,7 @@ export async function refreshTeammatesForRosterChange(
   if (!membershipChanged) return 0;
 
   const roster = await store.agents.listByProject(input.projectId);
-  // Only team members carry EDEN_TEAMMATES; a single-agent repo has nothing to refresh, and the
+  // Only team members carry HARNESST_TEAMMATES; a single-agent repo has nothing to refresh, and the
   // built-in assistant (kind !== 'member') is never a teammate.
   const members = roster.filter((a) => a.kind === "member" && a.root !== "agent");
   if (members.length === 0) return 0;
@@ -48,7 +48,7 @@ export async function refreshTeammatesForRosterChange(
       // pipeline queues the member's new-release deploy BEFORE this refresh runs, so the env's
       // current live row still points at the pre-merge release — queueing that release here
       // would land AFTER the publish's deploy job (FIFO worker) and silently revert the member. The
-      // in-flight deploy re-mints EDEN_TEAMMATES from the current roster anyway.
+      // in-flight deploy re-mints HARNESST_TEAMMATES from the current roster anyway.
       if (deployments.some((d) => d.status === "pending" || d.status === "building")) {
         continue;
       }

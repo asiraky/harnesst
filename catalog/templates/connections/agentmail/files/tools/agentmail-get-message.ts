@@ -2,7 +2,7 @@
  * Read a full AgentMail message, including attachment downloads.
  *
  * One of the four AgentMail billing-inbox tools (read + label only — nothing here can send,
- * delete, or provision mail). Set AGENTMAIL_API_KEY as an Eden secret; the value is read from
+ * delete, or provision mail). Set AGENTMAIL_API_KEY as a harnesst secret; the value is read from
  * the tool process environment and is never accepted as model input.
  *
  * Attachment downloads: the AgentMail API hands out a short-lived presigned download URL, so
@@ -136,7 +136,7 @@ export default defineTool({
       return {
         ok: false,
         error:
-          "Missing AGENTMAIL_API_KEY. Set it as an Eden secret on this agent before using the AgentMail tools.",
+          "Missing AGENTMAIL_API_KEY. Set it as a harnesst secret on this agent before using the AgentMail tools.",
       };
     }
 

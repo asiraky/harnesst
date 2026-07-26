@@ -1,7 +1,7 @@
 import { defineTool } from "eve/tools";
 import { z } from "zod";
 
-import { edenCall } from "../lib/edenApi";
+import { harnesstCall } from "../lib/harnesstApi";
 
 export default defineTool({
   description:
@@ -9,9 +9,9 @@ export default defineTool({
     "members (name, root directory, the NAMES of secrets each has set), your own configured " +
     "instructions/skills/schedules, and current project state. This is required before proposing " +
     "any plan, suggestion, or change; pair it with inspecting the actual git checkout so work is " +
-    "grounded in both Eden's control-plane context and the repository on disk.",
+    "grounded in both harnesst's control-plane context and the repository on disk.",
   inputSchema: z.object({}),
   async execute() {
-    return edenCall("project-context");
+    return harnesstCall("project-context");
   },
 });

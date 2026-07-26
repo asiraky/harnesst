@@ -4,13 +4,13 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { createEdenMcpServer } from "~/mcp/server.server";
+import { createHarnesstMcpServer } from "~/mcp/server.server";
 import type { McpToolService } from "~/mcp/tools.server";
 
 const readSkill = () =>
   readFile(
     new URL(
-      "../../catalog/templates/skills/eden-mcp-authoring/files/skills/eden-mcp-authoring/SKILL.md",
+      "../../catalog/templates/skills/harnesst-mcp-authoring/files/skills/harnesst-mcp-authoring/SKILL.md",
       import.meta.url,
     ),
     "utf8",
@@ -61,7 +61,7 @@ const properties = {
   clear_failed: ["environmentId"],
 } satisfies Record<keyof typeof contracts, string[]>;
 
-describe("Eden MCP authoring catalog skill", () => {
+describe("harnesst MCP authoring catalog skill", () => {
   const close: Array<() => Promise<void>> = [];
 
   afterEach(async () => {
@@ -73,7 +73,7 @@ describe("Eden MCP authoring catalog skill", () => {
     const [clientTransport, serverTransport] =
       InMemoryTransport.createLinkedPair();
     // Tool listing does not invoke the service; the protocol adapter is the contract under test.
-    const server = createEdenMcpServer({} as McpToolService);
+    const server = createHarnesstMcpServer({} as McpToolService);
     const client = new Client({
       name: "skill-contract-test",
       version: "1.0.0",
@@ -106,7 +106,7 @@ describe("Eden MCP authoring catalog skill", () => {
     const skill = await readSkill();
 
     expect(skill).toMatch(/stage_changes[\s\S]*publish_changes/);
-    expect(skill).toMatch(/one call runs Eden's whole pipeline/i);
+    expect(skill).toMatch(/one call runs harnesst's whole pipeline/i);
     expect(skill).toMatch(/a failed build lands nothing/i);
     expect(skill).toMatch(
       /`deploymentIds`[\s\S]*get_deploy_status[\s\S]*`live` or\s+`failed`/,

@@ -5,7 +5,7 @@ import { newPlaygroundSessionPath } from "~/playground/url";
 describe("newPlaygroundSessionPath", () => {
   it("removes React Router data request details from the redirect target", () => {
     const url = new URL(
-      "https://eden.test/repos/proj_1/playground.data?_routes=root&index&deployment=dep_1&session=old",
+      "https://harnesst.test/repos/proj_1/playground.data?_routes=root&index&deployment=dep_1&session=old",
     );
 
     expect(newPlaygroundSessionPath(url, "sess_new")).toBe(
@@ -15,7 +15,7 @@ describe("newPlaygroundSessionPath", () => {
 
   it("preserves team member playground paths", () => {
     const url = new URL(
-      "https://eden.test/repos/proj_1/agents/deployer/playground/_.data?deployment=dep_2",
+      "https://harnesst.test/repos/proj_1/agents/deployer/playground/_.data?deployment=dep_2",
     );
 
     expect(newPlaygroundSessionPath(url, "sess_new")).toBe(

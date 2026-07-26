@@ -207,7 +207,7 @@ function normalizePathBatch(paths: string[]): string[] {
   const normalized = paths.map((path) => normalizeAgentPath(path));
   if (normalized.some((path) => path === null)) {
     throw new McpToolError(
-      "Every path must be within Eden's editable agent surface.",
+      "Every path must be within harnesst's editable agent surface.",
       "invalid_input",
     );
   }

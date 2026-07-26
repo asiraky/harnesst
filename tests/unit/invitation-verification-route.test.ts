@@ -34,13 +34,13 @@ const KEY = Buffer.alloc(32, 7);
 
 function verificationRequest() {
   return new Request(
-    `https://eden.example.com/accept-invitation/${INVITATION_ID}`,
+    `https://harnesst.example.com/accept-invitation/${INVITATION_ID}`,
     {
       method: "POST",
       headers: {
         cookie: "better-auth.session_token=test-cookie",
         "content-type": "application/x-www-form-urlencoded",
-        origin: "https://eden.example.com",
+        origin: "https://harnesst.example.com",
         "x-real-ip": "203.0.113.10",
       },
       body: new URLSearchParams({
@@ -64,7 +64,7 @@ function actionArgs(request: Request) {
 describe("invitation verification route", () => {
   beforeEach(() => {
     vi.resetModules();
-    process.env.EDEN_SECRETS_KEY = KEY.toString("hex");
+    process.env.HARNESST_SECRETS_KEY = KEY.toString("hex");
     mocks.requireSession.mockReset().mockResolvedValue({
       user: { id: "user-1", email: EMAIL, emailVerified: false },
       requestHeaders: new Headers(),
@@ -94,17 +94,17 @@ describe("invitation verification route", () => {
     const forwarded = mocks.handler.mock.calls[0][0] as Request;
     expect(forwarded.method).toBe("POST");
     expect(forwarded.url).toBe(
-      "https://eden.example.com/api/auth/send-verification-email",
+      "https://harnesst.example.com/api/auth/send-verification-email",
     );
     expect(forwarded.headers.get("content-type")).toBe("application/json");
-    expect(forwarded.headers.get("origin")).toBe("https://eden.example.com");
+    expect(forwarded.headers.get("origin")).toBe("https://harnesst.example.com");
     expect(forwarded.headers.get("cookie")).toBe(
       "better-auth.session_token=test-cookie",
     );
     expect(forwarded.headers.get("x-real-ip")).toBe("203.0.113.10");
     await expect(forwarded.json()).resolves.toEqual({
       email: EMAIL,
-      callbackURL: `https://eden.example.com/accept-invitation/${INVITATION_ID}`,
+      callbackURL: `https://harnesst.example.com/accept-invitation/${INVITATION_ID}`,
     });
   });
 
@@ -137,13 +137,13 @@ describe("invitation verification route", () => {
 
   function acceptRequest(fields: Record<string, string>) {
     return new Request(
-      `https://eden.example.com/accept-invitation/${INVITATION_ID}`,
+      `https://harnesst.example.com/accept-invitation/${INVITATION_ID}`,
       {
         method: "POST",
         headers: {
           cookie: "better-auth.session_token=test-cookie",
           "content-type": "application/x-www-form-urlencoded",
-          origin: "https://eden.example.com",
+          origin: "https://harnesst.example.com",
         },
         body: new URLSearchParams({
           invitationId: INVITATION_ID,

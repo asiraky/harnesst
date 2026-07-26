@@ -28,9 +28,9 @@ export async function loader(args: LoaderFunctionArgs) {
 
 export function meta({}: Route.MetaArgs) {
   return pageMeta({
-    title: "Case studies — eden",
+    title: "Case studies — harnesst",
     description:
-      "How teams give their people better tools instead of fewer people — agencies, law firms, support teams and more building agents with eden.",
+      "How teams give their people better tools instead of fewer people — agencies, law firms, support teams and more building agents with harnesst.",
     path: "/case-studies",
   });
 }
@@ -42,14 +42,14 @@ export function meta({}: Route.MetaArgs) {
 export default function CaseStudies({ loaderData }: Route.ComponentProps) {
   const { appOrigin } = loaderData;
   return (
-    <main className="min-h-screen bg-eden-bg font-suisse text-eden-fg">
+    <main className="min-h-screen bg-harnesst-bg font-suisse text-harnesst-fg">
       <SiteHeader appOrigin={appOrigin} />
 
       {/* ————— Hero ————— */}
       <section className="mx-auto max-w-6xl px-6 pb-16 pt-16 sm:pt-24">
         <Reveal
           as="p"
-          className="text-sm uppercase tracking-[0.25em] text-eden-faint"
+          className="text-sm uppercase tracking-[0.25em] text-harnesst-faint"
         >
           Case studies
         </Reveal>
@@ -64,7 +64,7 @@ export default function CaseStudies({ loaderData }: Route.ComponentProps) {
         <Reveal
           as="p"
           delay={180}
-          className="mt-8 max-w-2xl text-lg leading-relaxed text-eden-muted"
+          className="mt-8 max-w-2xl text-lg leading-relaxed text-harnesst-muted"
         >
           None of these teams got smaller. They handed the repetitive work to
           agents they built themselves and spent the time they got back on the
@@ -72,7 +72,7 @@ export default function CaseStudies({ loaderData }: Route.ComponentProps) {
         </Reveal>
       </section>
 
-      <hr className="mx-auto max-w-6xl border-eden-line" />
+      <hr className="mx-auto max-w-6xl border-harnesst-line" />
 
       {/* ————— Cards ————— */}
       <section className="mx-auto max-w-6xl px-6 py-16 sm:py-20">
@@ -84,7 +84,7 @@ export default function CaseStudies({ loaderData }: Route.ComponentProps) {
                 className="group grid gap-8 sm:grid-cols-2 sm:items-center sm:gap-12"
               >
                 <div
-                  className={`overflow-hidden rounded-xl border border-eden-line ${
+                  className={`overflow-hidden rounded-xl border border-harnesst-line ${
                     i % 2 === 1 ? "sm:order-2" : ""
                   }`}
                 >
@@ -98,20 +98,20 @@ export default function CaseStudies({ loaderData }: Route.ComponentProps) {
                   </Parallax>
                 </div>
                 <div>
-                  <p className="text-sm uppercase tracking-[0.25em] text-eden-faint">
+                  <p className="text-sm uppercase tracking-[0.25em] text-harnesst-faint">
                     {cs.industry} · {cs.company}
                   </p>
                   <h2 className="mt-4 text-3xl font-medium leading-tight tracking-[-0.01em] sm:text-4xl">
                     {cs.headline}
                   </h2>
-                  <p className="mt-4 text-lg leading-relaxed text-eden-muted">
+                  <p className="mt-4 text-lg leading-relaxed text-harnesst-muted">
                     {cs.dek}
                   </p>
                   <div className="mt-6 flex items-baseline gap-3">
                     <span className="text-2xl font-medium">
                       {cs.highlight.value}
                     </span>
-                    <span className="text-sm text-eden-faint">
+                    <span className="text-sm text-harnesst-faint">
                       {cs.highlight.label}
                     </span>
                   </div>
@@ -126,7 +126,7 @@ export default function CaseStudies({ loaderData }: Route.ComponentProps) {
       </section>
 
       {/* ————— CTA band ————— */}
-      <section className="bg-eden-band-bg text-eden-band-fg">
+      <section className="bg-harnesst-band-bg text-harnesst-band-fg">
         <div className="mx-auto max-w-6xl px-6 py-20 text-center sm:py-24">
           <Reveal
             as="h2"
@@ -138,7 +138,7 @@ export default function CaseStudies({ loaderData }: Route.ComponentProps) {
           <Reveal
             as="p"
             delay={90}
-            className="mx-auto mt-6 max-w-xl text-lg leading-relaxed text-eden-band-muted"
+            className="mx-auto mt-6 max-w-xl text-lg leading-relaxed text-harnesst-band-muted"
           >
             Pick the process everyone dreads, describe it, and let an agent take
             the grind. Your people keep the judgment.
@@ -146,7 +146,7 @@ export default function CaseStudies({ loaderData }: Route.ComponentProps) {
           <Reveal delay={180} className="mt-10">
             <a
               href={`${appOrigin}/signup`}
-              className="rounded-full bg-eden-band-fg px-8 py-3 text-lg font-medium text-eden-band-bg transition hover:opacity-85"
+              className="rounded-full bg-harnesst-band-fg px-8 py-3 text-lg font-medium text-harnesst-band-bg transition hover:opacity-85"
             >
               Sign up
             </a>

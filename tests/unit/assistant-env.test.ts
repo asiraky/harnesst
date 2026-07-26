@@ -1,5 +1,5 @@
 /** Built-in assistant model-provider env: exact connection credentials for direct providers and
- * Eden's gateway only for active Codex OAuth connections. */
+ * harnesst's gateway only for active Codex OAuth connections. */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const getWorkspaceAssistantModel = vi.fn<() => Promise<string | null>>();
@@ -25,14 +25,14 @@ vi.mock("~/models/provider-connections.server", () => ({
 import { assistantEnv } from "~/assistant/instance.server";
 import { verifyGatewayToken } from "~/gateway/token.server";
 
-const OLD_KEY = process.env.EDEN_SECRETS_KEY;
+const OLD_KEY = process.env.HARNESST_SECRETS_KEY;
 const CONNECTION = "abcdefghijkl";
-const EXACT_OPENROUTER = "EDEN_PROVIDER_OPENROUTER_ABCDEFGHIJKL_API_KEY";
-const EXACT_ANTHROPIC = "EDEN_PROVIDER_ANTHROPIC_ABCDEFGHIJKL_API_KEY";
-const EXACT_OPENAI = "EDEN_PROVIDER_OPENAI_ABCDEFGHIJKL_API_KEY";
+const EXACT_OPENROUTER = "HARNESST_PROVIDER_OPENROUTER_ABCDEFGHIJKL_API_KEY";
+const EXACT_ANTHROPIC = "HARNESST_PROVIDER_ANTHROPIC_ABCDEFGHIJKL_API_KEY";
+const EXACT_OPENAI = "HARNESST_PROVIDER_OPENAI_ABCDEFGHIJKL_API_KEY";
 
 beforeEach(() => {
-  process.env.EDEN_SECRETS_KEY = "a".repeat(64);
+  process.env.HARNESST_SECRETS_KEY = "a".repeat(64);
   getWorkspaceAssistantModel.mockReset();
   getWorkspaceAssistantEffort.mockReset();
   getWorkspaceAssistantEffort.mockResolvedValue(null);
@@ -44,8 +44,8 @@ beforeEach(() => {
   getActiveModelConnection.mockResolvedValue(null);
 });
 afterEach(() => {
-  if (OLD_KEY === undefined) delete process.env.EDEN_SECRETS_KEY;
-  else process.env.EDEN_SECRETS_KEY = OLD_KEY;
+  if (OLD_KEY === undefined) delete process.env.HARNESST_SECRETS_KEY;
+  else process.env.HARNESST_SECRETS_KEY = OLD_KEY;
 });
 
 describe("assistantEnv", () => {
@@ -62,8 +62,8 @@ describe("assistantEnv", () => {
     const env = await assistantEnv({ orgId: "org_1", deploymentId: "dep_1" });
     expect(env[EXACT_OPENROUTER]).toBe("sk-or-workspace");
     expect(env.OPENROUTER_API_KEY).toBe("sk-or-workspace");
-    expect(env).not.toHaveProperty("EDEN_MODEL_GATEWAY_URL");
-    expect(env).not.toHaveProperty("EDEN_MODEL_GATEWAY_TOKEN");
+    expect(env).not.toHaveProperty("HARNESST_MODEL_GATEWAY_URL");
+    expect(env).not.toHaveProperty("HARNESST_MODEL_GATEWAY_TOKEN");
   });
 
   it("injects an Anthropic connection for direct provider routing", async () => {
@@ -79,7 +79,7 @@ describe("assistantEnv", () => {
     const env = await assistantEnv({ orgId: "org_1", deploymentId: "dep_1" });
     expect(env[EXACT_ANTHROPIC]).toBe("sk-ant-workspace");
     expect(env.ANTHROPIC_API_KEY).toBe("sk-ant-workspace");
-    expect(env).not.toHaveProperty("EDEN_MODEL_GATEWAY_TOKEN");
+    expect(env).not.toHaveProperty("HARNESST_MODEL_GATEWAY_TOKEN");
   });
 
   it("uses a published project override when no workspace default exists", async () => {
@@ -96,8 +96,8 @@ describe("assistantEnv", () => {
       modelOverride: `openai/${CONNECTION}/gpt-5.4`,
       effortOverride: "high",
     });
-    expect(env.EDEN_ASSISTANT_MODEL).toBe(`openai/${CONNECTION}/gpt-5.4`);
-    expect(env.EDEN_ASSISTANT_EFFORT).toBe("high");
+    expect(env.HARNESST_ASSISTANT_MODEL).toBe(`openai/${CONNECTION}/gpt-5.4`);
+    expect(env.HARNESST_ASSISTANT_EFFORT).toBe("high");
     expect(env[EXACT_OPENAI]).toBe("sk-openai-workspace");
     expect(getWorkspaceAssistantModel).not.toHaveBeenCalled();
   });
@@ -115,8 +115,8 @@ describe("assistantEnv", () => {
 
     const env = await assistantEnv({ orgId: "org_1", deploymentId: "dep_1" });
     expect(env).toMatchObject({
-      EDEN_ASSISTANT_MODEL: `openai/${CONNECTION}/gpt-5.4`,
-      EDEN_ASSISTANT_EFFORT: "medium",
+      HARNESST_ASSISTANT_MODEL: `openai/${CONNECTION}/gpt-5.4`,
+      HARNESST_ASSISTANT_EFFORT: "medium",
     });
   });
 
@@ -137,7 +137,7 @@ describe("assistantEnv", () => {
       modelOverride: `openai/${CONNECTION}/gpt-5.4`,
       effortOverride: null,
     });
-    expect(env).not.toHaveProperty("EDEN_ASSISTANT_EFFORT");
+    expect(env).not.toHaveProperty("HARNESST_ASSISTANT_EFFORT");
     expect(getWorkspaceAssistantModel).not.toHaveBeenCalled();
   });
 
@@ -148,9 +148,9 @@ describe("assistantEnv", () => {
 
     const env = await assistantEnv({ orgId: "org_1", deploymentId: "dep_1" });
     expect(env).not.toHaveProperty("OPENROUTER_API_KEY");
-    expect(env.EDEN_ASSISTANT_MODEL).toBe(`codex/${CONNECTION}/gpt-5.5`);
-    expect(env.EDEN_MODEL_GATEWAY_URL).toContain("/api/gateway/v1");
-    expect(verifyGatewayToken(env.EDEN_MODEL_GATEWAY_TOKEN)).toBe("org_1");
+    expect(env.HARNESST_ASSISTANT_MODEL).toBe(`codex/${CONNECTION}/gpt-5.5`);
+    expect(env.HARNESST_MODEL_GATEWAY_URL).toContain("/api/gateway/v1");
+    expect(verifyGatewayToken(env.HARNESST_MODEL_GATEWAY_TOKEN)).toBe("org_1");
   });
 
   it("injects gateway env alongside a direct key when any Codex connection is active", async () => {
@@ -166,7 +166,7 @@ describe("assistantEnv", () => {
 
     const env = await assistantEnv({ orgId: "org_1", deploymentId: "dep_1" });
     expect(env[EXACT_OPENROUTER]).toBe("sk-or-workspace");
-    expect(env.EDEN_MODEL_GATEWAY_TOKEN).toBeTruthy();
+    expect(env.HARNESST_MODEL_GATEWAY_TOKEN).toBeTruthy();
   });
 
   it("keeps a configured legacy bare OpenRouter id runnable through the standard alias", async () => {
@@ -177,7 +177,7 @@ describe("assistantEnv", () => {
     });
 
     const env = await assistantEnv({ orgId: "org_1", deploymentId: "dep_1" });
-    expect(env.EDEN_ASSISTANT_MODEL).toBe("z-ai/glm-5.2");
+    expect(env.HARNESST_ASSISTANT_MODEL).toBe("z-ai/glm-5.2");
     expect(env.OPENROUTER_API_KEY).toBe("sk-or-workspace");
   });
 

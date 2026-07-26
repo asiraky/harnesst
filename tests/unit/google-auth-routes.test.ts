@@ -71,7 +71,7 @@ vi.mock("~/github/repo.server", () => ({
   fetchAgentSource: mocks.fetchAgentSource,
 }));
 vi.mock("~/lib/ingress", () => ({
-  publicOrigin: () => "https://eden.example.com",
+  publicOrigin: () => "https://harnesst.example.com",
 }));
 vi.mock("~/project/guard.server", () => ({
   requireProject: mocks.requireProject,
@@ -81,7 +81,7 @@ vi.mock("~/seams/index.server", () => ({
   getRuntime: () => ({ data: { audit: { record: mocks.auditRecord } } }),
 }));
 
-process.env.EDEN_SECRETS_KEY =
+process.env.HARNESST_SECRETS_KEY =
   "1f8b16e6a46dd3ac12ef7a328f1ce35c67b5bc8f1acdd76280e3674c3a4f19b2";
 
 const PROJECT = {
@@ -139,11 +139,11 @@ describe("Google routes with Better Auth", () => {
     mocks.fetchAccountEmail.mockReset().mockResolvedValue("google@example.com");
     mocks.findGrant.mockReset().mockResolvedValue(null);
     mocks.getAgentSource.mockReset().mockResolvedValue({
-      files: { "eden-lock.json": effectiveLock() },
+      files: { "harnesst-lock.json": effectiveLock() },
       paths: [],
     });
     mocks.fetchAgentSource.mockReset().mockResolvedValue({
-      files: { "eden-lock.json": effectiveLock() },
+      files: { "harnesst-lock.json": effectiveLock() },
       paths: [],
     });
     mocks.getGoogleOAuthConfig.mockReset().mockReturnValue({
@@ -165,7 +165,7 @@ describe("Google routes with Better Auth", () => {
       await import("~/connections/google.server");
     const operation = loader(
       routeArgs(
-        "https://eden.example.com/google/connect?project=projabcdefgh&agent=agent" +
+        "https://harnesst.example.com/google/connect?project=projabcdefgh&agent=agent" +
           "&scopes=https%3A%2F%2Fmail.google.com%2F&returnTo=%2Fdashboard",
       ),
     );
@@ -213,7 +213,7 @@ describe("Google routes with Better Auth", () => {
     // treat that like a legacy no-snapshot lock and re-request the old grant's broad scopes.
     mocks.getAgentSource.mockResolvedValue({
       files: {
-        "eden-lock.json": JSON.stringify({
+        "harnesst-lock.json": JSON.stringify({
           version: 1,
           installs: [
             {
@@ -254,7 +254,7 @@ describe("Google routes with Better Auth", () => {
     const { loader } = await import("~/routes/google.connect");
     const result = await loader(
       routeArgs(
-        "https://eden.example.com/google/connect?project=projabcdefgh&agent=agent&returnTo=%2Fdashboard",
+        "https://harnesst.example.com/google/connect?project=projabcdefgh&agent=agent&returnTo=%2Fdashboard",
       ),
     );
     expect(result).toMatchObject({
@@ -287,14 +287,14 @@ describe("Google routes with Better Auth", () => {
 
     const staged = await loader(
       routeArgs(
-        `https://eden.example.com/google/callback?code=one-time-code&state=${encodeURIComponent(state)}`,
+        `https://harnesst.example.com/google/callback?code=one-time-code&state=${encodeURIComponent(state)}`,
       ),
     );
     const cookie = (staged as Response).headers
       .get("set-cookie")!
       .split(";", 1)[0];
     const result = await loader(
-      routeArgs("https://eden.example.com/google/callback", { cookie }),
+      routeArgs("https://harnesst.example.com/google/callback", { cookie }),
     );
     expect(result).toMatchObject({
       error: expect.stringContaining(
@@ -341,11 +341,11 @@ describe("Google routes with Better Auth", () => {
     // checks read RAW (issue #173), so the sequence rides the repo.server mock.
     mocks.fetchAgentSource
       .mockResolvedValueOnce({
-        files: { "eden-lock.json": broadLock },
+        files: { "harnesst-lock.json": broadLock },
         paths: [],
       })
       .mockResolvedValue({
-        files: { "eden-lock.json": effectiveLock() },
+        files: { "harnesst-lock.json": effectiveLock() },
         paths: [],
       });
     mocks.exchangeCode.mockResolvedValue({
@@ -371,14 +371,14 @@ describe("Google routes with Better Auth", () => {
 
     const staged = await loader(
       routeArgs(
-        `https://eden.example.com/google/callback?code=one-time-code&state=${encodeURIComponent(state)}`,
+        `https://harnesst.example.com/google/callback?code=one-time-code&state=${encodeURIComponent(state)}`,
       ),
     );
     const cookie = (staged as Response).headers
       .get("set-cookie")!
       .split(";", 1)[0];
     const result = await loader(
-      routeArgs("https://eden.example.com/google/callback", { cookie }),
+      routeArgs("https://harnesst.example.com/google/callback", { cookie }),
     );
     expect(result).toMatchObject({
       error: expect.stringContaining(
@@ -414,7 +414,7 @@ describe("Google routes with Better Auth", () => {
 
     const staged = await loader(
       routeArgs(
-        `https://eden.example.com/google/callback?code=one-time-code&state=${encodeURIComponent(state)}`,
+        `https://harnesst.example.com/google/callback?code=one-time-code&state=${encodeURIComponent(state)}`,
       ),
     );
     expect(staged).toBeInstanceOf(Response);
@@ -427,10 +427,10 @@ describe("Google routes with Better Auth", () => {
       .split(";", 1)[0];
 
     const result = await loader(
-      routeArgs("https://eden.example.com/google/callback", { cookie }),
+      routeArgs("https://harnesst.example.com/google/callback", { cookie }),
     );
     expect(result).toMatchObject({
-      error: expect.stringContaining("different Eden session"),
+      error: expect.stringContaining("different harnesst session"),
       backUrl: "/dashboard",
       user: mocks.auth.user,
     });
@@ -466,7 +466,7 @@ describe("Google routes with Better Auth", () => {
 
     const staged = await loader(
       routeArgs(
-        `https://eden.example.com/google/callback?code=one-time-code&state=${encodeURIComponent(state)}`,
+        `https://harnesst.example.com/google/callback?code=one-time-code&state=${encodeURIComponent(state)}`,
       ),
     );
     expect(staged).toBeInstanceOf(Response);
@@ -474,7 +474,7 @@ describe("Google routes with Better Auth", () => {
       .get("set-cookie")!
       .split(";", 1)[0];
     const cleanArgs = () =>
-      routeArgs("https://eden.example.com/google/callback", { cookie });
+      routeArgs("https://harnesst.example.com/google/callback", { cookie });
 
     const first = await loader(cleanArgs());
     expect(first).toMatchObject({
@@ -508,7 +508,7 @@ describe("Google routes with Better Auth", () => {
     );
     const staged = await loader(
       routeArgs(
-        `https://eden.example.com/google/callback?error=access_denied&state=${encodeURIComponent(state)}`,
+        `https://harnesst.example.com/google/callback?error=access_denied&state=${encodeURIComponent(state)}`,
       ),
     );
     const cookie = (staged as Response).headers
@@ -516,7 +516,7 @@ describe("Google routes with Better Auth", () => {
       .split(";", 1)[0];
 
     const result = await loader(
-      routeArgs("https://eden.example.com/google/callback", { cookie }),
+      routeArgs("https://harnesst.example.com/google/callback", { cookie }),
     );
     expect(result).toMatchObject({
       error: expect.stringContaining("cancelled or denied"),
@@ -553,7 +553,7 @@ describe("Google routes with Better Auth", () => {
 
     const staged = await loader(
       routeArgs(
-        `https://eden.example.com/google/callback?code=one-time-code&state=${encodeURIComponent(state)}`,
+        `https://harnesst.example.com/google/callback?code=one-time-code&state=${encodeURIComponent(state)}`,
       ),
     );
     const cookie = (staged as Response).headers
@@ -562,7 +562,7 @@ describe("Google routes with Better Auth", () => {
     let redirectResponse: Response | undefined;
     try {
       await loader(
-        routeArgs("https://eden.example.com/google/callback", { cookie }),
+        routeArgs("https://harnesst.example.com/google/callback", { cookie }),
       );
     } catch (error) {
       if (error instanceof Response) redirectResponse = error;
@@ -579,7 +579,7 @@ describe("Google routes with Better Auth", () => {
         clientSecret: "google-secret",
       },
       code: "one-time-code",
-      redirectUri: "https://eden.example.com/google/callback",
+      redirectUri: "https://harnesst.example.com/google/callback",
     });
     expect(mocks.upsertGrant).toHaveBeenCalledWith({
       projectId: PROJECT.id,
@@ -640,7 +640,7 @@ describe("Google routes with Better Auth", () => {
 
     const staged = await loader(
       routeArgs(
-        `https://eden.example.com/google/callback?code=one-time-code&state=${encodeURIComponent(state)}`,
+        `https://harnesst.example.com/google/callback?code=one-time-code&state=${encodeURIComponent(state)}`,
       ),
     );
     const cookie = (staged as Response).headers
@@ -648,7 +648,7 @@ describe("Google routes with Better Auth", () => {
       .split(";", 1)[0];
     try {
       await loader(
-        routeArgs("https://eden.example.com/google/callback", { cookie }),
+        routeArgs("https://harnesst.example.com/google/callback", { cookie }),
       );
     } catch (error) {
       if (!(error instanceof Response)) throw error;

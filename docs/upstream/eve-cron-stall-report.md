@@ -1,7 +1,7 @@
 # Upstream report draft — Scheduled (cron) turns hang before their first step and leak one idle sandbox container per fire
 
-> **Status: DRAFT for vercel/eve — not yet filed.** This is Eden's evidence package for an upstream
-> bug report. Eden never patches or forks eve (project policy); the Eden-side mitigation for the
+> **Status: DRAFT for vercel/eve — not yet filed.** This is harnesst's evidence package for an upstream
+> bug report. harnesst never patches or forks eve (project policy); the harnesst-side mitigation for the
 > resulting container leak lives in `app/deploy/sandbox-reaper.server.ts` (issue #118). File this
 > against `vercel/eve` once a maintainer channel is chosen.
 
@@ -87,10 +87,10 @@ $ docker inspect … --format '{{json .Config.Labels}}'
  "eve.sandbox.template-key":"eve-sbx-tpl-docker-…", "org.opencontainers.image.version":"26.04", …}
 ```
 
-The owning instance container logs nothing after boot (4 lines total for an `eden-inst-*` instance),
+The owning instance container logs nothing after boot (4 lines total for an `harnesst-inst-*` instance),
 so a stalled cron turn leaves no log trace at all.
 
-### Prod evidence (from the originating report, Eden issue #118)
+### Prod evidence (from the originating report, harnesst issue #118)
 
 - An agent's hourly schedule (`0 * * * *`) fired on time; a sandbox was created at the top of every
   hour, but **no cron run ever completed**. All 11 hourly sandboxes since a redeploy were still `Up`
@@ -129,7 +129,7 @@ so the trigger path (schedule/channel) is implicated, not the sandbox backend or
 ## Possibly-related observation (flagged, not asserted as cause)
 
 On the reproducing host, every instance's `WORKFLOW_POSTGRES_URL` world database
-(`eden_env_*`) contains **zero tables** — the Workflow world appears never to have been
+(`harnesst_env_*`) contains **zero tables** — the Workflow world appears never to have been
 initialized/migrated with a live schema. We cannot tell whether the scheduled-turn stall is a
 consequence of the Workflow persistence layer never coming up, or an independent issue in the
 schedule trigger path. Flagging it for maintainers who know the Workflow world lifecycle; we are not

@@ -56,7 +56,7 @@ import { unifiedDiff } from "~/publish/unified-diff";
 import { getRuntime } from "~/seams/index.server";
 import { listWorkspaceTasks } from "~/tasks/tasks.server";
 
-/** Group label for changes the built-in assistant owns (`.eden/assistant/**`). */
+/** Group label for changes the built-in assistant owns (`.harnesst/assistant/**`). */
 const ASSISTANT_GROUP = "Assistant configuration";
 
 /** How many staged paths the badge will probe individually before it stops asking (§4.2). */
@@ -126,7 +126,7 @@ async function publishState(connected: ConnectedProject): Promise<PublishStatePa
   ]);
 
   // The panel groups by EVERY agent that can own a change, not just the member roster: the
-  // built-in assistant owns `.eden/assistant/**`, and a change the grouping can't name is a
+  // built-in assistant owns `.harnesst/assistant/**`, and a change the grouping can't name is a
   // change the user never sees but Publish still ships (§4.2 — every pending change, with a
   // diff and its owner).
   const roster = [
@@ -274,7 +274,7 @@ async function publishState(connected: ConnectedProject): Promise<PublishStatePa
 /**
  * Which staged paths already exist on the default branch — the New-vs-Edited badge (§4.2).
  *
- * The cached agent-source tree only carries agent directories, so a staged repo-root file (Eden
+ * The cached agent-source tree only carries agent directories, so a staged repo-root file (harnesst
  * stages `package.json` alongside a model change) is simply absent from it and would badge "New"
  * while its own diff shows existing lines being replaced. Paths that tree can't account for are
  * probed individually — cheap, since only staged paths are asked about and agent-directory paths

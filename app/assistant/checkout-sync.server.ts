@@ -7,7 +7,7 @@
  *   syncConversationCheckout    — after a turn: pull the checkout's full tree state from the
  *                                 sidecar, apply the path policy, stage every change as a draft
  *                                 in the shared staging area (what the Publish button takes live), and
- *                                 mirror the tree onto `eden/conv-<id>` as one snapshot commit
+ *                                 mirror the tree onto `harnesst/conv-<id>` as one snapshot commit
  *                                 (force-updated ref) — an internal durability branch only.
  *                                 Skips when the tree is unchanged.
  *
@@ -127,7 +127,7 @@ export interface EnsureResult {
 
 /**
  * Ask the instance sidecar to ensure the conversation's checkout exists (clone/fetch + checkout
- * `eden/conv-<id>`, recovering it from the remote branch after volume/instance loss). If the base
+ * `harnesst/conv-<id>`, recovering it from the remote branch after volume/instance loss). If the base
  * branch advanced since the checkout was cut, returns a note for the model so it can rebase.
  */
 export async function ensureConversationCheckout(input: {
@@ -476,7 +476,7 @@ async function mirrorSnapshot(
   const commit = await octokit.rest.git.createCommit({
     owner,
     repo,
-    message: `eden: sync conversation ${conversationId}`,
+    message: `harnesst: sync conversation ${conversationId}`,
     tree: tree.data.sha,
     parents: [baseSha],
   });
@@ -529,5 +529,5 @@ export async function discardConversationCheckoutsForProject(
 export function isConversationBranch(
   branch: string | undefined | null,
 ): boolean {
-  return !!branch && branch.startsWith("eden/conv-");
+  return !!branch && branch.startsWith("harnesst/conv-");
 }

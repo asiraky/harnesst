@@ -2,7 +2,7 @@
  * The assistant's control-plane knowledge service — the business logic behind the read-only
  * `api/assistant/*` callback endpoints.
  *
- * Under the coding-agent model the assistant no longer edits files through Eden: it works in a real
+ * Under the coding-agent model the assistant no longer edits files through harnesst: it works in a real
  * per-conversation git checkout with native bash, and the control plane mirrors that checkout to a
  * PR (see `checkout-sync.server.ts`). So the old file read/write/dependency/scaffold/run-checks
  * callbacks are gone. What remains here is pure control-plane KNOWLEDGE the model can't get from its
@@ -206,11 +206,11 @@ export async function catalogOp(
 // ── Bundle (entrypoint materialization; published config only) ─────────────────
 
 export interface AssistantBundle {
-  /** Published `.eden/assistant/instructions.md`, or null. */
+  /** Published `.harnesst/assistant/instructions.md`, or null. */
   instructions: string | null;
   /** agent-relative target path → content (skills/user/*, schedules/user/*). */
   files: Record<string, string>;
-  /** Per-project model override from `.eden/assistant/assistant.json`, or null. */
+  /** Per-project model override from `.harnesst/assistant/assistant.json`, or null. */
   model: string | null;
   /** Explicit normalized effort paired with the project model, or provider default when null. */
   effort: ReasoningEffort | null;

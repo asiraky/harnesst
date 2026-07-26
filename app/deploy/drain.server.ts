@@ -25,12 +25,12 @@ import { DEPLOYMENT_CONTAINER_CLEANUP_GRACE_MS } from "./cleanup.server";
 
 /** Hard ceiling: a turn still running this long after cutover is reaped so the drain always ends. */
 export const DEPLOYMENT_DRAIN_CEILING_MS = Number(
-  process.env.EDEN_DEPLOYMENT_DRAIN_CEILING_MS || 15 * 60 * 1000,
+  process.env.HARNESST_DEPLOYMENT_DRAIN_CEILING_MS || 15 * 60 * 1000,
 );
 
 /** How often the drain watcher re-checks the runs table for the deployment going idle. */
 export const DEPLOYMENT_DRAIN_POLL_MS = Number(
-  process.env.EDEN_DEPLOYMENT_DRAIN_POLL_MS || 30 * 1000,
+  process.env.HARNESST_DEPLOYMENT_DRAIN_POLL_MS || 30 * 1000,
 );
 
 /** True while an instance is (or is becoming) a live traffic target — used to confirm a stop took. */

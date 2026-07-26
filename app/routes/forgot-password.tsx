@@ -28,7 +28,7 @@ export async function loader(args: Route.LoaderArgs) {
 }
 
 export function meta() {
-  return [{ title: "Forgot password · eden" }, ...noindexMeta];
+  return [{ title: "Forgot password · harnesst" }, ...noindexMeta];
 }
 
 export default function ForgotPassword({ loaderData }: Route.ComponentProps) {

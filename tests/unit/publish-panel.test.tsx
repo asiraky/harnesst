@@ -78,17 +78,17 @@ describe("groupDrafts", () => {
   });
 
   it("keeps a change whose owner is not in the roster, in the shared block", () => {
-    // The built-in assistant owns `.eden/assistant/**` and is not a roster member. Dropping
+    // The built-in assistant owns `.harnesst/assistant/**` and is not a roster member. Dropping
     // its changes here made the header count "1 change" over an empty panel — and Publish
     // shipped a file the user was never shown.
     expect(
       groupDrafts(
-        [draft("agent_a", "alpha/model.md"), draft("agent_x", ".eden/assistant/instructions.md")],
+        [draft("agent_a", "alpha/model.md"), draft("agent_x", ".harnesst/assistant/instructions.md")],
         roster,
       ),
     ).toEqual([
       { member: "alpha", files: ["alpha/model.md"] },
-      { member: null, files: [".eden/assistant/instructions.md"] },
+      { member: null, files: [".harnesst/assistant/instructions.md"] },
     ]);
   });
 

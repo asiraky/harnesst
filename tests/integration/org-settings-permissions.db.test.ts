@@ -2,12 +2,12 @@ import { eq } from "drizzle-orm";
 import { RouterContextProvider } from "react-router";
 import { describe, expect, it } from "vitest";
 
-const LIVE = process.env.EDEN_DB_SMOKE === "1";
+const LIVE = process.env.HARNESST_DB_SMOKE === "1";
 const ORIGIN = "http://localhost:5277";
 const PASSWORD = "correct-horse-battery-staple";
 
 process.env.BETTER_AUTH_SECRET ??=
-  "eden-org-permission-integration-secret-at-least-32-characters";
+  "harnesst-org-permission-integration-secret-at-least-32-characters";
 process.env.BETTER_AUTH_URL ??= ORIGIN;
 // This fixture uses the real invitation API, but a DB smoke test must never send externally.
 process.env.SMTP_URL = "";

@@ -21,7 +21,7 @@ import {
   requiredScopesByProvider,
   serializeLock,
   upsertInstall,
-  type EdenLock,
+  type HarnesstLock,
   type InstallEntry,
 } from "~/marketplace/lock";
 import type { ResolvedAuth } from "~/marketplace/compose.server";
@@ -127,7 +127,7 @@ describe("planInstall — path mapping", () => {
     const plan = planInstall(memberCtx());
     const paths = plan.writes.map((w) => w.path);
     expect(paths).toContain("agents/pm/agent/tools/cloudflare-deploy.ts");
-    expect(paths).toContain("eden-lock.json");
+    expect(paths).toContain("harnesst-lock.json");
     expect(plan.conflicts).toEqual([]);
     expect(plan.isUpdate).toBe(false);
     expect(plan.secrets).toEqual([
@@ -147,7 +147,7 @@ describe("planInstall — path mapping", () => {
     expect(paths).toContain("agent/tools/cloudflare-deploy.ts");
     // No package.json existed → a fresh one is written at the repo root, carrying the dep.
     expect(paths).toContain("package.json");
-    const lockWrite = plan.writes.find((w) => w.path === "eden-lock.json")!;
+    const lockWrite = plan.writes.find((w) => w.path === "harnesst-lock.json")!;
     expect(
       findInstall(
         parseLock(JSON.parse(lockWrite.content)),
@@ -192,7 +192,7 @@ describe("planInstall — path mapping", () => {
     const entry = findInstall(
       parseLock(
         JSON.parse(
-          plan.writes.find((w) => w.path === "eden-lock.json")!.content,
+          plan.writes.find((w) => w.path === "harnesst-lock.json")!.content,
         ),
       ),
       "cloudflare-deployment-engineer",
@@ -221,7 +221,7 @@ describe("planInstall — path mapping", () => {
       newMember.writes.find(
         (write) => write.path === "agents/deployer/agent/agent.ts",
       )?.content,
-    ).toContain(`edenModel('${model}')`);
+    ).toContain(`harnesstModel('${model}')`);
     expect(
       JSON.parse(
         newMember.writes.find(
@@ -245,7 +245,7 @@ describe("planInstall — path mapping", () => {
       existingMember.writes.find(
         (write) => write.path === "agents/pm/agent/agent.ts",
       )?.content,
-    ).toContain(`edenModel('${model}')`);
+    ).toContain(`harnesstModel('${model}')`);
     expect(
       JSON.parse(
         existingMember.writes.find(
@@ -271,7 +271,7 @@ describe("planInstall — path mapping", () => {
 describe("planInstall — lock secrets snapshot (§4.5)", () => {
   it("records manifest secrets in the lock entry so requirements survive forever", () => {
     const plan = planInstall(memberCtx());
-    const lockWrite = plan.writes.find((w) => w.path === "eden-lock.json")!;
+    const lockWrite = plan.writes.find((w) => w.path === "harnesst-lock.json")!;
     const entry = findInstall(
       parseLock(JSON.parse(lockWrite.content)),
       "cloudflare-deploy",
@@ -295,7 +295,7 @@ describe("planInstall — lock secrets snapshot (§4.5)", () => {
       rosterNames: ["pm"],
       target: { kind: "new-member", name: "deployer" },
     });
-    const lockWrite = plan.writes.find((w) => w.path === "eden-lock.json")!;
+    const lockWrite = plan.writes.find((w) => w.path === "harnesst-lock.json")!;
     const entry = findInstall(
       parseLock(JSON.parse(lockWrite.content)),
       "cloudflare-deployment-engineer",
@@ -360,7 +360,7 @@ describe("planInstall — lock auth snapshot (issue #30)", () => {
         target: { kind: "member", memberName: "pm", root: "agents/pm/agent" },
       }),
     );
-    const lockWrite = plan.writes.find((w) => w.path === "eden-lock.json")!;
+    const lockWrite = plan.writes.find((w) => w.path === "harnesst-lock.json")!;
     const entry = findInstall(
       parseLock(JSON.parse(lockWrite.content)),
       "google-sheets",
@@ -383,7 +383,7 @@ describe("planInstall — lock auth snapshot (issue #30)", () => {
         target: { kind: "member", memberName: "pm", root: "agents/pm/agent" },
       }),
     );
-    const lockWrite = plan.writes.find((w) => w.path === "eden-lock.json")!;
+    const lockWrite = plan.writes.find((w) => w.path === "harnesst-lock.json")!;
     const entry = findInstall(
       parseLock(JSON.parse(lockWrite.content)),
       "google-sheets",
@@ -400,7 +400,7 @@ describe("planInstall — lock auth snapshot (issue #30)", () => {
 
   it("omits the auth field for templates that declare none", () => {
     const plan = planInstall(memberCtx());
-    const lockWrite = plan.writes.find((w) => w.path === "eden-lock.json")!;
+    const lockWrite = plan.writes.find((w) => w.path === "harnesst-lock.json")!;
     const entry = findInstall(
       parseLock(JSON.parse(lockWrite.content)),
       "cloudflare-deploy",
@@ -426,7 +426,7 @@ describe("requiredScopesByProvider (issue #30)", () => {
   });
 
   it("unions and dedupes scopes across installs for the same member/provider, sorted", () => {
-    const lock: EdenLock = {
+    const lock: HarnesstLock = {
       version: 1,
       installs: [
         authEntry({
@@ -471,7 +471,7 @@ describe("requiredScopesByProvider (issue #30)", () => {
   });
 
   it("filters by member — a different member's scopes don't leak in", () => {
-    const lock: EdenLock = {
+    const lock: HarnesstLock = {
       version: 1,
       installs: [
         authEntry({
@@ -490,7 +490,7 @@ describe("requiredScopesByProvider (issue #30)", () => {
   });
 
   it("is empty when installs carry no auth snapshot (old locks)", () => {
-    const lock: EdenLock = {
+    const lock: HarnesstLock = {
       version: 1,
       installs: [authEntry({ member: "pm" })],
     };
@@ -526,7 +526,7 @@ describe("planInstall — sandbox setup", () => {
     expect(sandbox).toContain(
       'import * as addon0 from "./addons/agent-browser";',
     );
-    expect(sandbox).toContain("EDEN_SANDBOX_ENV");
+    expect(sandbox).toContain("HARNESST_SANDBOX_ENV");
     expect(sandbox).toContain(
       "defaultBackend({ docker: { env }, vercel: { env } })",
     );
@@ -534,7 +534,7 @@ describe("planInstall — sandbox setup", () => {
     const entry = findInstall(
       parseLock(
         JSON.parse(
-          plan.writes.find((w) => w.path === "eden-lock.json")!.content,
+          plan.writes.find((w) => w.path === "harnesst-lock.json")!.content,
         ),
       ),
       "agent-browser",
@@ -558,7 +558,7 @@ describe("planInstall — sandbox setup", () => {
     );
     const priorLock = parseLock(
       JSON.parse(
-        priorPlan.writes.find((w) => w.path === "eden-lock.json")!.content,
+        priorPlan.writes.find((w) => w.path === "harnesst-lock.json")!.content,
       ),
     );
     const cloudflareSkill: CatalogTemplate = {
@@ -688,15 +688,15 @@ describe("planInstall — conflicts", () => {
     expect(plan.conflicts).toEqual([]);
   });
 
-  it("never treats package.json or eden-lock.json as a conflict (they merge)", () => {
+  it("never treats package.json or harnesst-lock.json as a conflict (they merge)", () => {
     const plan = planInstall(
       memberCtx({
-        repoPaths: ["agents/pm/package.json", "eden-lock.json"],
+        repoPaths: ["agents/pm/package.json", "harnesst-lock.json"],
         packageJson: pkg({ zod: "^3.23.0" }),
       }),
     );
     expect(plan.conflicts).toEqual([]);
-    expect(plan.writes.some((w) => w.path === "eden-lock.json")).toBe(true);
+    expect(plan.writes.some((w) => w.path === "harnesst-lock.json")).toBe(true);
   });
 
   it("registers around an existing code-authored connection without owning or rewriting it", () => {
@@ -714,7 +714,7 @@ describe("planInstall — conflicts", () => {
     expect(plan.writes.some((write) => write.path === path)).toBe(false);
 
     const lock = parseLock(
-      JSON.parse(plan.writes.find((w) => w.path === "eden-lock.json")!.content),
+      JSON.parse(plan.writes.find((w) => w.path === "harnesst-lock.json")!.content),
     );
     const entry = findInstall(lock, "google-sheets", "pm")!;
     expect(entry.files).toEqual([]);
@@ -759,7 +759,7 @@ describe("planInstall — conflicts", () => {
     );
     expect(plan.writes.some((write) => write.path === missingPath)).toBe(true);
     const lock = parseLock(
-      JSON.parse(plan.writes.find((w) => w.path === "eden-lock.json")!.content),
+      JSON.parse(plan.writes.find((w) => w.path === "harnesst-lock.json")!.content),
     );
     expect(findInstall(lock, agentTpl.manifest.id, "pm")!.files).toEqual([
       missingPath,
@@ -806,7 +806,7 @@ describe("planInstall — conflicts", () => {
         keepExistingFiles: true,
       }),
     );
-    // The hand-authored module Eden never managed must not be clobbered…
+    // The hand-authored module harnesst never managed must not be clobbered…
     expect(plan.writes.some((w) => w.path === sandboxPath)).toBe(false);
     // …and the missing skill file still stages.
     expect(
@@ -849,7 +849,7 @@ describe("planInstall — conflicts", () => {
     );
     const lock = parseLock(
       JSON.parse(
-        registered.writes.find((w) => w.path === "eden-lock.json")!.content,
+        registered.writes.find((w) => w.path === "harnesst-lock.json")!.content,
       ),
     );
     expect(findInstall(lock, "google-sheets", "pm")!.preservedFiles).toEqual([
@@ -870,7 +870,7 @@ describe("planInstall — conflicts", () => {
     expect(repaired.writes.some((w) => w.path === path)).toBe(false);
     const nextLock = parseLock(
       JSON.parse(
-        repaired.writes.find((w) => w.path === "eden-lock.json")!.content,
+        repaired.writes.find((w) => w.path === "harnesst-lock.json")!.content,
       ),
     );
     expect(findInstall(nextLock, "google-sheets", "pm")!.preservedFiles).toEqual([
@@ -965,7 +965,7 @@ describe("planInstall — malformed package.json", () => {
     // No package.json write is staged; the template file + lock writes still plan fine.
     expect(plan.writes.map((w) => w.path)).toEqual([
       "agents/pm/agent/tools/cloudflare-deploy.ts",
-      "eden-lock.json",
+      "harnesst-lock.json",
     ]);
   });
 });
@@ -1029,7 +1029,7 @@ describe("planInstall — resolved (composed) templates", () => {
     const entry = findInstall(
       parseLock(
         JSON.parse(
-          plan.writes.find((w) => w.path === "eden-lock.json")!.content,
+          plan.writes.find((w) => w.path === "harnesst-lock.json")!.content,
         ),
       ),
       "engineer",
@@ -1221,7 +1221,7 @@ describe("planInstall — composite absorbs a standalone include install (issue 
     expect(plan.warnings.some((w) => w.includes("Absorbs"))).toBe(true);
 
     const lock = parseLock(
-      JSON.parse(plan.writes.find((w) => w.path === "eden-lock.json")!.content),
+      JSON.parse(plan.writes.find((w) => w.path === "harnesst-lock.json")!.content),
     );
     // The standalone entry is gone; the composite's entry records the include provenance.
     expect(findInstall(lock, "discord", "x")).toBeUndefined();
@@ -1248,7 +1248,7 @@ describe("planInstall — composite absorbs a standalone include install (issue 
     );
     expect(plan.conflicts).toEqual([]);
     const lock = parseLock(
-      JSON.parse(plan.writes.find((w) => w.path === "eden-lock.json")!.content),
+      JSON.parse(plan.writes.find((w) => w.path === "harnesst-lock.json")!.content),
     );
     expect(findInstall(lock, "discord", "y")).toBeDefined();
     expect(findInstall(lock, "discord", "x")).toBeUndefined();
@@ -1326,7 +1326,7 @@ describe("planUninstall", () => {
     ],
     dependencies: { wrangler: "^3.0.0" },
   };
-  const lock: EdenLock = upsertInstall(emptyLock(), entry);
+  const lock: HarnesstLock = upsertInstall(emptyLock(), entry);
 
   it("deletes the entry's files, drops it from the lock, lists deps left", () => {
     const plan = planUninstall({
@@ -1374,7 +1374,7 @@ describe("planUninstall", () => {
     );
     const installedLock = parseLock(
       JSON.parse(
-        installPlan.writes.find((w) => w.path === "eden-lock.json")!.content,
+        installPlan.writes.find((w) => w.path === "harnesst-lock.json")!.content,
       ),
     );
     const entry = findInstall(installedLock, "agent-browser", "pm")!;
@@ -1389,7 +1389,7 @@ describe("planUninstall", () => {
       "agents/pm/agent/skills/agent-browser.md",
     ]);
     expect(plan.writes.map((w) => w.path)).toEqual([
-      "eden-lock.json",
+      "harnesst-lock.json",
       "agents/pm/agent/sandbox/sandbox.ts",
     ]);
     expect(

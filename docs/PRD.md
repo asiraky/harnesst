@@ -1,13 +1,13 @@
-# Eden — Product Requirements Document
+# harnesst — Product Requirements Document
 
-> **Working name:** Eden (a companion to Vercel's **eve**). Rename TBD.
+> **harnesst** — a companion to Vercel's **eve**.
 > **Status:** Draft v0.2 · **Owner:** asiraky@gmail.com · **Last updated:** 2026-07-04
 
 ---
 
 ## 1. Summary
 
-**Eden is a web application for building, managing, and deploying [eve](https://github.com/vercel/eve) agents without writing code by hand.**
+**harnesst is a web application for building, managing, and deploying [eve](https://github.com/vercel/eve) agents without writing code by hand.**
 
 eve is Vercel's open-source, filesystem-first framework for durable AI agents: every agent is a
 directory of files (`instructions.md`, `tools/*.ts`, `skills/*`, `subagents/*`, `channels/*`,
@@ -16,7 +16,7 @@ It is powerful, but authoring an agent today means a developer opening a GitHub 
 TypeScript and Markdown by hand. Product managers — the people who actually know what the agent
 should _do_ — cannot participate directly.
 
-Eden closes that gap. It is a structured, opinionated web interface over an eve repository plus an
+harnesst closes that gap. It is a structured, opinionated web interface over an eve repository plus an
 embedded coding assistant, so a non-developer can:
 
 1. **Connect or create** the eve project (via a GitHub App) and initialize it.
@@ -24,10 +24,10 @@ embedded coding assistant, so a non-developer can:
    tools with the help of an in-app coding agent.
 3. **Publish it** — one explicit action that checks and builds the saved changes, lands them as
    one commit on the default branch, cuts a version, and **deploys** it to a running instance —
-   with the option for Eden to fully host and operate that instance on the customer's behalf.
+   with the option for harnesst to fully host and operate that instance on the customer's behalf.
 
-Eden ships as an **open-source product anyone can self-host**, and as a **commercial managed
-service** where Eden runs the infrastructure, meters usage, and bills the customer. Both are the
+harnesst ships as an **open-source product anyone can self-host**, and as a **commercial managed
+service** where harnesst runs the infrastructure, meters usage, and bills the customer. Both are the
 same product over the same seam; the managed service is the OSS product plus a managed credential
 pool, metering, and billing.
 
@@ -38,7 +38,7 @@ pool, metering, and billing.
 - **eve's authoring surface is developer-only.** Even the "no code" parts (instructions, skills)
   live in a git repo; the genuinely-code parts (tools are TypeScript with Zod schemas, `agent.ts`
   config, connections) are out of reach for PMs. Vercel's own blog notes non-technical teams built
-  agents — but only _with_ engineering support. Eden removes the engineering dependency.
+  agents — but only _with_ engineering support. harnesst removes the engineering dependency.
 - **The full capability of eve is never exposed in one place.** There is no visual, guided way to
   see and configure an agent's model, tools, skills, subagents, channels, schedules, approvals,
   connections, secrets, and evals together.
@@ -64,15 +64,15 @@ pool, metering, and billing.
 - Provide **one-click deployment and lifecycle management** for one or many instances of an agent,
   via a pluggable `DeployTarget` adapter. Default target is a **portable container image + Postgres
   Workflow World**.
-- Offer a **managed commercial mode** (v1): Eden owns the infra, meters usage, and bills the customer.
+- Offer a **managed commercial mode** (v1): harnesst owns the infra, meters usage, and bills the customer.
 - Keep the whole thing **self-hostable and open source**.
 
 ### Non-goals (for v1)
 
-- Being an eve _replacement_ or a general low-code app builder. Eden authors eve projects; it does
+- Being an eve _replacement_ or a general low-code app builder. harnesst authors eve projects; it does
   not invent a new agent runtime.
 - A visual node-graph / flowchart builder for agent logic. eve's model is files + an LLM loop, not a
-  DAG; Eden mirrors that.
+  DAG; harnesst mirrors that.
 - Supporting non-eve agent frameworks.
 - Building our own model-hosting/inference. We use provider keys / AI Gateway.
 
@@ -80,20 +80,20 @@ pool, metering, and billing.
 
 ## 4. Users & personas
 
-| Persona                       | Needs from Eden                                                                                                                                                                |
+| Persona                       | Needs from harnesst                                                                                                                                                                |
 | ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | **Product Manager (primary)** | Create and iterate on agents: instructions, tools, skills, schedules, channels. Uses the assistant to generate tool code. Ships via a review flow. Cannot write TypeScript.    |
-| **Engineer / Platform owner** | Reviews the PRs Eden opens, owns secrets and connections, approves risky tools, self-hosts Eden or manages the managed-service account. Wants git to stay the source of truth. |
+| **Engineer / Platform owner** | Reviews the PRs harnesst opens, owns secrets and connections, approves risky tools, self-hosts harnesst or manages the managed-service account. Wants git to stay the source of truth. |
 | **Ops / Admin**               | Manages members, deployment targets, billing (managed mode), environment/secret governance, and approval policies.                                                             |
 
 ---
 
-## 5. Background: the eve substrate Eden must fully expose
+## 5. Background: the eve substrate harnesst must fully expose
 
-Eden's UI is a faithful, guided editor over these eve concepts. This inventory _is_ the config
-surface Eden must cover.
+harnesst's UI is a faithful, guided editor over these eve concepts. This inventory _is_ the config
+surface harnesst must cover.
 
-| eve concept            | File / API                                                                                                                                                                                                                 | What Eden must let a PM do                                                                                                                                                                                            |
+| eve concept            | File / API                                                                                                                                                                                                                 | What harnesst must let a PM do                                                                                                                                                                                            |
 | ---------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **Runtime config**     | `agent/agent.ts` → `defineAgent({ model, ... })`                                                                                                                                                                           | Pick model (provider-prefixed string, e.g. `anthropic/claude-sonnet-5`), set runtime options, thinking level, etc. via forms.                                                                                         |
 | **Instructions**       | `agent/instructions.md`                                                                                                                                                                                                    | Rich Markdown editor for the always-on system prompt, with assistant help and templates.                                                                                                                              |
@@ -107,8 +107,8 @@ surface Eden must cover.
 | **Approvals / HITL**   | `needsApproval` on tools (`always()`, `once()`, predicates)                                                                                                                                                                | Toggle and configure human-approval gating per tool.                                                                                                                                                                  |
 | **Evals**              | TypeScript eval suites, run locally or vs deployed                                                                                                                                                                         | Author scored checks; run as a deploy gate (later phase for full UI).                                                                                                                                                 |
 | **Env vars / secrets** | project environment variables                                                                                                                                                                                              | Manage secrets per environment (user-defined, M5.7) with encryption and scoping.                                                                                                                                      |
-| **Observability**      | Agent Runs (Vercel) / OpenTelemetry via `instrumentation.ts` + the Workflow event log                                                                                                                                      | **First-class pillar (§7.6):** per-agent, per-run transcript + metrics dashboard (inputs, model/tool calls, outputs, errors, tokens, wall-clock). Eden supplies its own runs store/UI on every host, not just Vercel. |
-| **Build/runtime**      | `eve build` → `.eve/` (compiled artifacts) + `.output/` (Nitro host); runtime = **Nitro + Workflow SDK**; durability via **Workflow "Worlds"** (Local dev, **Postgres** reference, community Redis/Mongo/Turso/Cloudflare) | Eden drives build + deploy and wires the Workflow World, sandbox backend, and model keys.                                                                                                                             |
+| **Observability**      | Agent Runs (Vercel) / OpenTelemetry via `instrumentation.ts` + the Workflow event log                                                                                                                                      | **First-class pillar (§7.6):** per-agent, per-run transcript + metrics dashboard (inputs, model/tool calls, outputs, errors, tokens, wall-clock). harnesst supplies its own runs store/UI on every host, not just Vercel. |
+| **Build/runtime**      | `eve build` → `.eve/` (compiled artifacts) + `.output/` (Nitro host); runtime = **Nitro + Workflow SDK**; durability via **Workflow "Worlds"** (Local dev, **Postgres** reference, community Redis/Mongo/Turso/Cloudflare) | harnesst drives build + deploy and wires the Workflow World, sandbox backend, and model keys.                                                                                                                             |
 
 **Key portability fact (validated against source):** `eve build` emits a standard **Nitro
 `.output/`** deployable via Nitro presets to _any_ supported host. Durability is the open-source
@@ -116,13 +116,13 @@ surface Eden must cover.
 reference implementation for self-hosting and a **Local World** for dev. The sandbox and model layer
 are likewise adapters (local bash/Docker sandbox; direct provider keys off-Vercel). **eve is not
 Vercel-locked** — off-Vercel you supply three things: a Workflow World store, a sandbox backend, and
-model keys. This is the foundation of Eden's deployment design.
+model keys. This is the foundation of harnesst's deployment design.
 
 ---
 
 ## 6. Product pillars
 
-Eden has seven pillars. v1 delivers the first five; **Recruit** and **Teams** follow (§11).
+harnesst has seven pillars. v1 delivers the first five; **Recruit** and **Teams** follow (§11).
 
 1. **Connect** — GitHub App integration: create a new eve repo or connect an existing one; run
    `eve init`; detect and parse the agent structure.
@@ -132,7 +132,7 @@ Eden has seven pillars. v1 delivers the first five; **Recruit** and **Teams** fo
    publish panel shows every change with a diff, and **Publish** is the ship signal (Save &
    Publish cutover, M8.6).
 4. **Deploy & operate** — one-click deploy through a `DeployTarget` adapter (default: container +
-   Postgres World); manage multiple instances/environments; **managed mode** where Eden runs it and
+   Postgres World); manage multiple instances/environments; **managed mode** where harnesst runs it and
    bills usage.
 5. **Observe** — first-class run observability: for every agent, browse every execution and open the
    **full transcript** — the triggering input, each model call and tool call (with inputs, outputs,
@@ -143,7 +143,7 @@ Eden has seven pillars. v1 delivers the first five; **Recruit** and **Teams** fo
    shortcut for creation, not a new runtime concept.
 7. **Teams** — model an **organisation**, not just an agent: a team of top-level eve agents
    (PM, designer, developers, QA, deployer) living in one **monorepo by convention**, each with its
-   own channels, schedules, credentials, Releases, and run history — auto-wired by Eden so
+   own channels, schedules, credentials, Releases, and run history — auto-wired by harnesst so
    teammates can delegate to each other.
 
 ---
@@ -152,17 +152,17 @@ Eden has seven pillars. v1 delivers the first five; **Recruit** and **Teams** fo
 
 ### 7.1 Connect — GitHub App & repo lifecycle
 
-- **GitHub App** (not just OAuth) so Eden can create repos, read/write files, open PRs, manage
+- **GitHub App** (not just OAuth) so harnesst can create repos, read/write files, open PRs, manage
   branches, and receive webhooks on the user's behalf, scoped to selected repos.
 - **Two entry paths:**
-  - _Create new:_ Eden creates a repo and scaffolds it by running the equivalent of
+  - _Create new:_ harnesst creates a repo and scaffolds it by running the equivalent of
     `npx eve@latest init` (an eve project skeleton), commits the initial structure.
-  - _Connect existing:_ point Eden at an existing eve repo; Eden validates it is an eve project
+  - _Connect existing:_ point harnesst at an existing eve repo; harnesst validates it is an eve project
     (`agent/` present), parses the manifest, and hydrates the UI from the files.
-- **Repo model = source of truth.** Eden never keeps a divergent copy of agent config; it reads and
+- **Repo model = source of truth.** harnesst never keeps a divergent copy of agent config; it reads and
   writes the files. UI state is a projection of the repo (plus in-flight, uncommitted edits on a
   working branch).
-- **Detection & sync:** webhooks keep Eden in sync when the repo changes outside Eden (an engineer
+- **Detection & sync:** webhooks keep harnesst in sync when the repo changes outside harnesst (an engineer
   edits a tool directly). Conflicts surface in the UI.
 
 ### 7.2 Author — visual config + embedded coding assistant
@@ -172,7 +172,7 @@ Markdown editors for instructions/skills; a code view for tools/connections).
 
 **Embedded authoring assistant (Pi SDK).** Built by embedding
 [`@earendil-works/pi-coding-agent`](https://github.com/earendil-works/pi/tree/main/packages/coding-agent)
-as a library — _not_ eve. Rationale: Eden itself is a normal web app, not an eve runtime; Pi's SDK
+as a library — _not_ eve. Rationale: harnesst itself is a normal web app, not an eve runtime; Pi's SDK
 (`createAgentSession`, custom `defineTool` tools, streaming events, model registry, in-memory or
 persisted sessions) is designed exactly for embedding an agent inside your own app.
 
@@ -185,8 +185,8 @@ The assistant:
   tools scoped to a checkout/sandbox of the repo), so its edits become part of the same PR.
 - **Helps configure everything else**: drafts instructions, proposes skills, wires connections and
   the env vars/secrets a tool needs, and can run the tool in a sandbox to validate.
-- **Is scoped and safe**: custom Eden tools (via Pi's `customTools`) expose only repo-authoring and
-  sandbox-test actions; destructive/host actions are excluded. Model + keys come from Eden config.
+- **Is scoped and safe**: custom harnesst tools (via Pi's `customTools`) expose only repo-authoring and
+  sandbox-test actions; destructive/host actions are excluded. Model + keys come from harnesst config.
 
 > **Decision (revised 2026-07-02):** v1 ships a **Claude-API generator** (stateless: describe →
 > generated `defineTool` file → lands on the working branch via the normal PR flow) behind an
@@ -196,12 +196,12 @@ The assistant:
 > in behind the same seam without touching the editors.
 
 **Secrets & env vars UI:** when a tool or connection needs a secret, the assistant references it by
-name; the PM sets the value in Eden's secrets manager (per environment), never in code. Values are
+name; the PM sets the value in harnesst's secrets manager (per environment), never in code. Values are
 encrypted at rest and injected at deploy time.
 
 ### 7.3 Review & version — Save & Publish (revised, M8.6 / issue #225)
 
-- All Eden edits (form changes and assistant code changes) land as **saved drafts** in one shared
+- All harnesst edits (form changes and assistant code changes) land as **saved drafts** in one shared
   staging area — every editor has a Save button, and an assistant turn saves its file diff the
   same way. Saving never touches git.
 - **Publish = ship.** One button in the workspace header shows every pending change (diff, owning
@@ -209,15 +209,15 @@ encrypted at rest and injected at deploy time.
   A failed build means nothing lands — the drafts stay saved, and the failure names the step and
   the member and shows the compiler's own output.
 - The commit is one compare-and-swap fast-forward onto the default branch; the commit history
-  **is** the audit trail. Eden authors no branches and no pull requests. Developers can still
-  push or merge PRs directly on GitHub — Eden cuts Releases for merges to the default branch via
+  **is** the audit trail. harnesst authors no branches and no pull requests. Developers can still
+  push or merge PRs directly on GitHub — harnesst cuts Releases for merges to the default branch via
   webhook (and never auto-deploys them).
 - Benefits inherited for free: history, blame, rollback (§7.7), and CI hooks (evals as a gate —
   later phase).
 
 ### 7.4 Deploy & operate — `DeployTarget` adapter
 
-**Build:** at publish, Eden builds the staged tree **before** the commit lands (nothing broken
+**Build:** at publish, harnesst builds the staged tree **before** the commit lands (nothing broken
 ever reaches the default branch) — `eve build` produces `.eve/` + the Nitro `.output/`, packaged
 as a **container image** of the host; the deploy step reuses that image rather than rebuilding.
 
@@ -236,9 +236,9 @@ sandbox backend. This is the portable path and underpins both OSS-BYO and manage
 **Credential-ownership models over the same adapter:**
 
 - **BYO (OSS / self-host):** customer connects their host + their Postgres + their model keys. The
-  instance runs in _their_ account; they pay their providers. Eden orchestrates.
-- **Managed (commercial, v1):** _Eden_ owns the host, the Postgres World, the sandbox, and pays the
-  bills; the customer never picks a provider. Eden meters usage and bills the customer (§8).
+  instance runs in _their_ account; they pay their providers. harnesst orchestrates.
+- **Managed (commercial, v1):** _harnesst_ owns the host, the Postgres World, the sandbox, and pays the
+  bills; the customer never picks a provider. harnesst meters usage and bills the customer (§8).
 
 **Other targets behind the seam (later):** a **Vercel** adapter (zero-config: Workflows store,
 Vercel Sandbox, AI Gateway auto-wire) and additional Worlds (Redis/Turso/Cloudflare).
@@ -247,7 +247,7 @@ Vercel Sandbox, AI Gateway auto-wire) and additional Worlds (Redis/Turso/Cloudfl
 
 - **Environments are user-defined and per-agent (M5.7).** A new member starts with exactly ONE,
   named `default` — the user renames it and creates/deletes others as their workflow demands
-  (someone who wants dev/staging/production makes them; nothing is imposed). Eden enforces one
+  (someone who wants dev/staging/production makes them; nothing is imposed). harnesst enforces one
   invariant: a member always has at least one environment. Environments render as equal peers
   everywhere; the member's first (creation order) is only the _mechanical_ default the Ship
   dialog preselects — no environment name or position is special in the UI. Deleting an
@@ -281,19 +281,19 @@ live slot); each environment runs exactly one version.
 
 ### 7.5 Managed commercial offering (v1)
 
-The managed mode turns Eden into a hosted service:
+The managed mode turns harnesst into a hosted service:
 
-- **Managed credential pool:** Eden-owned provider accounts/infra; customers deploy without bringing
+- **Managed credential pool:** harnesst-owned provider accounts/infra; customers deploy without bringing
   cloud accounts.
 - **Multi-tenancy & isolation:** each customer's instances run isolated (separate namespaces/DBs;
   sandbox isolation per eve's model).
 - **Metering:** capture requests, compute-seconds, sandbox usage, and model tokens per instance.
-- **Billing:** plans + usage-based billing (Stripe or similar); Eden pays providers, marks up.
+- **Billing:** plans + usage-based billing (Stripe or similar); harnesst pays providers, marks up.
 - **Governance:** org/team/roles, SSO (later), audit log, approval policies, spend limits.
 
 ### 7.6 Observe — run observability
 
-Observability is a primary reason teams can trust an agent in production. Eden must let anyone open
+Observability is a primary reason teams can trust an agent in production. harnesst must let anyone open
 **any agent** and inspect **any execution** of it in full. This works on **every deploy target**
 (managed and BYO/self-host), not just Vercel's Agent Runs.
 
@@ -321,18 +321,18 @@ calls, reasoning, and messages. The dashboard is: _Agent → its Runs → drill 
 
 **System prompt — link, don't (only) snapshot.** Each Run records the **deployed agent version**
 (git commit SHA / build id) it executed under. Because `instructions.md`, tools, and skills all live
-in the repo, Eden reconstructs the exact **system prompt at run time by linking to that commit** —
-no need to duplicate it in the telemetry store (resolving the user's open question). Eden _may_ also
+in the repo, harnesst reconstructs the exact **system prompt at run time by linking to that commit** —
+no need to duplicate it in the telemetry store (resolving the user's open question). harnesst _may_ also
 snapshot the resolved system prompt for convenience/immutability, but the versioned source is the
 source of truth. The **user input**, tool I/O, tokens, and timing are runtime data and _are_ recorded.
 
 **Where the data comes from.** Two complementary sources (see ARCHITECTURE §3.7): eve's
 **OpenTelemetry** AI-SDK spans (via `agent/instrumentation.ts`) give tokens, model, latency, and
 model/tool I/O; the **Workflow event log** (in Postgres) is the durable, replayable record of every
-turn and step. Eden ingests both into its own runs store and renders the UI.
+turn and step. harnesst ingests both into its own runs store and renders the UI.
 
 **Cross-cutting requirements:** works for **BYO** deploys by shipping telemetry from the customer's
-instance to Eden's collector over an authenticated OTLP endpoint; **tenant-isolated** in managed
+instance to harnesst's collector over an authenticated OTLP endpoint; **tenant-isolated** in managed
 mode; **access-controlled** by active Better Auth organization membership (transcripts contain
 sensitive prompt/response data);
 **retention + redaction** controls; and the deployer-disclosure note eve already flags. Token counts
@@ -342,7 +342,7 @@ source of truth; observability is the per-run detail view.
 ### 7.7 Version & release
 
 eve has **no built-in agent-versioning primitive** (validated against source): it is git-native
-(`init` initializes git) and relies on **immutable deployments**. Eden builds a thin product layer
+(`init` initializes git) and relies on **immutable deployments**. harnesst builds a thin product layer
 over that — it does _not_ invent a parallel versioning system.
 
 **A Release = an immutable build of an agent at a git commit.** Because every publish lands one
@@ -373,7 +373,7 @@ changelog, author, and timestamp. Environments/deployments point at a Release.
    can return behind a deliberate surface (progressive rollout, explicit A/B) when that story
    exists.
 
-**"A/B" is emergent, not a first-class feature.** Eden deliberately does **not** build an automated
+**"A/B" is emergent, not a first-class feature.** harnesst deliberately does **not** build an automated
 experimentation framework — no thumbs UI, no eval-gated winner selection, no auto-rollout engine in
 v1. The product gives PMs (a) **per-version telemetry** (Runs are already version-tagged, so
 observability groups/filters/compares by Release) and (b) one-click movement between versions.
@@ -434,7 +434,7 @@ so the user can prune.
 
 **Install = saved changes.** Installing an item:
 
-1. Eden materializes the template's files into the right location as **saved drafts** (the normal
+1. harnesst materializes the template's files into the right location as **saved drafts** (the normal
    §7.3 flow — visible in the publish panel, history and rollback for free).
 2. An **onboarding wizard** walks the customer through the manifest's requirements: "this agent
    needs `CLOUDFLARE_API_TOKEN` — set it now." Secret _values_ go to the secrets store (§7.2), never
@@ -448,12 +448,12 @@ fidelities in §7.9 — no separate "team builder" needed for the simple case.
 **After install it's just a regular agent.** The customer edits its instructions, removes tools,
 adds skills — the template was a starting point, not a subscription. Files are theirs.
 
-**Update-from-source (provenance).** Each install is recorded in a repo-root **`eden-lock.json`**
+**Update-from-source (provenance).** Each install is recorded in a repo-root **`harnesst-lock.json`**
 (generalizing the existing `skills-lock.json` pattern): source registry, template id, version,
-content hash. When the upstream template publishes a new version, Eden shows "update available";
+content hash. When the upstream template publishes a new version, harnesst shows "update available";
 accepting opens a **PR with the diff**. If the customer has locally modified the installed files,
 the PR surfaces the conflict and a human resolves it in review — git review _is_ the merge
-machinery; Eden does not build three-way merge tooling.
+machinery; harnesst does not build three-way merge tooling.
 
 **Distribution — the catalog lives in the eve repo.** v1 is a **first-party curated catalog**: a
 `marketplace/` directory inside the eve OSS repo (owner decision — no separate repo), laid out as
@@ -464,21 +464,21 @@ machinery; Eden does not build three-way merge tooling.
   schema-check every manifest, typecheck each template against its declared eve range, verify the
   manifest file list matches the directory, enforce a version bump when contents change, and
   regenerate a root **`marketplace/index.json`** (id, type, version, description, content hash).
-  Eden consumes _only_ that index for browse (one cached fetch, no tree walk) and reads a template's
+  harnesst consumes _only_ that index for browse (one cached fetch, no tree walk) and reads a template's
   subtree at install time. The catalog location is a **config pointer** (repo + path + ref) behind a
   `CatalogSource` seam, which also defines what a registry _is_ — a repo with this layout and an
   index — so third-party registries later are the same shape with a different pointer. Publishing
   policy, trust/review, and revenue share stay out of scope for v1 (§12).
 
-**Authoring is back-of-house, gated by CI — no Eden feature required.** Creating a template is a
+**Authoring is back-of-house, gated by CI — no harnesst feature required.** Creating a template is a
 coding-agent session (or human PR) in the eve repo: a scaffold script stamps the directory
 convention, the JSON schema makes the manifest checkable, and catalog CI is the gatekeeper —
 curation is literally code review. The contribution ladder has two rungs: rung 1 (now), outsiders
 PR the catalog and CI + review gate it; rung 2 (later), an in-product **"publish to marketplace"**
-flow extracts a customer's live-tested tool/agent from their Eden workspace, generates the manifest
-from what Eden already knows (secrets referenced, deps, eve version), and opens the catalog PR.
+flow extracts a customer's live-tested tool/agent from their harnesst workspace, generates the manifest
+from what harnesst already knows (secrets referenced, deps, eve version), and opens the catalog PR.
 
-**Team templates are deliberately _not_ in the marketplace v1.** A team is an Eden-level construct
+**Team templates are deliberately _not_ in the marketplace v1.** A team is a harnesst-level construct
 (§7.9); once agent templates and the monorepo convention exist, a team template is trivially a
 scaffold referencing agent templates plus a wiring spec — it can come later without redesign.
 
@@ -517,12 +517,12 @@ repo/                          repo/
                                    developer/
                                    deployer/
                                  packages/shared/   ← optional shared code (npm workspaces)
-                                 eden.json          ← optional: team name, roster metadata
+                                 harnesst.json          ← optional: team name, roster metadata
 ```
 
 - `agent/` at the repo root → **single-agent mode** (today's behavior, unchanged).
 - `agents/*/agent/` → **team mode**; each subdirectory is a complete, independently buildable eve
-  project. `eden.json` is metadata only (team name, display order) — never required for discovery.
+  project. `harnesst.json` is metadata only (team name, display order) — never required for discovery.
 - Each teammate builds independently: `eve build` in its directory → its own image → its own
   Release → its own instance container. **Multiple runtimes, one repo.**
 - A single-agent repo is just a team of one; the UI stays simple for the common case.
@@ -533,19 +533,19 @@ format" ships as one reviewable change-set. This is the core argument for team-i
 team-as-N-repos.
 
 **Teammate wiring — what makes it a _team_, not a folder of agents.** eve exposes a stable HTTP
-contract per agent (`POST /eve/v1/session` + stream). When Eden knows two agents are teammates, it
+contract per agent (`POST /eve/v1/session` + stream). When harnesst knows two agents are teammates, it
 **auto-generates a delegation tool in each** — a `defineTool` (e.g. `ask_developer(...)`) that calls
 the peer's channel endpoint, with the route-auth secret injected from the secrets store and the
-peer's role description baked into the tool description so the model knows when to delegate. Eden
+peer's role description baked into the tool description so the model knows when to delegate. harnesst
 generates and keeps these tools in sync as the roster changes.
 
 **Cross-agent observability.** Every delegation carries a **correlation id**, so a task that flows
 PM → developer → deployer renders as **one linked trace** across the teammates' run transcripts
 (§7.6). This is a genuinely differentiated capability over raw eve.
 
-**"Team" is an Eden construct, not an eve construct.** eve knows nothing about teams; the repo
-convention, the roster, the generated delegation tools, and the linked traces are all Eden's product
-layer. In Eden's data model this introduces an **`agents` entity between `projects` and everything
+**"Team" is a harnesst construct, not an eve construct.** eve knows nothing about teams; the repo
+convention, the roster, the generated delegation tools, and the linked traces are all harnesst's product
+layer. In harnesst's data model this introduces an **`agents` entity between `projects` and everything
 downstream** — releases, deployments, runs, schedules, and drafts key by _agent_, not project.
 
 > **Decision (2026-07-04): teams are a hard commitment, and the schema lands now.** The
@@ -568,7 +568,7 @@ downstream** — releases, deployments, runs, schedules, and drafts key by _agen
 
 ```
                     ┌────────────────────────────────────────────┐
-                    │                 Eden Web App                │
+                    │               harnesst Web App              │
                     │  (Next.js UI + API; OSS + managed control)  │
                     └───────┬───────────────┬───────────────┬─────┘
                             │               │               │
@@ -599,7 +599,7 @@ downstream** — releases, deployments, runs, schedules, and drafts key by _agen
   managed adds tenancy/billing.
 - **Identity & auth (Better Auth):** self-hosted email/password authentication plus the organization
   plugin's organizations, members, invitations, active-organization sessions, and default roles.
-  Better Auth organizations map directly to Eden tenants; users and tenancy live in the same
+  Better Auth organizations map directly to harnesst tenants; users and tenancy live in the same
   Postgres database as the control plane (see §9). Login is email-first then password; signup is
   name/email/password with no verification gate. Password resets use Better Auth's standard
   single-use token flow and transactional email.
@@ -615,11 +615,11 @@ downstream** — releases, deployments, runs, schedules, and drafts key by _agen
 - **Traffic splitter (ingress):** weighted, session-sticky routing across concurrent Releases of one
   agent — data-plane capability retained; the product runs one live Release per environment since
   M5.6 (§7.7).
-- **Eden datastore:** projects, repos, environments, instances, releases, members, secrets metadata,
+- **harnesst datastore:** projects, repos, environments, instances, releases, members, secrets metadata,
   runs index, billing — _not_ agent config (that lives in the repo).
 
-**Data-model note:** agent configuration is **not** duplicated in Eden's DB. The repo is
-authoritative; Eden stores pointers, projections/cache, and operational metadata only. This avoids a
+**Data-model note:** agent configuration is **not** duplicated in harnesst's DB. The repo is
+authoritative; harnesst stores pointers, projections/cache, and operational metadata only. This avoids a
 two-source-of-truth reconciliation problem.
 
 ---
@@ -628,7 +628,7 @@ two-source-of-truth reconciliation problem.
 
 - **Identity, auth & tenancy (Better Auth):** all human authentication runs through Better Auth's
   same-origin React Router handler using email/password credentials. A **Better Auth organization is
-  an Eden tenant**; the organization plugin is authoritative for members, invitations, its standard
+  a harnesst tenant**; the organization plugin is authoritative for members, invitations, its standard
   owner/admin/member roles, and `session.activeOrganizationId`. Invitation delivery uses the
   installation's React Email/Postmark sender and acceptance uses the plugin API. Password reset
   delivery uses the same sender. Ordinary signup/sign-in are not gated by email verification, but
@@ -638,12 +638,12 @@ two-source-of-truth reconciliation problem.
 - **Security & secrets:** encrypted at rest, scoped per environment/instance, never written to repo
   files; least-privilege GitHub App scopes; the assistant runs in an isolated sandbox and cannot
   reach production secrets or hosts.
-- **Observability (pillar §7.6):** Eden ships its own run-observability subsystem on every host (not
+- **Observability (pillar §7.6):** harnesst ships its own run-observability subsystem on every host (not
   just Vercel's Agent Runs) — per-agent, per-run transcripts + metrics, fed by eve's OpenTelemetry
   (`instrumentation.ts`) and the Workflow event log. See ARCHITECTURE §3.7 for the pipeline.
-- **Approvals surfaced in UI:** tool `needsApproval` events must render as actionable items in Eden
+- **Approvals surfaced in UI:** tool `needsApproval` events must render as actionable items in harnesst
   (and in Slack where used), pausing the durable session with no compute cost until resolved.
-- **Multi-repo / multi-agent:** an org may manage many eve projects; Eden lists and switches between
+- **Multi-repo / multi-agent:** an org may manage many eve projects; harnesst lists and switches between
   them. Within one repo, the team convention (§7.9) allows many agents; a project is a repo, an
   agent is a member of it (single-agent repos are teams of one).
 
@@ -691,7 +691,7 @@ two-source-of-truth reconciliation problem.
 **Milestone 3 — Observe (run observability, §7.6)**
 
 - Telemetry ingestion: OTel collector (`instrumentation.ts`) + Workflow-event-log reader; authenticated
-  OTLP endpoint so **BYO** instances ship runs back to Eden.
+  OTLP endpoint so **BYO** instances ship runs back to harnesst.
 - Runs store + per-agent **Run list** (tokens, wall-clock, status, tool-call/error counts).
 - Per-Run **transcript** view (input, model/tool calls with I/O + errors, final answer); link each Run
   to its deployed git commit/Release to resolve the system prompt.
@@ -803,7 +803,7 @@ two-source-of-truth reconciliation problem.
 - **Settings tab** (member level; merged with repo sections on single-agent repos): Model
   (moved off the Overview), Secrets (the former tab, env scoping intact), danger zone with
   Remove agent (moved off the Overview header). Repo level: General (GitHub connection),
-  Run-ingestion tokens (moved out of Runs), and **Delete repository** — a full Eden-side
+  Run-ingestion tokens (moved out of Runs), and **Delete repository** — a full harnesst-side
   teardown (owner decision): instances stopped and destroyed, every row cascaded; the
   GitHub repository is never touched; typed-name confirm.
 - Punted: repo-level all-runs rollup; per-member assistant transcripts (the shared project
@@ -846,13 +846,13 @@ two-source-of-truth reconciliation problem.
 - **Phase 2 — install / update / uninstall (shipped).** Install is a change-set: a **pure
   planner** (`app/marketplace/install.server.ts`, unit-tested against literals) maps a template
   to final repo paths and hands the wizard route writes/deletions/conflicts/warnings; the route
-  stages them as drafts and hands off to the existing Deployment-tab publish/ship pipeline (Eden
+  stages them as drafts and hands off to the existing Deployment-tab publish/ship pipeline (harnesst
   does not open the PR itself). The **wizard** (`marketplace/:type/:id/install`) is
   searchParams-driven SSR — the URL is the state — with a target picker (tool/skill/subagent →
   member; agent → new team member), a live plan preview, and secret inputs (stored per-agent,
   agent-wide). The **dependency merge** follows the PRD policy — absent → add; ranges intersect
   → keep the agent's silently; disjoint → keep + warn (real `semver`, the one dependency added).
-  **Provenance** is a repo-root `eden-lock.json` (final paths + version + hash + registry +
+  **Provenance** is a repo-root `harnesst-lock.json` (final paths + version + hash + registry +
   member), folded into the cached `fetchAgentSource` read so loaders get it for free. The
   Deployment tab shows a **Marketplace installs** card per member: **Update to x.y.z** when the
   catalog has a newer version (`semver.gt`), and **Uninstall** (stages deletions of owned files;
@@ -867,7 +867,7 @@ two-source-of-truth reconciliation problem.
 
 **Milestone 6.1 — Runtime: real sandboxes & durable worlds (shipped)**
 
-- **The discovery.** A secrets audit of a live Eden instance found the model's `bash` tool
+- **The discovery.** A secrets audit of a live harnesst instance found the model's `bash` tool
   couldn't run a single binary — no git, no node, no npm. eve's `defaultBackend()` picks a
   sandbox in priority order (Vercel Sandbox when `process.env.VERCEL` → Docker when a daemon is
   reachable via a `docker` CLI → microsandbox on a KVM/Apple-Silicon host → **just-bash**, a
@@ -884,9 +884,9 @@ two-source-of-truth reconciliation problem.
   built from the new image, with the socket mounted, prints the host daemon version.
 - **Durable worlds.** eve's durability model keeps sessions in the Workflow "world" (Postgres) and
   each durable session's sandbox as a long-lived sibling container (labelled `eve.sandbox`) that
-  eve reattaches via `docker start`. Eden used to provision a **fresh instance DB per deployment**
-  (`eden_inst_<deploymentId>`), so every redeploy orphaned all sessions and their sandboxes. The
-  world DB is now keyed by **environment** (`eden_env_<sanitized>_<sha1slug>`, from
+  eve reattaches via `docker start`. harnesst used to provision a **fresh instance DB per deployment**
+  (`harnesst_inst_<deploymentId>`), so every redeploy orphaned all sessions and their sandboxes. The
+  world DB is now keyed by **environment** (`harnesst_env_<sanitized>_<sha1slug>`, from
   `DeployRequest.worldKey = environment.id`): every deploy of an environment shares one world, so
   sessions AND their `/workspace` filesystems (where an agent might keep e.g. SSH keys) survive
   redeploys — eve's intended "sessions survive cold starts, redeploys, and long pauses". During a
@@ -894,7 +894,7 @@ two-source-of-truth reconciliation problem.
   multi-instance mode (Vercel runs many function instances against one world). Per-deployment
   `destroy` now removes only the container; a new `destroyWorld(worldKey)` drops the shared world
   DB once, on environment/repository teardown, after every per-deployment destroy.
-- **Migration:** old `eden_inst_<deploymentId>` databases are orphaned by design (sessions were
+- **Migration:** old `harnesst_inst_<deploymentId>` databases are orphaned by design (sessions were
   never durable before this) — no data migration; they can be dropped manually.
 - **Security surface.** The Docker socket grants the _runtime_ process host-level Docker control;
   the trusted surface is the eve framework + repo-authored tool code (reviewed via change-sets).
@@ -924,9 +924,9 @@ two-source-of-truth reconciliation problem.
 - **The design — an `EVE_DOCKER_PATH` shim.** eve shells out to the docker CLI at `EVE_DOCKER_PATH`.
   The instance image ships a tiny POSIX-sh wrapper at `/usr/local/bin/eve-docker`
   (`EVE_DOCKER_SHIM`, eve-image.server.ts); the deploy target sets `EVE_DOCKER_PATH` to it and
-  `EDEN_HOME_VOLUME` to this environment's volume (both injected AFTER the user-secret env spread, so
+  `HARNESST_HOME_VOLUME` to this environment's volume (both injected AFTER the user-secret env spread, so
   a secret can never shadow them). On a `run` that carries eve's session-container label pair
-  `--label eve.sandbox.role=session`, the shim injects `-v $EDEN_HOME_VOLUME:/workspace/home` right
+  `--label eve.sandbox.role=session`, the shim injects `-v $HARNESST_HOME_VOLUME:/workspace/home` right
   after the `run` token and `exec`s the real client; everything else — template-build runs (shared,
   must not capture a volume), `start`/`exec`/`stop`/`rm`, an unset volume — passes through untouched.
   (The image runs as root, so the mount is already writable — no chown needed.)
@@ -935,7 +935,7 @@ two-source-of-truth reconciliation problem.
   stop mounting — a graceful degradation back to pre-6.2 behaviour, documented here as the thing to
   check when "my SSH key vanished again" resurfaces.
 - **Volume naming & lifecycle.** One named volume per environment: `homeVolumeName(worldKey)` =
-  `eden-home-<sanitized>-<sha1slug8>` (same stability/collision-safety shape as `worldDbName`, wider
+  `harnesst-home-<sanitized>-<sha1slug8>` (same stability/collision-safety shape as `worldDbName`, wider
   volume charset). Docker auto-creates it on first sandbox use — no provisioning. `destroyWorld` now
   tears the whole environment down: drop the world DB, then (best-effort) reap the sandbox containers
   mounting that volume — a `docker ps --filter volume=<name>` finds exactly this env's siblings, which
@@ -955,14 +955,14 @@ two-source-of-truth reconciliation problem.
 - ✅ **Runtime collaboration — teammate delegation.** Every team member gets an `ask-teammate`
   tool, baked into its image at build time (never the repo; a repo file at that path wins), that
   delegates a self-contained task to a peer and returns the peer's final reply. The design:
-  - **Eden relay, not peer-to-peer** — the tool POSTs `POST /api/team/ask` on the control plane,
+  - **harnesst relay, not peer-to-peer** — the tool POSTs `POST /api/team/ask` on the control plane,
     which resolves the peer's live deployment and drives its eve session via the hardened
     `sendTurn` client. Instances stay loopback-only and unauthenticated; the relay is the single
     authorization chokepoint and the natural correlation point.
   - **Default-allow, directed permissions** (`agent_links` — absent row = allowed) with a
     Settings → Team collaboration matrix; toggles apply live at the relay, no redeploy. Roster
-    identity (`EDEN_TEAMMATES`) + relay coordinates + an HMAC deployment token are env-injected at
-    deploy (stripped-then-set, like `EDEN_SANDBOX_ENV`); a roster change auto-redeploys the other
+    identity (`HARNESST_TEAMMATES`) + relay coordinates + an HMAC deployment token are env-injected at
+    deploy (stripped-then-set, like `HARNESST_SANDBOX_ENV`); a roster change auto-redeploys the other
     members to refresh it.
   - **Linked traces** — a `delegations` row plus a relay-recorded peer run (channel `teammate`)
     give the caller's tool step a link to the peer's run and the peer's run header a "Triggered
@@ -977,17 +977,17 @@ two-source-of-truth reconciliation problem.
 
 **Milestone 8 — Self-host: single-VPS deployment (shipped)**
 
-- The supported production topology for OSS v1: **one Linux VPS runs everything** — Eden,
+- The supported production topology for OSS v1: **one Linux VPS runs everything** — harnesst,
   Postgres, agent instances, sandbox containers. Co-residency is a feature of the local-docker
   target (loopback instance URLs), not an accident; multi-host is out of scope.
 - Deliverable is a **runbook, not an installer** (owner decision): `deploy/vps/README.md` walks
-  firewall → Docker Engine → clone → env file → compose stack (Postgres + Eden, host networking,
+  firewall → Docker Engine → clone → env file → compose stack (Postgres + harnesst, host networking,
   socket mount) → nginx + Let's Encrypt (host packages, not Caddy) → Better Auth/Postmark configuration
   - GitHub App pointed at the domain → smoke test. Supporting artifacts: production `Dockerfile`
-    (docker CLI + tar in the runtime image), `deploy/vps/docker-compose.yml`, `nginx-eden.conf`,
+    (docker CLI + tar in the runtime image), `deploy/vps/docker-compose.yml`, `nginx-harnesst.conf`,
     `env.example`.
 - **Acceptance (owner's words):** clone the repo on a fresh VPS, follow the README top to bottom,
-  and Eden is up on the domain — connect a repo, ship, and talk to the agent in the playground.
+  and harnesst is up on the domain — connect a repo, ship, and talk to the agent in the playground.
 - **Deprioritized:** the Vercel target (§7.4 "later" adapter) moves behind this and behind a
   probable **Cloudflare** target — revisit after VPS parity is proven. The seam stays: nothing in
   M8 hard-codes the topology outside the local-docker target.
@@ -1015,11 +1015,11 @@ two-source-of-truth reconciliation problem.
   through the same draft rails as every file. New scaffolds (create repo, add member, both
   catalog agent templates) ship a default `sandbox.ts`; the assistant's METHOD teaches the
   surface, so "add the GitHub CLI to my sandbox" is an assistant edit.
-- **Secret exposure — the `EDEN_SANDBOX_ENV` convention.** eve sandboxes are sealed by default
+- **Secret exposure — the `HARNESST_SANDBOX_ENV` convention.** eve sandboxes are sealed by default
   (they never inherit the instance env — a property we keep). Each secret gets an
   "available in the agent's sandbox shell" toggle (`secrets_metadata.sandbox_exposed` — metadata,
-  never values). At deploy, Eden joins the exposed names that actually resolved into
-  `EDEN_SANDBOX_ENV`, set AFTER the user-secret spread so it can't be shadowed or smuggled; the
+  never values). At deploy, harnesst joins the exposed names that actually resolved into
+  `HARNESST_SANDBOX_ENV`, set AFTER the user-secret spread so it can't be shadowed or smuggled; the
   scaffolded `sandbox.ts` forwards exactly those variables into the sandbox backend's `env`
   (docker + vercel bags). With nothing exposed the allowlist is absent and behavior is identical
   to the framework default. Two propagation facts, by eve's design: env values are hashed into
@@ -1055,7 +1055,7 @@ two-source-of-truth reconciliation problem.
   gain a **default model** inherited by the assistant and model-less agents. Deploys can force a
   rebuild (rebuild flag through queue → controller). `AI_GATEWAY_API_KEY`/`VERCEL_OIDC_TOKEN` still
   pass through for legacy repos. Supersedes the Vercel-AI-Gateway model decision recorded earlier
-  in the eden-project memory. (commits `63dd0db`, `2bcc7a8`, `157bc3f`.)
+  in the harnesst-project memory. (commits `63dd0db`, `2bcc7a8`, `157bc3f`.)
 
 **Milestone 8.4 — Secrets management rework (shipped)**
 
@@ -1084,30 +1084,30 @@ two-source-of-truth reconciliation problem.
   header control that shows every pending change with a diff and runs
   **check → build → commit → version → deploy** as a single pipeline). A failed build lands
   nothing; the failure names the step and member and shows the compiler's own output.
-- Eden **authors no branches and no pull requests**: the commit is a compare-and-swap
+- harnesst **authors no branches and no pull requests**: the commit is a compare-and-swap
   fast-forward onto the default branch (an external push mid-publish triggers one
   rebuild-and-retry). Each change is Docker-built **once** — the publish build's image is
   promoted and the deploy reuses it.
 - The **assistant stages drafts** like everything else: a turn's file diff lands in the same
-  staging area, and nothing deploys until Publish is clicked. The `eden/conv-*` mirror branch
+  staging area, and nothing deploys until Publish is clicked. The `harnesst/conv-*` mirror branch
   survives as an internal durability mechanism only.
 - The **Deployment tab** shrinks to environments + version history, with **Roll back** promoted
   to a primary action. The environment question is asked at most once (persisted as
   `liveEnvironmentName`); Quick deploy, the staged-count pill, per-file publish selection, and
   the `merge_change`/`publish_change` jobs are gone.
 - The GitHub webhook's cut-Releases-on-merged-PR path survives unchanged — it serves developers
-  pushing to the repo directly, not the Eden UI.
+  pushing to the repo directly, not the harnesst UI.
 
 ---
 
 ## 12. Open questions & risks
 
 - **eve beta churn.** eve is in public beta; APIs (`defineAgent`, `defineTool`, build output, Worlds)
-  may change. Eden must isolate an "eve-version adapter" layer and pin/track eve versions per repo.
+  may change. harnesst must isolate an "eve-version adapter" layer and pin/track eve versions per repo.
   **Sharpened by the eve spike:** the eve ↔ `@workflow/world-postgres` version pair
-  is strict and runtime-enforced (world spec versions) — Eden must treat it as pinned per repo.
+  is strict and runtime-enforced (world spec versions) — harnesst must treat it as pinned per repo.
 - ~~**`eve init` in a server context.**~~ **Resolved (2026-07-02):** `eve init`
-  and `eve build` run fully headless (Node ≥ 24; Eden runs them inside build containers). A repo is
+  and `eve build` run fully headless (Node ≥ 24; harnesst runs them inside build containers). A repo is
   deployable off-Vercel only if it declares the Postgres world in `agent.ts` — Connect should
   validate and offer a "make deployable" PR.
 - **Assistant workspace model.** Exactly how the Pi session mounts the working branch (ephemeral
@@ -1117,12 +1117,12 @@ two-source-of-truth reconciliation problem.
   `defaultBackend()` selects its real Docker sandbox (sibling containers) instead of degrading to
   just-bash. A hosted microVM equivalent (gVisor/Firecracker) remains the managed-substrate story
   (ARCH §2.2); egress policy beyond allow-all/deny-all and sandbox-container GC are the open edges.
-- **Observability parity.** How much of Agent Runs' fidelity Eden can reproduce off-Vercel from the
+- **Observability parity.** How much of Agent Runs' fidelity harnesst can reproduce off-Vercel from the
   Workflow event log + OTel.
 - **Two-source-of-truth avoidance.** Keep repo authoritative; validate the projection/cache stays
   correct under external repo edits (webhook races, conflicts).
 - **Managed multi-tenant security.** Isolation guarantees for customer agents (which run
-  model-generated code in sandboxes) in shared Eden infra.
+  model-generated code in sandboxes) in shared harnesst infra.
 - **Naming/branding & licensing** of the OSS core vs. managed service (open-core boundaries).
 - **Marketplace trust & safety.** Templates contain executable TypeScript that will run in customer
   instances. v1's first-party curated catalog sidesteps this; third-party publishing needs a
@@ -1131,7 +1131,7 @@ two-source-of-truth reconciliation problem.
 - ~~**Teammate delegation semantics.** Generated delegation tools call the peer's HTTP channel —
   fire-and-forget vs. wait-for-completion vs. streaming intermediate progress back into the caller's
   turn; and how approval gates (`needsApproval`) compose across a delegation chain. Needs a spike.~~
-  **RESOLVED (2026-07-06): teammate delegation.** Not a peer HTTP channel — an **Eden relay**
+  **RESOLVED (2026-07-06): teammate delegation.** Not a peer HTTP channel — a **harnesst relay**
   (`POST /api/team/ask`): the baked-in `ask-teammate` tool speaks
   plain JSON to the control plane, which drives the peer's eve session via `sendTurn` and returns
   its final reply. **Wait-for-completion**, one ask = one fresh peer session (multi-turn punted —
@@ -1146,7 +1146,7 @@ two-source-of-truth reconciliation problem.
   provider key: Org settings holds one OpenRouter key (encrypted, write-only). Every deploy
   inherits it as `OPENROUTER_API_KEY` unless a project/environment secret with that name
   overrides it, and the authoring assistant uses it for model access. In managed mode this
-  still collapses into the ModelGateway (Eden owns the keys; §8).
+  still collapses into the ModelGateway (harnesst owns the keys; §8).
 
 ---
 

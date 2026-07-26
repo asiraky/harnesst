@@ -66,7 +66,7 @@ describe("transactional email client", () => {
     process.env.NODE_ENV = "development";
     process.env.SMTP_URL = "smtp://127.0.0.1:1025";
     process.env.POSTMARK_SERVER_TOKEN = "postmark-token";
-    process.env.FROM_EMAIL = "Eden <noreply@example.com>";
+    process.env.FROM_EMAIL = "harnesst <noreply@example.com>";
     const { sendEmail } = await freshClient();
 
     await sendEmail({
@@ -77,7 +77,7 @@ describe("transactional email client", () => {
 
     expect(mocks.createTransport).toHaveBeenCalledWith("smtp://127.0.0.1:1025");
     expect(mocks.smtpSend).toHaveBeenCalledWith({
-      from: "Eden <noreply@example.com>",
+      from: "harnesst <noreply@example.com>",
       to: "member@example.com",
       subject: "Invite",
       html: "<p>Join</p>",
@@ -88,7 +88,7 @@ describe("transactional email client", () => {
   it("maps production messages to Postmark", async () => {
     process.env.NODE_ENV = "production";
     process.env.POSTMARK_SERVER_TOKEN = "postmark-token";
-    process.env.FROM_EMAIL = "Eden <noreply@example.com>";
+    process.env.FROM_EMAIL = "harnesst <noreply@example.com>";
     const { sendEmail } = await freshClient();
 
     await sendEmail({
@@ -98,7 +98,7 @@ describe("transactional email client", () => {
     });
 
     expect(mocks.postmarkSend).toHaveBeenCalledWith({
-      From: "Eden <noreply@example.com>",
+      From: "harnesst <noreply@example.com>",
       To: "person@example.com",
       Subject: "Reset",
       HtmlBody: "<p>Reset</p>",
@@ -140,7 +140,7 @@ describe("transactional email client", () => {
     let baseDir: string;
 
     beforeEach(async () => {
-      baseDir = await mkdtemp(join(tmpdir(), "eden-mailbox-"));
+      baseDir = await mkdtemp(join(tmpdir(), "harnesst-mailbox-"));
     });
 
     afterEach(async () => {
@@ -197,7 +197,7 @@ describe("transactional email client", () => {
       process.env.NODE_ENV = "production";
       process.env.MAILBOX_DIR = baseDir;
       process.env.POSTMARK_SERVER_TOKEN = "postmark-token";
-      process.env.FROM_EMAIL = "Eden <noreply@example.com>";
+      process.env.FROM_EMAIL = "harnesst <noreply@example.com>";
       const { sendEmail } = await freshClient();
 
       await sendEmail({

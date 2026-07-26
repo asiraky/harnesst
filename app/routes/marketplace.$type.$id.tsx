@@ -81,18 +81,18 @@ export const loader = (args: LoaderFunctionArgs) =>
   );
 
 export function meta() {
-  return [{ title: "Marketplace · eden" }];
+  return [{ title: "Marketplace · harnesst" }];
 }
 
 export default function TemplateDetail({ loaderData }: Route.ComponentProps) {
   const { user, template } = loaderData;
   const { manifest, files } = template;
   const deps = Object.entries(manifest.dependencies ?? {});
-  // Issue #47: provisioned secrets (GITHUB_APP_ID and friends) are Eden's concern, set by the
+  // Issue #47: provisioned secrets (GITHUB_APP_ID and friends) are harnesst's concern, set by the
   // Create GitHub App guided flow on the Deployment tab — never something the user provides. Keep
   // them out of the "Secrets you provide" list; if EVERY secret is provisioned, the card is dropped
   // entirely (the Setup card already tells the user to run Create GitHub App).
-  // Issue #163: generated secrets are minted by Eden at first deploy — like provisioned ones,
+  // Issue #163: generated secrets are minted by harnesst at first deploy — like provisioned ones,
   // never something the user provides.
   const secrets = manifest.secrets ?? [];
   const userSecrets = secrets.filter((s) => !s.provisioned && !s.generated);
@@ -236,7 +236,7 @@ export default function TemplateDetail({ loaderData }: Route.ComponentProps) {
                     <span className="font-mono">
                       {provisionedSecrets.map((s) => s.name).join(", ")}
                     </span>{" "}
-                    — Eden sets{" "}
+                    — harnesst sets{" "}
                     {provisionedSecrets.length === 1 ? "this" : "these"} via
                     guided setup on the agent&rsquo;s Deployment tab. You never
                     provide {provisionedSecrets.length === 1 ? "it" : "them"}.
@@ -250,7 +250,7 @@ export default function TemplateDetail({ loaderData }: Route.ComponentProps) {
                     <span className="font-mono">
                       {generatedSecrets.map((s) => s.name).join(", ")}
                     </span>{" "}
-                    — Eden mints{" "}
+                    — harnesst mints{" "}
                     {generatedSecrets.length === 1 ? "this" : "these"} at first
                     deploy. You never provide{" "}
                     {generatedSecrets.length === 1 ? "it" : "them"}.

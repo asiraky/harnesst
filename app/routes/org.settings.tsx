@@ -91,14 +91,14 @@ import {
 } from "~/managed/billing.server";
 import { getRuntime } from "~/seams/index.server";
 import type { auditLog } from "~/db/schema";
-import type { EdenMode } from "~/seams/types";
+import type { HarnesstMode } from "~/seams/types";
 import { noindexMeta } from "~/lib/seo";
 import { auth as betterAuth } from "~/lib/auth.server";
 import type { Route } from "./+types/org.settings";
 
 interface OrgSettingsView {
   org: WorkspaceInfo | null;
-  mode: EdenMode;
+  mode: HarnesstMode;
   limit: SpendLimit | null;
   used: number;
   audit: (typeof auditLog.$inferSelect)[];
@@ -373,7 +373,7 @@ export async function action(args: ActionFunctionArgs) {
 }
 
 export function meta() {
-  return [{ title: "Org settings · eden" }, ...noindexMeta];
+  return [{ title: "Org settings · harnesst" }, ...noindexMeta];
 }
 
 export default function OrgSettings({ loaderData }: Route.ComponentProps) {
@@ -433,7 +433,7 @@ export default function OrgSettings({ loaderData }: Route.ComponentProps) {
             <CardDescription>
               Connect one or more provider accounts. API keys are injected
               directly into agent instances for their matching connection; Codex
-              subscription traffic uses Eden's OAuth gateway. Model pickers show
+              subscription traffic uses harnesst's OAuth gateway. Model pickers show
               only models from active connections.
             </CardDescription>
           </CardHeader>
@@ -815,7 +815,7 @@ function AddAgentOverrideRow() {
       {missingName && (
         <p className="text-sm text-destructive">
           Enter the agent's name first — it's the name in{" "}
-          <code>edenAgentModel('…')</code>.
+          <code>harnesstAgentModel('…')</code>.
         </p>
       )}
       {fetcher.data && "error" in fetcher.data && fetcher.data.error && (
@@ -929,7 +929,7 @@ function ConnectApiKeyDialog() {
         <DialogHeader>
           <DialogTitle>Connect an API-key provider</DialogTitle>
           <DialogDescription>
-            Eden validates the key before sealing it. Keys are write-only and
+            harnesst validates the key before sealing it. Keys are write-only and
             are sent directly to agent instances for this exact connection.
           </DialogDescription>
         </DialogHeader>
@@ -1098,7 +1098,7 @@ function ConnectCodexDialog() {
           <p className="text-sm text-rose-600 dark:text-rose-400">{error}</p>
         ) : device ? (
           <div className="space-y-3">
-            <p className="text-sm">Enter this code to authorize eden:</p>
+            <p className="text-sm">Enter this code to authorize harnesst:</p>
             <p className="text-center font-mono text-3xl font-semibold tracking-widest">
               {device.userCode}
             </p>

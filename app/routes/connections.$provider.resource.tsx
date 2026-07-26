@@ -34,7 +34,7 @@ export const action = (args: Route.ActionArgs) =>
   resourcePickerAction(args, args.params.provider ?? "");
 
 export function meta() {
-  return [{ title: "Connect · eden" }, ...noindexMeta];
+  return [{ title: "Connect · harnesst" }, ...noindexMeta];
 }
 
 export default function ConnectionResourcePicker({

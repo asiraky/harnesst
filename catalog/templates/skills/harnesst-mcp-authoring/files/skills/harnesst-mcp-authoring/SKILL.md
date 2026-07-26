@@ -1,25 +1,25 @@
 ---
-name: eden-mcp-authoring
-description: Author, publish, and deploy eve agents through Eden's MCP tools. Use when creating or changing agent instructions, skills, tools, schedules, connections, channels, subagents, sandboxes, or agent.ts through a connected Eden project, including taking the change live through Eden's publish pipeline and confirming the deployment.
+name: harnesst-mcp-authoring
+description: Author, publish, and deploy eve agents through harnesst's MCP tools. Use when creating or changing agent instructions, skills, tools, schedules, connections, channels, subagents, sandboxes, or agent.ts through a connected harnesst project, including taking the change live through harnesst's publish pipeline and confirming the deployment.
 ---
 
-# Authoring eve agents with Eden MCP
+# Authoring eve agents with harnesst MCP
 
-Use Eden's MCP server for the complete delivery path:
+Use harnesst's MCP server for the complete delivery path:
 
 1. discover the project and its agent layout;
 2. author and stage complete file contents as saved drafts;
-3. publish — one call runs Eden's whole pipeline (check, build, commit, version, deploy); and
+3. publish — one call runs harnesst's whole pipeline (check, build, commit, version, deploy); and
 4. poll every deployment until it is live or has failed.
 
 Do not commit or push directly to the repository yourself. `stage_changes` and `publish_changes`
-are the supported write path: staging saves drafts in Eden, and publishing commits them to the
-default branch only after Eden's build passes. MCP clients may display a server prefix on these
+are the supported write path: staging saves drafts in harnesst, and publishing commits them to the
+default branch only after harnesst's build passes. MCP clients may display a server prefix on these
 names; the server-side names below are the contract.
 
 ## Preconditions and tool contract
 
-The Eden API key needs `read`, `author`, and `deploy` scopes. The project needs a connected GitHub
+The harnesst API key needs `read`, `author`, and `deploy` scopes. The project needs a connected GitHub
 repository. Never print the API key or put it in an authored file.
 
 - `list_projects()`
@@ -36,7 +36,7 @@ repository. Never print the API key or put it in an authored file.
 - `clear_failed({ environmentId })`
 
 `stage_changes` takes the complete UTF-8 content for every write and `null` for a deletion. Its
-optional `baseSha` is a source-blob conflict hint, not a substitute for reading the source. Eden's
+optional `baseSha` is a source-blob conflict hint, not a substitute for reading the source. harnesst's
 MCP server does not expose repository file contents. Before replacing an existing file, obtain its
 current complete content through the client's repository/file access or from the user. If neither is
 available, do not guess or silently overwrite it. Creating a new file from complete known content is
@@ -80,8 +80,8 @@ Follow the existing project and installed eve version. In particular:
   tool focused, make its description precise enough for model selection, and return useful failure
   information.
 - Never hardcode or invent a secret. Read it as `process.env.SCREAMING_SNAKE_CASE` inside the
-  execution path and report the exact secret names that a human must configure in Eden. Preserve an
-  existing sandbox's `EDEN_SANDBOX_ENV` forwarding.
+  execution path and report the exact secret names that a human must configure in harnesst. Preserve an
+  existing sandbox's `HARNESST_SANDBOX_ENV` forwarding.
 - Prefer `fetch` and Node built-ins. If a dependency is necessary and the client has a checkout,
   use that project's package manager so `package.json` and its lockfile stay synchronized, then
   stage their complete resulting contents. Without a checkout or complete current manifests, do not
@@ -92,7 +92,7 @@ Follow the existing project and installed eve version. In particular:
 Before publishing, validate in a checkout when one is available: install with the repository's
 package manager, run its typecheck and lint scripts, run `npx eve build`, and exercise relevant
 evals or a local eve instance. Static compilation is not behavioral proof. If no checkout exists,
-state that local checks were unavailable; `publish_changes` still runs Eden's server-side build for
+state that local checks were unavailable; `publish_changes` still runs harnesst's server-side build for
 every affected agent root, and a failed build lands nothing.
 
 ## Stage one coherent change set
@@ -108,11 +108,11 @@ call `discard_changes` with every staged path. `discard_changes` removes unpubli
 
 ## Publish — one call, the whole pipeline
 
-When the change set is ready, call `publish_changes({ projectId })`. It runs Eden's full pipeline
+When the change set is ready, call `publish_changes({ projectId })`. It runs harnesst's full pipeline
 synchronously: check the drafts, build every affected agent root, commit the whole saved set to the
 project's default branch, cut a version per roster member, and queue a deploy of the WHOLE team
 into the project's live environment. Pass `environment` only when the project has several
-environments and Eden has no live environment recorded yet — the answer is remembered.
+environments and harnesst has no live environment recorded yet — the answer is remembered.
 
 If the build fails, nothing lands: no commit, no version, no deploy, and every draft stays saved.
 The error carries the compiler's own output. Correct the complete file contents with
@@ -141,7 +141,7 @@ connected default branch; use it only for an explicit HEAD deploy with nothing s
 
 On `failed`, report `errorDetail`. If retry is appropriate, call `retry_deployment` with the failed
 deployment ID, save the new returned deployment ID, and poll that new row. Use `clear_failed` with
-the environment ID only when the user wants the failed state cleared without a retry. If Eden
+the environment ID only when the user wants the failed state cleared without a retry. If harnesst
 reports `already_deploying`, do not submit another deploy; continue polling the deployment IDs
 already known to the conversation, or report that an operator must identify the in-flight
 deployment when its ID is unavailable.

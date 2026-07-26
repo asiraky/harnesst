@@ -1,7 +1,7 @@
 /**
  * Theme selector: System (default, follows the OS) / Light / Dark.
  *
- * The choice persists in the `eden-theme` cookie (1yr, SameSite=Lax), read
+ * The choice persists in the `harnesst-theme` cookie (1yr, SameSite=Lax), read
  * before first paint by the inline script in app/root.tsx so there's no flash.
  * Setting it here applies the class immediately — no navigation/round-trip.
  */
@@ -20,12 +20,12 @@ import {
   DropdownMenuTrigger,
 } from "~/components/ui/dropdown-menu";
 
-const THEME_COOKIE = "eden-theme";
+const THEME_COOKIE = "harnesst-theme";
 type Theme = "system" | "light" | "dark";
 
 function readTheme(): Theme {
   if (typeof document === "undefined") return "system";
-  const m = document.cookie.match(/(?:^|; )eden-theme=([^;]+)/);
+  const m = document.cookie.match(/(?:^|; )harnesst-theme=([^;]+)/);
   const v = m ? decodeURIComponent(m[1]) : "system";
   return v === "light" || v === "dark" ? v : "system";
 }

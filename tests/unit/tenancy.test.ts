@@ -123,7 +123,7 @@ describe("agent context", () => {
     await store.agents.createAssistant({
       projectId: project.id,
       name: "assistant",
-      root: ".eden/assistant",
+      root: ".harnesst/assistant",
     });
 
     const markerless = await resolveSyncedAgentContext(project.id, null, [], store);

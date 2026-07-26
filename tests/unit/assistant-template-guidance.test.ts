@@ -12,11 +12,11 @@ describe("assistant template authoring guidance", () => {
   it("requires control-plane and checkout grounding before proposals", async () => {
     const [instructions, contextTool] = await Promise.all([
       readTemplate("agent/instructions.md"),
-      readTemplate("agent/tools/eden-project-context.ts"),
+      readTemplate("agent/tools/harnesst-project-context.ts"),
     ]);
 
     expect(instructions).toMatch(
-      /before proposing anything[\s\S]*eden_project_context[\s\S]*(bash|checkout)/i,
+      /before proposing anything[\s\S]*harnesst_project_context[\s\S]*(bash|checkout)/i,
     );
     expect(instructions).toMatch(/plan, suggestion, or change/i);
     expect(instructions).toMatch(
@@ -50,11 +50,11 @@ describe("assistant template authoring guidance", () => {
       readTemplate("agent/instructions.md"),
       readTemplate("agent/skills/building-eve-agents.md"),
       readTemplate("agent/skills/plan-implement-validate.md"),
-      readTemplate("agent/tools/eden-project-context.ts"),
+      readTemplate("agent/tools/harnesst-project-context.ts"),
     ]).then((files) => files.join("\n"));
 
-    expect(guidance).not.toContain("eden_add_dependency");
-    expect(guidance).not.toContain("eden_run_checks");
+    expect(guidance).not.toContain("harnesst_add_dependency");
+    expect(guidance).not.toContain("harnesst_run_checks");
     expect(guidance).not.toMatch(/staged drafts?/i);
   });
 
@@ -63,15 +63,15 @@ describe("assistant template authoring guidance", () => {
       await Promise.all([
         readTemplate("agent/instructions.md"),
         readTemplate("agent/skills/building-eve-agents.md"),
-        readTemplate("agent/tools/eden-catalog.ts"),
-        readTemplate("agent/tools/eden-install.ts"),
+        readTemplate("agent/tools/harnesst-catalog.ts"),
+        readTemplate("agent/tools/harnesst-install.ts"),
         readTemplate("VERSION"),
       ]);
 
     const guidance = `${instructions}\n${skill}\n${catalogTool}`;
-    expect(guidance).toMatch(/eden_catalog[\s\S]*eden_install/i);
+    expect(guidance).toMatch(/harnesst_catalog[\s\S]*harnesst_install/i);
     expect(guidance).toMatch(/never (copy|hand-copy)/i);
-    expect(guidance).toContain("eden-lock.json");
+    expect(guidance).toContain("harnesst-lock.json");
     expect(guidance).toContain("sandbox.bootstrap");
     for (const type of [
       "tool",
@@ -85,7 +85,7 @@ describe("assistant template authoring guidance", () => {
       expect(catalogTool).toContain(`"${type}"`);
       expect(installTool).toContain(`"${type}"`);
     }
-    expect(installTool).toContain('edenCall("install"');
+    expect(installTool).toContain('harnesstCall("install"');
     expect(version.trim()).toBe("0.2.1");
   });
 
@@ -97,8 +97,8 @@ describe("assistant template authoring guidance", () => {
     ]);
 
     expect(agent).toMatch(/reasoning:\s*assistantEffort/);
-    expect(agent).toContain("EDEN_ASSISTANT_EFFORT");
-    expect(bootstrap).toContain('shellAssignment("EDEN_ASSISTANT_EFFORT"');
-    expect(entrypoint).toContain("export EDEN_ASSISTANT_EFFORT");
+    expect(agent).toContain("HARNESST_ASSISTANT_EFFORT");
+    expect(bootstrap).toContain('shellAssignment("HARNESST_ASSISTANT_EFFORT"');
+    expect(entrypoint).toContain("export HARNESST_ASSISTANT_EFFORT");
   });
 });

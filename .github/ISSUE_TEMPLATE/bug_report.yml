@@ -1,5 +1,5 @@
 name: "\U0001F41E Bug report"
-description: Report an issue with Eden
+description: Report an issue with harnesst
 labels: [bug, pending triage]
 body:
   - type: markdown
@@ -32,7 +32,7 @@ body:
     attributes:
       label: Environment
       description: Where did this happen? Include browser/OS, and whether it was local, staging, or production.
-      placeholder: e.g. Chrome 126 on macOS, production (eden.zero8.ai)
+      placeholder: e.g. Chrome 126 on macOS, production (app.harnesst.dev)
     validations:
       required: true
   - type: textarea

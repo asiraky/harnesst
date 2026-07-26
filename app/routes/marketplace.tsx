@@ -7,7 +7,7 @@
  *
  * The catalog is a remote/optional dependency, so an unreachable index is an expected state, not
  * a crash: the loader catches it and the page renders a friendly empty-state explaining the
- * EDEN_CATALOG_REPO pointer and the fixture fallback.
+ * HARNESST_CATALOG_REPO pointer and the fixture fallback.
  */
 import { sessionLoader } from "~/auth/session.server";
 import {
@@ -128,7 +128,7 @@ const TYPE_META: Record<TemplateType, TypeMeta> = {
  * The set of installed "type/id" keys for the marketplace "Installed" facet. The browse listing
  * has NO project/target context, so the scope is the UNION across ALL of the org's connected
  * projects (any member): a template counts as installed if it appears in any project's effective
- * `eden-lock.json`. Each project's fetch is wrapped in its own try/catch so one unreachable repo
+ * `harnesst-lock.json`. Each project's fetch is wrapped in its own try/catch so one unreachable repo
  * degrades to "nothing installed there" rather than breaking the browse page — the same ethos as
  * the loader treating an unreachable catalog as an expected empty-state.
  */
@@ -148,7 +148,7 @@ async function collectInstalledKeys(
           listDrafts(p.id),
         ]);
         const lock = overlayLock(
-          source.files["eden-lock.json"] ?? null,
+          source.files["harnesst-lock.json"] ?? null,
           drafts.map((d) => ({ path: d.path, content: d.content })),
         );
         return installedKeys(lock);
@@ -193,7 +193,7 @@ export const loader = (args: LoaderFunctionArgs) =>
   );
 
 export function meta() {
-  return [{ title: "Marketplace · eden" }, ...noindexMeta];
+  return [{ title: "Marketplace · harnesst" }, ...noindexMeta];
 }
 
 export default function Marketplace({ loaderData }: Route.ComponentProps) {
@@ -232,10 +232,10 @@ export default function Marketplace({ loaderData }: Route.ComponentProps) {
           <CardHeader className="items-center py-12 text-center">
             <CardTitle className="text-lg">Catalog unavailable</CardTitle>
             <CardDescription className="max-w-lg">
-              eden couldn&rsquo;t reach the template catalog. In development it
+              harnesst couldn&rsquo;t reach the template catalog. In development it
               reads the in-repo <span className="font-mono">marketplace/</span>{" "}
               seed; in production set{" "}
-              <span className="font-mono">EDEN_CATALOG_REPO</span> to an
+              <span className="font-mono">HARNESST_CATALOG_REPO</span> to an
               &ldquo;owner/repo&rdquo; pointer at the catalog.
             </CardDescription>
             <p className="mt-3 max-w-lg font-mono text-xs text-muted-foreground">

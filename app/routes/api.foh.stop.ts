@@ -52,7 +52,7 @@ export async function action(args: ActionFunctionArgs) {
           ok: true as const,
           detail: target
             ? "No Eve session id was recorded yet."
-            : "The deployment that ran this turn is gone — Eden settled the conversation without contacting its replacement.",
+            : "The deployment that ran this turn is gone — harnesst settled the conversation without contacting its replacement.",
         };
 
   if (!eveCancel.ok) {
@@ -110,7 +110,7 @@ async function cancelEveTurn(input: {
       ok: false,
       unsupported: true,
       detail:
-        "This Eve deployment does not expose turn cancellation yet. eden did not detach from the running turn.",
+        "This Eve deployment does not expose turn cancellation yet. harnesst did not detach from the running turn.",
     };
   }
   const text = await res.text().catch(() => "");

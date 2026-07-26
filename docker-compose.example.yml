@@ -1,4 +1,4 @@
-# Eden local development dependencies.
+# harnesst local development dependencies.
 #
 # Copy this to docker-compose.yml (gitignored, so you can tweak it locally) and run:
 #   docker compose up -d
@@ -11,23 +11,23 @@
 services:
   postgres:
     image: postgres:17
-    container_name: eden-postgres
+    container_name: harnesst-postgres
     restart: unless-stopped
     environment:
-      POSTGRES_USER: eden
-      POSTGRES_PASSWORD: eden
-      POSTGRES_DB: eden
+      POSTGRES_USER: harnesst
+      POSTGRES_PASSWORD: harnesst
+      POSTGRES_DB: harnesst
     # Host port 5442 (not the default 5432) to avoid clashing with other local
     # Postgres instances. The container still listens on 5432 internally.
     ports:
       - "5442:5432"
     volumes:
-      - eden-postgres-data:/var/lib/postgresql/data
+      - harnesst-postgres-data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U eden -d eden"]
+      test: ["CMD-SHELL", "pg_isready -U harnesst -d harnesst"]
       interval: 5s
       timeout: 5s
       retries: 5
 
 volumes:
-  eden-postgres-data:
+  harnesst-postgres-data:

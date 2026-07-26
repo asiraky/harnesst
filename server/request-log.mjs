@@ -13,7 +13,7 @@ const REDACTED_PATHS = [
 export function safeRequestPath(requestTarget) {
   let pathname;
   try {
-    pathname = new URL(requestTarget, "http://eden.invalid").pathname;
+    pathname = new URL(requestTarget, "http://harnesst.invalid").pathname;
   } catch {
     return "/[invalid-request-target]";
   }

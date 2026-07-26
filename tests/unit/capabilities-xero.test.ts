@@ -1,7 +1,7 @@
 /**
  * The Xero capability definition (issue #166) — every server-side invariant in the whitelist,
  * exercised through the REAL orchestration (`executeCapabilityCall` with the real xeroCapability)
- * against a fake Xero API, so the tests prove what an agent can and cannot make Eden do:
+ * against a fake Xero API, so the tests prove what an agent can and cannot make harnesst do:
  *
  *  - bills are ALWAYS created DRAFT/ACCPAY — client-sent Status/Type are stripped, never read;
  *  - line amounts must sum to the total; account codes and the currency must exist in the org;

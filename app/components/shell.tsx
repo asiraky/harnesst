@@ -31,7 +31,7 @@ import {
 import { InviteMember } from "~/components/invite-member";
 import { PublishControl } from "~/components/publish";
 import { WorkspaceTasksIndicator } from "~/components/workspace-tasks";
-import { EdenWordmark } from "~/components/marketing/logo";
+import { BrandWordmark } from "~/components/marketing/logo";
 import { ThemeToggle } from "~/components/theme-toggle";
 import { Button } from "~/components/ui/button";
 import {
@@ -109,9 +109,9 @@ export function AppShell({
           <Link
             to="/dashboard"
             className="flex shrink-0 items-center"
-            aria-label="eden dashboard"
+            aria-label="harnesst dashboard"
           >
-            <EdenWordmark className="h-5" />
+            <BrandWordmark className="h-5" />
           </Link>
           {breadcrumbs && breadcrumbs.length > 0 && (
             <Breadcrumbs crumbs={breadcrumbs} />
@@ -167,8 +167,8 @@ function NavProgress() {
   const navigation = useNavigation();
   if (navigation.state === "idle") return null;
   return (
-    <div className="eden-nav-progress" aria-hidden>
-      <div className="eden-nav-progress-bar bg-primary" />
+    <div className="harnesst-nav-progress" aria-hidden>
+      <div className="harnesst-nav-progress-bar bg-primary" />
     </div>
   );
 }

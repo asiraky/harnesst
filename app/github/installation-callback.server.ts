@@ -6,7 +6,7 @@ import {
 export type GitHubInstallationCallbackPayload = OAuthCallbackPayload;
 
 const staging = createOAuthCallbackStaging({
-  cookieName: "eden-github-installation-callback",
+  cookieName: "harnesst-github-installation-callback",
   path: "/github/installations/callback",
 });
 

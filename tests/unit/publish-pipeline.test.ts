@@ -97,7 +97,7 @@ function makeDeps(over: Partial<PublishPipelineDeps> = {}): PublishPipelineDeps 
   return {
     checkBuild: vi.fn(async (req: { agentRoot?: string }) => ({
       ok: true as const,
-      provisionalTag: `eden/publish-task:${req.agentRoot ?? "repo"}`,
+      provisionalTag: `harnesst/publish-task:${req.agentRoot ?? "repo"}`,
     })),
     listRepoPaths: vi
       .fn()
@@ -167,7 +167,7 @@ describe("runPublish — happy path", () => {
         const row = await store.workspaceTasks.findById(task.id);
         const build = row!.steps!.find((s) => s.key === "build")!;
         observed.push({ status: build.status, detail: build.detail });
-        return { ok: true as const, provisionalTag: `eden/publish-task:${req.agentRoot}` };
+        return { ok: true as const, provisionalTag: `harnesst/publish-task:${req.agentRoot}` };
       }),
     });
 
@@ -211,8 +211,8 @@ describe("runPublish — happy path", () => {
 
     // Provisional tags never outlive the publish.
     expect(deps.removeProvisionalImages).toHaveBeenCalledWith([
-      "eden/publish-task:agents/ivy/agent",
-      "eden/publish-task:agents/otto/agent",
+      "harnesst/publish-task:agents/ivy/agent",
+      "harnesst/publish-task:agents/otto/agent",
     ]);
   });
 
@@ -323,7 +323,7 @@ describe("runPublish — failures leave nothing landed", () => {
 describe("runPublish — assistant-config-only", () => {
   it("skips build/version/deploy with a reason and enqueues an assistant restart", async () => {
     seedTeam();
-    await stageDrafts({ ".eden/assistant/instructions.md": "Be helpful." });
+    await stageDrafts({ ".harnesst/assistant/instructions.md": "Be helpful." });
     const task = await seedTask();
     const deps = makeDeps();
 
@@ -371,8 +371,8 @@ describe("runPublish — CAS conflict on the commit", () => {
     expect(deps.checkBuild).toHaveBeenCalledTimes(2);
     // …and BOTH passes' provisional tags were cleaned up.
     expect(deps.removeProvisionalImages).toHaveBeenCalledWith([
-      "eden/publish-task:agents/ivy/agent",
-      "eden/publish-task:agents/ivy/agent",
+      "harnesst/publish-task:agents/ivy/agent",
+      "harnesst/publish-task:agents/ivy/agent",
     ]);
   });
 

@@ -143,7 +143,7 @@ interface ProjectView {
  * Persists dismissal of the team-landing intro card (1yr, SameSite=Lax). Read server-side
  * in the loader — same pattern as the theme cookie — so dismissed users never see a flash.
  */
-const TEAM_INTRO_COOKIE = "eden-team-intro-dismissed";
+const TEAM_INTRO_COOKIE = "harnesst-team-intro-dismissed";
 
 export const loader = (args: LoaderFunctionArgs) =>
   sessionLoader(
@@ -216,7 +216,7 @@ export const loader = (args: LoaderFunctionArgs) =>
         if (view === "member" && !active)
           throw redirect(`/repos/${project.id}`);
         const lock = overlayLock(
-          source.files["eden-lock.json"] ?? null,
+          source.files["harnesst-lock.json"] ?? null,
           drafts.map((d) => ({ path: d.path, content: d.content })),
         );
         const members =
@@ -366,10 +366,10 @@ export async function action(args: ActionFunctionArgs) {
     if (intent === "add-member") {
       const name = slugifyResourceName(String(form.get("name") ?? ""));
       if (!name) return { error: "Agent name is required." };
-      // "assistant" is reserved for Eden's built-in project-level assistant agent.
+      // "assistant" is reserved for harnesst's built-in project-level assistant agent.
       if (name === "assistant") {
         return {
-          error: `"assistant" is reserved for eden's built-in assistant — pick another name.`,
+          error: `"assistant" is reserved for harnesst's built-in assistant — pick another name.`,
         };
       }
       const { roster } = await resolveAgentContext(project.id, null);
@@ -377,7 +377,7 @@ export async function action(args: ActionFunctionArgs) {
         return { error: `An agent named "${name}" already exists.` };
       }
       // No model is baked into the scaffold: the member resolves the workspace's configured
-      // model (or its own override) from Eden at runtime, so it follows Org settings from
+      // model (or its own override) from harnesst at runtime, so it follows Org settings from
       // day one and model changes never touch the repo.
       // The scaffold is SAVED as drafts (§2.4: structural operations save their full file set
       // in one action) — the header Publish control takes the new agent live with everything
@@ -401,7 +401,7 @@ export async function action(args: ActionFunctionArgs) {
 }
 
 export function meta() {
-  return [{ title: "Project · eden" }, ...noindexMeta];
+  return [{ title: "Project · harnesst" }, ...noindexMeta];
 }
 
 export default function ProjectDetail({
@@ -559,7 +559,7 @@ export default function ProjectDetail({
             {needsReconnect ? (
               <div className="space-y-3">
                 <p>
-                  eden can no longer read{" "}
+                  harnesst can no longer read{" "}
                   <span className="font-mono">
                     {project.repoOwner}/{project.repoName}
                   </span>{" "}

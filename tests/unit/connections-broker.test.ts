@@ -7,7 +7,7 @@
  *    the access token is released, dead grants flip to "expired" with the reconnect message, and
  *    concurrent calls for one grant are serialized (the second sees the first's rotated token —
  *    the discipline that keeps mayi's family-reuse revocation from firing).
- *  - the `/api/connections/token` resource action (mocked seams): EDEN_TEAM_TOKEN delegation
+ *  - the `/api/connections/token` resource action (mocked seams): HARNESST_TEAM_TOKEN delegation
  *    auth (the Discord-send-proxy pattern), deployment → environment → agent resolution, body
  *    validation, and BrokerResult status passthrough.
  */

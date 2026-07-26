@@ -21,7 +21,7 @@ import type { DataStore, Deployment, Release } from "~/data/ports";
 import {
   overlayLock,
   requiredScopesByProvider,
-  type EdenLock,
+  type HarnesstLock,
 } from "~/marketplace/lock";
 import { lockSecretsForMember } from "~/project/secrets.server";
 import { listProviders } from "~/connections/providers.server";
@@ -69,10 +69,10 @@ export interface DeployDeps {
     requiredScopes?: ReadonlyMap<string, string[]> | null,
   ) => Promise<Record<string, string>>;
   /**
-   * Committed `eden-lock.json` content at a release's commit — the generated-secret mint
+   * Committed `harnesst-lock.json` content at a release's commit — the generated-secret mint
    * (issue #163) and deploy-time scope-coverage validation (issue #69) both read it. null when
    * the repo has no lock file; a fetch failure THROWS (failing the deploy) — without the lock
-   * Eden can't know which generated secrets the agent requires, and deploys are repeatable.
+   * harnesst can't know which generated secrets the agent requires, and deploys are repeatable.
    */
   agentLock?: (input: {
     installationId: string;
@@ -109,7 +109,7 @@ function deployDeps(): DeployDeps {
     agentLock: ({ installationId, owner, repo, ref }) =>
       import("~/github/repo.server")
         .then((m) => m.fetchAgentSource(installationId, { owner, repo, ref }))
-        .then((s) => s.files["eden-lock.json"] ?? null),
+        .then((s) => s.files["harnesst-lock.json"] ?? null),
   };
 }
 
@@ -124,7 +124,7 @@ function hasModelCredential(
 ): boolean {
   return Boolean(
     Object.keys(env).some((name) =>
-      /^EDEN_PROVIDER_(?:ANTHROPIC|OPENAI|OPENROUTER)_[A-Z]{12}_API_KEY$/.test(
+      /^HARNESST_PROVIDER_(?:ANTHROPIC|OPENAI|OPENROUTER)_[A-Z]{12}_API_KEY$/.test(
         name,
       ),
     ) ||
@@ -137,13 +137,13 @@ function hasModelCredential(
   );
 }
 
-/** Exact connection credentials and routing coordinates reserved to Eden. */
+/** Exact connection credentials and routing coordinates reserved to harnesst. */
 function isReservedModelEnvName(name: string): boolean {
   return (
-    /^EDEN_PROVIDER_.*_API_KEY$/.test(name) ||
-    name === "EDEN_MODEL_GATEWAY_URL" ||
-    name === "EDEN_MODEL_GATEWAY_TOKEN" ||
-    name === "EDEN_MODEL_DIRECTIVE_SECRET"
+    /^HARNESST_PROVIDER_.*_API_KEY$/.test(name) ||
+    name === "HARNESST_MODEL_GATEWAY_URL" ||
+    name === "HARNESST_MODEL_GATEWAY_TOKEN" ||
+    name === "HARNESST_MODEL_DIRECTIVE_SECRET"
   );
 }
 
@@ -297,9 +297,9 @@ export async function deployRelease(
   ]);
 
   // A team member (an `agents/<name>/agent` root — never the single-agent repo's "agent") gets
-  // Eden's delegation wiring: the ask-teammate tool baked into its image (D2) and the relay
+  // harnesst's delegation wiring: the ask-teammate tool baked into its image (D2) and the relay
   // coordinates + roster injected as env (D3). A team of one is a member too — the tool ships
-  // and the env is set; EDEN_TEAMMATES is simply an empty roster.
+  // and the env is set; HARNESST_TEAMMATES is simply an empty roster.
   // Roster for teammate wiring is real members only (never the built-in assistant).
   const roster = allAgents.filter((a) => a.kind === "member");
   const isTeamMember =
@@ -313,15 +313,15 @@ export async function deployRelease(
     };
     const envVars = await secrets.resolve(scope);
 
-    // Committed `eden-lock.json` at THIS release's commit — fetched ONCE and shared by the
+    // Committed `harnesst-lock.json` at THIS release's commit — fetched ONCE and shared by the
     // generated-secret mint below and the connection scope-coverage check further down (issue
     // #69). A repo without a lock FILE is fine (nothing to mint or validate), but a failed
-    // FETCH fails the deploy: without the lock Eden can't know which generated secrets the
+    // FETCH fails the deploy: without the lock harnesst can't know which generated secrets the
     // agent requires, and silently launching without them ships a broken container. Deploys
     // are repeatable — redeploying retries. (A corrupt lock still degrades to empty inside
     // overlayLock; the next install rewrites it cleanly.) Attribution matches the route
     // loaders': a team member is keyed by name, the single-agent root by null.
-    let lock: EdenLock | null = null;
+    let lock: HarnesstLock | null = null;
     if (
       deps.agentLock &&
       project?.repoOwner &&
@@ -339,7 +339,7 @@ export async function deployRelease(
       } catch (error) {
         const detail = error instanceof Error ? error.message : String(error);
         throw new Error(
-          `Could not fetch eden-lock.json at ${release.gitSha.slice(0, 7)} (${detail}) — the deploy needs it to mint generated secrets and validate connection scopes. Redeploy to retry.`,
+          `Could not fetch harnesst-lock.json at ${release.gitSha.slice(0, 7)} (${detail}) — the deploy needs it to mint generated secrets and validate connection scopes. Redeploy to retry.`,
         );
       }
       lock = overlayLock(lockJson, []);
@@ -376,42 +376,42 @@ export async function deployRelease(
       }
     }
 
-    // Legacy/plain Eve model strings call Vercel AI Gateway. Eden-authored model choices use
+    // Legacy/plain Eve model strings call Vercel AI Gateway. harnesst-authored model choices use
     // OpenRouter wiring, but keep this fallback so older repos still run if configured.
     for (const key of ["AI_GATEWAY_API_KEY", "VERCEL_OIDC_TOKEN"] as const) {
       const value = process.env[key];
       if (!envVars[key] && value) envVars[key] = value;
     }
 
-    // Exact model credentials are Eden-owned: a user secret cannot impersonate another workspace
+    // Exact model credentials are harnesst-owned: a user secret cannot impersonate another workspace
     // connection. Standard provider aliases retain the ordinary secret-cascade override contract
-    // for legacy/custom code; Eden's qualified generated wiring consumes exact vars only.
+    // for legacy/custom code; harnesst's qualified generated wiring consumes exact vars only.
     for (const key of Object.keys(envVars)) {
       if (isReservedModelEnvName(key)) delete envVars[key];
     }
     if (project && deps.providerDeploymentEnv) {
       const providerEnv = await deps.providerDeploymentEnv(project.orgId);
       for (const [key, value] of Object.entries(providerEnv)) {
-        if (/^EDEN_PROVIDER_.*_API_KEY$/.test(key) || !envVars[key]) {
+        if (/^HARNESST_PROVIDER_.*_API_KEY$/.test(key) || !envVars[key]) {
           envVars[key] = value;
         }
       }
     }
 
-    // Eden gateway coordinates (issue #28 + runtime model-config): EVERY deploy gets the
-    // org-scoped URL + token — the generated eden-model.ts resolves the workspace's configured
+    // harnesst gateway coordinates (issue #28 + runtime model-config): EVERY deploy gets the
+    // org-scoped URL + token — the generated harnesst-model.ts resolves the workspace's configured
     // model through `<url>/model-config` at runtime, and a `codex/<connection>/<slug>` model
-    // runs on the connected subscription through `<url>/chat/completions`. Eden-owned (anti-
-    // shadowing like EDEN_SANDBOX_ENV): strip any user-set values first, then set.
-    delete envVars.EDEN_MODEL_GATEWAY_URL;
-    delete envVars.EDEN_MODEL_GATEWAY_TOKEN;
+    // runs on the connected subscription through `<url>/chat/completions`. harnesst-owned (anti-
+    // shadowing like HARNESST_SANDBOX_ENV): strip any user-set values first, then set.
+    delete envVars.HARNESST_MODEL_GATEWAY_URL;
+    delete envVars.HARNESST_MODEL_GATEWAY_TOKEN;
     if (project) {
-      envVars.EDEN_MODEL_GATEWAY_URL = gatewayBaseUrl();
-      envVars.EDEN_MODEL_GATEWAY_TOKEN = mintGatewayToken(project.orgId);
+      envVars.HARNESST_MODEL_GATEWAY_URL = gatewayBaseUrl();
+      envVars.HARNESST_MODEL_GATEWAY_TOKEN = mintGatewayToken(project.orgId);
     }
-    delete envVars.EDEN_MODEL_DIRECTIVE_SECRET;
+    delete envVars.HARNESST_MODEL_DIRECTIVE_SECRET;
     if (project && deps.modelDirectiveSecret) {
-      envVars.EDEN_MODEL_DIRECTIVE_SECRET = deps.modelDirectiveSecret(dep.id);
+      envVars.HARNESST_MODEL_DIRECTIVE_SECRET = deps.modelDirectiveSecret(dep.id);
     }
 
     // A Codex-only org has no API key in env — its model source is the gateway itself.
@@ -428,42 +428,42 @@ export async function deployRelease(
       );
     }
 
-    // EDEN_SANDBOX_ENV (sandbox exposure convention): the comma-joined NAMES of the secrets
+    // HARNESST_SANDBOX_ENV (sandbox exposure convention): the comma-joined NAMES of the secrets
     // the human marked "available in the agent's sandbox shell"; the scaffolded sandbox.ts
-    // forwards exactly those vars into the sandbox env (~/eve/templates). Eden-owned and set
-    // AFTER the secret resolve, so a user secret named EDEN_SANDBOX_ENV can never smuggle its
+    // forwards exactly those vars into the sandbox env (~/eve/templates). harnesst-owned and set
+    // AFTER the secret resolve, so a user secret named HARNESST_SANDBOX_ENV can never smuggle its
     // own allowlist. Names only — never values — and only names that actually resolved to an
     // injected env var (exposing a secret that doesn't exist in scope forwards nothing).
-    delete envVars.EDEN_SANDBOX_ENV;
+    delete envVars.HARNESST_SANDBOX_ENV;
     const exposed = deps.sandboxExposedNames
       ? await deps.sandboxExposedNames(scope)
       : [];
-    // A dummy exposed secret must not squat on a name Eden later overwrites with a real provider
+    // A dummy exposed secret must not squat on a name harnesst later overwrites with a real provider
     // credential (or Codex gateway token), which would leak that credential into the sandbox.
     const allowlist = exposed.filter(
       (name) => !isReservedModelEnvName(name) && name in envVars,
     );
-    if (allowlist.length > 0) envVars.EDEN_SANDBOX_ENV = allowlist.join(",");
+    if (allowlist.length > 0) envVars.HARNESST_SANDBOX_ENV = allowlist.join(",");
 
     // Team delegation (D3): a team member gets the relay coordinates, an HMAC token identifying
-    // THIS deployment, and its roster — all Eden-owned, so stripped from user secrets first (the
-    // same anti-shadowing rule as EDEN_SANDBOX_ENV) then set. Discovery (EDEN_TEAMMATES) is env;
+    // THIS deployment, and its roster — all harnesst-owned, so stripped from user secrets first (the
+    // same anti-shadowing rule as HARNESST_SANDBOX_ENV) then set. Discovery (HARNESST_TEAMMATES) is env;
     // authorization is enforced live at the relay, so a roster here is never permission-filtered.
     for (const key of [
-      "EDEN_TEAM_URL",
-      "EDEN_TEAM_TOKEN",
-      "EDEN_TEAMMATES",
-      "EDEN_DELEGATION_TIMEOUT_MS",
+      "HARNESST_TEAM_URL",
+      "HARNESST_TEAM_TOKEN",
+      "HARNESST_TEAMMATES",
+      "HARNESST_DELEGATION_TIMEOUT_MS",
     ]) {
       delete envVars[key];
     }
     if (isTeamMember && project && agent) {
-      // Default relay port matches Eden's production host (3000) and Vite dev server (5173,
+      // Default relay port matches harnesst's production host (3000) and Vite dev server (5173,
       // vite.config.ts). PORT wins when set.
-      envVars.EDEN_TEAM_URL =
-        process.env.EDEN_TEAM_RELAY_URL ??
+      envVars.HARNESST_TEAM_URL =
+        process.env.HARNESST_TEAM_RELAY_URL ??
         `http://host.docker.internal:${process.env.PORT ?? (process.env.NODE_ENV === "production" ? "3000" : "5173")}`;
-      envVars.EDEN_TEAM_TOKEN = mintDelegationToken(dep.id);
+      envVars.HARNESST_TEAM_TOKEN = mintDelegationToken(dep.id);
       const teammates = await teammateRoster({
         project: {
           repoOwner: project.repoOwner ?? "",
@@ -473,11 +473,11 @@ export async function deployRelease(
         roster,
         selfAgentId: agent.id,
       });
-      envVars.EDEN_TEAMMATES = JSON.stringify(teammates);
+      envVars.HARNESST_TEAMMATES = JSON.stringify(teammates);
       // Keep the tool's fetch budget aligned with the relay's when an operator overrides it.
-      if (process.env.EDEN_DELEGATION_TIMEOUT_MS) {
-        envVars.EDEN_DELEGATION_TIMEOUT_MS =
-          process.env.EDEN_DELEGATION_TIMEOUT_MS;
+      if (process.env.HARNESST_DELEGATION_TIMEOUT_MS) {
+        envVars.HARNESST_DELEGATION_TIMEOUT_MS =
+          process.env.HARNESST_DELEGATION_TIMEOUT_MS;
       }
     }
 
@@ -486,35 +486,35 @@ export async function deployRelease(
     // (application id + public key, used for inbound Ed25519 verification) plus the URL of the
     // control-plane send proxy. All bot-token operations happen control-plane-side. Only when the
     // operator has configured the shared app: legacy self-managed-app users are left untouched.
-    // Anti-shadowing (as with EDEN_SANDBOX_ENV / EDEN_TEAM_*): delete user-set keys, then set.
+    // Anti-shadowing (as with HARNESST_SANDBOX_ENV / HARNESST_TEAM_*): delete user-set keys, then set.
     const discord = getDiscordAppConfig();
     if (discord) {
       for (const key of [
         "DISCORD_BOT_TOKEN",
         "DISCORD_APPLICATION_ID",
         "DISCORD_PUBLIC_KEY",
-        "EDEN_DISCORD_SEND_URL",
+        "HARNESST_DISCORD_SEND_URL",
       ]) {
         delete envVars[key];
       }
       envVars.DISCORD_APPLICATION_ID = discord.applicationId;
       envVars.DISCORD_PUBLIC_KEY = discord.publicKey;
-      // Same control-plane base-URL derivation as EDEN_TEAM_URL above.
+      // Same control-plane base-URL derivation as HARNESST_TEAM_URL above.
       const controlPlaneBase =
-        process.env.EDEN_TEAM_RELAY_URL ??
+        process.env.HARNESST_TEAM_RELAY_URL ??
         `http://host.docker.internal:${process.env.PORT ?? (process.env.NODE_ENV === "production" ? "3000" : "5173")}`;
-      envVars.EDEN_DISCORD_SEND_URL = `${controlPlaneBase}/api/discord/send`;
+      envVars.HARNESST_DISCORD_SEND_URL = `${controlPlaneBase}/api/discord/send`;
       // The send proxy authenticates the CALLER DEPLOYMENT with the same delegation token the
-      // team relay uses, so single-agent deployments (not team members — no EDEN_TEAM_* above)
+      // team relay uses, so single-agent deployments (not team members — no HARNESST_TEAM_* above)
       // need one too. The team relay independently authorizes, so this grants no team powers.
-      envVars.EDEN_TEAM_TOKEN ??= mintDelegationToken(dep.id);
+      envVars.HARNESST_TEAM_TOKEN ??= mintDelegationToken(dep.id);
     }
 
     // Auth-brokered connections (issues #30, #163): for every provider this agent holds an active
     // grant for, inject the operator client creds + sealed refresh token (`<PREFIX>_OAUTH_*`) so
     // the shipped eve connections can self-refresh access tokens at runtime. The provider validates
     // each grant once (a dead grant THROWS here, failing the deploy with a reconnect message).
-    // Eden OWNS a provider's keys only when it actually brokers that connection: like the Discord
+    // harnesst OWNS a provider's keys only when it actually brokers that connection: like the Discord
     // block above, anti-shadowing runs ONLY per injected provider — so a self-hoster's manually-set
     // GOOGLE_OAUTH_* (their own client + token, no broker) passes through untouched. No-op when
     // there are no grants / no operator config.
@@ -531,15 +531,15 @@ export async function deployRelease(
     if (Object.keys(grantEnv).length > 0) {
       let hasBrokeredProvider = false;
       // Capability providers (issue #166) inject NO <PREFIX>_OAUTH_* vars at all — their only
-      // trace in grantEnv is the EDEN_CAPABILITY_PROVIDERS marker, so anti-shadowing must read
-      // it to know Eden brokered them: a user secret like XERO_OAUTH_REFRESH_TOKEN (a leftover
+      // trace in grantEnv is the HARNESST_CAPABILITY_PROVIDERS marker, so anti-shadowing must read
+      // it to know harnesst brokered them: a user secret like XERO_OAUTH_REFRESH_TOKEN (a leftover
       // self-managed connector) must not survive into a container whose whole safety story is
       // "the instance holds no vendor credential".
       const capabilityProviderIds = new Set(
-        (grantEnv.EDEN_CAPABILITY_PROVIDERS ?? "").split(",").filter(Boolean),
+        (grantEnv.HARNESST_CAPABILITY_PROVIDERS ?? "").split(",").filter(Boolean),
       );
       for (const def of listProviders()) {
-        // Only the providers Eden actually brokered this deploy — a present <PREFIX>_OAUTH_SCOPES
+        // Only the providers harnesst actually brokered this deploy — a present <PREFIX>_OAUTH_SCOPES
         // or refresh token marks one (access-token-broker providers ship scopes but no refresh
         // token, issue #167; both deliveries set scopes), and capability providers are named by
         // the marker.
@@ -558,7 +558,7 @@ export async function deployRelease(
         ]) {
           delete envVars[`${def.envPrefix}_OAUTH_${suffix}`];
         }
-        // The provider's static deploy constants (issue #167) are Eden-owned too.
+        // The provider's static deploy constants (issue #167) are harnesst-owned too.
         for (const key of Object.keys(def.deployEnv ?? {})) {
           delete envVars[key];
         }
@@ -575,15 +575,15 @@ export async function deployRelease(
       // deployment-scoped delegation token (the SAME auth story as the team relay and Discord
       // send proxy — the token grants no team powers, authorization happens per surface).
       // Capability providers inject NO per-provider env at all, so their marker
-      // (EDEN_CAPABILITY_PROVIDERS, Eden-owned — grantEnv overwrites any user-set value) is the
-      // deploy's signal. EDEN_API_URL is Eden-owned when injected (anti-shadowing);
-      // EDEN_TEAM_TOKEN was already stripped from user secrets by the team block above.
-      if (hasBrokeredProvider || "EDEN_CAPABILITY_PROVIDERS" in grantEnv) {
-        delete envVars.EDEN_API_URL;
-        envVars.EDEN_API_URL =
-          process.env.EDEN_TEAM_RELAY_URL ??
+      // (HARNESST_CAPABILITY_PROVIDERS, harnesst-owned — grantEnv overwrites any user-set value) is the
+      // deploy's signal. HARNESST_API_URL is harnesst-owned when injected (anti-shadowing);
+      // HARNESST_TEAM_TOKEN was already stripped from user secrets by the team block above.
+      if (hasBrokeredProvider || "HARNESST_CAPABILITY_PROVIDERS" in grantEnv) {
+        delete envVars.HARNESST_API_URL;
+        envVars.HARNESST_API_URL =
+          process.env.HARNESST_TEAM_RELAY_URL ??
           `http://host.docker.internal:${process.env.PORT ?? (process.env.NODE_ENV === "production" ? "3000" : "5173")}`;
-        envVars.EDEN_TEAM_TOKEN ??= mintDelegationToken(dep.id);
+        envVars.HARNESST_TEAM_TOKEN ??= mintDelegationToken(dep.id);
       }
     }
 
@@ -592,7 +592,7 @@ export async function deployRelease(
     // can be webhook-driven with no meaningful request origin). Anti-shadowing only when
     // injecting — unset means a user-set EVE_PUBLIC_ORIGIN passes through (local dev /
     // self-managed ingress).
-    const publicOriginConfig = process.env.EDEN_PUBLIC_ORIGIN?.trim();
+    const publicOriginConfig = process.env.HARNESST_PUBLIC_ORIGIN?.trim();
     if (publicOriginConfig) {
       delete envVars.EVE_PUBLIC_ORIGIN;
       envVars.EVE_PUBLIC_ORIGIN = envIngressUrl(

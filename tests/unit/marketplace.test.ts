@@ -24,7 +24,7 @@ import {
   installKey,
   installedKeys,
   upsertInstall,
-  type EdenLock,
+  type HarnesstLock,
   type InstallEntry,
 } from "~/marketplace/lock";
 import { resolveTemplate } from "~/marketplace/compose.server";
@@ -97,7 +97,7 @@ describe("manifest schema", () => {
     ).toThrow();
   });
 
-  it("preserves a secret's provisioned flag (set by a guided Eden flow, not the wizard)", () => {
+  it("preserves a secret's provisioned flag (set by a guided harnesst flow, not the wizard)", () => {
     const parsed = parseManifest({
       ...VALID,
       secrets: [{ name: "GITHUB_APP_ID", sandbox: true, provisioned: true }],
@@ -345,16 +345,16 @@ describe("composition against the real seed", () => {
       "eve_input_freeform:eyJyZXF1ZXN0SWQiOiJlZGVuOnJlcGx5In0",
     );
     expect(resolved.files["channels/discord.ts"]).toContain(
-      'const EDEN_REPLY_REQUEST_ID = "eden:reply"',
+      'const HARNESST_REPLY_REQUEST_ID = "harnesst:reply"',
     );
     expect(resolved.files["channels/discord.ts"]).toContain(
-      "r.requestId === EDEN_REPLY_REQUEST_ID",
+      "r.requestId === HARNESST_REPLY_REQUEST_ID",
     );
     expect(resolved.files["channels/discord.ts"]).toContain(
       "message: replies.map((r) => r.text).join",
     );
     expect(resolved.files["channels/discord.ts"]).toContain(
-      "edenTurnAskedQuestion",
+      "harnesstTurnAskedQuestion",
     );
     expect(resolved.files["channels/discord.ts"]).toContain(
       'async "turn.started"(event, channel)',
@@ -362,17 +362,17 @@ describe("composition against the real seed", () => {
     expect(resolved.files["channels/discord.ts"]).toContain(
       "channel.discord.startTyping()",
     );
-    // The send tool now proxies through Eden's control plane (issue #32) — it reads the
+    // The send tool now proxies through harnesst's control plane (issue #32) — it reads the
     // injected send URL/token, not the shared bot token, and no longer imports eve's Discord.
     expect(resolved.files["tools/discord-send-message.ts"]).toContain(
-      "EDEN_DISCORD_SEND_URL",
+      "HARNESST_DISCORD_SEND_URL",
     );
     expect(resolved.files["tools/discord-send-message.ts"]).not.toContain(
       "sendDiscordChannelMessage",
     );
 
     // The GitHub App secrets (from the GitHub channel) and Discord's PROVISIONED secrets union
-    // in. The bot token is never a per-agent secret (issue #32) — Eden holds it control-plane-side.
+    // in. The bot token is never a per-agent secret (issue #32) — harnesst holds it control-plane-side.
     const secretNames = (resolved.manifest.secrets ?? []).map((s) => s.name);
     expect(secretNames).toEqual(
       expect.arrayContaining([
@@ -463,7 +463,7 @@ describe("fakeCatalog", () => {
 /**
  * The "Installed" facet (issue #72). The data path — aggregating install keys across the org's
  * connected projects — can't be browser-exercised without a connected repo carrying an
- * `eden-lock.json`, so the pure identity/aggregation logic is covered thoroughly here.
+ * `harnesst-lock.json`, so the pure identity/aggregation logic is covered thoroughly here.
  */
 function installEntry(over: {
   id: string;
@@ -495,7 +495,7 @@ describe("installedKeys", () => {
   });
 
   it("returns a 'type/id' key per install", () => {
-    let lock: EdenLock = emptyLock();
+    let lock: HarnesstLock = emptyLock();
     lock = upsertInstall(lock, installEntry({ id: "web-search", type: "tool" }));
     lock = upsertInstall(lock, installEntry({ id: "pm", type: "agent" }));
     expect(installedKeys(lock).sort()).toEqual(["agent/pm", "tool/web-search"]);
@@ -504,7 +504,7 @@ describe("installedKeys", () => {
   it("returns one key per install for the same id under two members, and the caller dedupes by set", () => {
     // A team repo can host the same (type, id) under two members. `installedKeys` reports BOTH;
     // the marketplace loader collapses them via `new Set(...)` so the facet counts it once.
-    const lock: EdenLock = {
+    const lock: HarnesstLock = {
       version: 1,
       installs: [
         installEntry({ id: "web-search", type: "tool", member: "pm" }),

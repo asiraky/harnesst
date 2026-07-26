@@ -1,12 +1,12 @@
 /**
  * Channel-run reconciler (issue #119) — the pull side of run observability.
  *
- * Only playground/assistant turns are recorded in-process (Eden drains their eve stream live).
+ * Only playground/assistant turns are recorded in-process (harnesst drains their eve stream live).
  * Cron (`schedule`), Discord, and other-channel turns fire INSIDE the managed instance and never
  * notify the control plane, so they leave no `runs`/`run_steps` — the observability gap. There is
  * no instance→control-plane step-reporting path and eve is never patched, so this is a PULL:
  * a periodic loop discovers non-`http` sessions on every live managed instance (via the world
- * DB's `workflow.workflow_runs` + eve's `$eve.*` attributes — the sanctioned Eden-side surface),
+ * DB's `workflow.workflow_runs` + eve's `$eve.*` attributes — the sanctioned harnesst-side surface),
  * drains eve's durable replay stream, folds it into per-turn results (session-turns.server.ts),
  * and ingests them through the same `recordTurnStart`/`recordTurnFinish` chokepoint the playground
  * uses. Hung cron turns become visible `status=running` rows — the desired #118 outcome, not a bug.
@@ -40,11 +40,11 @@ import type { WorldSessionSummary } from "~/seams/types";
 
 /** How far back to look for sessions on each sweep (a session older than this is left alone). */
 export const RECONCILE_BACKFILL_MS = Number(
-  process.env.EDEN_RECONCILE_BACKFILL_MS || 7 * 24 * 60 * 60 * 1000,
+  process.env.HARNESST_RECONCILE_BACKFILL_MS || 7 * 24 * 60 * 60 * 1000,
 );
 /** Sweep interval. */
 export const RECONCILE_INTERVAL_MS = Number(
-  process.env.EDEN_RECONCILE_INTERVAL_MS || 60_000,
+  process.env.HARNESST_RECONCILE_INTERVAL_MS || 60_000,
 );
 /** Cap on how many sessions one deployment drains per tick (oldest first) — bounds a big backfill. */
 const MAX_SESSIONS_PER_TICK = 25;
@@ -551,11 +551,11 @@ function startReconciler(): { stop: () => void } {
 
 let running = false;
 const globalForReconciler = globalThis as unknown as {
-  __edenRunReconciler?: { stop: () => void };
+  __harnesstRunReconciler?: { stop: () => void };
 };
 
 /** Start the reconciler once per process; safe to call from any server module. */
 export function ensureReconcilerStarted(): void {
-  if (process.env.EDEN_DISABLE_RECONCILER === "1") return;
-  globalForReconciler.__edenRunReconciler ??= startReconciler();
+  if (process.env.HARNESST_DISABLE_RECONCILER === "1") return;
+  globalForReconciler.__harnesstRunReconciler ??= startReconciler();
 }

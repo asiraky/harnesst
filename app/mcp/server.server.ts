@@ -4,11 +4,11 @@ import { z } from "zod/v4";
 import type { McpToolService } from "~/mcp/tools.server";
 
 const projectInput = {
-  projectId: z.string().min(1).describe("Eden project ID"),
+  projectId: z.string().min(1).describe("harnesst project ID"),
 };
 
 const deploymentInput = {
-  deploymentId: z.string().min(1).describe("Eden deployment row ID"),
+  deploymentId: z.string().min(1).describe("harnesst deployment row ID"),
 };
 
 function toolResult(value: Record<string, unknown>) {
@@ -23,16 +23,16 @@ function toolResult(value: Record<string, unknown>) {
  *
  * Authentication and organization/user scoping live in the injected service. Keeping those
  * concerns outside the protocol adapter also lets the HTTP route bind one service to one MCP
- * session without sending the caller back through Eden's resource routes.
+ * session without sending the caller back through harnesst's resource routes.
  */
-export function createEdenMcpServer(service: McpToolService): McpServer {
-  const server = new McpServer({ name: "eden", version: "0.1.0" });
+export function createHarnesstMcpServer(service: McpToolService): McpServer {
+  const server = new McpServer({ name: "harnesst", version: "0.1.0" });
 
   server.registerTool(
     "list_projects",
     {
       description:
-        "List the Eden projects visible to the authenticated caller.",
+        "List the harnesst projects visible to the authenticated caller.",
       inputSchema: {},
       annotations: { readOnlyHint: true, openWorldHint: false },
     },
@@ -42,7 +42,7 @@ export function createEdenMcpServer(service: McpToolService): McpServer {
   server.registerTool(
     "list_agents",
     {
-      description: "List the agents in an Eden project.",
+      description: "List the agents in a harnesst project.",
       inputSchema: projectInput,
       annotations: { readOnlyHint: true, openWorldHint: false },
     },
@@ -60,7 +60,7 @@ export function createEdenMcpServer(service: McpToolService): McpServer {
           .string()
           .min(1)
           .optional()
-          .describe("Optional Eden agent ID"),
+          .describe("Optional harnesst agent ID"),
       },
       annotations: { readOnlyHint: true, openWorldHint: false },
     },
@@ -78,7 +78,7 @@ export function createEdenMcpServer(service: McpToolService): McpServer {
           .string()
           .min(1)
           .optional()
-          .describe("Optional Eden agent ID"),
+          .describe("Optional harnesst agent ID"),
       },
       annotations: { readOnlyHint: true, openWorldHint: false },
     },
@@ -157,7 +157,7 @@ export function createEdenMcpServer(service: McpToolService): McpServer {
     {
       description: "Clear the failed deployment state for an environment.",
       inputSchema: {
-        environmentId: z.string().min(1).describe("Eden environment ID"),
+        environmentId: z.string().min(1).describe("harnesst environment ID"),
       },
       annotations: {
         destructiveHint: true,
@@ -172,7 +172,7 @@ export function createEdenMcpServer(service: McpToolService): McpServer {
     "stage_changes",
     {
       description:
-        "Save one or more agent edits as drafts in Eden's shared staging area. This is the first step of the authoring flow: save changes, then publish_changes takes EVERY saved draft live through Eden's pipeline (check, build, commit, version, deploy). This tool only writes drafts — it never touches GitHub.",
+        "Save one or more agent edits as drafts in harnesst's shared staging area. This is the first step of the authoring flow: save changes, then publish_changes takes EVERY saved draft live through harnesst's pipeline (check, build, commit, version, deploy). This tool only writes drafts — it never touches GitHub.",
       inputSchema: {
         ...projectInput,
         edits: z
@@ -212,7 +212,7 @@ export function createEdenMcpServer(service: McpToolService): McpServer {
     "publish_changes",
     {
       description:
-        "Publish EVERY saved draft through Eden's full pipeline: check, build, commit to the default branch, cut a version per agent, and deploy the whole team into the project's live environment. A failed build lands nothing and keeps the drafts saved. Runs synchronously and returns the commit sha, release ids, and queued deployment ids; poll get_deploy_status for the deploys.",
+        "Publish EVERY saved draft through harnesst's full pipeline: check, build, commit to the default branch, cut a version per agent, and deploy the whole team into the project's live environment. A failed build lands nothing and keeps the drafts saved. Runs synchronously and returns the commit sha, release ids, and queued deployment ids; poll get_deploy_status for the deploys.",
       inputSchema: {
         ...projectInput,
         environment: z
@@ -236,7 +236,7 @@ export function createEdenMcpServer(service: McpToolService): McpServer {
     "discard_changes",
     {
       description:
-        "Discard selected saved drafts from Eden without publishing. This removes only unpublished drafts from the staging area and never touches GitHub.",
+        "Discard selected saved drafts from harnesst without publishing. This removes only unpublished drafts from the staging area and never touches GitHub.",
       inputSchema: {
         ...projectInput,
         paths: z

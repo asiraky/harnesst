@@ -2,7 +2,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { createEdenMcpServer } from "~/mcp/server.server";
+import { createHarnesstMcpServer } from "~/mcp/server.server";
 import type { McpToolService } from "~/mcp/tools.server";
 
 function serviceMock(): McpToolService {
@@ -23,7 +23,7 @@ function serviceMock(): McpToolService {
   };
 }
 
-describe("Eden MCP server", () => {
+describe("harnesst MCP server", () => {
   const close: Array<() => Promise<void>> = [];
 
   afterEach(async () => {
@@ -33,8 +33,8 @@ describe("Eden MCP server", () => {
   async function connected(service: McpToolService) {
     const [clientTransport, serverTransport] =
       InMemoryTransport.createLinkedPair();
-    const server = createEdenMcpServer(service);
-    const client = new Client({ name: "eden-test", version: "1.0.0" });
+    const server = createHarnesstMcpServer(service);
+    const client = new Client({ name: "harnesst-test", version: "1.0.0" });
     await server.connect(serverTransport);
     await client.connect(clientTransport);
     close.push(

@@ -217,12 +217,12 @@ describe("inferBuildRoots", () => {
     ).toBeUndefined();
   });
 
-  it("repo-level Eden metadata never forces a repo-root build", () => {
-    // eden-lock.json (marketplace provenance) and the team-layout marker README (saved by a
+  it("repo-level harnesst metadata never forces a repo-root build", () => {
+    // harnesst-lock.json (marketplace provenance) and the team-layout marker README (saved by a
     // remove-member) ride along without widening the build.
     expect(
       inferBuildRoots(AGENTS, [
-        draft("eden-lock.json"),
+        draft("harnesst-lock.json"),
         draft("agents/README.md"),
         draft("agents/pm/agent/tools/plan.ts", "agent_pm"),
       ]),
@@ -319,16 +319,16 @@ describe("normalizeOpenRouterPackageDrafts (coherence pass)", () => {
     });
   });
 
-  it("heals a stale Eden-authored Dockerfile when the lock deletion would break its COPY", async () => {
+  it("heals a stale harnesst-authored Dockerfile when the lock deletion would break its COPY", async () => {
     const repoPackage =
       JSON.stringify(
         { dependencies: { "@openrouter/ai-sdk-provider": "^2.10.0" } },
         null,
         2,
       ) + "\n";
-    // Older Eden scaffolds committed a copy of the reference image that COPYs the lock
+    // Older harnesst scaffolds committed a copy of the reference image that COPYs the lock
     // explicitly and runs a bare `npm ci` — deleting the lock breaks it at COPY.
-    const staleDockerfile = `# Eden reference image for an eve agent (mirrors LocalDockerTarget.build()).
+    const staleDockerfile = `# harnesst reference image for an eve agent (mirrors LocalDockerTarget.build()).
 FROM node:24-slim AS build
 WORKDIR /app
 COPY package.json package-lock.json ./
@@ -352,7 +352,7 @@ RUN npm ci
     expect(dockerfile?.content).toContain("npm install");
   });
 
-  it("never touches a user-authored Dockerfile (no Eden header)", async () => {
+  it("never touches a user-authored Dockerfile (no harnesst header)", async () => {
     const repoPackage =
       JSON.stringify(
         { dependencies: { "@openrouter/ai-sdk-provider": "^2.10.0" } },
@@ -453,12 +453,12 @@ describe("findOrphanedDrafts (pure)", () => {
     expect(findOrphanedDrafts([], [], [pkg, code])).toEqual([]);
   });
 
-  it("never flags non-member paths (agent/, root package.json, lock, .eden)", () => {
+  it("never flags non-member paths (agent/, root package.json, lock, .harnesst)", () => {
     const drafts = [
       draft("agent/agent.ts"),
       draft("package.json", "{}"),
-      draft("eden-lock.json", "{}"),
-      draft(".eden/assistant/instructions.md"),
+      draft("harnesst-lock.json", "{}"),
+      draft(".harnesst/assistant/instructions.md"),
     ];
     expect(findOrphanedDrafts([], [], drafts)).toEqual([]);
   });

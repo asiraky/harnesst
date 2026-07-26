@@ -5,11 +5,11 @@
 // shared home volume (/workspace/home/checkouts/<conversationId>) that both the instance and the
 // model's bash sandbox see. The control plane drives it:
 //
-//   POST /ensure {conversationId}          → clone/fetch + checkout eden/conv-<id>; report base moves
+//   POST /ensure {conversationId}          → clone/fetch + checkout harnesst/conv-<id>; report base moves
 //   GET  /tree?conversationId=<id>         → full working-tree snapshot vs the merge-base with base
 //
 // GitHub credentials NEVER live here at rest: on each clone/fetch the sidecar asks the control
-// plane (EDEN_API_URL + EDEN_ASSISTANT_TOKEN, both instance-only env) for a short-lived token
+// plane (HARNESST_API_URL + HARNESST_ASSISTANT_TOKEN, both instance-only env) for a short-lived token
 // NARROWED to this one repo with contents:read, and passes it to git via a per-invocation
 // http.extraheader — never the remote URL, never git config on the shared volume. The edna token
 // and the read token stay in this instance process; they are never exposed in any response (the
@@ -24,14 +24,14 @@ import { randomBytes } from "node:crypto";
 
 const exec = promisify(execFile);
 
-const AUX_PORT = Number(process.env.EDEN_AUX_PORT ?? 3100);
-const API_URL = (process.env.EDEN_API_URL ?? "").replace(/\/+$/, "");
-const TOKEN = process.env.EDEN_ASSISTANT_TOKEN ?? "";
-const CHECKOUT_ROOT = process.env.EDEN_CHECKOUT_ROOT ?? "/workspace/home/checkouts";
-const MAX_FILE_BYTES = Number(process.env.EDEN_SYNC_MAX_BYTES ?? 1024 * 1024);
+const AUX_PORT = Number(process.env.HARNESST_AUX_PORT ?? 3100);
+const API_URL = (process.env.HARNESST_API_URL ?? "").replace(/\/+$/, "");
+const TOKEN = process.env.HARNESST_ASSISTANT_TOKEN ?? "";
+const CHECKOUT_ROOT = process.env.HARNESST_CHECKOUT_ROOT ?? "/workspace/home/checkouts";
+const MAX_FILE_BYTES = Number(process.env.HARNESST_SYNC_MAX_BYTES ?? 1024 * 1024);
 
 const checkoutDir = (id) => join(CHECKOUT_ROOT, id.replace(/[^A-Za-z0-9_-]/g, ""));
-const convBranch = (id) => `eden/conv-${id}`;
+const convBranch = (id) => `harnesst/conv-${id}`;
 
 /**
  * Narrowed read token + repo coordinates, cached in-process until ~5 minutes before the token
@@ -45,7 +45,7 @@ async function repoCreds() {
   if (credsCache && Date.now() < credsCache.expiresAtMs - CREDS_SLACK_MS) {
     return credsCache.creds;
   }
-  if (!API_URL || !TOKEN) throw new Error("checkout sidecar: EDEN_API_URL / EDEN_ASSISTANT_TOKEN unset");
+  if (!API_URL || !TOKEN) throw new Error("checkout sidecar: HARNESST_API_URL / HARNESST_ASSISTANT_TOKEN unset");
   const res = await fetch(`${API_URL}/api/assistant/read-token`, {
     method: "POST",
     headers: { authorization: `Bearer ${TOKEN}`, "content-type": "application/json" },
@@ -156,7 +156,7 @@ async function hasRemoteBranch(dir, branch, token) {
  *
  * SECURITY: entries whose mode is not a regular file — symlinks (120000), submodules (160000) —
  * are NEVER read. The model controls the checkout and could `ln -s /proc/1/environ leak`; this
- * process runs in the INSTANCE (whose env holds EDEN_ASSISTANT_TOKEN), so following a link here
+ * process runs in the INSTANCE (whose env holds HARNESST_ASSISTANT_TOKEN), so following a link here
  * would exfiltrate instance secrets into the mirrored branch. Such paths get `notFile: true` and
  * no body. An `lstat` isFile() re-check before every read is the second line of defense (a path
  * swapped for a symlink between `git add` and the read still won't be followed).
@@ -175,7 +175,7 @@ async function tree(conversationId) {
     )
   ).trim();
 
-  const tmpIndex = join(tmpdir(), `eden-idx-${randomBytes(6).toString("hex")}`);
+  const tmpIndex = join(tmpdir(), `harnesst-idx-${randomBytes(6).toString("hex")}`);
   const env = { ...process.env, GIT_INDEX_FILE: tmpIndex };
   try {
     await exec("git", ["-C", dir, "add", "-A"], { env, timeout: 120_000, maxBuffer: 64 * 1024 * 1024 });
@@ -292,7 +292,7 @@ function readBody(req) {
 }
 
 // Listen only when run as the entrypoint's process (node checkout-sidecar.mjs) — importing this
-// module (Eden's unit tests import classifyRawRecord) must not bind a port.
+// module (harnesst's unit tests import classifyRawRecord) must not bind a port.
 if (process.argv[1] && process.argv[1].endsWith("checkout-sidecar.mjs")) {
   server.listen(AUX_PORT, "0.0.0.0", () => {
     console.log(`[assistant] checkout sidecar listening on :${AUX_PORT}`);

@@ -18,7 +18,7 @@ export interface GitHubInstallState {
 }
 
 function stateKey(): Buffer {
-  return decodeKey(process.env.EDEN_SECRETS_KEY);
+  return decodeKey(process.env.HARNESST_SECRETS_KEY);
 }
 
 function nonceHash(nonce: string): string {

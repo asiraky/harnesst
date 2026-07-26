@@ -15,7 +15,7 @@ function getDatabaseUrl(): string {
   const url = process.env.DATABASE_URL;
   if (!url) {
     throw new Error(
-      "DATABASE_URL is not set. Add it to .env.local (e.g. postgres://user:pass@localhost:5432/eden).",
+      "DATABASE_URL is not set. Add it to .env.local (e.g. postgres://user:pass@localhost:5432/harnesst).",
     );
   }
   return url;
@@ -28,12 +28,12 @@ function createClient() {
   return drizzle(client, { schema });
 }
 
-const globalForDb = globalThis as unknown as { __edenDb?: DbClient };
+const globalForDb = globalThis as unknown as { __harnesstDb?: DbClient };
 
-export const db: DbClient = globalForDb.__edenDb ?? createClient();
+export const db: DbClient = globalForDb.__harnesstDb ?? createClient();
 
 if (process.env.NODE_ENV !== "production") {
-  globalForDb.__edenDb = db;
+  globalForDb.__harnesstDb = db;
 }
 
 export { schema };

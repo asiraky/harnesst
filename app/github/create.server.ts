@@ -1,7 +1,7 @@
 /**
  * Create a new eve repo and scaffold it (Connect pillar — the "create new" path, PRD §7.1).
  *
- * This is Eden's headless equivalent of `eve init`: create the repo via the GitHub App, then
+ * This is harnesst's headless equivalent of `eve init`: create the repo via the GitHub App, then
  * commit an eve skeleton directly to the default branch. Two layouts (PRD §7.9):
  *  - **single** — one agent at the repo root (`agent/`), today's default.
  *  - **team**   — an initially empty monorepo marked by `agents/README.md`.
@@ -61,7 +61,7 @@ export interface CreatedRepo {
 const GITIGNORE =
   ".eve/\n.output/\n.workflow-data/\nnode_modules/\n.env\n.env.*\n";
 
-/** Dependencies required by the provider router in the generated `eden-model.ts`. */
+/** Dependencies required by the provider router in the generated `harnesst-model.ts`. */
 function modelProviderDependencies(): Record<string, string> {
   return {
     [ANTHROPIC_PROVIDER_PACKAGE]: ANTHROPIC_PROVIDER_VERSION,
@@ -75,7 +75,7 @@ function modelProviderDependencies(): Record<string, string> {
 
 /**
  * The files every eve agent directory starts with, under `root` (e.g. "agent"). No model is
- * baked anywhere: `agent.ts` resolves through the generated `eden-model.ts`, so the agent runs
+ * baked anywhere: `agent.ts` resolves through the generated `harnesst-model.ts`, so the agent runs
  * the workspace's configured model from day one (an explicit per-agent override wins when set,
  * and a workspace with nothing configured gets a readable "set a model in Org settings" error).
  */
@@ -90,8 +90,8 @@ function agentDirFiles(root: string, displayName: string): FileChange[] {
       content: scaffoldOrgModelAgentModule(displayName),
     },
     { path: orgModelModulePath(root), content: orgModelModuleSource() },
-    // The Eden default sandbox: identical to eve's framework default until a secret is
-    // exposed (the EDEN_SANDBOX_ENV convention — see ~/eve/templates), but present from day
+    // The harnesst default sandbox: identical to eve's framework default until a secret is
+    // exposed (the HARNESST_SANDBOX_ENV convention — see ~/eve/templates), but present from day
     // one so "make X available in my sandbox" is an edit, not a new concept.
     { path: sandboxPath(root), content: DEFAULT_SANDBOX_MODULE },
   ];
@@ -117,7 +117,7 @@ function singleAgentFiles(name: string, agentName: string): FileChange[] {
     },
     {
       path: "README.md",
-      content: `# ${name}\n\nAn [eve](https://github.com/vercel/eve) agent scaffolded by Eden. The agent\nlives under \`agent/\`. Edit it here or in Eden.\n`,
+      content: `# ${name}\n\nAn [eve](https://github.com/vercel/eve) agent scaffolded by harnesst. The agent\nlives under \`agent/\`. Edit it here or in harnesst.\n`,
     },
     { path: ".gitignore", content: GITIGNORE },
   ];
@@ -146,7 +146,7 @@ export function memberScaffold(member: string): FileChange[] {
 
 /**
  * A fresh team monorepo skeleton (PRD §7.9): npm workspaces, each member a complete eve
- * project under `agents/<member>/`, detected by convention. `eden.json` is metadata only.
+ * project under `agents/<member>/`, detected by convention. `harnesst.json` is metadata only.
  */
 export function teamFiles(name: string): FileChange[] {
   return [
@@ -165,12 +165,12 @@ export function teamFiles(name: string): FileChange[] {
       }),
     },
     {
-      path: "eden.json",
+      path: "harnesst.json",
       content: packageJson({ name }),
     },
     {
       path: "README.md",
-      content: `# ${name}\n\nA team of [eve](https://github.com/vercel/eve) agents scaffolded by Eden.\nEach member is a complete eve project under \`agents/<member>/\` — add a member by\nadding a directory with its own \`agent/\` and \`package.json\`. Eden detects the roster\nby convention; \`eden.json\` holds team metadata only.\n`,
+      content: `# ${name}\n\nA team of [eve](https://github.com/vercel/eve) agents scaffolded by harnesst.\nEach member is a complete eve project under \`agents/<member>/\` — add a member by\nadding a directory with its own \`agent/\` and \`package.json\`. harnesst detects the roster\nby convention; \`harnesst.json\` holds team metadata only.\n`,
     },
     { path: ".gitignore", content: GITIGNORE },
   ];
@@ -229,8 +229,8 @@ export async function createEveRepo(
       description:
         input.description ??
         (layout === "team"
-          ? "A team of eve agents, built with Eden."
-          : "An eve agent, built with Eden."),
+          ? "A team of eve agents, built with harnesst."
+          : "An eve agent, built with harnesst."),
     });
   } catch (error) {
     const status = statusOf(error);

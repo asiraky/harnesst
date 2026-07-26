@@ -135,7 +135,7 @@ describe("refreshTeammatesForRosterChange", () => {
   });
 
   it("fires for a pure rename (a name swap counts as a membership change)", async () => {
-    // pm renamed → product: the other live member must refresh so EDEN_TEAMMATES reflects it.
+    // pm renamed → product: the other live member must refresh so HARNESST_TEAMMATES reflects it.
     seedMember("other", "env_other");
     const liveRelease = await seedLive("other", "env_other");
 

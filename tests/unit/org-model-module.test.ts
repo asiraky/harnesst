@@ -1,8 +1,8 @@
 /**
- * The generated `eden-model.ts` workspace module + the resolver-style `agent.ts` scaffold.
- * Pins the shape both Eden and the migration prompt rely on: one exported
- * `edenAgentModel(agentName)` used verbatim by agents and subagents (subagents pass the
- * PARENT's name), runtime resolution against `<EDEN_MODEL_GATEWAY_URL>/model-config`, the
+ * The generated `harnesst-model.ts` workspace module + the resolver-style `agent.ts` scaffold.
+ * Pins the shape both harnesst and the migration prompt rely on: one exported
+ * `harnesstAgentModel(agentName)` used verbatim by agents and subagents (subagents pass the
+ * PARENT's name), runtime resolution against `<HARNESST_MODEL_GATEWAY_URL>/model-config`, the
  * playground directive taking precedence, and the read-side helpers recognizing the shape
  * (so a model save writes the org map instead of rewriting the file).
  */
@@ -24,28 +24,28 @@ import {
 describe("orgModelModuleSource", () => {
   const source = orgModelModuleSource();
 
-  it("exports edenAgentModel and resolves through the Eden model-config endpoint", () => {
-    expect(source).toContain("export function edenAgentModel(agentName: string)");
+  it("exports harnesstAgentModel and resolves through the harnesst model-config endpoint", () => {
+    expect(source).toContain("export function harnesstAgentModel(agentName: string)");
     expect(source).toContain("/model-config?agent=");
-    expect(source).toContain("EDEN_MODEL_GATEWAY_URL");
-    expect(source).toContain("EDEN_MODEL_GATEWAY_TOKEN");
+    expect(source).toContain("HARNESST_MODEL_GATEWAY_URL");
+    expect(source).toContain("HARNESST_MODEL_GATEWAY_TOKEN");
   });
 
   it("checks the playground directive before the workspace configuration", () => {
-    const directive = source.indexOf("edenSelectedModel(ctx.messages)");
-    const configured = source.indexOf("await edenConfiguredModel(agentName)");
+    const directive = source.indexOf("harnesstSelectedModel(ctx.messages)");
+    const configured = source.indexOf("await harnesstConfiguredModel(agentName)");
     expect(directive).toBeGreaterThan(-1);
     expect(configured).toBeGreaterThan(directive);
   });
 
   it("carries the shared credential router and directive parser (no drift from setModel)", () => {
-    expect(source).toContain("function edenModel(");
-    expect(source).toContain("EDEN_MODEL_DIRECTIVE_SECRET");
+    expect(source).toContain("function harnesstModel(");
+    expect(source).toContain("HARNESST_MODEL_DIRECTIVE_SECRET");
     expect(source).toContain("timingSafeEqual");
   });
 
   it("never bakes a resolvable model id — the fallback errors readably instead", () => {
-    expect(source).toContain("eden/unconfigured");
+    expect(source).toContain("harnesst/unconfigured");
     expect(source).toContain("Org settings");
   });
 });
@@ -53,15 +53,15 @@ describe("orgModelModuleSource", () => {
 describe("scaffoldOrgModelAgentModule", () => {
   it("emits a model-free agent.ts that resolves by agent name", () => {
     const source = scaffoldOrgModelAgentModule("bookkeeping");
-    expect(source).toContain("model: edenAgentModel('bookkeeping')");
-    expect(source).toContain("from './eden-model'");
+    expect(source).toContain("model: harnesstAgentModel('bookkeeping')");
+    expect(source).toContain("from './harnesst-model'");
     // No model id anywhere — the workspace configuration is the only source of truth.
     expect(source).not.toMatch(/anthropic|openai|openrouter|codex/);
   });
 
   it("strips quote characters from the agent name (no source injection)", () => {
     expect(scaffoldOrgModelAgentModule("a'b\"c`d\\e")).toContain(
-      "edenAgentModel('abcde')",
+      "harnesstAgentModel('abcde')",
     );
   });
 
@@ -76,15 +76,15 @@ describe("scaffoldOrgModelAgentModule", () => {
 });
 
 describe("module placement helpers", () => {
-  it("places eden-model.ts at the member root", () => {
+  it("places harnesst-model.ts at the member root", () => {
     expect(orgModelModulePath("agents/bob/agent")).toBe(
-      "agents/bob/agent/eden-model.ts",
+      "agents/bob/agent/harnesst-model.ts",
     );
   });
 
   it("builds the import specifier for the member root and for subagents", () => {
-    expect(orgModelImportSpecifier()).toBe("./eden-model");
+    expect(orgModelImportSpecifier()).toBe("./harnesst-model");
     // subagents/<name>/agent.ts sits two directories below the member root.
-    expect(orgModelImportSpecifier(2)).toBe("../../eden-model");
+    expect(orgModelImportSpecifier(2)).toBe("../../harnesst-model");
   });
 });

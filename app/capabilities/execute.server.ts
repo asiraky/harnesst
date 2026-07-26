@@ -129,7 +129,7 @@ async function defaultEnabledGroups(
     listDrafts(project.id),
   ]);
   const lock = overlayLock(
-    source.files["eden-lock.json"] ?? null,
+    source.files["harnesst-lock.json"] ?? null,
     drafts.map((d) => ({ path: d.path, content: d.content })),
   );
   const member = caller.agent.root === "agent" ? null : caller.agent.name;
@@ -202,7 +202,7 @@ export async function executeCapabilityCall(
       ? deps.getCapability(input.provider)
       : null;
   if (!providerDef || !capability) {
-    const error = `"${input.provider}" is not a capability provider this Eden installation supports.`;
+    const error = `"${input.provider}" is not a capability provider this harnesst installation supports.`;
     await audit("refused", error, null, {});
     return { status: 404, body: { ok: false, error } };
   }
@@ -300,7 +300,7 @@ export async function executeCapabilityCall(
       body: {
         ok: false,
         error:
-          "Eden couldn't record this call in its audit log, so it was not executed — retry.",
+          "harnesst couldn't record this call in its audit log, so it was not executed — retry.",
       },
     };
   }

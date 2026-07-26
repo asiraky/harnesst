@@ -1,5 +1,5 @@
 /**
- * Operator config for Eden's ONE shared Discord app (issue #32). A self-host installation
+ * Operator config for harnesst's ONE shared Discord app (issue #32). A self-host installation
  * registers a single Discord application in the Developer Portal and sets its three
  * credentials as control-plane env. The connect flow, the interactions relay, and the send
  * proxy all read this — the bot token NEVER leaves the control plane (it can act in every
@@ -16,9 +16,9 @@ export interface DiscordAppConfig {
 
 /** The shared app's config, or null when the operator hasn't set all three env vars. */
 export function getDiscordAppConfig(): DiscordAppConfig | null {
-  const applicationId = process.env.EDEN_DISCORD_APPLICATION_ID?.trim();
-  const botToken = process.env.EDEN_DISCORD_BOT_TOKEN?.trim();
-  const publicKey = process.env.EDEN_DISCORD_PUBLIC_KEY?.trim();
+  const applicationId = process.env.HARNESST_DISCORD_APPLICATION_ID?.trim();
+  const botToken = process.env.HARNESST_DISCORD_BOT_TOKEN?.trim();
+  const publicKey = process.env.HARNESST_DISCORD_PUBLIC_KEY?.trim();
   if (!applicationId || !botToken || !publicKey) return null;
   return { applicationId, botToken, publicKey };
 }

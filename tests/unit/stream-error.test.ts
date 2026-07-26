@@ -7,7 +7,7 @@ import {
 
 const FRIENDLY = "The model provider had a temporary error. Retry your message.";
 
-// The verbatim blob Eden receives when an Azure-hosted OpenAI call 500s mid-stream: the
+// The verbatim blob harnesst receives when an Azure-hosted OpenAI call 500s mid-stream: the
 // provider message, the MODEL_CALL_FAILED code, and a Details JSON carrying the eve.mjs stack.
 const AZURE_500_BLOB = `The server had an error processing your request. Sorry about that! You can retry your request, or contact us through an Azure support request at https://portal.azure.com if the error persists. (Please include the request ID f3a88be5-0000-0000-0000-000000000000 in your email.)
 Code: MODEL_CALL_FAILED

@@ -56,7 +56,7 @@ describe("provider model references", () => {
 describe("providerConnectionEnvName", () => {
   it("constructs exact API-key vars only from safe provider/connection values", () => {
     expect(providerConnectionEnvName("anthropic", CONNECTION_ID)).toBe(
-      "EDEN_PROVIDER_ANTHROPIC_ABCDEFGHIJKL_API_KEY",
+      "HARNESST_PROVIDER_ANTHROPIC_ABCDEFGHIJKL_API_KEY",
     );
     expect(providerConnectionEnvName("codex", CONNECTION_ID)).toBeNull();
     expect(providerConnectionEnvName("unknown", CONNECTION_ID)).toBeNull();

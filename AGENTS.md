@@ -1,4 +1,4 @@
-# Eden
+# harnesst
 
 A web app for building, managing, and deploying [eve](https://github.com/vercel/eve) agents
 without hand-writing code — a guided UI plus an embedded coding assistant over an eve repo.

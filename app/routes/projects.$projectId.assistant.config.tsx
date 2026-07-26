@@ -1,6 +1,6 @@
 /**
- * Assistant configuration — the user layer over `.eden/assistant/**`.
- * Editing here SAVES drafts like every other edit; the fixed Eden-owned layer (instructions +
+ * Assistant configuration — the user layer over `.harnesst/assistant/**`.
+ * Editing here SAVES drafts like every other edit; the fixed harnesst-owned layer (instructions +
  * tools) is shown read-only so the assistant is inspectable. Config takes effect when you
  * publish, which restarts the instance.
  */
@@ -248,7 +248,7 @@ export async function action(args: ActionFunctionArgs) {
 }
 
 export function meta() {
-  return [{ title: "Assistant configuration · eden" }];
+  return [{ title: "Assistant configuration · harnesst" }];
 }
 
 export default function AssistantConfig({ loaderData }: Route.ComponentProps) {
@@ -298,7 +298,7 @@ export default function AssistantConfig({ loaderData }: Route.ComponentProps) {
           <CardHeader>
             <CardTitle>Instructions</CardTitle>
             <CardDescription>
-              The assistant always starts with eden's built-in instructions
+              The assistant always starts with harnesst's built-in instructions
               (shown below, read-only). Anything you add is appended under a
               “Project instructions” marker — so you don't need to repeat what's
               already covered here.

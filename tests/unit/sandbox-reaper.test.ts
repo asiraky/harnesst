@@ -6,7 +6,7 @@
  * volume→environment map the reaper uses to attribute a reaped stall to its project. We pin: a young
  * running sandbox is spared; an old running one with no in-flight exec (and a known env) is reaped
  * AND records a `failed` run keyed `reaped:<sessionId>`; a live exec spares it; an old EXITED one is
- * GC'd with NO run row; a non-eden volume is untouched; a known-label but unknown env is reaped
+ * GC'd with NO run row; a non-harnesst volume is untouched; a known-label but unknown env is reaped
  * without a run; a docker error soft-fails without throwing; and the ceiling boundary is exclusive.
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -174,7 +174,7 @@ describe("sweepLeakedSandboxes", () => {
     expect(recorded).toEqual([]);
   });
 
-  it("leaves a sandbox mounting a non-eden volume untouched", async () => {
+  it("leaves a sandbox mounting a non-harnesst volume untouched", async () => {
     const { deps, removed, recorded } = makeDeps([
       container({ id: "foreign", createdMsAgo: OLD, volume: "some-other-volume" }),
     ]);

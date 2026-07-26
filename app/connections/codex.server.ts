@@ -3,7 +3,7 @@
  * sign-in flow plus the token exchange/refresh network calls and the JWT identity decode.
  *
  * Unlike the Google broker (a redirect-based authorization-code flow), a web control plane can't
- * use the Codex CLI's hardcoded `http://localhost:1455/auth/callback` redirect. So Eden connects
+ * use the Codex CLI's hardcoded `http://localhost:1455/auth/callback` redirect. So harnesst connects
  * a Codex account through OpenAI's DEVICE-CODE flow, an official Codex sign-in method:
  *
  *   1. usercode  — POST {auth}/api/accounts/deviceauth/usercode {client_id} → device_auth_id + code
@@ -23,18 +23,18 @@
 /** The public Codex CLI OAuth client id (no secret). Same value the Codex CLI ships. */
 export const CODEX_CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann";
 
-/** Auth host — override with EDEN_CODEX_AUTH_BASE_URL for tests/dev-mocking. */
+/** Auth host — override with HARNESST_CODEX_AUTH_BASE_URL for tests/dev-mocking. */
 export function codexAuthBase(): string {
   return (
-    process.env.EDEN_CODEX_AUTH_BASE_URL?.replace(/\/+$/, "") ||
+    process.env.HARNESST_CODEX_AUTH_BASE_URL?.replace(/\/+$/, "") ||
     "https://auth.openai.com"
   );
 }
 
-/** Codex backend host (the Responses API) — override with EDEN_CODEX_API_BASE_URL. */
+/** Codex backend host (the Responses API) — override with HARNESST_CODEX_API_BASE_URL. */
 export function codexApiBase(): string {
   return (
-    process.env.EDEN_CODEX_API_BASE_URL?.replace(/\/+$/, "") ||
+    process.env.HARNESST_CODEX_API_BASE_URL?.replace(/\/+$/, "") ||
     "https://chatgpt.com/backend-api/codex"
   );
 }

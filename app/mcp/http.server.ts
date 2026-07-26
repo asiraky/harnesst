@@ -1,7 +1,7 @@
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 
 import { verifyApiKey } from "~/mcp/api-keys.server";
-import { createEdenMcpServer } from "~/mcp/server.server";
+import { createHarnesstMcpServer } from "~/mcp/server.server";
 import { createMcpToolService, type McpToolService } from "~/mcp/tools.server";
 
 type VerifiedApiKey = NonNullable<Awaited<ReturnType<typeof verifyApiKey>>>;
@@ -29,7 +29,7 @@ function jsonRpcError(message: string, status: number): Response {
 /**
  * A stateless Streamable HTTP endpoint. Every request re-verifies the bearer key, then binds an
  * org/user-scoped tool service to a fresh protocol server. This avoids an in-memory session map
- * that would break when hosted Eden is restarted or scaled across processes.
+ * that would break when hosted harnesst is restarted or scaled across processes.
  */
 export function createMcpRequestHandler(dependencies: McpRouteDependencies) {
   return async (request: Request): Promise<Response> => {
@@ -44,7 +44,7 @@ export function createMcpRequestHandler(dependencies: McpRouteDependencies) {
     if (!principal) return jsonRpcError("Unauthorized", 401);
 
     const service = await dependencies.createService(principal);
-    const server = createEdenMcpServer(service);
+    const server = createHarnesstMcpServer(service);
     const transport = new WebStandardStreamableHTTPServerTransport({
       sessionIdGenerator: undefined,
       enableJsonResponse: true,

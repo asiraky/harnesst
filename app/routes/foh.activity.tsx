@@ -74,7 +74,7 @@ export const loader = (args: LoaderFunctionArgs) =>
   );
 
 export function meta({ loaderData }: Route.MetaArgs) {
-  return [{ title: `activity · ${loaderData?.projectName ?? "eden"}` }];
+  return [{ title: `activity · ${loaderData?.projectName ?? "harnesst"}` }];
 }
 
 const AGENT_FALLBACK = "removed agent";

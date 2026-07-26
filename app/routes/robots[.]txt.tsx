@@ -39,7 +39,7 @@ export function loader({ request }: LoaderFunctionArgs) {
 
   const body = marketingMode
     ? [
-        "# Eden — marketing pages are open to all crawlers; the authed app is kept out of the index.",
+        "# harnesst — marketing pages are open to all crawlers; the authed app is kept out of the index.",
         "User-agent: *",
         "Allow: /",
         ...APP_DISALLOWS.map((path) => `Disallow: ${path}`),
@@ -50,7 +50,7 @@ export function loader({ request }: LoaderFunctionArgs) {
         "",
       ].join("\n")
     : [
-        "# Eden app host — the marketing site lives on its own host; nothing here is indexable.",
+        "# harnesst app host — the marketing site lives on its own host; nothing here is indexable.",
         "User-agent: *",
         "Disallow: /",
         "",

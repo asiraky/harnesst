@@ -3,24 +3,24 @@
  *
  * In prod, eve's hourly schedule fires and creates a session sandbox container each time — but the
  * cron turn stalls BEFORE its first model/tool step: no command is ever exec'd in the sandbox
- * (`docker top` shows only the keeper `sleep 2147483647`), no run row ever reaches Eden, and the
- * idle `Up` sandbox containers accumulate forever. eve owns the stall (Eden policy: never patch or
- * fork eve — see docs/upstream/eve-cron-stall-report.md); Eden's job is to (a) stop the containers
+ * (`docker top` shows only the keeper `sleep 2147483647`), no run row ever reaches harnesst, and the
+ * idle `Up` sandbox containers accumulate forever. eve owns the stall (harnesst policy: never patch or
+ * fork eve — see docs/upstream/eve-cron-stall-report.md); harnesst's job is to (a) stop the containers
  * leaking and (b) make the failure class visible without docker archaeology.
  *
  * Scope — deliberately narrow. This reaps ONLY containers carrying BOTH
  *   eve.sandbox.role=session  AND  eve.sandbox.tag.channel=schedule
- * that also mount an Eden-owned home volume (a Mount whose Name starts `eden-home-`). Schedule
+ * that also mount a harnesst-owned home volume (a Mount whose Name starts `harnesst-home-`). Schedule
  * sessions are one-shot fire-and-forget — nothing ever resumes them, so a stalled/finished one is
  * always safe to remove. Every OTHER channel (playground / discord / assistant) can be resumed and
  * is never touched, and template-build containers (a different role) are out of scope too.
  *
- * TRIPWIRE (same shape as the eve-docker shim's): the label names are eve's, not Eden's. If a future
+ * TRIPWIRE (same shape as the eve-docker shim's): the label names are eve's, not harnesst's. If a future
  * eve upgrade renames `eve.sandbox.role` / `eve.sandbox.tag.channel`, the `ps` filter simply matches
  * nothing and the sweep becomes a no-op — leaks would return, but nothing breaks. Graceful
  * degradation over a hard dependency on private label strings.
  *
- * Signals (all docker-observable + Eden's own DB — the Workflow world DBs are empty on this host, so
+ * Signals (all docker-observable + harnesst's own DB — the Workflow world DBs are empty on this host, so
  * a "session has no steps" query is not viable):
  *   - RUNNING candidate, older than the ceiling, with EMPTY ExecIDs → the stall signature. An
  *     in-flight `docker exec` (ExecIDs non-empty) is real work and spares the container. Reaping one
@@ -41,7 +41,7 @@ const exec = promisify(execFile);
 
 /** How often the reaper sweeps for leaked schedule sandboxes. */
 export const SANDBOX_REAP_SWEEP_MS = Number(
-  process.env.EDEN_SANDBOX_REAP_SWEEP_MS || 5 * 60 * 1000,
+  process.env.HARNESST_SANDBOX_REAP_SWEEP_MS || 5 * 60 * 1000,
 );
 
 /**
@@ -49,27 +49,27 @@ export const SANDBOX_REAP_SWEEP_MS = Number(
  * reaped. Generous by default so a legitimately slow first step is never mistaken for a stall.
  */
 export const SANDBOX_REAP_CEILING_MS = Number(
-  process.env.EDEN_SANDBOX_REAP_CEILING_MS || 45 * 60 * 1000,
+  process.env.HARNESST_SANDBOX_REAP_CEILING_MS || 45 * 60 * 1000,
 );
 
 const SESSION_ROLE_LABEL = "eve.sandbox.role=session";
 const SCHEDULE_CHANNEL_LABEL = "eve.sandbox.tag.channel=schedule";
-const HOME_VOLUME_PREFIX = "eden-home-";
+const HOME_VOLUME_PREFIX = "harnesst-home-";
 /** Docker's zero value for an unset FinishedAt — treat as "never finished". */
 const DOCKER_ZERO_TIME = "0001-01-01T00:00:00Z";
 
 /**
  * Provisional publish-image namespace (issue #225 §3.2): the pipeline builds under
- * `eden/publish-<taskId>:…` tags and removes them in a `finally` — but a crashed process
+ * `harnesst/publish-<taskId>:…` tags and removes them in a `finally` — but a crashed process
  * strands them, so this sweep prunes any old enough that no publish can still be using them.
- * The whole `eden/publish-` reference namespace belongs to the pipeline; promoted images live
- * under `eden/proj-…` and are never matched.
+ * The whole `harnesst/publish-` reference namespace belongs to the pipeline; promoted images live
+ * under `harnesst/proj-…` and are never matched.
  */
-const PROVISIONAL_IMAGE_REFERENCE = "eden/publish-*";
+const PROVISIONAL_IMAGE_REFERENCE = "harnesst/publish-*";
 
 /** Age past which a leaked provisional publish image is pruned (publishes take minutes). */
 export const PUBLISH_IMAGE_PRUNE_CEILING_MS = Number(
-  process.env.EDEN_PUBLISH_IMAGE_PRUNE_CEILING_MS || 6 * 60 * 60 * 1000,
+  process.env.HARNESST_PUBLISH_IMAGE_PRUNE_CEILING_MS || 6 * 60 * 60 * 1000,
 );
 
 /** The subset of `docker inspect` fields the sweep reads. */
@@ -115,7 +115,7 @@ export interface SandboxReapResult {
   error?: string;
 }
 
-/** The eden-home volume mounted by this sandbox, if any (its owning environment's home). */
+/** The harnesst-home volume mounted by this sandbox, if any (its owning environment's home). */
 function homeVolumeOf(c: InspectedContainer): string | null {
   for (const m of c.Mounts ?? []) {
     if (m.Name && m.Name.startsWith(HOME_VOLUME_PREFIX)) return m.Name;
@@ -200,7 +200,7 @@ export async function sweepLeakedSandboxes(
   for (const c of inspected) {
     const volume = homeVolumeOf(c);
     if (!volume) {
-      // Not an Eden-owned sandbox (another checkout's, or an unmounted one) — leave it alone.
+      // Not a harnesst-owned sandbox (another checkout's, or an unmounted one) — leave it alone.
       spared++;
       continue;
     }
@@ -296,7 +296,7 @@ export interface ProvisionalImageSweepResult {
 }
 
 /**
- * One sweep of leaked provisional publish images: list every `eden/publish-*` tag, inspect its
+ * One sweep of leaked provisional publish images: list every `harnesst/publish-*` tag, inspect its
  * creation time, and untag the ones older than the ceiling. Same soft-fail discipline as the
  * sandbox sweep — docker being unavailable must never break the interval.
  */
@@ -340,7 +340,7 @@ export async function sweepStaleProvisionalImages(
   let pruned = 0;
   for (const ref of stale) {
     try {
-      // rmi untags; layers shared with a promoted `eden/proj-…` tag survive.
+      // rmi untags; layers shared with a promoted `harnesst/proj-…` tag survive.
       await deps.runDocker(["rmi", ref]);
       console.log(`[reaper] pruned stale provisional publish image ${ref}`);
       pruned++;
@@ -375,16 +375,16 @@ function startSandboxReaper(): { stop: () => void } {
 }
 
 const globalForReaper = globalThis as unknown as {
-  __edenSandboxReaper?: { stop: () => void };
+  __harnesstSandboxReaper?: { stop: () => void };
 };
 
 /**
  * Start the sandbox reaper once per process. Gated OFF unless the deploy target is local-docker
- * (only that target spawns host sandbox containers Eden can see) and not explicitly disabled. Safe
+ * (only that target spawns host sandbox containers harnesst can see) and not explicitly disabled. Safe
  * to call from any server module; called from ensureWorkerStarted so every start site gets it.
  */
 export function ensureSandboxReaperStarted(): void {
-  if (process.env.EDEN_DISABLE_SANDBOX_REAPER === "1") return;
+  if (process.env.HARNESST_DISABLE_SANDBOX_REAPER === "1") return;
   if (getRuntime().deployTarget.name !== "local-docker") return;
-  globalForReaper.__edenSandboxReaper ??= startSandboxReaper();
+  globalForReaper.__harnesstSandboxReaper ??= startSandboxReaper();
 }

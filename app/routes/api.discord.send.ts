@@ -1,6 +1,6 @@
 /**
  * Discord send proxy (issue #32). The `discord-send-message` tool can't hold the shared bot
- * token, so it POSTs `{ channelId, message }` here with `Authorization: Bearer <EDEN_TEAM_TOKEN>`
+ * token, so it POSTs `{ channelId, message }` here with `Authorization: Bearer <HARNESST_TEAM_TOKEN>`
  * (the same delegation token the team relay uses). The token authenticates the CALLER
  * DEPLOYMENT; the control plane resolves its agent, confirms the target channel's server is one
  * the agent is connected to, and sends with the bot token. This confines the shared token to
@@ -57,7 +57,7 @@ export async function action({ request }: ActionFunctionArgs) {
   if (!agent) {
     return data({
       ok: false,
-      error: "Your deployment is no longer known to Eden.",
+      error: "Your deployment is no longer known to harnesst.",
     });
   }
 

@@ -2,14 +2,14 @@
  * Invitation delivery tokens. The invitation email link carries `?token=` — an HMAC-signed
  * (invitationId, email) pair minted when the invitation email is sent. Invitation ids alone are
  * enumerable by organization members (CVE-2026-53514), so possessing the id proves nothing;
- * possessing this token proves the bearer received the email Eden sent to the invited address.
+ * possessing this token proves the bearer received the email harnesst sent to the invited address.
  *
  * That proof-of-delivery is what lets the accept screen treat a signed-in invitee whose account
  * email matches the invited address as email-verified, without a second manual verification
  * round-trip. The organization plugin's `requireEmailVerificationOnInvitation` gate stays ON:
  * anyone who arrives with only the enumerable id (no token) still has to verify by email.
  *
- * Keyed by the same `EDEN_SECRETS_KEY` as the other signed-state flows (never a new env var);
+ * Keyed by the same `HARNESST_SECRETS_KEY` as the other signed-state flows (never a new env var);
  * pure over an injected key so mint/verify unit-test without env. No `exp` in the payload: the
  * invitation row carries its own expiry and Better Auth enforces it on get/accept, so a token
  * outlives its invitation harmlessly — it only ever attests delivery to the invited mailbox.
@@ -27,7 +27,7 @@ type InvitationTokenPayload = {
 
 /** The signing key — reuses the secrets key source (never a new env var). */
 export function invitationTokenKey(): Buffer {
-  return decodeKey(process.env.EDEN_SECRETS_KEY);
+  return decodeKey(process.env.HARNESST_SECRETS_KEY);
 }
 
 /** Mint the delivery token embedded in an invitation email link. */

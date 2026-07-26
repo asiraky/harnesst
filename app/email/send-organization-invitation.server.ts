@@ -39,7 +39,7 @@ export async function sendOrganizationInvitation(
 
   await sendEmail({
     to: data.email,
-    subject: `Join ${data.organization.name} on Eden`,
+    subject: `Join ${data.organization.name} on harnesst`,
     html,
   });
 }

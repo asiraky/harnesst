@@ -1,6 +1,6 @@
 /**
  * The workspace's agent-model configuration — the single source of truth a running agent's
- * generated `eden-model.ts` resolves against (`GET /api/gateway/v1/model-config`).
+ * generated `harnesst-model.ts` resolves against (`GET /api/gateway/v1/model-config`).
  *
  * Resolution is deliberately boring: an explicit per-agent override in `agent_model_overrides`
  * wins, else the workspace default (`workspace_settings.assistant_model`), else nothing — and

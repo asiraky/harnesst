@@ -1,7 +1,7 @@
 /**
- * GitHub App webhook receiver — keeps Eden's Release history in sync when a developer's PR is
+ * GitHub App webhook receiver — keeps harnesst's Release history in sync when a developer's PR is
  * merged on github.com. This is the ONLY PR-shaped path that survives issue #225's cutover,
- * and only because it serves developers pushing to the repo directly, never the Eden UI (Eden's
+ * and only because it serves developers pushing to the repo directly, never the harnesst UI (harnesst's
  * own publishes commit straight to the default branch and cut their releases pipeline-side).
  *
  * On a PR merged into the default branch, find-or-create the Release at the merge commit. It
@@ -62,7 +62,7 @@ export async function action({ request }: ActionFunctionArgs) {
       : null;
 
   // Only act on PRs merged into the default branch — a merge into a feature branch changes
-  // nothing Eden serves.
+  // nothing harnesst serves.
   if (
     event !== "pull_request" ||
     payload.action !== "closed" ||
@@ -104,7 +104,7 @@ export async function action({ request }: ActionFunctionArgs) {
         },
       );
       // D7: a merge that added/removed a member must refresh the OTHER members' running
-      // instances so their EDEN_TEAMMATES reflects the new roster (image reuse, no rebuild).
+      // instances so their HARNESST_TEAMMATES reflects the new roster (image reuse, no rebuild).
       await refreshTeammatesForRosterChange({
         projectId: project.id,
         previousNames: before.map((a) => a.name),

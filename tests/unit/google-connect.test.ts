@@ -260,7 +260,7 @@ describe("googleAuthorizeUrl", () => {
   it("adds offline/consent and identity scopes, response_type=code", () => {
     const url = googleAuthorizeUrl({
       clientId: "client_1",
-      redirectUri: "https://eden.example/google/callback",
+      redirectUri: "https://harnesst.example/google/callback",
       state: "st at e",
       scopes: "https://www.googleapis.com/auth/spreadsheets",
     });
@@ -273,7 +273,7 @@ describe("googleAuthorizeUrl", () => {
     expect(parsed.searchParams.get("access_type")).toBe("offline");
     expect(parsed.searchParams.get("prompt")).toBe("consent");
     expect(parsed.searchParams.get("redirect_uri")).toBe(
-      "https://eden.example/google/callback",
+      "https://harnesst.example/google/callback",
     );
     expect(parsed.searchParams.get("state")).toBe("st at e");
     const scope = parsed.searchParams.get("scope") ?? "";

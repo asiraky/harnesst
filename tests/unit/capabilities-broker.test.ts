@@ -12,7 +12,7 @@
  *    (the real `upsertGrant`, faked Drizzle) invalidates the cache so the replaced account's
  *    token never serves another call.
  *  - `connectionGrantEnv`: a capability provider's deploy injects NO `<PREFIX>_OAUTH_*` vars —
- *    only the Eden-owned `EDEN_CAPABILITY_PROVIDERS` marker — but still liveness-validates the
+ *    only the harnesst-owned `HARNESST_CAPABILITY_PROVIDERS` marker — but still liveness-validates the
  *    grant (dead → readable throw), requires the resource binding when the capability declares
  *    one, and fails honestly when the operator OAuth client was removed after an active grant
  *    was made.
@@ -172,8 +172,8 @@ describe("capabilityAccessToken", () => {
   });
 
   it("invalidates the cached token when the grant is replaced — a reconnect's account is honored at the very next call", async () => {
-    const OLD_KEY = process.env.EDEN_SECRETS_KEY;
-    process.env.EDEN_SECRETS_KEY = "a".repeat(64);
+    const OLD_KEY = process.env.HARNESST_SECRETS_KEY;
+    process.env.HARNESST_SECRETS_KEY = "a".repeat(64);
     dbMocks.insert.mockReturnValue({
       values: () => ({
         onConflictDoUpdate: () => ({
@@ -216,8 +216,8 @@ describe("capabilityAccessToken", () => {
       expect(second.accessToken).not.toBe(first.accessToken);
       expect(events.filter((e) => e.startsWith("refresh:"))).toHaveLength(2);
     } finally {
-      if (OLD_KEY === undefined) delete process.env.EDEN_SECRETS_KEY;
-      else process.env.EDEN_SECRETS_KEY = OLD_KEY;
+      if (OLD_KEY === undefined) delete process.env.HARNESST_SECRETS_KEY;
+      else process.env.HARNESST_SECRETS_KEY = OLD_KEY;
     }
   });
 
@@ -269,13 +269,13 @@ function deployDeps(over: Partial<ConnectionDeployDeps>): ConnectionDeployDeps {
 }
 
 describe("connectionGrantEnv — capability delivery (issue #166)", () => {
-  it("injects NO XERO_OAUTH_* vars — only the Eden-owned capability marker", async () => {
+  it("injects NO XERO_OAUTH_* vars — only the harnesst-owned capability marker", async () => {
     const out = await connectionGrantEnv(deployScope, okFetch, deployDeps({}));
     expect(Object.keys(out).filter((k) => k.startsWith("XERO"))).toEqual([]);
-    expect(out).toEqual({ EDEN_CAPABILITY_PROVIDERS: "xero" });
+    expect(out).toEqual({ HARNESST_CAPABILITY_PROVIDERS: "xero" });
   });
 
-  it("still liveness-validates the grant with the rotation persisted (Eden stays the single writer)", async () => {
+  it("still liveness-validates the grant with the rotation persisted (harnesst stays the single writer)", async () => {
     const order: string[] = [];
     const rotateRefreshToken = vi.fn(async (_id: string, rt: string) => {
       order.push(`rotate:${rt}`);
@@ -288,7 +288,7 @@ describe("connectionGrantEnv — capability delivery (issue #166)", () => {
     );
     expect(rotateRefreshToken).toHaveBeenCalledWith("grant_xero", "rt_2", "iv_1");
     // The rotated token was persisted — and still nothing credential-shaped got injected.
-    expect(out).toEqual({ EDEN_CAPABILITY_PROVIDERS: "xero" });
+    expect(out).toEqual({ HARNESST_CAPABILITY_PROVIDERS: "xero" });
   });
 
   it("fails the deploy honestly on a dead grant (marked expired, readable reconnect throw)", async () => {
@@ -332,7 +332,7 @@ describe("connectionGrantEnv — capability delivery (issue #166)", () => {
   it("fails the deploy honestly when an ACTIVE capability grant has no operator OAuth client (config removed after connect)", async () => {
     await expect(
       connectionGrantEnv(deployScope, okFetch, deployDeps({ getConfig: () => null })),
-    ).rejects.toThrow(/no Xero OAuth client configured.*EDEN_XERO_CLIENT_ID/);
+    ).rejects.toThrow(/no Xero OAuth client configured.*HARNESST_XERO_CLIENT_ID/);
   });
 
   it("still skips silently when the operator config is missing and no ACTIVE capability grant exists", async () => {
@@ -370,6 +370,6 @@ describe("connectionGrantEnv — capability delivery (issue #166)", () => {
       GOOGLE_OAUTH_REFRESH_TOKEN: "rt_g",
       GOOGLE_OAUTH_SCOPES: "https://www.googleapis.com/auth/spreadsheets",
     });
-    expect(out.EDEN_CAPABILITY_PROVIDERS).toBeUndefined();
+    expect(out.HARNESST_CAPABILITY_PROVIDERS).toBeUndefined();
   });
 });

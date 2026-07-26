@@ -29,16 +29,16 @@ export default function OrganizationInvitationEmail({
   return (
     <Html lang="en">
       <Head />
-      <Preview>Join {organizationName} on Eden</Preview>
+      <Preview>Join {organizationName} on harnesst</Preview>
       <Body style={styles.main}>
         <Container style={styles.container}>
           <Text style={styles.brand}>
-            <span style={styles.brandAccent}>e</span>den
+            <span style={styles.brandAccent}>h</span>arnesst
           </Text>
           <Heading style={styles.heading}>Join {organizationName}</Heading>
           <Text style={styles.text}>
             {inviterName} ({inviterEmail}) invited you to join{" "}
-            {organizationName} on Eden.
+            {organizationName} on harnesst.
           </Text>
           <Button href={invitationUrl} style={styles.button}>
             Accept invitation

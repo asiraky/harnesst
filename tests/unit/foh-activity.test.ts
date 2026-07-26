@@ -253,14 +253,14 @@ describe("projectActivity", () => {
 describe("summarizeExchangeSteps", () => {
   it("keeps messages and tool calls in seq order, drops quiet model beats", () => {
     const steps = summarizeExchangeSteps([
-      { seq: 3, type: "tool_call", toolName: "bash", isError: false, data: { summary: "dig eden.dev" } },
+      { seq: 3, type: "tool_call", toolName: "bash", isError: false, data: { summary: "dig harnesst.dev" } },
       { seq: 1, type: "message", toolName: null, isError: false, data: { role: "user", text: "can you check DNS?" } },
       { seq: 2, type: "model_call", toolName: null, isError: false, data: {} },
       { seq: 4, type: "message", toolName: null, isError: false, data: { role: "assistant", text: "DNS looks fine." } },
     ]);
     expect(steps).toEqual([
       { kind: "message", role: "user", text: "can you check DNS?" },
-      { kind: "tool", toolName: "bash", summary: "dig eden.dev", isError: false },
+      { kind: "tool", toolName: "bash", summary: "dig harnesst.dev", isError: false },
       { kind: "message", role: "assistant", text: "DNS looks fine." },
     ]);
   });
@@ -317,14 +317,14 @@ describe("exchangeStepsFromEntries", () => {
         role: "assistant",
         text: "DNS looks fine.",
         steps: [
-          { toolName: "bash", summary: "dig eden.dev", isError: false },
+          { toolName: "bash", summary: "dig harnesst.dev", isError: false },
           { toolName: null, isError: true, message: "overloaded" },
         ],
         error: "the turn failed late",
       },
     ]);
     expect(steps).toEqual([
-      { kind: "tool", toolName: "bash", summary: "dig eden.dev", isError: false },
+      { kind: "tool", toolName: "bash", summary: "dig harnesst.dev", isError: false },
       { kind: "error", text: "overloaded" },
       { kind: "message", role: "assistant", text: "DNS looks fine." },
       { kind: "error", text: "the turn failed late" },

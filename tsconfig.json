@@ -6,12 +6,12 @@
     ".react-router/types/**/*"
   ],
   "exclude": [
-    // The catalog seed's template files are customer-facing exemplars that import `eve` (not an
-    // Eden dependency) — they ship to customer repos, they aren't Eden source. Don't typecheck
+    // The catalog seed's template files are customer-facing exemplars that import `eve` (not a
+    // harnesst dependency) — they ship to customer repos, they aren't harnesst source. Don't typecheck
     // them here; the catalog CI (catalog/scripts/validate.mjs) gates them instead.
     "catalog/templates/**/*",
     // The bundled assistant eve project (docs/ASSISTANT.md) is a separate project compiled by
-    // `eve build` inside its own image — it imports `eve` (not an Eden dependency), so the
+    // `eve build` inside its own image — it imports `eve` (not a harnesst dependency), so the
     // control-plane tsc must not typecheck it.
     "assistant-template/**/*"
   ],

@@ -36,7 +36,7 @@ function rpcRequest(body: object, authorization = "Bearer edn_test") {
     "content-type": "application/json",
   });
   if (authorization) headers.set("authorization", authorization);
-  return new Request("https://eden.example/api/mcp", {
+  return new Request("https://harnesst.example/api/mcp", {
     method: "POST",
     headers,
     body: JSON.stringify(body),
@@ -115,7 +115,7 @@ describe("MCP HTTP route", () => {
     expect(await response.json()).toMatchObject({
       jsonrpc: "2.0",
       id: 1,
-      result: { serverInfo: { name: "eden", version: "0.1.0" } },
+      result: { serverInfo: { name: "harnesst", version: "0.1.0" } },
     });
     expect(createService).toHaveBeenCalledWith(principal);
   });
