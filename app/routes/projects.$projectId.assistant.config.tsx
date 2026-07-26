@@ -285,7 +285,7 @@ export default function AssistantConfig({ loaderData }: Route.ComponentProps) {
           icon={Sparkles}
           accent="brand"
           title="Configure the assistant"
-          description="Tailor the assistant to this repo. Changes are saved as drafts — they take effect when you publish (the Publish button in the header), which restarts the assistant."
+          description="Tailor the assistant to this repo. Changes are saved as drafts — they take effect when you publish (the Publish button on the Deployment tab), which restarts the assistant."
           actions={
             <Button asChild variant="outline" size="sm">
               <Link to={`/repos/${project.id}/assistant`}>Back to chat</Link>
@@ -635,7 +635,7 @@ function ModelField({
       )}
       {fetcher.data?.ok && (
         <p className="text-sm text-muted-foreground">
-          Saved — publish with the Publish button in the header to apply.
+          Saved — publish from the Deployment tab to apply.
         </p>
       )}
     </div>

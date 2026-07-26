@@ -346,7 +346,7 @@ export async function action(args: ActionFunctionArgs) {
   const intent = String(form.get("intent") ?? "");
 
   try {
-    // Publishing lives in the header Publish control — the repos/<id>/publish resource route
+    // Publishing lives on the Deployment tab — the repos/<id>/publish resource route
     // owns the pipeline. This route keeps retry-deploy and roster CRUD.
 
     // ── Retry a failed deploy (same release, same environment) ──

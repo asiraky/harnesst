@@ -113,35 +113,26 @@ export function AppShell({
           >
             <BrandWordmark className="h-5" />
           </Link>
+          {/* The primary nav lives behind one menu at every width. Inline, it was five links
+              (~490px) sharing a max-w-5xl row with the wordmark, a two-level breadcrumb trail
+              and the account controls — the row was over budget by design, and whatever sat
+              between them got crushed. */}
+          <PrimaryNavMenu />
           {breadcrumbs && breadcrumbs.length > 0 && (
             <Breadcrumbs crumbs={breadcrumbs} />
           )}
-          {/* The Publish control (issue #225 §4.1): project-scoped, on every back-of-house
-              page. Renders nothing off /repos/* — the ml-auto wrapper still pushes the nav
-              right when it's empty. */}
-          <div className="ml-auto flex min-w-0 shrink items-center">
-            <PublishControl />
-          </div>
-          {/* Desktop: inline primary nav. Mobile: folds into the menu button below. */}
-          <nav className="hidden items-center gap-1 text-sm md:flex">
-            {/* House switcher (FOH D18): back into the operate surface at the app root. */}
-            <HeaderLink to="/">Front of house</HeaderLink>
-            <HeaderLink to="/dashboard">Repositories</HeaderLink>
-            <HeaderLink to="/marketplace">Marketplace</HeaderLink>
-            <HeaderLink to="/org/members">Members</HeaderLink>
-            <HeaderLink to="/org/settings">Settings</HeaderLink>
-          </nav>
-          <div className="flex shrink-0 items-center gap-1">
+          <div className="ml-auto flex shrink-0 items-center gap-1">
             {userEmail && <WorkspaceMenu />}
             <ThemeToggle />
             <AccountMenu userEmail={userEmail} />
-            <MobileNav />
           </div>
         </div>
-        {/* Persistent workspace task-progress strip (issue #142): a slim row below the header,
-            project-scoped, that survives navigation within a workspace. Renders nothing off a
-            /repos/:id page or with no tasks. */}
+        {/* Strips below the header, both project-scoped and both rendering nothing off a
+            /repos/:id page. Order matters: task progress (issue #142) is what's happening NOW,
+            so it sits above the publish nudge (issue #225 §4.1), which is only ever a
+            dismissible "there's something you haven't shipped". */}
         <WorkspaceTasksIndicator />
+        <PublishControl />
       </header>
       <main
         className={
@@ -356,54 +347,91 @@ function WorkspaceMenu() {
   );
 }
 
-/** Primary nav folded behind a menu button on small screens (< md). */
-function MobileNav() {
-  return (
-    <div className="md:hidden">
-      <DropdownMenu>
-        <DropdownMenuTrigger asChild>
-          <Button variant="ghost" size="icon" aria-label="Menu">
-            <Menu className="h-4 w-4" />
-          </Button>
-        </DropdownMenuTrigger>
-        <DropdownMenuContent align="end" className="w-48">
-          <DropdownMenuItem asChild>
-            <Link to="/">Front of house</Link>
-          </DropdownMenuItem>
-          <DropdownMenuItem asChild>
-            <Link to="/dashboard">Repositories</Link>
-          </DropdownMenuItem>
-          <DropdownMenuItem asChild>
-            <Link to="/marketplace">Marketplace</Link>
-          </DropdownMenuItem>
-          <DropdownMenuItem asChild>
-            <Link to="/org/members">Members</Link>
-          </DropdownMenuItem>
-          <DropdownMenuItem asChild>
-            <Link to="/org/settings">Settings</Link>
-          </DropdownMenuItem>
-        </DropdownMenuContent>
-      </DropdownMenu>
-    </div>
+/**
+ * The primary nav. `end` marks a route that only matches exactly — "/" is the Front of House
+ * root and prefixes every other path, so without it every page would read as Front of house.
+ */
+const NAV_ITEMS: { to: string; label: string; end?: boolean }[] = [
+  // House switcher (FOH D18): back into the operate surface at the app root.
+  { to: "/", label: "Front of house", end: true },
+  { to: "/dashboard", label: "Repositories" },
+  { to: "/marketplace", label: "Marketplace" },
+  { to: "/org/members", label: "Members" },
+  { to: "/org/settings", label: "Settings" },
+];
+
+/**
+ * Which nav item the current path belongs to, or null outside all of them. Longest match wins, so
+ * /org/settings resolves to Settings rather than to whichever /org item was declared first.
+ * `/repos/*` is Repositories' territory: the dashboard is the list, a repo page is one entry in
+ * it, and a header that went blank the moment you opened a repository would be worse than one
+ * that admits where you are.
+ *
+ * Exported for unit tests.
+ */
+export function activeNavLabel(pathname: string): string | null {
+  if (pathname === "/") return "Front of house";
+  if (pathname.startsWith("/repos/") || pathname === "/repos") return "Repositories";
+  const matches = NAV_ITEMS.filter(
+    (item) => !item.end && (pathname === item.to || pathname.startsWith(`${item.to}/`)),
   );
+  if (matches.length === 0) return null;
+  return matches.reduce((best, item) => (item.to.length > best.to.length ? item : best))
+    .label;
 }
 
-function HeaderLink({ to, children }: { to: string; children: React.ReactNode }) {
+/**
+ * Primary nav, behind one menu at every width. The trigger names the section you're in, so the
+ * "where am I" signal an inline tab row used to give survives the fold — the difference is that
+ * it now costs ~140px instead of ~490px, which is what made room for the breadcrumb trail.
+ */
+function PrimaryNavMenu() {
+  const location = useLocation();
+  const active = activeNavLabel(location.pathname);
   return (
-    <NavLink
-      to={to}
-      prefetch="intent"
-      className={({ isActive, isPending }) =>
-        cn(
-          "rounded-md px-3 py-1.5 text-muted-foreground transition-colors hover:text-foreground",
-          isActive && "bg-accent text-foreground",
-          // Register the click within a frame, before the destination loader resolves.
-          isPending && "bg-accent/60 text-foreground",
-        )
-      }
-    >
-      {children}
-    </NavLink>
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button
+          variant="ghost"
+          size="sm"
+          className="shrink-0 gap-1.5 px-2"
+          aria-label={active ? `Menu — ${active}` : "Menu"}
+        >
+          <Menu className="h-4 w-4 shrink-0" aria-hidden />
+          {active && <span className="hidden sm:inline">{active}</span>}
+          <ChevronsUpDown
+            className="hidden h-3.5 w-3.5 shrink-0 text-muted-foreground sm:inline"
+            aria-hidden
+          />
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="start" className="w-52">
+        {NAV_ITEMS.map((item) => (
+          <DropdownMenuItem key={item.to} asChild>
+            <NavLink
+              to={item.to}
+              end={item.end}
+              prefetch="intent"
+              className="cursor-pointer"
+            >
+              {({ isActive }) => (
+                <>
+                  <Check
+                    className={cn(
+                      "mr-2 h-4 w-4",
+                      // NavLink's own isActive can't see that /repos/* belongs to Repositories.
+                      isActive || item.label === active ? "opacity-100" : "opacity-0",
+                    )}
+                    aria-hidden
+                  />
+                  {item.label}
+                </>
+              )}
+            </NavLink>
+          </DropdownMenuItem>
+        ))}
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 }
 

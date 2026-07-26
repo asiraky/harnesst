@@ -2,7 +2,7 @@ import { renderToString } from "react-dom/server";
 import { createRoutesStub } from "react-router";
 import { describe, expect, it } from "vitest";
 
-import { AgentNav } from "~/components/shell";
+import { AgentNav, activeNavLabel } from "~/components/shell";
 import { TooltipProvider } from "~/components/ui/tooltip";
 
 // AgentNav's controls (InviteMember) self-fetch via useFetcher, which needs a data router in
@@ -65,5 +65,41 @@ describe("AgentNav", () => {
     // (dropping flex-col) fails here — that merge is what hid Settings on ~375px.
     expect(html).toContain("flex-col");
     expect(html).toContain("sm:flex-row");
+  });
+});
+
+/**
+ * The primary nav folded behind a single menu (the header row was over its width budget with
+ * five inline links). The trigger names the current section, so this mapping IS the "where am
+ * I" signal — it replaces the active styling an inline row used to carry.
+ */
+describe("activeNavLabel", () => {
+  it("resolves each nav destination to its own label", () => {
+    expect(activeNavLabel("/")).toBe("Front of house");
+    expect(activeNavLabel("/dashboard")).toBe("Repositories");
+    expect(activeNavLabel("/marketplace")).toBe("Marketplace");
+    expect(activeNavLabel("/org/members")).toBe("Members");
+    expect(activeNavLabel("/org/settings")).toBe("Settings");
+  });
+
+  it("keeps a repository page under Repositories", () => {
+    expect(activeNavLabel("/repos/abc")).toBe("Repositories");
+    expect(activeNavLabel("/repos/abc/agents/ivy/runs")).toBe("Repositories");
+  });
+
+  // "/" prefixes every path, so a plain prefix match would label the whole app Front of house.
+  it("does not let the Front of house root swallow every other path", () => {
+    expect(activeNavLabel("/dashboard")).not.toBe("Front of house");
+    expect(activeNavLabel("/marketplace/agent/x")).toBe("Marketplace");
+  });
+
+  // /org/settings starts with neither /org/members nor a shorter sibling by accident today, but
+  // longest-match is what keeps that true as /org/* grows.
+  it("prefers the longest matching destination", () => {
+    expect(activeNavLabel("/org/settings/billing")).toBe("Settings");
+  });
+
+  it("returns null outside the primary nav", () => {
+    expect(activeNavLabel("/login")).toBeNull();
   });
 });

@@ -249,7 +249,7 @@ function Editor({
         description={
           isNew
             ? "Starting from a template — edit it, then Save to keep the new file until you publish."
-            : "Save keeps the change here until you publish — the Publish button in the header takes everything you've saved live."
+            : "Save keeps the change here until you publish — Publish, on the Deployment tab, takes everything you've saved live."
         }
       />
 

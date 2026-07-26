@@ -11,7 +11,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   PipelineStepList,
-  PublishControlButton,
+  PublishNudgeBanner,
   PublishReviewChanges,
 } from "~/components/publish";
 import type { DraftChange, PipelineStep } from "~/data/ports";
@@ -24,6 +24,7 @@ import {
   publishedVersion,
   runningStepSummary,
   type PublishChangeRow,
+  type PublishControlState,
 } from "~/publish/publish-panel";
 
 function renderInRouter(ui: React.ReactElement): string {
@@ -267,58 +268,43 @@ describe("publishDisabledReason", () => {
   });
 });
 
-describe("PublishControlButton", () => {
+describe("PublishNudgeBanner", () => {
   const open = () => {};
-
-  it("renders quiet Live text — not a button — when deployed with nothing saved", () => {
-    const html = renderInRouter(
-      <PublishControlButton state={{ kind: "live", version: "v12" }} onOpen={open} />,
+  const render = (state: PublishControlState) =>
+    renderInRouter(
+      <PublishNudgeBanner state={state} projectId="p1" onOpen={open} />,
     );
-    expect(html).toContain("Live · v12");
-    expect(html).not.toContain("<button");
+
+  it("nudges about saved changes, with the count and a dismiss", () => {
+    const html = render({ kind: "ready", count: 3 });
+    expect(html).toContain("3 saved changes aren&#x27;t live yet");
+    expect(html).toContain("Review &amp; publish →");
+    expect(html).toContain('aria-label="Dismiss"');
   });
 
-  it("renders Not deployed yet with a Publish button for a never-deployed repo", () => {
-    const html = renderInRouter(
-      <PublishControlButton state={{ kind: "never-deployed" }} onOpen={open} />,
+  it("says isn't/aren't to match one change vs several", () => {
+    expect(render({ kind: "ready", count: 1 })).toContain(
+      "1 saved change isn&#x27;t live yet",
     );
-    expect(html).toContain("Not deployed yet");
-    expect(html).toContain("Publish</button>");
+    expect(render({ kind: "ready", count: 2 })).toContain(
+      "2 saved changes aren&#x27;t live yet",
+    );
   });
 
-  it("renders the change count on the primary button", () => {
-    expect(
-      renderInRouter(
-        <PublishControlButton state={{ kind: "ready", count: 3 }} onOpen={open} />,
-      ),
-    ).toContain("Publish 3 changes");
-    expect(
-      renderInRouter(
-        <PublishControlButton state={{ kind: "ready", count: 1 }} onOpen={open} />,
-      ),
-    ).toContain("Publish 1 change<");
+  it("nudges a never-deployed repository toward its first publish", () => {
+    const html = render({ kind: "never-deployed" });
+    expect(html).toContain("hasn&#x27;t been deployed yet");
+    expect(html).toContain("Publish it →");
   });
 
-  it("renders the live running summary while a publish runs", () => {
-    const html = renderInRouter(
-      <PublishControlButton
-        state={{ kind: "running", summary: "Building your agents — ivy (1 of 2)" }}
-        onOpen={open}
-      />,
-    );
-    expect(html).toContain("Building your agents — ivy (1 of 2)");
-    const fallback = renderInRouter(
-      <PublishControlButton state={{ kind: "running", summary: null }} onOpen={open} />,
-    );
-    expect(fallback).toContain("Publishing…");
-  });
-
-  it("renders the destructive failed state", () => {
-    const html = renderInRouter(
-      <PublishControlButton state={{ kind: "failed" }} onOpen={open} />,
-    );
-    expect(html).toContain("Publish failed");
-    expect(html).toContain('data-variant="destructive"');
+  // The banner deliberately covers only the states with no workspace task behind them. A
+  // running, failed or just-finished publish is already a row in WorkspaceTasksIndicator
+  // directly above it, and live/deploying are status for the Deployment tab, not a nudge.
+  it("renders nothing for states the task strip or the Deployment tab already own", () => {
+    expect(render({ kind: "running", summary: "Building" })).toBe("");
+    expect(render({ kind: "failed" })).toBe("");
+    expect(render({ kind: "live", version: "v12" })).toBe("");
+    expect(render({ kind: "deploying" })).toBe("");
   });
 });
 
