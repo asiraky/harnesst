@@ -2,15 +2,30 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   requireSession: vi.fn(),
+  getSessionAuth: vi.fn(),
   getInvitation: vi.fn(),
   acceptInvitation: vi.fn(),
+  signOut: vi.fn(),
   handler: vi.fn(),
   dbUpdate: vi.fn(),
   dbWhere: vi.fn(),
+  dbSelect: vi.fn(),
+  dbSelectLimit: vi.fn(),
+  invitationGrantsNoAccess: vi.fn(),
+}));
+
+/** The decayed-grant check is exercised directly in invitation-grant.test.ts. */
+const NO_ACCESS = "no access message";
+vi.mock("~/auth/invitation-grant.server", () => ({
+  invitationGrantsNoAccess: mocks.invitationGrantsNoAccess,
+  NO_ACCESS_INVITATION_MESSAGE: NO_ACCESS,
 }));
 
 vi.mock("~/auth/session.server", () => ({
   requireSession: mocks.requireSession,
+  getSessionAuth: mocks.getSessionAuth,
+  signupPath: (_request: Request, returnTo: string) =>
+    `/signup?returnTo=${encodeURIComponent(returnTo)}`,
   sessionLoader: vi.fn(),
 }));
 
@@ -19,16 +34,18 @@ vi.mock("~/lib/auth.server", () => ({
     api: {
       getInvitation: mocks.getInvitation,
       acceptInvitation: mocks.acceptInvitation,
+      signOut: mocks.signOut,
     },
     handler: mocks.handler,
   },
 }));
 
 vi.mock("~/db/client.server", () => ({
-  db: { update: mocks.dbUpdate },
+  db: { update: mocks.dbUpdate, select: mocks.dbSelect },
 }));
 
 const EMAIL = "invitee@example.com";
+const OTHER_EMAIL = "someone-else@example.com";
 const INVITATION_ID = "invitation-123";
 const KEY = Buffer.alloc(32, 7);
 
@@ -65,18 +82,32 @@ describe("invitation verification route", () => {
   beforeEach(() => {
     vi.resetModules();
     process.env.HARNESST_SECRETS_KEY = KEY.toString("hex");
-    mocks.requireSession.mockReset().mockResolvedValue({
+    const session = {
       user: { id: "user-1", email: EMAIL, emailVerified: false },
       requestHeaders: new Headers(),
-    });
+    };
+    mocks.requireSession.mockReset().mockResolvedValue(session);
+    mocks.getSessionAuth.mockReset().mockResolvedValue(session);
     mocks.getInvitation.mockReset().mockRejectedValue({
       body: { code: "EMAIL_VERIFICATION_REQUIRED_FOR_INVITATION" },
     });
     mocks.acceptInvitation.mockReset();
+    mocks.signOut.mockReset().mockResolvedValue(
+      new Response(null, {
+        headers: { "set-cookie": "better-auth.session_token=; Max-Age=0" },
+      }),
+    );
     mocks.handler.mockReset();
     mocks.dbWhere.mockReset().mockResolvedValue(undefined);
     mocks.dbUpdate.mockReset().mockImplementation(() => ({
       set: () => ({ where: mocks.dbWhere }),
+    }));
+    // The invitation still grants real access unless a test says otherwise.
+    mocks.invitationGrantsNoAccess.mockReset().mockResolvedValue(false);
+    // No account exists for the invited address unless a test says otherwise.
+    mocks.dbSelectLimit.mockReset().mockResolvedValue([]);
+    mocks.dbSelect.mockReset().mockImplementation(() => ({
+      from: () => ({ where: () => ({ limit: mocks.dbSelectLimit }) }),
     }));
   });
 
@@ -97,7 +128,9 @@ describe("invitation verification route", () => {
       "https://harnesst.example.com/api/auth/send-verification-email",
     );
     expect(forwarded.headers.get("content-type")).toBe("application/json");
-    expect(forwarded.headers.get("origin")).toBe("https://harnesst.example.com");
+    expect(forwarded.headers.get("origin")).toBe(
+      "https://harnesst.example.com",
+    );
     expect(forwarded.headers.get("cookie")).toBe(
       "better-auth.session_token=test-cookie",
     );
@@ -154,9 +187,8 @@ describe("invitation verification route", () => {
   }
 
   async function mintToken(invitationId: string, email: string) {
-    const { mintInvitationToken } = await import(
-      "~/auth/invitation-token.server"
-    );
+    const { mintInvitationToken } =
+      await import("~/auth/invitation-token.server");
     return mintInvitationToken(invitationId, email, KEY);
   }
 
@@ -200,22 +232,226 @@ describe("invitation verification route", () => {
     expect(result).toMatchObject({ verificationRequired: true });
   });
 
-  it("ignores a delivery token minted for a different email address", async () => {
+  async function expectResponse(run: () => Promise<unknown>) {
+    try {
+      await run();
+    } catch (error) {
+      if (error instanceof Response) return error;
+      throw error;
+    }
+    throw new Error("expected a Response to be thrown");
+  }
+
+  it("signs the wrong account out rather than accepting for it (issue #220)", async () => {
+    const { action } = await import("~/routes/accept-invitation.$invitationId");
+
+    // The token names OTHER_EMAIL; the session is EMAIL. Better Auth would reject this outright,
+    // so end the session and hand the invitee a sign-in for the address the invite is for.
+    const request = acceptRequest({
+      token: await mintToken(INVITATION_ID, OTHER_EMAIL),
+    });
+    const response = await expectResponse(() => action(actionArgs(request)));
+
+    expect(mocks.acceptInvitation).not.toHaveBeenCalled();
+    // Never redeem a foreign token as this account's mailbox proof.
+    expect(mocks.dbUpdate).not.toHaveBeenCalled();
+    expect(mocks.signOut).toHaveBeenCalledOnce();
+    expect(response.status).toBe(302);
+    const location = new URL(response.headers.get("location")!, "http://x");
+    expect(location.pathname).toBe("/login");
+    expect(location.searchParams.get("email")).toBe(OTHER_EMAIL);
+    expect(location.searchParams.get("returnTo")).toContain(
+      `/accept-invitation/${INVITATION_ID}`,
+    );
+    // The sign-out cookie deletion has to ride along or the redirect lands signed in again.
+    expect(response.headers.get("set-cookie")).toContain("Max-Age=0");
+  });
+
+  it("refuses to accept an invitation that grants no access (issue #220)", async () => {
+    // A `member` invitation whose teams are gone — a legacy row, or one whose repo was deleted
+    // after it was sent. Accepting it would land the invitee in the exact no-access limbo the
+    // final acceptance criterion rules out, so the accept never reaches Better Auth.
+    mocks.invitationGrantsNoAccess.mockResolvedValue(true);
+    mocks.acceptInvitation.mockResolvedValue({});
+    const { action } = await import("~/routes/accept-invitation.$invitationId");
+
+    const request = acceptRequest({
+      token: await mintToken(INVITATION_ID, EMAIL),
+    });
+    const result = await action(actionArgs(request));
+
+    expect(result).toEqual({ error: NO_ACCESS });
+    expect(mocks.acceptInvitation).not.toHaveBeenCalled();
+  });
+
+  it("offers the account switch when Better Auth rejects the recipient", async () => {
     mocks.acceptInvitation.mockRejectedValue({
-      body: {
-        code: "EMAIL_VERIFICATION_REQUIRED_BEFORE_ACCEPTING_OR_REJECTING_INVITATION",
-      },
+      body: { code: "YOU_ARE_NOT_THE_RECIPIENT_OF_THE_INVITATION" },
       statusCode: 403,
     });
     const { action } = await import("~/routes/accept-invitation.$invitationId");
 
-    const request = acceptRequest({
-      token: await mintToken(INVITATION_ID, "someone-else@example.com"),
-    });
-    const result = await action(actionArgs(request));
+    // No delivery token, so the mismatch only surfaces from Better Auth's own check.
+    const result = await action(actionArgs(acceptRequest({})));
 
+    expect(result).toEqual({ wrongAccount: true });
+    expect(mocks.signOut).not.toHaveBeenCalled();
+  });
+
+  it("switch-account signs out and returns to the invitation", async () => {
+    const { action } = await import("~/routes/accept-invitation.$invitationId");
+
+    const token = await mintToken(INVITATION_ID, OTHER_EMAIL);
+    const response = await expectResponse(() =>
+      action(actionArgs(acceptRequest({ intent: "switch-account", token }))),
+    );
+
+    expect(mocks.signOut).toHaveBeenCalledOnce();
+    const location = new URL(response.headers.get("location")!, "http://x");
+    expect(location.pathname).toBe("/login");
+    expect(location.searchParams.get("email")).toBe(OTHER_EMAIL);
+    // The token has to survive the round-trip, or the invitee has to verify by email instead.
+    expect(location.searchParams.get("returnTo")).toBe(
+      `/accept-invitation/${INVITATION_ID}?token=${encodeURIComponent(token)}`,
+    );
+  });
+
+  describe("signed-out routing", () => {
+    function loaderArgs(search = "") {
+      const request = new Request(
+        `https://harnesst.example.com/accept-invitation/${INVITATION_ID}${search}`,
+      );
+      return {
+        request,
+        url: new URL(request.url),
+        pattern: "/accept-invitation/:invitationId",
+        params: { invitationId: INVITATION_ID },
+        context: {} as never,
+      };
+    }
+
+    beforeEach(() => {
+      mocks.getSessionAuth.mockResolvedValue({
+        user: null,
+        session: null,
+        organizationId: null,
+      });
+    });
+
+    it("sends an invitee who already has an account to sign-in", async () => {
+      mocks.dbSelectLimit.mockResolvedValue([{ id: "user-9" }]);
+      const { loader } =
+        await import("~/routes/accept-invitation.$invitationId");
+
+      const token = await mintToken(INVITATION_ID, EMAIL);
+      const response = await expectResponse(() =>
+        loader(loaderArgs(`?token=${encodeURIComponent(token)}`)),
+      );
+
+      const location = new URL(response.headers.get("location")!, "http://x");
+      expect(location.pathname).toBe("/login");
+      expect(location.searchParams.get("email")).toBe(EMAIL);
+      expect(location.searchParams.get("returnTo")).toBe(
+        `/accept-invitation/${INVITATION_ID}?token=${token}`,
+      );
+    });
+
+    it("sends a brand-new invitee to sign-up with the address prefilled", async () => {
+      const { loader } =
+        await import("~/routes/accept-invitation.$invitationId");
+
+      const token = await mintToken(INVITATION_ID, EMAIL);
+      const response = await expectResponse(() =>
+        loader(loaderArgs(`?token=${encodeURIComponent(token)}`)),
+      );
+
+      const location = new URL(response.headers.get("location")!, "http://x");
+      expect(location.pathname).toBe("/signup");
+      expect(location.searchParams.get("email")).toBe(EMAIL);
+    });
+
+    it("does not answer the account question without a valid delivery token", async () => {
+      mocks.dbSelectLimit.mockResolvedValue([{ id: "user-9" }]);
+      const { loader } =
+        await import("~/routes/accept-invitation.$invitationId");
+
+      // An enumerable invitation id alone must not become an account-existence oracle.
+      const response = await expectResponse(() => loader(loaderArgs()));
+
+      const location = new URL(response.headers.get("location")!, "http://x");
+      expect(location.pathname).toBe("/signup");
+      expect(location.searchParams.get("email")).toBeNull();
+      expect(mocks.dbSelect).not.toHaveBeenCalled();
+    });
+
+    it("does not answer it for a token bound to another invitation either", async () => {
+      mocks.dbSelectLimit.mockResolvedValue([{ id: "user-9" }]);
+      const { loader } =
+        await import("~/routes/accept-invitation.$invitationId");
+
+      const token = await mintToken("other-invitation", EMAIL);
+      const response = await expectResponse(() =>
+        loader(loaderArgs(`?token=${encodeURIComponent(token)}`)),
+      );
+
+      expect(
+        new URL(response.headers.get("location")!, "http://x").pathname,
+      ).toBe("/signup");
+      expect(mocks.dbSelect).not.toHaveBeenCalled();
+    });
+  });
+
+  it("explains a decayed grant instead of offering a dead Accept button", async () => {
+    mocks.invitationGrantsNoAccess.mockResolvedValue(true);
+    mocks.getInvitation.mockResolvedValue({
+      id: INVITATION_ID,
+      email: EMAIL,
+      organizationName: "Acme",
+      inviterEmail: "owner@example.com",
+    });
+    const { loader } = await import("~/routes/accept-invitation.$invitationId");
+
+    const request = new Request(
+      `https://harnesst.example.com/accept-invitation/${INVITATION_ID}`,
+    );
+    const result = await loader({
+      request,
+      url: new URL(request.url),
+      pattern: "/accept-invitation/:invitationId",
+      params: { invitationId: INVITATION_ID },
+      context: {} as never,
+    });
+
+    expect(result).toMatchObject({
+      error: NO_ACCESS,
+      verificationRequired: false,
+      wrongAccount: false,
+    });
+  });
+
+  it("shows the account-switch screen to a signed-in stranger", async () => {
+    const { loader } = await import("~/routes/accept-invitation.$invitationId");
+
+    const token = await mintToken(INVITATION_ID, OTHER_EMAIL);
+    const request = new Request(
+      `https://harnesst.example.com/accept-invitation/${INVITATION_ID}?token=${encodeURIComponent(token)}`,
+    );
+    const result = await loader({
+      request,
+      url: new URL(request.url),
+      pattern: "/accept-invitation/:invitationId",
+      params: { invitationId: INVITATION_ID },
+      context: {} as never,
+    });
+
+    expect(result).toMatchObject({
+      wrongAccount: true,
+      invitedEmail: OTHER_EMAIL,
+    });
+    // A GET must not end a session as a side effect — the switch is an explicit POST.
+    expect(mocks.signOut).not.toHaveBeenCalled();
+    expect(mocks.getInvitation).not.toHaveBeenCalled();
     expect(mocks.dbUpdate).not.toHaveBeenCalled();
-    expect(result).toMatchObject({ verificationRequired: true });
   });
 
   it("does not touch the verified flag for an already-verified account", async () => {
