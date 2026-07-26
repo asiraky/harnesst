@@ -304,6 +304,11 @@ export interface DraftRepo {
    * Remove drafts a publish landed — but never a row saved AFTER the pipeline captured it
    * (row `updatedAt` newer than the captured one): a save that raced the multi-minute
    * build/commit window was not published and must stay saved for the next publish.
+   *
+   * "Newer" is judged at MILLISECOND resolution, because `updatedAt` reaches callers as a JS
+   * Date and the store's timestamps are finer-grained than that (see the drizzle
+   * implementation): a captured row must always be deleted, even though its stored timestamp
+   * carries digits the Date dropped.
    */
   deletePublished(
     projectId: string,

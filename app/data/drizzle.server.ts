@@ -13,6 +13,7 @@ import {
   gte,
   inArray,
   isNull,
+  lt,
   lte,
   notInArray,
   or,
@@ -563,12 +564,24 @@ export const drizzleDataStore: DataStore = {
       if (entries.length === 0) return;
       // One statement, per-row updatedAt guard: a row re-saved after the pipeline captured it
       // has a newer updatedAt and survives (it was not part of the published commit).
+      //
+      // The comparison is `< captured + 1ms`, not `<= captured`, because the two sides have
+      // different resolutions: `updated_at` is a timestamptz (MICROSECONDS, what `defaultNow()`
+      // writes) while the captured value has round-tripped through a JS Date (MILLISECONDS).
+      // `<= captured` makes `.780099 <= .780` false — the guard then rejects the very row it
+      // captured, every published draft survives its own publish, and the header's "Publish N
+      // changes" never clears (each republish re-commits the same files under a new version).
+      // Taking the millisecond's ceiling instead deletes anything saved within the captured
+      // millisecond and still keeps any save from a later one.
       await db.delete(draftChanges).where(
         and(
           eq(draftChanges.projectId, projectId),
           or(
             ...entries.map((e) =>
-              and(eq(draftChanges.path, e.path), lte(draftChanges.updatedAt, e.updatedAt)),
+              and(
+                eq(draftChanges.path, e.path),
+                lt(draftChanges.updatedAt, new Date(e.updatedAt.getTime() + 1)),
+              ),
             ),
           ),
         ),
