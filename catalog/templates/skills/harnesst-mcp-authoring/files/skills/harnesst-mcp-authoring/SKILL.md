@@ -1,11 +1,11 @@
 ---
-name: eden-mcp-authoring
-description: Author, review, merge, and deploy eve agents through Eden's MCP tools. Use when creating or changing agent instructions, skills, tools, schedules, connections, channels, subagents, sandboxes, or agent.ts through a connected Eden project, including taking the change through one pull request and confirming the deployment is live.
+name: harnesst-mcp-authoring
+description: Author, review, merge, and deploy eve agents through harnesst's MCP tools. Use when creating or changing agent instructions, skills, tools, schedules, connections, channels, subagents, sandboxes, or agent.ts through a connected harnesst project, including taking the change through one pull request and confirming the deployment is live.
 ---
 
-# Authoring eve agents with Eden MCP
+# Authoring eve agents with harnesst MCP
 
-Use Eden's MCP server for the complete delivery path:
+Use harnesst's MCP server for the complete delivery path:
 
 1. discover the project and its agent layout;
 2. author and stage complete file contents;
@@ -14,14 +14,14 @@ Use Eden's MCP server for the complete delivery path:
 5. deploy the exact reviewed merge; and
 6. poll every deployment until it is live or has failed.
 
-Do not commit or push directly to the repository's default branch. Eden deliberately exposes no
+Do not commit or push directly to the repository's default branch. harnesst deliberately exposes no
 direct-commit MCP tool. `stage_changes`, `publish_changes`, and `merge_change` are the supported
 write path. MCP clients may display a server prefix on these names; the server-side names below are
 the contract.
 
 ## Preconditions and tool contract
 
-The Eden API key needs `read`, `author`, and `deploy` scopes. The project needs a connected GitHub
+The harnesst API key needs `read`, `author`, and `deploy` scopes. The project needs a connected GitHub
 repository and the target environment must already exist. Never print the API key or put it in an
 authored file.
 
@@ -41,7 +41,7 @@ authored file.
 - `clear_failed({ environmentId })`
 
 `stage_changes` takes the complete UTF-8 content for every write and `null` for a deletion. Its
-optional `baseSha` is a source-blob conflict hint, not a substitute for reading the source. Eden's
+optional `baseSha` is a source-blob conflict hint, not a substitute for reading the source. harnesst's
 MCP server does not expose repository file contents. Before replacing an existing file, obtain its
 current complete content through the client's repository/file access or from the user. If neither is
 available, do not guess or silently overwrite it. Creating a new file from complete known content is
@@ -85,8 +85,8 @@ Follow the existing project and installed eve version. In particular:
   tool focused, make its description precise enough for model selection, and return useful failure
   information.
 - Never hardcode or invent a secret. Read it as `process.env.SCREAMING_SNAKE_CASE` inside the
-  execution path and report the exact secret names that a human must configure in Eden. Preserve an
-  existing sandbox's `EDEN_SANDBOX_ENV` forwarding.
+  execution path and report the exact secret names that a human must configure in harnesst. Preserve an
+  existing sandbox's `HARNESST_SANDBOX_ENV` forwarding.
 - Prefer `fetch` and Node built-ins. If a dependency is necessary and the client has a checkout,
   use that project's package manager so `package.json` and its lockfile stay synchronized, then
   stage their complete resulting contents. Without a checkout or complete current manifests, do not
@@ -97,7 +97,7 @@ Follow the existing project and installed eve version. In particular:
 Before publishing, validate in a checkout when one is available: install with the repository's
 package manager, run its typecheck and lint scripts, run `npx eve build`, and exercise relevant
 evals or a local eve instance. Static compilation is not behavioral proof. If no checkout exists,
-state that local checks were unavailable; `publish_changes` still runs Eden's server-side build gate
+state that local checks were unavailable; `publish_changes` still runs harnesst's server-side build gate
 for affected agent roots.
 
 ## Stage one coherent change set
@@ -114,11 +114,11 @@ does not close or alter a pull request.
 ## Publish exactly one pull request
 
 When the full change set is ready, call `publish_changes` once with `paths` containing every staged
-path and a concise title. Publishing selected drafts creates one fresh `eden/publish-*` branch, one
+path and a concise title. Publishing selected drafts creates one fresh `harnesst/publish-*` branch, one
 commit, and one pull request targeting the project's configured default branch. It never writes
 directly to that branch.
 
-If Eden's build gate rejects the change, no branch or pull request is created and the drafts remain
+If harnesst's build gate rejects the change, no branch or pull request is created and the drafts remain
 staged. Correct the complete file contents with `stage_changes`, revalidate, and call
 `publish_changes` again with the same full path set. Do not split one requested delivery into several
 pull requests merely to work around a validation failure.
@@ -136,14 +136,14 @@ and another authorized review surface rather than treating absence as approval.
 
 Confirm all of the following before merge:
 
-- the base is the project's default branch and the branch is the returned Eden branch;
+- the base is the project's default branch and the branch is the returned harnesst branch;
 - the changed paths and patches implement the request without unrelated or secret content;
 - validation evidence is adequate for the risk;
 - the PR is not a draft, is mergeable, and required human or policy approval is complete.
 
 Do not equate the ability to call `merge_change` with approval to merge. When review is complete and
-the caller is authorized to merge, call `merge_change({ projectId, pullRequestNumber })`. Eden
-resolves the branch server-side and refuses a PR that is not an open Eden change targeting that
+the caller is authorized to merge, call `merge_change({ projectId, pullRequestNumber })`. harnesst
+resolves the branch server-side and refuses a PR that is not an open harnesst change targeting that
 project's default branch. Save `merge.mergeSha`; it is the reviewed version to deploy.
 
 If a human merges outside the MCP client, wait for the PR to disappear from `list_open_changes` and
@@ -176,7 +176,7 @@ for a just-reviewed PR, `deploy_team_version` with the saved merge SHA is the sa
 
 On `failed`, report `errorDetail`. If retry is appropriate, call `retry_deployment` with the failed
 deployment ID, save the new returned deployment ID, and poll that new row. Use `clear_failed` with
-the environment ID only when the user wants the failed state cleared without a retry. If Eden reports
+the environment ID only when the user wants the failed state cleared without a retry. If harnesst reports
 `already_deploying`, do not submit another deploy; continue polling the deployment IDs already known
 to the conversation, or report that an operator must identify the in-flight deployment when its ID
 is unavailable.

@@ -1,4 +1,4 @@
-# Eden — Product Roadmap
+# harnesst — Product Roadmap
 
 The concise phasing view: what's shipped, what's in progress, and what's planned. This is
 recorded retrospectively from the commit and PR history, so it stays honest about what actually
@@ -14,12 +14,12 @@ _Last updated: 2026-07-07._
 
 ---
 
-## Eden in one line
+## harnesst in one line
 
 A web UI plus an embedded coding assistant over an [eve](https://github.com/vercel/eve) agent
 repo, so **product managers** can author, ship, and operate agents without hand-writing code.
 Open source and self-hostable, with an optional managed service. The eve repo stays the single
-source of truth; Eden is a projection and a control plane over it.
+source of truth; harnesst is a projection and a control plane over it.
 
 ---
 
@@ -63,7 +63,7 @@ source of truth; Eden is a projection and a control plane over it.
 
 - ✅ **M6** — Recruit / marketplace: traversal-safe template format (Zod `template.json` manifest)
   - first-party catalog + type-filtered browse; install/update/uninstall as change-sets with
-    `eden-lock.json` provenance and semver dependency merge.
+    `harnesst-lock.json` provenance and semver dependency merge.
 - ✅ **M6.1** — Real Docker sandboxes (ship the docker CLI client + mount the host socket, ending
   silent `just-bash` degradation); durable worlds keyed per **environment** — sessions and their
   `/workspace` filesystems survive redeploys.
@@ -73,12 +73,12 @@ source of truth; Eden is a projection and a control plane over it.
 ### Teams, self-host, platform polish — M7–M8.5
 
 - ✅ **M7** — Peer teams: `agents/*` monorepo convention, hierarchy-first UX, roster CRUD,
-  team-fan-out Ship; runtime **teammate delegation** (`ask-teammate` via an Eden relay,
+  team-fan-out Ship; runtime **teammate delegation** (`ask-teammate` via a harnesst relay,
   default-allow directed permissions, linked traces).
 - ✅ **M8** — Self-host: single-VPS runbook — the supported OSS production topology (one Linux box
-  runs Eden, Postgres, and every agent instance). See [`../deploy/vps/README.md`](../deploy/vps/README.md).
+  runs harnesst, Postgres, and every agent instance). See [`../deploy/vps/README.md`](../deploy/vps/README.md).
 - ✅ **M8.1** — Sandbox platform: prewarm fix (boot via `eve start`), `sandbox.ts` as a
-  first-class editable surface, `EDEN_SANDBOX_ENV` secret-exposure convention.
+  first-class editable surface, `HARNESST_SANDBOX_ENV` secret-exposure convention.
 - ✅ **M8.2** — Catalog agents get capabilities from the terminal + sandbox-exposed secrets, not
   bespoke tools (Cloudflare App Builder + Deployment Engineer).
 - ✅ **M8.3** — Models: OpenRouter end-to-end (provider-wired `agent.ts`, live catalog, workspace
@@ -117,7 +117,7 @@ Drawn from deliberately-punted items and the open questions in [`PRD.md`](./PRD.
 - ⬜ Remaining install targets: **new standalone repo** and **subagent of an agent** (member +
   new-team-member are the shipped two).
 - 🟡 **Connections** — install-time auth-brokered connectors (issue #30). Phase 1 ships the
-  Google Sheets connector: the manifest's `auth` descriptor drives an Eden-brokered OAuth flow in
+  Google Sheets connector: the manifest's `auth` descriptor drives a harnesst-brokered OAuth flow in
   the install wizard, the grant is sealed in Postgres, and deploy injects it so eve's OpenAPI
   connection self-refreshes tokens. Follow-ups: user-scoped grants and more providers.
 - ⬜ Rung-2 **publish to marketplace** — extract a live-tested tool/agent into a catalog PR.

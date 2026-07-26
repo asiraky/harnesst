@@ -306,7 +306,7 @@ describe("member removal (roster prune) tears down infra", () => {
     await store.agents.createAssistant({
       projectId: project.id,
       name: "assistant",
-      root: ".eden/assistant",
+      root: ".harnesst/assistant",
     });
     const [environment] = await store.environments.listByAgent(alpha.id);
     const target = fakeDeployTarget({ health: { status: "live", url: "http://x" } });

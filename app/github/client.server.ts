@@ -1,7 +1,7 @@
 /**
  * GitHub App client (Connect pillar, M0).
  *
- * Eden authenticates to GitHub as an App: a JWT signed with the App private key mints
+ * harnesst authenticates to GitHub as an App: a JWT signed with the App private key mints
  * short-lived per-installation tokens. Public callers pass only opaque verified grant ids;
  * this module resolves the raw GitHub installation id immediately before App authentication.
  *

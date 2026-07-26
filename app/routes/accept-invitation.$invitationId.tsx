@@ -87,7 +87,7 @@ function signInForInvitation(
   return `/login?returnTo=${returnTo}${email}`;
 }
 
-/** Whether an Eden account already exists for an address (case-insensitive). */
+/** Whether a harnesst account already exists for an address (case-insensitive). */
 async function accountExists(email: string): Promise<boolean> {
   const rows = await db
     .select({ id: user.id })
@@ -305,7 +305,7 @@ export async function action(args: Route.ActionArgs) {
 }
 
 export function meta() {
-  return [{ title: "Accept invitation · eden" }, ...noindexMeta];
+  return [{ title: "Accept invitation · harnesst" }, ...noindexMeta];
 }
 
 export default function AcceptInvitation({

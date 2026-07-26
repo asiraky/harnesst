@@ -23,7 +23,7 @@ export const CONNECTION_CALLBACK_PATH_RE =
 
 function stagingFor(pathname: string) {
   return createOAuthCallbackStaging({
-    cookieName: "eden-connection-oauth-callback",
+    cookieName: "harnesst-connection-oauth-callback",
     path: pathname,
   });
 }

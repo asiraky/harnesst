@@ -48,13 +48,13 @@ describe("inferMergeBuildRoots", () => {
     expect(inferMergeBuildRoots(["package-lock.json"], true)).toEqual([]);
   });
 
-  it("team: .eden config is ignored", () => {
+  it("team: .harnesst config is ignored", () => {
     expect(
-      inferMergeBuildRoots([".eden/assistant/instructions.md"], true),
+      inferMergeBuildRoots([".harnesst/assistant/instructions.md"], true),
     ).toEqual([]);
     expect(
       inferMergeBuildRoots(
-        [".eden/assistant/instructions.md", "agents/sam/agent/agent.ts"],
+        [".harnesst/assistant/instructions.md", "agents/sam/agent/agent.ts"],
         true,
       ),
     ).toEqual(["agents/sam/agent"]);
@@ -72,7 +72,7 @@ describe("runConversationMergeGate", () => {
   const base = {
     projectId: "proj_1",
     repo: REPO,
-    ref: "eden/conv-abc",
+    ref: "harnesst/conv-abc",
     installationId: "inst_1",
   };
 
@@ -108,7 +108,7 @@ describe("runConversationMergeGate", () => {
     for (const call of checkBuild.mock.calls) {
       const req = call[0] as BuildCheckRequest;
       expect(req.overlay).toEqual([]);
-      expect(req.ref).toBe("eden/conv-abc");
+      expect(req.ref).toBe("harnesst/conv-abc");
     }
   });
 

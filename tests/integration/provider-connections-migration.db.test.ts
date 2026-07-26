@@ -1,6 +1,6 @@
 /**
  * Destructive-shape migration smoke test in an isolated Postgres schema. Run with:
- * `EDEN_DB_SMOKE=1 npx vitest run tests/integration/provider-connections-migration.db.test.ts`
+ * `HARNESST_DB_SMOKE=1 npx vitest run tests/integration/provider-connections-migration.db.test.ts`
  * after sourcing `.env.local`.
  */
 import { readFile } from "node:fs/promises";
@@ -9,12 +9,12 @@ import path from "node:path";
 import postgres from "postgres";
 import { describe, expect, it } from "vitest";
 
-const LIVE = process.env.EDEN_DB_SMOKE === "1";
+const LIVE = process.env.HARNESST_DB_SMOKE === "1";
 
 describe.runIf(LIVE)("Phase 2 provider migration against Postgres", () => {
   it("moves legacy keys and qualifies defaults plus playground sessions without losing Codex", async () => {
     const databaseUrl =
-      process.env.EDEN_DB_MIGRATION_URL ?? process.env.DATABASE_URL;
+      process.env.HARNESST_DB_MIGRATION_URL ?? process.env.DATABASE_URL;
     if (!databaseUrl)
       throw new Error("DATABASE_URL is required for DB smoke tests.");
     const schema = `provider_migration_${Date.now()}_${Math.random()

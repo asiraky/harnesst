@@ -73,7 +73,7 @@ export const loader = (args: LoaderFunctionArgs) =>
   );
 
 export function meta() {
-  return [{ title: "Run · eden" }];
+  return [{ title: "Run · harnesst" }];
 }
 
 /** failed→destructive, completed→success (emerald), running→default (violet), else outline. */

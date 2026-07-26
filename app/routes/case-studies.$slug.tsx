@@ -30,9 +30,9 @@ export async function loader(args: LoaderFunctionArgs) {
 
 export function meta({ params }: Route.MetaArgs) {
   const study = getCaseStudy(params.slug ?? "");
-  if (!study) return [{ title: "Case study — eden" }];
+  if (!study) return [{ title: "Case study — harnesst" }];
   return pageMeta({
-    title: `${study.company} — eden case study`,
+    title: `${study.company} — harnesst case study`,
     description: study.dek,
     path: `/case-studies/${study.slug}`,
   });
@@ -55,14 +55,14 @@ export default function CaseStudyDetail({
   const others = caseStudies.filter((c) => c.slug !== study.slug).slice(0, 2);
 
   return (
-    <main className="min-h-screen bg-eden-bg font-suisse text-eden-fg">
+    <main className="min-h-screen bg-harnesst-bg font-suisse text-harnesst-fg">
       <SiteHeader appOrigin={appOrigin} />
 
       {/* ————— Hero ————— */}
       <section className="mx-auto max-w-4xl px-6 pb-12 pt-12 sm:pt-20">
         <Reveal
           as="p"
-          className="text-sm uppercase tracking-[0.25em] text-eden-faint"
+          className="text-sm uppercase tracking-[0.25em] text-harnesst-faint"
         >
           <Link to="/case-studies" className="hover:underline">
             Case studies
@@ -79,7 +79,7 @@ export default function CaseStudyDetail({
         <Reveal
           as="p"
           delay={180}
-          className="mt-8 max-w-2xl text-xl leading-relaxed text-eden-muted"
+          className="mt-8 max-w-2xl text-xl leading-relaxed text-harnesst-muted"
         >
           {study.dek}
         </Reveal>
@@ -87,7 +87,7 @@ export default function CaseStudyDetail({
 
       {/* ————— Hero image + highlight ————— */}
       <section className="mx-auto max-w-6xl px-6">
-        <Reveal className="overflow-hidden rounded-2xl border border-eden-line">
+        <Reveal className="overflow-hidden rounded-2xl border border-harnesst-line">
           <Parallax speed={0.08}>
             <img
               src={study.image}
@@ -100,7 +100,7 @@ export default function CaseStudyDetail({
           <span className="text-4xl font-medium tracking-[-0.02em] sm:text-5xl">
             {study.highlight.value}
           </span>
-          <span className="text-eden-faint">{study.highlight.label}</span>
+          <span className="text-harnesst-faint">{study.highlight.label}</span>
         </Reveal>
       </section>
 
@@ -109,13 +109,13 @@ export default function CaseStudyDetail({
         <div className="grid gap-10 sm:grid-cols-[auto_1fr] sm:gap-20">
           <Reveal
             as="span"
-            className="text-sm uppercase tracking-[0.25em] text-eden-faint"
+            className="text-sm uppercase tracking-[0.25em] text-harnesst-faint"
           >
             The challenge
           </Reveal>
           <Reveal delay={100} className="max-w-2xl space-y-4">
             {study.challenge.map((p, i) => (
-              <p key={i} className="text-lg leading-relaxed text-eden-muted">
+              <p key={i} className="text-lg leading-relaxed text-harnesst-muted">
                 {p}
               </p>
             ))}
@@ -124,11 +124,11 @@ export default function CaseStudyDetail({
       </section>
 
       {/* ————— What they built (inverted band) ————— */}
-      <section className="overflow-hidden bg-eden-band-bg text-eden-band-fg">
+      <section className="overflow-hidden bg-harnesst-band-bg text-harnesst-band-fg">
         <div className="mx-auto max-w-6xl px-6 py-16 sm:py-20">
           <Reveal
             as="span"
-            className="text-sm uppercase tracking-[0.25em] text-eden-band-muted"
+            className="text-sm uppercase tracking-[0.25em] text-harnesst-band-muted"
           >
             What they built
           </Reveal>
@@ -137,7 +137,7 @@ export default function CaseStudyDetail({
               {study.approach.map((p, i) => (
                 <p
                   key={i}
-                  className="text-lg leading-relaxed text-eden-band-muted"
+                  className="text-lg leading-relaxed text-harnesst-band-muted"
                 >
                   {p}
                 </p>
@@ -145,15 +145,15 @@ export default function CaseStudyDetail({
             </Reveal>
             <Reveal delay={120}>
               <Parallax speed={0.1}>
-                <div className="rounded-lg border border-eden-panel-line bg-eden-panel-bg p-6">
-                  <p className="font-mono text-xs uppercase tracking-[0.2em] text-eden-band-muted">
+                <div className="rounded-lg border border-harnesst-panel-line bg-harnesst-panel-bg p-6">
+                  <p className="font-mono text-xs uppercase tracking-[0.2em] text-harnesst-band-muted">
                     Agents they stood up
                   </p>
                   <ul className="mt-5 space-y-4">
                     {study.agents.map((a) => (
                       <li key={a.name} className="font-mono text-sm">
-                        <span className="text-eden-band-fg">{a.name}</span>
-                        <span className="text-eden-band-muted">
+                        <span className="text-harnesst-band-fg">{a.name}</span>
+                        <span className="text-harnesst-band-muted">
                           {"  "}— {a.does}
                         </span>
                       </li>
@@ -170,14 +170,14 @@ export default function CaseStudyDetail({
       <section className="mx-auto max-w-6xl px-6 py-16 sm:py-20">
         <Reveal
           as="span"
-          className="text-sm uppercase tracking-[0.25em] text-eden-faint"
+          className="text-sm uppercase tracking-[0.25em] text-harnesst-faint"
         >
           The result
         </Reveal>
         <div className="mt-10 grid gap-12 lg:grid-cols-[1fr_auto] lg:gap-20">
           <Reveal className="max-w-2xl space-y-4">
             {study.result.map((p, i) => (
-              <p key={i} className="text-lg leading-relaxed text-eden-muted">
+              <p key={i} className="text-lg leading-relaxed text-harnesst-muted">
                 {p}
               </p>
             ))}
@@ -187,11 +187,11 @@ export default function CaseStudyDetail({
             className="grid gap-8 sm:grid-cols-3 lg:grid-cols-1"
           >
             {study.stats.map((s) => (
-              <div key={s.label} className="border-t border-eden-line pt-4">
+              <div key={s.label} className="border-t border-harnesst-line pt-4">
                 <p className="text-3xl font-medium tracking-[-0.01em]">
                   {s.value}
                 </p>
-                <p className="mt-2 text-sm leading-snug text-eden-faint">
+                <p className="mt-2 text-sm leading-snug text-harnesst-faint">
                   {s.label}
                 </p>
               </div>
@@ -200,7 +200,7 @@ export default function CaseStudyDetail({
         </div>
       </section>
 
-      <hr className="mx-auto max-w-6xl border-eden-line" />
+      <hr className="mx-auto max-w-6xl border-harnesst-line" />
 
       {/* ————— Pull quote ————— */}
       <section className="mx-auto max-w-4xl px-6 py-20 sm:py-24">
@@ -208,7 +208,7 @@ export default function CaseStudyDetail({
           <p className="text-3xl font-medium italic leading-snug tracking-[-0.01em] sm:text-4xl">
             &ldquo;{study.quote.text}&rdquo;
           </p>
-          <p className="mt-8 text-sm uppercase tracking-[0.25em] text-eden-faint">
+          <p className="mt-8 text-sm uppercase tracking-[0.25em] text-harnesst-faint">
             {study.quote.name} · {study.quote.role}
           </p>
         </Reveal>
@@ -218,7 +218,7 @@ export default function CaseStudyDetail({
       <section className="mx-auto max-w-6xl px-6 pb-8">
         <Reveal
           as="span"
-          className="text-sm uppercase tracking-[0.25em] text-eden-faint"
+          className="text-sm uppercase tracking-[0.25em] text-harnesst-faint"
         >
           More stories
         </Reveal>
@@ -229,7 +229,7 @@ export default function CaseStudyDetail({
                 to={`/case-studies/${cs.slug}`}
                 className="group grid grid-cols-[6rem_1fr] items-center gap-5"
               >
-                <div className="overflow-hidden rounded-lg border border-eden-line">
+                <div className="overflow-hidden rounded-lg border border-harnesst-line">
                   <img
                     src={cs.image}
                     alt={cs.imageAlt}
@@ -238,7 +238,7 @@ export default function CaseStudyDetail({
                   />
                 </div>
                 <div>
-                  <p className="text-xs uppercase tracking-[0.2em] text-eden-faint">
+                  <p className="text-xs uppercase tracking-[0.2em] text-harnesst-faint">
                     {cs.industry}
                   </p>
                   <p className="mt-1 font-medium leading-snug group-hover:opacity-70">
@@ -252,7 +252,7 @@ export default function CaseStudyDetail({
       </section>
 
       {/* ————— CTA band ————— */}
-      <section className="mt-8 bg-eden-band-bg text-eden-band-fg">
+      <section className="mt-8 bg-harnesst-band-bg text-harnesst-band-fg">
         <div className="mx-auto max-w-6xl px-6 py-20 text-center sm:py-24">
           <Reveal
             as="h2"
@@ -264,7 +264,7 @@ export default function CaseStudyDetail({
           <Reveal delay={120} className="mt-10">
             <a
               href={`${appOrigin}/signup`}
-              className="rounded-full bg-eden-band-fg px-8 py-3 text-lg font-medium text-eden-band-bg transition hover:opacity-85"
+              className="rounded-full bg-harnesst-band-fg px-8 py-3 text-lg font-medium text-harnesst-band-bg transition hover:opacity-85"
             >
               Sign up
             </a>
@@ -273,7 +273,7 @@ export default function CaseStudyDetail({
       </section>
 
       {/* photo credit — not required by the Unsplash license, but fair. */}
-      <p className="mx-auto max-w-6xl px-6 pt-8 text-xs text-eden-faint">
+      <p className="mx-auto max-w-6xl px-6 pt-8 text-xs text-harnesst-faint">
         Photograph by{" "}
         <a
           href={study.creditUrl}

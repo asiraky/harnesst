@@ -20,7 +20,7 @@ export const AGENT_ROOT = "agent";
  * `detectAgentRoots` ignores it — but it is the repo-relative directory the assistant agent
  * row's `root` points at, so drafts under it attribute to the assistant.
  */
-export const ASSISTANT_CONFIG_ROOT = ".eden/assistant";
+export const ASSISTANT_CONFIG_ROOT = ".harnesst/assistant";
 /** Root directory that marks a team monorepo (PRD §7.9): `agents/<member>/agent/...`. */
 export const TEAM_ROOT = "agents";
 /** Committed sentinel that distinguishes a valid empty team from a truncated tree read. */

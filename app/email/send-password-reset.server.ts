@@ -13,7 +13,7 @@ export async function sendPasswordResetEmail({
   const html = await renderPasswordResetEmail({ resetUrl, userEmail });
   await sendEmail({
     to: userEmail,
-    subject: "Reset your Eden password",
+    subject: "Reset your harnesst password",
     html,
   });
 }

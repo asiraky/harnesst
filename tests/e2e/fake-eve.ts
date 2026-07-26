@@ -1,6 +1,6 @@
 /**
  * A scriptable fake eve instance: a real node:http server implementing the eve HTTP session
- * contract Eden talks to (verified in app/agent/talk.server.ts's header):
+ * contract harnesst talks to (verified in app/agent/talk.server.ts's header):
  *
  *   POST /eve/v1/session                → 202 + x-eve-session-id + {sessionId, continuationToken}
  *   POST /eve/v1/session/:id            → 202 (+ x-eve-session-id); body {message,

@@ -29,24 +29,24 @@ export default defineConfig(({ mode }) => {
     },
     server: {
       port: Number(env.PORT ?? 5173),
-      // Bind all interfaces (not just loopback). Containerized eve instances reach Eden via
+      // Bind all interfaces (not just loopback). Containerized eve instances reach harnesst via
       // `host.docker.internal` → the Docker host-gateway IP, which cannot connect to a server
       // bound only to 127.0.0.1/::1. Without this the assistant/deploy callbacks fail with
-      // "Couldn't reach Eden: fetch failed".
+      // "Couldn't reach harnesst: fetch failed".
       host: true,
       // Containerized eve instances (the built-in assistant, team-delegation peers) call back
-      // into Eden's dev server via `host.docker.internal`. Vite's dev server rejects Host
+      // into harnesst's dev server via `host.docker.internal`. Vite's dev server rejects Host
       // headers it doesn't recognise with a 403, so allow that one explicitly (dev-only; the
       // production React Router/Express host has no corresponding dev-server allowlist). `.loca.lt`
       // and `.trycloudflare.com` admit tunnel hostnames so the GitHub App manifest flow
       // (webhook delivery, OAuth-style redirects) can be exercised against a local dev server.
       allowedHosts: ["host.docker.internal", ".loca.lt", ".trycloudflare.com"],
       // In production nginx routes /e/<environmentId>/… to the traffic splitter
-      // (deploy/vps/nginx-eden.conf); mirror that here so the ingress URLs the UI shows —
+      // (deploy/vps/nginx-harnesst.conf); mirror that here so the ingress URLs the UI shows —
       // and the webhook URLs baked into GitHub App manifests — work against the dev server.
       proxy: {
         "/e/": {
-          target: `http://127.0.0.1:${env.EDEN_SPLITTER_PORT ?? 8787}`,
+          target: `http://127.0.0.1:${env.HARNESST_SPLITTER_PORT ?? 8787}`,
         },
       },
     },

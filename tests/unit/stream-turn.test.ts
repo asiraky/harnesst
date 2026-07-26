@@ -464,7 +464,7 @@ describe("streamTurn", () => {
 
   it("resolves a dynamic-model agent's modelId to the sent model directive", async () => {
     const at = new Date().toISOString();
-    const sent = "<!-- eden:model openai/gpt-5.1 ctx=400000 -->\n\nwhat model are you?";
+    const sent = "<!-- harnesst:model openai/gpt-5.1 ctx=400000 -->\n\nwhat model are you?";
     const out = await drain(
       [
         {

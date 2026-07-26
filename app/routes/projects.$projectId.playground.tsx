@@ -1,7 +1,7 @@
 /**
  * Playground — persistent Eve sessions with a live deployment of this agent.
  *
- * Eden's durable event cache is the transcript source. Eve is consulted only for a bounded
+ * harnesst's durable event cache is the transcript source. Eve is consulted only for a bounded
  * reconcile or one-time legacy backfill, and only on the deployment that owns the session.
  *
  * Turns STREAM: the composer POSTs to the streaming resource route
@@ -113,7 +113,7 @@ export const loader = (args: LoaderFunctionArgs) =>
           agentId: active.id,
           userId: auth.user!.id,
         }),
-        // The selector's default: the agent's configured model, resolved by name from Eden's
+        // The selector's default: the agent's configured model, resolved by name from harnesst's
         // control plane (never parsed from agent.ts). Best-effort — a lookup hiccup must not
         // take down the playground.
         resolveAgentModel(project.orgId, active.name)
@@ -135,7 +135,7 @@ export const loader = (args: LoaderFunctionArgs) =>
       let currentSessionOwnerLive: boolean | null = null;
       let currentSessionWillReseed = false;
       if (currentSession) {
-        // Recover a session whose drain died with the Eden process (restart/redeploy mid-turn):
+        // Recover a session whose drain died with the harnesst process (restart/redeploy mid-turn):
         // stuck "running", or marked "failed" even though Eve actually finished. Reconciling
         // settles the status from Eve AND persists the tail events into the transcript cache, so
         // the recovered final reply is part of the cache read below — not just a status flip.
@@ -209,11 +209,11 @@ export const loader = (args: LoaderFunctionArgs) =>
             }
           } else {
             historyError =
-              "Eden is showing the history it cached, but some older messages may be missing because the original deployment is unavailable.";
+              "harnesst is showing the history it cached, but some older messages may be missing because the original deployment is unavailable.";
           }
         }
 
-        // The transcript comes from Eden's durable cache — a DB read, not a replay of Eve's whole
+        // The transcript comes from harnesst's durable cache — a DB read, not a replay of Eve's whole
         // event log from index 0. It's complete (the drain persists every event as it arrives,
         // plus the reconcile/backfill above), fast regardless of length, and works even when the
         // instance is gone.
@@ -246,7 +246,7 @@ export const loader = (args: LoaderFunctionArgs) =>
     { ensureSignedIn: true },
   );
 
-/** The action creates a new Eden session row; turns go through the stream route. */
+/** The action creates a new harnesst session row; turns go through the stream route. */
 export async function action(args: ActionFunctionArgs) {
   const auth = await getSessionAuth(args);
   if (!auth.user) throw redirect("/login");
@@ -306,7 +306,7 @@ export async function action(args: ActionFunctionArgs) {
 }
 
 export function meta() {
-  return [{ title: "Playground · eden" }];
+  return [{ title: "Playground · harnesst" }];
 }
 
 /**
@@ -831,7 +831,7 @@ export default function Playground({ loaderData }: Route.ComponentProps) {
           icon={FlaskConical}
           accent="blue"
           title={isTeam ? `Playground — ${activeAgent}` : "Playground"}
-          description="Talk to a live deployment of this agent. Conversation history is saved in Eden and survives instance replacement."
+          description="Talk to a live deployment of this agent. Conversation history is saved in harnesst and survives instance replacement."
           actions={headerActions}
         />
         {targets.length === 0 && (
@@ -848,8 +848,8 @@ export default function Playground({ loaderData }: Route.ComponentProps) {
             <AlertTitle>Deployment replaced</AlertTitle>
             <AlertDescription>
               This conversation started on a deployment that has been replaced.
-              Your next message continues it on the current deployment — Eden
-              restores the saved history automatically.
+              Your next message continues it on the current deployment —
+              harnesst restores the saved history automatically.
             </AlertDescription>
           </Alert>
         )}

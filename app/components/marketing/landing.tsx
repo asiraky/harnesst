@@ -2,7 +2,7 @@
  * Editorial landing page, extracted from the old `routes/home.tsx` when Front of House took
  * over `/` (FOH PRD §2.6). Rendered by the FOH index route on the configured marketing host
  * — self-hosts without MARKETING_HOST never see it. Swiss/grotesque type (Suisse Intl),
- * cream-paper light theme and warm-charcoal dark theme — both driven by the `eden-*` color
+ * cream-paper light theme and warm-charcoal dark theme — both driven by the `harnesst-*` color
  * tokens in app.css, so the whole page follows the ThemeToggle (defaults to system). Motion
  * (scroll-reveal + parallax) comes from ~/components/landing-motion and is disabled for
  * prefers-reduced-motion.
@@ -19,7 +19,7 @@ import { caseStudies } from "~/lib/case-studies";
 
 export function MarketingLanding({ appOrigin = "" }: { appOrigin?: string }) {
   return (
-    <main className="min-h-screen bg-eden-bg font-suisse text-eden-fg">
+    <main className="min-h-screen bg-harnesst-bg font-suisse text-harnesst-fg">
       <SiteHeader appOrigin={appOrigin} />
 
       {/* ————— Hero ————— */}
@@ -27,7 +27,7 @@ export function MarketingLanding({ appOrigin = "" }: { appOrigin?: string }) {
         <Parallax speed={0.1}>
           <Reveal
             as="p"
-            className="text-sm uppercase tracking-[0.25em] text-eden-faint"
+            className="text-sm uppercase tracking-[0.25em] text-harnesst-faint"
           >
             Built on Vercel&rsquo;s eve
           </Reveal>
@@ -43,11 +43,11 @@ export function MarketingLanding({ appOrigin = "" }: { appOrigin?: string }) {
             delay={180}
             className="mt-12 grid gap-10 sm:grid-cols-[1fr_auto] sm:items-end"
           >
-            <p className="max-w-xl text-lg leading-relaxed text-eden-muted">
+            <p className="max-w-xl text-lg leading-relaxed text-harnesst-muted">
               Pick something your team does over and over — triaging tickets,
               chasing invoices, prepping the weekly report. Describe how it
-              should work in plain words, and eden builds an agent that runs it.
-              Stack a few together and you&rsquo;ve got a small team working
+              should work in plain words, and harnesst builds an agent that runs
+              it. Stack a few together and you&rsquo;ve got a small team working
               while you do something else.
             </p>
             <a
@@ -67,20 +67,20 @@ export function MarketingLanding({ appOrigin = "" }: { appOrigin?: string }) {
             <ProductMockup />
           </Parallax>
         </Reveal>
-        <Reveal as="p" delay={120} className="mt-5 text-sm text-eden-faint">
+        <Reveal as="p" delay={120} className="mt-5 text-sm text-harnesst-faint">
           Describe the job in plain words. The assistant writes the code and
           opens it for your review.
         </Reveal>
       </section>
 
-      <hr className="mx-auto max-w-6xl border-eden-line" />
+      <hr className="mx-auto max-w-6xl border-harnesst-line" />
 
       {/* ————— The problem ————— */}
       <section className="mx-auto max-w-6xl px-6 py-20">
         <div className="grid gap-12 sm:grid-cols-[auto_1fr] sm:gap-20">
           <Reveal
             as="span"
-            className="text-sm uppercase tracking-[0.25em] text-eden-faint"
+            className="text-sm uppercase tracking-[0.25em] text-harnesst-faint"
           >
             The problem
           </Reveal>
@@ -88,27 +88,27 @@ export function MarketingLanding({ appOrigin = "" }: { appOrigin?: string }) {
             <h2 className="text-4xl font-medium leading-tight tracking-[-0.01em] sm:text-5xl">
               The best ideas sit in a queue.
             </h2>
-            <p className="mt-6 text-lg leading-relaxed text-eden-muted">
+            <p className="mt-6 text-lg leading-relaxed text-harnesst-muted">
               You can see exactly where an agent would save your team hours
               every week. But making it real means writing a spec, handing it to
               engineering, and waiting for a slot that might never open. By the
               time it ships, the process has already moved on.
             </p>
-            <p className="mt-4 text-lg leading-relaxed text-eden-muted">
-              eden takes out the hand-off. The person who actually knows the
+            <p className="mt-4 text-lg leading-relaxed text-harnesst-muted">
+              harnesst takes out the hand-off. The person who actually knows the
               work builds the agent, and changes it the moment the work changes.
             </p>
           </Reveal>
         </div>
       </section>
 
-      <hr className="mx-auto max-w-6xl border-eden-line" />
+      <hr className="mx-auto max-w-6xl border-harnesst-line" />
 
       {/* ————— How it works ————— */}
       <section className="mx-auto max-w-6xl px-6 py-20">
         <Reveal
           as="span"
-          className="text-sm uppercase tracking-[0.25em] text-eden-faint"
+          className="text-sm uppercase tracking-[0.25em] text-harnesst-faint"
         >
           How it works
         </Reveal>
@@ -118,7 +118,7 @@ export function MarketingLanding({ appOrigin = "" }: { appOrigin?: string }) {
               n: "01",
               title: "Describe",
               blurb:
-                "Tell eden what the job is, in plain words — the steps, the rules, the exceptions. Its assistant turns that into a working agent while you watch.",
+                "Tell harnesst what the job is, in plain words — the steps, the rules, the exceptions. Its assistant turns that into a working agent while you watch.",
             },
             {
               n: "02",
@@ -137,23 +137,23 @@ export function MarketingLanding({ appOrigin = "" }: { appOrigin?: string }) {
               <Parallax
                 as="span"
                 speed={0.06 + i * 0.06}
-                className="inline-block text-3xl italic text-eden-numeral"
+                className="inline-block text-3xl italic text-harnesst-numeral"
               >
                 {s.n}
               </Parallax>
               <h3 className="mt-3 text-xl font-medium">{s.title}</h3>
-              <p className="mt-3 leading-relaxed text-eden-muted">{s.blurb}</p>
+              <p className="mt-3 leading-relaxed text-harnesst-muted">{s.blurb}</p>
             </Reveal>
           ))}
         </ol>
       </section>
 
       {/* ————— Anatomy (inverted band) ————— */}
-      <section className="overflow-hidden bg-eden-band-bg text-eden-band-fg">
+      <section className="overflow-hidden bg-harnesst-band-bg text-harnesst-band-fg">
         <div className="mx-auto max-w-6xl px-6 py-20">
           <Reveal
             as="span"
-            className="text-sm uppercase tracking-[0.25em] text-eden-band-muted"
+            className="text-sm uppercase tracking-[0.25em] text-harnesst-band-muted"
           >
             What&rsquo;s inside an agent
           </Reveal>
@@ -163,7 +163,7 @@ export function MarketingLanding({ appOrigin = "" }: { appOrigin?: string }) {
                 No black box.
                 <span className="italic"> Just a few plain parts.</span>
               </h2>
-              <p className="mt-6 max-w-lg text-lg leading-relaxed text-eden-band-muted">
+              <p className="mt-6 max-w-lg text-lg leading-relaxed text-harnesst-band-muted">
                 An agent is made of pieces you can open and understand: what it
                 does, the actions it can take, when it runs, and where it shows
                 up. Change any of them yourself. When something needs real code,
@@ -172,35 +172,35 @@ export function MarketingLanding({ appOrigin = "" }: { appOrigin?: string }) {
             </Reveal>
             <Reveal delay={120}>
               <Parallax speed={0.12}>
-                <div className="rounded-lg border border-eden-panel-line bg-eden-panel-bg p-6 font-mono text-sm leading-loose">
-                  <p className="text-eden-band-muted"># support-agent/</p>
+                <div className="rounded-lg border border-harnesst-panel-line bg-harnesst-panel-bg p-6 font-mono text-sm leading-loose">
+                  <p className="text-harnesst-band-muted"># support-agent/</p>
                   <p>
                     ├── instructions.md{"  "}
-                    <span className="text-eden-band-muted">
+                    <span className="text-harnesst-band-muted">
                       — what it should do
                     </span>
                   </p>
                   <p>
                     ├── tools/refund.ts{"  "}
-                    <span className="text-eden-band-muted">
+                    <span className="text-harnesst-band-muted">
                       — an action it can take
                     </span>
                   </p>
                   <p>
                     ├── skills/triage/{"  "}
-                    <span className="text-eden-band-muted">
+                    <span className="text-harnesst-band-muted">
                       — know-how it reuses
                     </span>
                   </p>
                   <p>
                     ├── schedules/daily.ts{"  "}
-                    <span className="text-eden-band-muted">
+                    <span className="text-harnesst-band-muted">
                       — runs every morning
                     </span>
                   </p>
                   <p>
                     └── channels/slack.ts{"  "}
-                    <span className="text-eden-band-muted">
+                    <span className="text-harnesst-band-muted">
                       — where it works
                     </span>
                   </p>
@@ -215,7 +215,7 @@ export function MarketingLanding({ appOrigin = "" }: { appOrigin?: string }) {
       <section className="mx-auto max-w-6xl px-6 py-20">
         <Reveal
           as="span"
-          className="text-sm uppercase tracking-[0.25em] text-eden-faint"
+          className="text-sm uppercase tracking-[0.25em] text-harnesst-faint"
         >
           What you get
         </Reveal>
@@ -249,22 +249,22 @@ export function MarketingLanding({ appOrigin = "" }: { appOrigin?: string }) {
             {
               title: "Yours to keep",
               blurb:
-                "eden is open source and free to run on your own servers, or let us host it. Every version is saved, so you can roll back or walk away anytime.",
+                "harnesst is open source and free to run on your own servers, or let us host it. Every version is saved, so you can roll back or walk away anytime.",
             },
           ].map((f, i) => (
             <Reveal
               key={f.title}
               delay={(i % 2) * 90}
-              className="border-t border-eden-line pt-6"
+              className="border-t border-harnesst-line pt-6"
             >
               <h3 className="text-xl font-medium">{f.title}</h3>
-              <p className="mt-3 leading-relaxed text-eden-muted">{f.blurb}</p>
+              <p className="mt-3 leading-relaxed text-harnesst-muted">{f.blurb}</p>
             </Reveal>
           ))}
         </div>
       </section>
 
-      <hr className="mx-auto max-w-6xl border-eden-line" />
+      <hr className="mx-auto max-w-6xl border-harnesst-line" />
 
       {/* ————— Pull quote ————— */}
       <section className="mx-auto max-w-6xl overflow-hidden px-6 py-24">
@@ -274,20 +274,20 @@ export function MarketingLanding({ appOrigin = "" }: { appOrigin?: string }) {
               &ldquo;The best person to build the support agent is the one
               who&rsquo;s already answered a thousand support tickets.&rdquo;
             </p>
-            <p className="mt-8 text-sm uppercase tracking-[0.25em] text-eden-faint">
-              The idea behind eden
+            <p className="mt-8 text-sm uppercase tracking-[0.25em] text-harnesst-faint">
+              The idea behind harnesst
             </p>
           </Reveal>
         </Parallax>
       </section>
 
-      <hr className="mx-auto max-w-6xl border-eden-line" />
+      <hr className="mx-auto max-w-6xl border-harnesst-line" />
 
       {/* ————— Who it's for ————— */}
       <section className="mx-auto max-w-6xl px-6 py-20">
         <Reveal
           as="span"
-          className="text-sm uppercase tracking-[0.25em] text-eden-faint"
+          className="text-sm uppercase tracking-[0.25em] text-harnesst-faint"
         >
           Who it&rsquo;s for
         </Reveal>
@@ -311,20 +311,20 @@ export function MarketingLanding({ appOrigin = "" }: { appOrigin?: string }) {
           ].map((p, i) => (
             <Reveal key={p.title} delay={i * 110}>
               <h3 className="text-2xl italic">{p.title}</h3>
-              <p className="mt-4 leading-relaxed text-eden-muted">{p.blurb}</p>
+              <p className="mt-4 leading-relaxed text-harnesst-muted">{p.blurb}</p>
             </Reveal>
           ))}
         </div>
       </section>
 
-      <hr className="mx-auto max-w-6xl border-eden-line" />
+      <hr className="mx-auto max-w-6xl border-harnesst-line" />
 
       {/* ————— In the wild (case studies teaser) ————— */}
       <section className="mx-auto max-w-6xl px-6 py-20">
         <div className="flex flex-wrap items-end justify-between gap-4">
           <Reveal
             as="span"
-            className="text-sm uppercase tracking-[0.25em] text-eden-faint"
+            className="text-sm uppercase tracking-[0.25em] text-harnesst-faint"
           >
             In the wild
           </Reveal>
@@ -349,7 +349,7 @@ export function MarketingLanding({ appOrigin = "" }: { appOrigin?: string }) {
           {caseStudies.slice(0, 3).map((cs, i) => (
             <Reveal key={cs.slug} delay={i * 100}>
               <Link to={`/case-studies/${cs.slug}`} className="group block">
-                <div className="overflow-hidden rounded-xl border border-eden-line">
+                <div className="overflow-hidden rounded-xl border border-harnesst-line">
                   <img
                     src={cs.image}
                     alt={cs.imageAlt}
@@ -357,14 +357,14 @@ export function MarketingLanding({ appOrigin = "" }: { appOrigin?: string }) {
                     className="marketing-photo aspect-[4/3] w-full object-cover transition duration-700 group-hover:scale-[1.04]"
                   />
                 </div>
-                <p className="mt-4 text-xs uppercase tracking-[0.2em] text-eden-faint">
+                <p className="mt-4 text-xs uppercase tracking-[0.2em] text-harnesst-faint">
                   {cs.industry}
                 </p>
                 <p className="mt-2 text-lg font-medium leading-snug group-hover:opacity-70">
                   {cs.headline}
                 </p>
-                <p className="mt-3 flex items-baseline gap-2 text-sm text-eden-muted">
-                  <span className="font-medium text-eden-fg">
+                <p className="mt-3 flex items-baseline gap-2 text-sm text-harnesst-muted">
+                  <span className="font-medium text-harnesst-fg">
                     {cs.highlight.value}
                   </span>
                   {cs.highlight.label}
@@ -375,13 +375,13 @@ export function MarketingLanding({ appOrigin = "" }: { appOrigin?: string }) {
         </div>
       </section>
 
-      <hr className="mx-auto max-w-6xl border-eden-line" />
+      <hr className="mx-auto max-w-6xl border-harnesst-line" />
 
       {/* ————— Open source / self-host ————— */}
       <section className="mx-auto max-w-6xl overflow-hidden px-6 py-20">
         <Reveal
           as="span"
-          className="text-sm uppercase tracking-[0.25em] text-eden-faint"
+          className="text-sm uppercase tracking-[0.25em] text-harnesst-faint"
         >
           Open source
         </Reveal>
@@ -391,18 +391,19 @@ export function MarketingLanding({ appOrigin = "" }: { appOrigin?: string }) {
               Run it on your own hardware.
               <span className="italic"> Own the whole thing.</span>
             </h2>
-            <p className="mt-6 max-w-lg text-lg leading-relaxed text-eden-muted">
-              eden is open source. Clone the repo, run it on your own servers,
-              and keep your agents and your data on machines you control.
-              There&rsquo;s no vendor holding the keys — read every line, change
-              what you want, and never worry about being locked in or shut off.
+            <p className="mt-6 max-w-lg text-lg leading-relaxed text-harnesst-muted">
+              harnesst is open source. Clone the repo, run it on your own
+              servers, and keep your agents and your data on machines you
+              control. There&rsquo;s no vendor holding the keys — read every
+              line, change what you want, and never worry about being locked in
+              or shut off.
             </p>
-            <p className="mt-4 max-w-lg text-lg leading-relaxed text-eden-muted">
+            <p className="mt-4 max-w-lg text-lg leading-relaxed text-harnesst-muted">
               Don&rsquo;t want to run it yourself? We&rsquo;ll host it for you.
               Same software either way.
             </p>
             <a
-              href="https://github.com/zero8ai/eden"
+              href="https://github.com/asiraky/harnesst"
               className="mt-8 inline-flex items-center gap-2 text-lg font-medium underline underline-offset-8 hover:opacity-70"
             >
               View the source on GitHub →
@@ -410,23 +411,23 @@ export function MarketingLanding({ appOrigin = "" }: { appOrigin?: string }) {
           </Reveal>
           <Reveal delay={120}>
             <Parallax speed={0.1}>
-              <div className="rounded-lg border border-eden-panel-line bg-eden-panel-bg p-6 font-mono text-sm leading-loose text-eden-band-fg">
-                <p className="text-eden-band-muted">
+              <div className="rounded-lg border border-harnesst-panel-line bg-harnesst-panel-bg p-6 font-mono text-sm leading-loose text-harnesst-band-fg">
+                <p className="text-harnesst-band-muted">
                   # your server, your rules
                 </p>
                 <p>
-                  <span className="text-eden-band-muted">$ </span>
-                  git clone github.com/zero8ai/eden
+                  <span className="text-harnesst-band-muted">$ </span>
+                  git clone github.com/asiraky/harnesst
                 </p>
                 <p>
-                  <span className="text-eden-band-muted">$ </span>
+                  <span className="text-harnesst-band-muted">$ </span>
                   npm install
                 </p>
                 <p>
-                  <span className="text-eden-band-muted">$ </span>
+                  <span className="text-harnesst-band-muted">$ </span>
                   npm run start
                 </p>
-                <p className="text-eden-band-muted">
+                <p className="text-harnesst-band-muted">
                   → running at localhost, on your box
                 </p>
               </div>
@@ -436,7 +437,7 @@ export function MarketingLanding({ appOrigin = "" }: { appOrigin?: string }) {
       </section>
 
       {/* ————— Final CTA ————— */}
-      <section className="bg-eden-band-bg text-eden-band-fg">
+      <section className="bg-harnesst-band-bg text-harnesst-band-fg">
         <div className="mx-auto max-w-6xl px-6 py-24 text-center">
           <Reveal
             as="h2"
@@ -448,7 +449,7 @@ export function MarketingLanding({ appOrigin = "" }: { appOrigin?: string }) {
           <Reveal
             as="p"
             delay={90}
-            className="mx-auto mt-6 max-w-xl text-lg leading-relaxed text-eden-band-muted"
+            className="mx-auto mt-6 max-w-xl text-lg leading-relaxed text-harnesst-band-muted"
           >
             Start from a template or a blank slate. Describe the job, check the
             work, put it live. That&rsquo;s the whole loop.
@@ -456,7 +457,7 @@ export function MarketingLanding({ appOrigin = "" }: { appOrigin?: string }) {
           <Reveal delay={180} className="mt-10">
             <a
               href={`${appOrigin}/signup`}
-              className="rounded-full bg-eden-band-fg px-8 py-3 text-lg font-medium text-eden-band-bg transition hover:opacity-85"
+              className="rounded-full bg-harnesst-band-fg px-8 py-3 text-lg font-medium text-harnesst-band-bg transition hover:opacity-85"
             >
               Sign up
             </a>

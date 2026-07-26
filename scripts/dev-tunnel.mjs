@@ -180,7 +180,7 @@ async function main() {
   // Better Auth is served by this app under /api/auth, so a tunnel only needs the
   // public same-origin base URL. There is no third-party callback registry to mutate.
   childEnv.BETTER_AUTH_URL = publicUrl;
-  childEnv.EDEN_TUNNEL_URL = publicUrl;
+  childEnv.HARNESST_TUNNEL_URL = publicUrl;
   console.log(`dev-tunnel: public URL ${publicUrl}`);
   console.log(`dev-tunnel: Better Auth URL ${publicUrl}`);
   console.log(

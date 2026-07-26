@@ -5,7 +5,7 @@
  *   ensureConversationCheckout  — before a turn: tell the instance sidecar to clone/fetch the
  *                                 conversation's checkout and report whether the base branch moved.
  *   syncConversationCheckout    — after a turn: pull the checkout's full tree state from the
- *                                 sidecar, apply the path policy, and mirror it onto `eden/conv-<id>`
+ *                                 sidecar, apply the path policy, and mirror it onto `harnesst/conv-<id>`
  *                                 as one snapshot commit (force-updated ref), opening a PR on
  *                                 the first non-empty sync. Skips when the tree is unchanged.
  *
@@ -131,7 +131,7 @@ export interface EnsureResult {
 
 /**
  * Ask the instance sidecar to ensure the conversation's checkout exists (clone/fetch + checkout
- * `eden/conv-<id>`, recovering it from the remote branch after volume/instance loss). If the base
+ * `harnesst/conv-<id>`, recovering it from the remote branch after volume/instance loss). If the base
  * branch advanced since the checkout was cut, returns a note for the model so it can rebase.
  */
 export async function ensureConversationCheckout(input: {
@@ -470,7 +470,7 @@ async function mirrorSnapshot(
   const commit = await octokit.rest.git.createCommit({
     owner,
     repo,
-    message: `eden: sync conversation ${conversationId}`,
+    message: `harnesst: sync conversation ${conversationId}`,
     tree: tree.data.sha,
     parents: [baseSha],
   });
@@ -510,7 +510,7 @@ function prTitle(
 
 function prBody(title: string | null | undefined, warnings: string[]): string {
   const lines = [
-    "Changes proposed by the Eden assistant while working on this conversation.",
+    "Changes proposed by the harnesst assistant while working on this conversation.",
     "",
     "This PR auto-updates after each assistant turn; review and merge it on the Changes tab when you're happy.",
   ];
@@ -533,5 +533,5 @@ export async function discardConversationCheckoutByBranch(
 export function isConversationBranch(
   branch: string | undefined | null,
 ): boolean {
-  return !!branch && branch.startsWith("eden/conv-");
+  return !!branch && branch.startsWith("harnesst/conv-");
 }

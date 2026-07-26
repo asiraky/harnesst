@@ -4,7 +4,7 @@ import { promisify } from "node:util";
 const exec = promisify(execFile);
 
 export const DOCKER_PREFLIGHT_TIMEOUT_MS = Number(
-  process.env.EDEN_DOCKER_PREFLIGHT_TIMEOUT_MS ?? 10_000,
+  process.env.HARNESST_DOCKER_PREFLIGHT_TIMEOUT_MS ?? 10_000,
 );
 
 export class DockerUnavailableError extends Error {
@@ -78,7 +78,7 @@ export function normalizeDockerCliError(error: unknown, action: string): Error {
     : raw;
   return new DockerUnavailableError(
     [
-      `Docker is not responding, so Eden cannot ${action}.`,
+      `Docker is not responding, so harnesst cannot ${action}.`,
       "Install or restart Docker Desktop, Colima, or OrbStack, wait until `docker version` or `docker info` completes, then redeploy.",
       timeoutNote ? `Original Docker error: ${timeoutNote}` : null,
     ]

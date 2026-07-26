@@ -15,7 +15,7 @@
  * What it does:
  *   1. `git worktree remove --force <root>/.worktrees/<dir>`
  *   2. Drops the worktree's Postgres database inside the shared
- *      `eden-postgres` docker container via `docker exec` (no host-side
+ *      `harnesst-postgres` docker container via `docker exec` (no host-side
  *      psql required). Warns and continues if the container is down or the
  *      drop fails — never blocks port registry cleanup.
  *   3. Removes the feature's entry from `.worktrees/_ports.json`,
@@ -37,7 +37,7 @@ import {
   tunnelPaths,
 } from "./worktree-tunnel.mjs";
 
-const PG_CONTAINER = "eden-postgres";
+const PG_CONTAINER = "harnesst-postgres";
 const WORKTREE_ROOT_DIR = process.env.AGENT_WORKTREE_DIR ?? ".worktrees";
 
 function die(message) {

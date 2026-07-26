@@ -75,7 +75,7 @@ function main() {
   }
 
   const originCert =
-    process.env.EDEN_CLOUDFLARED_ORIGIN_CERT ||
+    process.env.HARNESST_CLOUDFLARED_ORIGIN_CERT ||
     process.env.TUNNEL_ORIGIN_CERT ||
     join(homedir(), ".cloudflared", "cert.pem");
   if (!existsSync(originCert)) {
@@ -121,7 +121,7 @@ function main() {
   const tunnelId = tunnel.id || tunnel.uuid;
   if (!tunnelId) die("cloudflared did not return a tunnel UUID");
   const credentialsFile = resolve(
-    process.env.EDEN_TUNNEL_CREDENTIALS_FILE ||
+    process.env.HARNESST_TUNNEL_CREDENTIALS_FILE ||
       tunnel.credentials_file ||
       tunnel.credentialsFile ||
       join(homedir(), ".cloudflared", `${tunnelId}.json`),

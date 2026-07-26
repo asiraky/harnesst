@@ -4,7 +4,7 @@
  * When a playground follow-up lands on a deployment that did NOT create the conversation's eve
  * session (the owning container was replaced, or a different deployment was explicitly selected),
  * the eve-side runtime context is gone — it died with the old container and can't be migrated. So
- * instead of dead-ending the user, Eden seeds a FRESH eve session on the replacement deployment
+ * instead of dead-ending the user, harnesst seeds a FRESH eve session on the replacement deployment
  * from its own durable transcript cache (`playground_events`): the prior conversation is rendered
  * into a plain-text block and prepended to the first message on the new session, so the agent
  * continues with the history in context.
@@ -16,8 +16,8 @@
  */
 import type { ChatEntry } from "~/chat/types";
 
-export const SEED_CONTEXT_START = "<!-- eden:context-start -->";
-export const SEED_CONTEXT_END = "<!-- eden:context-end -->";
+export const SEED_CONTEXT_START = "<!-- harnesst:context-start -->";
+export const SEED_CONTEXT_END = "<!-- harnesst:context-end -->";
 
 /** Cap per message so one huge turn can't dominate the seed. */
 const MAX_MESSAGE_CHARS = 4_000;
@@ -25,7 +25,7 @@ const MAX_MESSAGE_CHARS = 4_000;
 const MAX_BODY_CHARS = 24_000;
 const OMITTED_NOTE = "[Earlier messages were omitted to fit.]";
 const INSTRUCTION =
-  "[Eden] This conversation continues from a previous deployment of this agent that has since been replaced, so your runtime context was reset. The transcript so far is below. Continue the conversation naturally; do not mention the reset unless asked.";
+  "[harnesst] This conversation continues from a previous deployment of this agent that has since been replaced, so your runtime context was reset. The transcript so far is below. Continue the conversation naturally; do not mention the reset unless asked.";
 
 /** Truncate a single message and de-fang the end marker so content can't break the wrapper. */
 function sanitize(text: string): string {

@@ -93,8 +93,8 @@ export interface CallbackFlowDeps extends ConnectFlowDeps {
 
 function unknownProviderError(providerId: string): string {
   return (
-    `"${providerId}" is not a connection provider this Eden installation supports. ` +
-    "Check the connection template's provider id, or update Eden to a version that " +
+    `"${providerId}" is not a connection provider this harnesst installation supports. ` +
+    "Check the connection template's provider id, or update harnesst to a version that " +
     "registers this provider."
   );
 }
@@ -114,7 +114,7 @@ function withParams(backUrl: string, params: Record<string, string>): string {
 
 /**
  * Step 1: sign a (project, agent, Better Auth user/session, provider, scopes, returnTo) state and
- * redirect the user to the provider's OAuth consent screen for Eden's shared client. After
+ * redirect the user to the provider's OAuth consent screen for harnesst's shared client. After
  * approval, the provider returns to its registered callback path, which exchanges the code and
  * stores the grant.
  */
@@ -157,15 +157,15 @@ export function connectionConnectLoader(
       if (!config && !provider.clientRegistration) {
         return {
           error:
-            `This Eden installation has no ${provider.label} OAuth client configured. An operator must set ` +
-            `EDEN_${provider.envPrefix}_CLIENT_ID and EDEN_${provider.envPrefix}_CLIENT_SECRET on the control plane (see the ` +
+            `This harnesst installation has no ${provider.label} OAuth client configured. An operator must set ` +
+            `HARNESST_${provider.envPrefix}_CLIENT_ID and HARNESST_${provider.envPrefix}_CLIENT_SECRET on the control plane (see the ` +
             `self-host docs) before ${provider.label} can be connected.`,
           backUrl,
           providerLabel: provider.label,
         };
       }
 
-      // Derive requested scopes from Eden's server-side install ledger. Query parameters are
+      // Derive requested scopes from harnesst's server-side install ledger. Query parameters are
       // attacker-controlled and must never widen the consent requested by the shared OAuth client.
       // Old lock entries predate the auth snapshot, so a stored grant is their trusted fallback.
       const [source, drafts, existingGrant] = await Promise.all([
@@ -181,7 +181,7 @@ export function connectionConnectLoader(
         }),
       ]);
       const lock = overlayLock(
-        source.files["eden-lock.json"] ?? null,
+        source.files["harnesst-lock.json"] ?? null,
         drafts.map((draft) => ({
           path: draft.path,
           content: draft.content,
@@ -228,10 +228,10 @@ export function connectionConnectLoader(
       // consent tab was open (the client is immutable; see the callback's coverage check).
       let registeredEnvironmentIds: string[] | undefined;
       if (provider.clientRegistration) {
-        // Instance callbacks must be publicly reachable — prefer the operator's EDEN_PUBLIC_ORIGIN
+        // Instance callbacks must be publicly reachable — prefer the operator's HARNESST_PUBLIC_ORIGIN
         // (the same origin EVE_PUBLIC_ORIGIN injection uses) over the request-derived origin.
         const callbackBase =
-          process.env.EDEN_PUBLIC_ORIGIN?.trim() || publicOrigin(args.request);
+          process.env.HARNESST_PUBLIC_ORIGIN?.trim() || publicOrigin(args.request);
         const callbackPath = provider.clientRegistration.approvalCallbackPath;
         const environments = callbackPath
           ? await listAgentEnvironments(agent.id)
@@ -239,7 +239,7 @@ export function connectionConnectLoader(
         try {
           const registered = await (deps.registerClient ?? registerOAuthClient)({
             provider,
-            clientName: `Eden — ${project.name ?? project.id} / ${agent.name}`,
+            clientName: `harnesst — ${project.name ?? project.id} / ${agent.name}`,
             redirectUris: [redirectUri],
             approvalCallbackUris: environments.map((env) =>
               envIngressUrl(callbackBase, env.id, callbackPath),
@@ -253,8 +253,8 @@ export function connectionConnectLoader(
           return {
             error:
               `${(error as Error).message} ${provider.label} requires every callback URL to be ` +
-              "public HTTPS, so this Eden installation needs a publicly reachable " +
-              "EDEN_PUBLIC_ORIGIN (a local-dev host can't receive approval callbacks).",
+              "public HTTPS, so this harnesst installation needs a publicly reachable " +
+              "HARNESST_PUBLIC_ORIGIN (a local-dev host can't receive approval callbacks).",
             backUrl,
             providerLabel: provider.label,
           };
@@ -317,7 +317,7 @@ export function connectionConnectLoader(
 /**
  * Step 2: the provider redirects back after consent with the signed `?state=` and a `?code=` (or
  * an `?error=` if the user declined). Verifies the state + tenancy, exchanges the code for a
- * refresh token against Eden's shared client, fetches the account email for display (when the
+ * refresh token against harnesst's shared client, fetches the account email for display (when the
  * provider has a userinfo endpoint), seals and stores the grant, and returns the user to the
  * wizard/Deployment tab it came from. Mirrors the Discord callback's readable-error (`fail`)
  * pattern.
@@ -381,7 +381,7 @@ export function connectionCallbackLoader(
         state.sessionId !== auth.session.id
       ) {
         return fail(
-          `This ${label} connection was started in a different Eden session. Start again from ` +
+          `This ${label} connection was started in a different harnesst session. Start again from ` +
             "the agent's install page or Deployment tab.",
         );
       }
@@ -448,7 +448,7 @@ export function connectionCallbackLoader(
           listDrafts(project.id),
         ]);
         const lock = overlayLock(
-          source.files["eden-lock.json"] ?? null,
+          source.files["harnesst-lock.json"] ?? null,
           drafts.map((draft) => ({ path: draft.path, content: draft.content })),
         );
         const requiredNow = requiredScopesByProvider(
@@ -501,8 +501,8 @@ export function connectionCallbackLoader(
         : deps.getConfig(provider);
       if (!config) {
         return fail(
-          `This Eden installation no longer has a ${label} OAuth client configured — ask an ` +
-            `operator to set the EDEN_${provider.envPrefix}_* env vars.`,
+          `This harnesst installation no longer has a ${label} OAuth client configured — ask an ` +
+            `operator to set the HARNESST_${provider.envPrefix}_* env vars.`,
           backUrl,
         );
       }
@@ -562,7 +562,7 @@ export function connectionCallbackLoader(
         }
         if (resources.length === 0) {
           return fail(
-            `The connected ${label} account has no ${capability.resource.label} Eden can use — ` +
+            `The connected ${label} account has no ${capability.resource.label} harnesst can use — ` +
               `connect an account with access to the ${capability.resource.label} this agent should work in.`,
             backUrl,
           );

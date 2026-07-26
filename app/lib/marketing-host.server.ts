@@ -1,6 +1,6 @@
 /**
  * Marketing/app host split (FOH PRD §2.6, D11). `MARKETING_HOST` (a bare host such as
- * `www.eden.example.com`, optionally `host:port` for local dev) puts the editorial marketing
+ * `www.harnesst.example.com`, optionally `host:port` for local dev) puts the editorial marketing
  * site on its own host: the marketing paths serve ONLY there, every other GET on that host
  * redirects to the app origin (`BETTER_AUTH_URL`), and the app host bounces the
  * marketing-only paths to the marketing origin. Unset — the self-host default — everything

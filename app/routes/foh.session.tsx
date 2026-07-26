@@ -102,7 +102,7 @@ export const loader = (args: LoaderFunctionArgs) =>
       let historyError: string | null = null;
 
       // Dead-drain recovery (chokepoint #2 rides inside): a turn whose drain died with the
-      // Eden process must not read "busy" forever — and a park it recorded is recovered
+      // harnesst process must not read "busy" forever — and a park it recorded is recovered
       // into pendingInputAt/inbox by the reconcile itself.
       if (
         (currentSession.status === "running" ||
@@ -150,7 +150,7 @@ export const loader = (args: LoaderFunctionArgs) =>
           }
         } else {
           historyError =
-            "Eden is showing the history it cached, but some older messages may be missing because the original deployment is unavailable.";
+            "harnesst is showing the history it cached, but some older messages may be missing because the original deployment is unavailable.";
         }
       }
 
@@ -245,7 +245,7 @@ export const loader = (args: LoaderFunctionArgs) =>
   );
 
 export function meta({ loaderData }: Route.MetaArgs) {
-  return [{ title: `${loaderData?.sessionTitle ?? "Session"} · eden` }];
+  return [{ title: `${loaderData?.sessionTitle ?? "Session"} · harnesst` }];
 }
 
 /** Local mirror of an in-flight turn, driven by the NDJSON stream (playground copy). */

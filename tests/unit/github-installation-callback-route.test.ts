@@ -70,7 +70,7 @@ import { loader } from "~/routes/github.installations.callback";
 
 const args = () =>
   ({
-    request: new Request("https://eden.test/github/installations/callback"),
+    request: new Request("https://harnesst.test/github/installations/callback"),
     context: {},
   }) as never;
 
@@ -109,7 +109,7 @@ describe("GitHub installation OAuth callback", () => {
       orgId: "org-1",
     });
     await expect(loader(args())).resolves.toMatchObject({
-      error: expect.stringMatching(/different Eden session/),
+      error: expect.stringMatching(/different harnesst session/),
     });
 
     mocks.consume.mockResolvedValueOnce(null);

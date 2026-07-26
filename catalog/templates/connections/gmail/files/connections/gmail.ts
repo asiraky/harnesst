@@ -1,12 +1,12 @@
 /**
- * Gmail connection (Eden marketplace connector, issues #30, #165).
+ * Gmail connection (harnesst marketplace connector, issues #30, #165).
  *
  * eve's `defineOpenAPIConnection` turns each operation in the vendored OpenAPI spec into a tool
  * (`gmail__messages_list`, `gmail__messages_get`, `gmail__messages_send`, …). eve sends the token
  * as `Authorization: Bearer <token>`, caches it per step, and refreshes ahead of `expiresAt` — so
  * `getToken` below just exchanges the long-lived refresh token for a short-lived access token.
  *
- * The env vars are provisioned by Eden at DEPLOY time from the agent's Google connection grant:
+ * The env vars are provisioned by harnesst at DEPLOY time from the agent's Google connection grant:
  * `GOOGLE_OAUTH_CLIENT_ID` / `GOOGLE_OAUTH_CLIENT_SECRET` are the operator's shared OAuth client,
  * `GOOGLE_OAUTH_REFRESH_TOKEN` is the per-agent grant. There is no control-plane dependency at
  * runtime: refresh happens directly against Google.
@@ -37,7 +37,7 @@ async function getToken(): Promise<{ token: string; expiresAt: number }> {
   if (!clientId || !clientSecret || !refreshToken) {
     throw new Error(
       "Gmail connection is not configured — GOOGLE_OAUTH_CLIENT_ID / " +
-        "GOOGLE_OAUTH_CLIENT_SECRET / GOOGLE_OAUTH_REFRESH_TOKEN are injected by Eden at deploy " +
+        "GOOGLE_OAUTH_CLIENT_SECRET / GOOGLE_OAUTH_REFRESH_TOKEN are injected by harnesst at deploy " +
         "from the agent's Google connection. Reconnect Google from the Deployment tab.",
     );
   }
@@ -66,7 +66,7 @@ async function getToken(): Promise<{ token: string; expiresAt: number }> {
 }
 
 /**
- * The permission level this instance actually holds, read from the granted scopes Eden injects
+ * The permission level this instance actually holds, read from the granted scopes harnesst injects
  * (`GOOGLE_OAUTH_SCOPES`, issue #165). Unset (self-managed env) → assume everything.
  */
 function grantedCapabilities(): { read: boolean; labels: boolean; send: boolean } {

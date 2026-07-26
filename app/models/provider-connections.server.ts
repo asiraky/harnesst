@@ -54,7 +54,7 @@ export interface GatewayConnection {
 }
 
 function secretsKey(): Buffer {
-  return decodeKey(process.env.EDEN_SECRETS_KEY);
+  return decodeKey(process.env.HARNESST_SECRETS_KEY);
 }
 
 export function toDisplayModelConnection(

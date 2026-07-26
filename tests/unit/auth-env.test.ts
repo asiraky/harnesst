@@ -5,9 +5,9 @@ import { assertProductionAuthEnvironment } from "~/lib/auth-env.server";
 const validProductionEnvironment: NodeJS.ProcessEnv = {
   NODE_ENV: "production",
   BETTER_AUTH_SECRET: "0123456789abcdefghijklmnopqrstuv",
-  BETTER_AUTH_URL: "https://eden.example.com",
+  BETTER_AUTH_URL: "https://harnesst.example.com",
   POSTMARK_SERVER_TOKEN: "postmark-token",
-  FROM_EMAIL: "Eden <noreply@example.com>",
+  FROM_EMAIL: "harnesst <noreply@example.com>",
 };
 
 describe("production auth and email environment", () => {
@@ -55,13 +55,13 @@ describe("production auth and email environment", () => {
   });
 
   it.each([
-    "http://eden.example.com",
-    "https://user:password@eden.example.com",
-    "https://@eden.example.com",
-    "https://eden.example.com/auth",
-    "https://eden.example.com/.",
-    "https://eden.example.com?source=test",
-    "https://eden.example.com#auth",
+    "http://harnesst.example.com",
+    "https://user:password@harnesst.example.com",
+    "https://@harnesst.example.com",
+    "https://harnesst.example.com/auth",
+    "https://harnesst.example.com/.",
+    "https://harnesst.example.com?source=test",
+    "https://harnesst.example.com#auth",
     "/relative",
   ])("rejects a non-origin BETTER_AUTH_URL: %s", (betterAuthUrl) => {
     expect(() =>
@@ -76,11 +76,11 @@ describe("production auth and email environment", () => {
     "noreply",
     "noreply@",
     "@example.com",
-    "Eden <noreply>",
-    "Eden <no..reply@example.com>",
-    "Eden <noreply@example..com>",
-    "Eden <noreply@-example.com>",
-    "Eden <noreply@example.com>, Other <other@example.com>",
+    "harnesst <noreply>",
+    "harnesst <no..reply@example.com>",
+    "harnesst <noreply@example..com>",
+    "harnesst <noreply@-example.com>",
+    "harnesst <noreply@example.com>, Other <other@example.com>",
   ])("rejects an implausible FROM_EMAIL: %s", (fromEmail) => {
     expect(() =>
       assertProductionAuthEnvironment({
@@ -94,7 +94,7 @@ describe("production auth and email environment", () => {
     expect(() =>
       assertProductionAuthEnvironment({
         ...validProductionEnvironment,
-        MARKETING_HOST: "www.eden.example.com",
+        MARKETING_HOST: "www.harnesst.example.com",
       }),
     ).not.toThrow();
     expect(() =>
@@ -106,10 +106,10 @@ describe("production auth and email environment", () => {
   });
 
   it.each([
-    "https://www.eden.example.com",
-    "www.eden.example.com/landing",
-    "www.eden.example.com:443",
-    "user@www.eden.example.com",
+    "https://www.harnesst.example.com",
+    "www.harnesst.example.com/landing",
+    "www.harnesst.example.com:443",
+    "user@www.harnesst.example.com",
     "-bad-.example.com",
   ])("rejects a non-bare-host MARKETING_HOST: %s", (marketingHost) => {
     expect(() =>
@@ -124,7 +124,7 @@ describe("production auth and email environment", () => {
     expect(() =>
       assertProductionAuthEnvironment({
         ...validProductionEnvironment,
-        MARKETING_HOST: "eden.example.com",
+        MARKETING_HOST: "harnesst.example.com",
       }),
     ).toThrow("MARKETING_HOST must differ from the BETTER_AUTH_URL host");
   });

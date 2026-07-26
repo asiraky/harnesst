@@ -1,5 +1,5 @@
 /**
- * `eden-lock.json` — the install provenance ledger (PRD §7.8 "Update-from-source"),
+ * `harnesst-lock.json` — the install provenance ledger (PRD §7.8 "Update-from-source"),
  * generalizing the skills-lock idea to every hierarchy level.
  *
  * One record per install: what was installed, at what version, from where, and — the load-
@@ -12,7 +12,7 @@
  *
  * Client-safe: pure Zod + pure helpers, no server imports — the install planner and the wizard
  * route component alike reference these types. Callers treat a MISSING file as an empty lock
- * (a repo that has never installed anything has no `eden-lock.json`); malformed bytes throw.
+ * (a repo that has never installed anything has no `harnesst-lock.json`); malformed bytes throw.
  */
 import { z } from "zod";
 
@@ -22,7 +22,7 @@ import { TEMPLATE_TYPES, type TemplateType } from "./manifest";
 export const LOCK_VERSION = 1;
 
 /** The lock's fixed repo-root location. */
-export const LOCK_PATH = "eden-lock.json";
+export const LOCK_PATH = "harnesst-lock.json";
 
 const installEntrySchema = z.object({
   /** The template id (kebab slug) — the marketplace identity. */
@@ -37,7 +37,7 @@ const installEntrySchema = z.object({
   registry: z.string().min(1),
   /** Owning roster member; null = the single-agent repo's root agent. */
   member: z.string().nullable(),
-  /** FINAL repo-relative paths the install owns (excludes package.json / eden-lock.json). */
+  /** FINAL repo-relative paths the install owns (excludes package.json / harnesst-lock.json). */
   files: z.array(z.string().min(1)),
   /**
    * Paths this install deliberately PRESERVED at register time (issue #177): files that already
@@ -61,9 +61,9 @@ const installEntrySchema = z.object({
         name: z.string().min(1),
         description: z.string().optional(),
         sandbox: z.boolean().optional(),
-        /** Set by a guided Eden flow (e.g. the GitHub App manifest flow), not collected at install. */
+        /** Set by a guided harnesst flow (e.g. the GitHub App manifest flow), not collected at install. */
         provisioned: z.boolean().optional(),
-        /** Minted once by Eden at first deploy (issue #163), never typed or collected. */
+        /** Minted once by harnesst at first deploy (issue #163), never typed or collected. */
         generated: z.boolean().optional(),
       }),
     )
@@ -133,14 +133,14 @@ const installEntrySchema = z.object({
         /**
          * Operation-group ids this install OFFERS for the provider's capability (issue #166) —
          * the template's `capability.groups`, snapshotted at install. Ids only: the labels/
-         * descriptions/risk live in Eden's capability registry (they're code, not data), unlike
+         * descriptions/risk live in harnesst's capability registry (they're code, not data), unlike
          * `scopeGroups` whose definitions are template-authored.
          */
         capabilityGroups: z.array(z.string().min(1)).min(1).optional(),
         /**
          * The installer's CURRENT capability-group choice (issue #166) — subset of
          * `capabilityGroups`, written at install and mutable from the Deployment tab. Enforcement
-         * is PER CALL in Eden (`/api/capabilities/...`), so edits apply at the agent's next call —
+         * is PER CALL in harnesst (`/api/capabilities/...`), so edits apply at the agent's next call —
          * no reconnect, no redeploy. Absent (never written) reads as NOTHING enabled: fail closed.
          */
         selectedCapabilityGroups: z.array(z.string().min(1)).optional(),
@@ -156,32 +156,32 @@ export const lockSchema = z.object({
   installs: z.array(installEntrySchema),
 });
 
-export type EdenLock = z.infer<typeof lockSchema>;
+export type HarnesstLock = z.infer<typeof lockSchema>;
 
-/** A fresh, empty lock — what callers use when `eden-lock.json` is absent. */
-export function emptyLock(): EdenLock {
+/** A fresh, empty lock — what callers use when `harnesst-lock.json` is absent. */
+export function emptyLock(): HarnesstLock {
   return { version: LOCK_VERSION, installs: [] };
 }
 
 /**
- * Parse+validate raw `eden-lock.json` bytes. Throws on malformed content (a corrupt lock is a
+ * Parse+validate raw `harnesst-lock.json` bytes. Throws on malformed content (a corrupt lock is a
  * real problem the reviewer must see, not a silent reset). Callers handle the *missing*-file
  * case themselves with `emptyLock()`.
  */
-export function parseLock(json: unknown): EdenLock {
+export function parseLock(json: unknown): HarnesstLock {
   return lockSchema.parse(json);
 }
 
 /**
- * The effective lock for a repo: the staged `eden-lock.json` draft if there is one, else the
+ * The effective lock for a repo: the staged `harnesst-lock.json` draft if there is one, else the
  * branch's file, else empty. A corrupt lock degrades to empty rather than crashing the surface
  * that reads it (the next install's change-set rewrites it cleanly). `repoContent` is the
- * branch's `eden-lock.json` bytes (or null when absent).
+ * branch's `harnesst-lock.json` bytes (or null when absent).
  */
 export function overlayLock(
   repoContent: string | null,
   drafts: Array<{ path: string; content: string | null }>,
-): EdenLock {
+): HarnesstLock {
   const draft = drafts.find((d) => d.path === LOCK_PATH);
   const raw = draft !== undefined ? draft.content : repoContent;
   if (!raw) return emptyLock();
@@ -194,7 +194,7 @@ export function overlayLock(
 
 /** An install is identified by (id, member) — the same template can live under two members. */
 export function findInstall(
-  lock: EdenLock,
+  lock: HarnesstLock,
   id: string,
   member: string | null,
 ): InstallEntry | undefined {
@@ -207,7 +207,7 @@ export function installKey(type: TemplateType, id: string): string {
 }
 
 /** All (type/id) keys installed in a lock — the marketplace "Installed" facet reads this. */
-export function installedKeys(lock: EdenLock): string[] {
+export function installedKeys(lock: HarnesstLock): string[] {
   return lock.installs.map((e) => installKey(e.type, e.id));
 }
 
@@ -254,7 +254,7 @@ export function effectiveAuthScopes(auth: InstallAuth): string[] {
  * Client-safe: pure, no server imports.
  */
 export function requiredScopesByProvider(
-  lock: EdenLock,
+  lock: HarnesstLock,
   member: string | null,
 ): Map<string, string[]> {
   const byProvider = new Map<string, Set<string>>();
@@ -293,7 +293,7 @@ export interface ScopeGroupChoice {
  * Client-safe: pure, no server imports.
  */
 export function scopeGroupsByProvider(
-  lock: EdenLock,
+  lock: HarnesstLock,
   member: string | null,
 ): Map<string, ScopeGroupChoice[]> {
   const byProvider = new Map<string, ScopeGroupChoice[]>();
@@ -333,11 +333,11 @@ export function scopeGroupsByProvider(
  * through untouched. Pure; returns a new lock and whether anything changed.
  */
 export function setSelectedGroups(
-  lock: EdenLock,
+  lock: HarnesstLock,
   member: string | null,
   provider: string,
   selected: string[],
-): { lock: EdenLock; changed: boolean } {
+): { lock: HarnesstLock; changed: boolean } {
   let changed = false;
   const installs = lock.installs.map((entry) => {
     if (entry.member !== member || !entry.auth) return entry;
@@ -368,7 +368,7 @@ export function setSelectedGroups(
 }
 
 /** Upsert an entry by (id, member): replaces the matching install, else appends. Pure. */
-export function upsertInstall(lock: EdenLock, entry: InstallEntry): EdenLock {
+export function upsertInstall(lock: HarnesstLock, entry: InstallEntry): HarnesstLock {
   const rest = lock.installs.filter(
     (e) => !(e.id === entry.id && e.member === entry.member),
   );
@@ -377,10 +377,10 @@ export function upsertInstall(lock: EdenLock, entry: InstallEntry): EdenLock {
 
 /** Remove the (id, member) entry, returning a new lock. Pure. */
 export function removeInstall(
-  lock: EdenLock,
+  lock: HarnesstLock,
   id: string,
   member: string | null,
-): EdenLock {
+): HarnesstLock {
   return {
     ...lock,
     installs: lock.installs.filter(
@@ -397,10 +397,10 @@ export function removeInstall(
  * a new lock and a flag for whether anything changed (so callers can skip an empty rewrite).
  */
 export function renameMember(
-  lock: EdenLock,
+  lock: HarnesstLock,
   oldName: string,
   newName: string,
-): { lock: EdenLock; changed: boolean } {
+): { lock: HarnesstLock; changed: boolean } {
   let changed = false;
   const oldPrefix = `agents/${oldName}/`;
   const newPrefix = `agents/${newName}/`;
@@ -423,7 +423,7 @@ export function renameMember(
  * driven by content not insertion order, 2-space indent, trailing newline (the repo's file
  * convention — everything else in a change-set looks like this).
  */
-export function serializeLock(lock: EdenLock): string {
+export function serializeLock(lock: HarnesstLock): string {
   const installs = [...lock.installs].sort((a, b) => {
     if (a.id !== b.id) return a.id < b.id ? -1 : 1;
     // Root agent (null member) sorts before named members; then lexical.

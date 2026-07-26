@@ -62,7 +62,7 @@ describe("GPT-5.6 family (ChatMock registry parity)", () => {
     for (const slug of ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"]) {
       const spec = findCodexSpec(slug);
       expect(spec, slug).not.toBeNull();
-      // Upstream lists none…max; Eden's effort scale caps at xhigh.
+      // Upstream lists none…max; harnesst's effort scale caps at xhigh.
       expect(spec?.supportedEfforts).toEqual([
         "none",
         "low",

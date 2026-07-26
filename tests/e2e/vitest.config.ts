@@ -3,7 +3,7 @@
  * Config for the FOH e2e suite only (`npm run test:e2e`). The specs are named `*.e2e.ts` so
  * the DEFAULT suite (`npm test`, root vitest.config.ts, `**\/*.test.*` glob) never picks them
  * up — they exercise the live worktree Postgres and a real HTTP fake-eve server, opt-in via
- * EDEN_DB_SMOKE=1 exactly like tests/integration.
+ * HARNESST_DB_SMOKE=1 exactly like tests/integration.
  */
 import { fileURLToPath } from "node:url";
 import { defineConfig } from "vitest/config";

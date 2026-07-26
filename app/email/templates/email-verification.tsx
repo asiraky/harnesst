@@ -25,16 +25,16 @@ export default function EmailVerificationEmail({
   return (
     <Html lang="en">
       <Head />
-      <Preview>Verify your email to join an Eden workspace</Preview>
+      <Preview>Verify your email to join a harnesst workspace</Preview>
       <Body style={styles.main}>
         <Container style={styles.container}>
           <Text style={styles.brand}>
-            <span style={styles.brandAccent}>e</span>den
+            <span style={styles.brandAccent}>h</span>arnesst
           </Text>
           <Heading style={styles.heading}>Verify your email</Heading>
           <Text style={styles.text}>
-            Confirm that {userEmail} belongs to you before accepting the Eden
-            workspace invitation.
+            Confirm that {userEmail} belongs to you before accepting the
+            harnesst workspace invitation.
           </Text>
           <Button href={verificationUrl} style={styles.button}>
             Verify email

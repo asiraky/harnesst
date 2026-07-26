@@ -1,10 +1,10 @@
 /**
  * Runtime registry — the single place that binds the seams (types.ts) to concrete
- * implementations for the current `EDEN_MODE` (PRD §8, ARCH §1.5). Everything else in the
+ * implementations for the current `HARNESST_MODE` (PRD §8, ARCH §1.5). Everything else in the
  * app depends on `getRuntime()`, never on a concrete provider, so OSS and managed stay one
  * codebase with no fork.
  *
- * `EDEN_MODE=oss` (default) wires the local/BYO reference implementations. `EDEN_MODE=managed`
+ * `HARNESST_MODE=oss` (default) wires the local/BYO reference implementations. `HARNESST_MODE=managed`
  * will wire the KMS/gateway/Stripe/Nomad implementations as they land (M4); until then it
  * falls back to the OSS impls so the control plane still boots.
  */
@@ -25,17 +25,17 @@ import { localTelemetrySink } from "./oss/telemetry.local.server";
 import type {
   CatalogSource,
   DeployTarget,
-  EdenMode,
-  EdenRuntime,
+  HarnesstMode,
+  HarnesstRuntime,
 } from "./types";
 
-function resolveMode(): EdenMode {
-  return process.env.EDEN_MODE === "managed" ? "managed" : "oss";
+function resolveMode(): HarnesstMode {
+  return process.env.HARNESST_MODE === "managed" ? "managed" : "oss";
 }
 
-/** Pick the DeployTarget by `EDEN_DEPLOY_TARGET` (container | nomad | vercel). */
+/** Pick the DeployTarget by `HARNESST_DEPLOY_TARGET` (container | nomad | vercel). */
 function resolveDeployTarget(): DeployTarget {
-  switch (process.env.EDEN_DEPLOY_TARGET) {
+  switch (process.env.HARNESST_DEPLOY_TARGET) {
     case "local-docker":
       return localDockerTarget;
     case "nomad":
@@ -47,12 +47,12 @@ function resolveDeployTarget(): DeployTarget {
   }
 }
 
-/** Catalog source: the GitHub-raw pointer when `EDEN_CATALOG_REPO` is set, else the in-repo fixture. */
+/** Catalog source: the GitHub-raw pointer when `HARNESST_CATALOG_REPO` is set, else the in-repo fixture. */
 function resolveCatalog(): CatalogSource {
-  return process.env.EDEN_CATALOG_REPO ? githubCatalog : fixtureCatalog;
+  return process.env.HARNESST_CATALOG_REPO ? githubCatalog : fixtureCatalog;
 }
 
-function buildRuntime(mode: EdenMode): EdenRuntime {
+function buildRuntime(mode: HarnesstMode): HarnesstRuntime {
   // Managed-only implementations (KMS secrets, gateway proxy, Stripe metering, Nomad target)
   // are introduced in M4 and swapped in here by mode. Until then both modes share the OSS
   // reference impls; the seam boundary means that swap is local to this file.
@@ -68,14 +68,14 @@ function buildRuntime(mode: EdenMode): EdenRuntime {
     // Managed swaps in the gateway proxy (keys/metering/caps) and Stripe metering.
     modelGateway: managed ? managedModelGateway : directModelGateway,
     metering: managed ? managedMeteringSink : localMeteringSink,
-    // Marketplace catalog: fixture (in-repo seed) by default; GitHub-raw when EDEN_CATALOG_REPO set.
+    // Marketplace catalog: fixture (in-repo seed) by default; GitHub-raw when HARNESST_CATALOG_REPO set.
     catalog: resolveCatalog(),
   };
 }
 
-let cached: EdenRuntime | undefined;
+let cached: HarnesstRuntime | undefined;
 
 /** The runtime implementations selected for this process. Cached after first resolution. */
-export function getRuntime(): EdenRuntime {
+export function getRuntime(): HarnesstRuntime {
   return (cached ??= buildRuntime(resolveMode()));
 }

@@ -6,14 +6,14 @@
  * conversation_reads upsert/unread math, inbox insert/resolve, pending-input stop-wins guard,
  * and the FK cascades that keep a deleted session from stranding inbox/read rows.
  *
- * Opt-in: runs only when EDEN_DB_SMOKE=1 and DATABASE_URL point at a live dev database
- * (`EDEN_DB_SMOKE=1 npx vitest run tests/integration/foh-schema.db.test.ts` with .env.local
+ * Opt-in: runs only when HARNESST_DB_SMOKE=1 and DATABASE_URL point at a live dev database
+ * (`HARNESST_DB_SMOKE=1 npx vitest run tests/integration/foh-schema.db.test.ts` with .env.local
  * sourced). Creates its own org/user/project/agent rows and deletes them, so it's safe to re-run.
  */
 import { and, eq, sql } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 
-const LIVE = process.env.EDEN_DB_SMOKE === "1";
+const LIVE = process.env.HARNESST_DB_SMOKE === "1";
 
 describe.runIf(LIVE)("FOH session substrate against real Postgres", () => {
   it("isolates surfaces, tracks reads/unread, and cascades inbox rows with the session", async () => {
@@ -129,8 +129,8 @@ describe.runIf(LIVE)("FOH session substrate against real Postgres", () => {
       .insert(agents)
       .values({
         projectId: project.id,
-        name: "eden-assistant",
-        root: "agents/eden-assistant/agent",
+        name: "harnesst-assistant",
+        root: "agents/harnesst-assistant/agent",
         kind: "assistant",
       })
       .returning();

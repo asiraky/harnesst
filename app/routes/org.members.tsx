@@ -360,7 +360,7 @@ export async function action(args: Route.ActionArgs) {
 }
 
 export function meta() {
-  return [{ title: "Members · eden" }, ...noindexMeta];
+  return [{ title: "Members · harnesst" }, ...noindexMeta];
 }
 
 /**
@@ -380,8 +380,8 @@ function InviteTeammate({ repos }: { repos: { id: string; name: string }[] }) {
           Invite a teammate
         </CardTitle>
         <CardDescription>
-          Eden emails a secure invitation link. Choose what it grants before you
-          send it.
+          harnesst emails a secure invitation link. Choose what it grants before
+          you send it.
         </CardDescription>
       </CardHeader>
       <CardContent>

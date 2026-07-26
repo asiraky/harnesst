@@ -6,7 +6,7 @@
  * agent.ts). Nothing here mutates the repo — Connect/visualize is read-only in M0; writes
  * (branch -> PR) come in M1.
  *
- * We also surface the repo-root `eden-lock.json` (marketplace install provenance, PRD §7.8) in
+ * We also surface the repo-root `harnesst-lock.json` (marketplace install provenance, PRD §7.8) in
  * the tree + eager reads when present: the Deployment tab and the install wizard both need the
  * lock, and folding it into this one cached read spares them a separate ~600ms round trip. It
  * sits OUTSIDE every agent root, so the prefix-based parser (`detectAgentRoots`,
@@ -23,7 +23,7 @@ import {
 import { getInstallationOctokit } from "./client.server";
 
 /** Repo-root marketplace install ledger (PRD §7.8) — carried alongside the agent tree. */
-const EDEN_LOCK = "eden-lock.json";
+const HARNESST_LOCK = "harnesst-lock.json";
 
 export interface InstallationRepo {
   owner: string;
@@ -105,7 +105,7 @@ export async function fetchAgentSource(
     e.type === "blob" &&
     typeof e.path === "string" &&
     (e.path === AGENT_ROOT ||
-      e.path === EDEN_LOCK ||
+      e.path === HARNESST_LOCK ||
       e.path.startsWith(agentPrefix) ||
       e.path.startsWith(teamPrefix) ||
       e.path.startsWith(assistantPrefix))
@@ -122,7 +122,7 @@ export async function fetchAgentSource(
         `${root}/subagents/${name}/instructions.md`,
       ]),
     ]),
-    EDEN_LOCK,
+    HARNESST_LOCK,
   ];
   const files: Record<string, string> = {};
   await Promise.all(

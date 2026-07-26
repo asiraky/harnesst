@@ -1,7 +1,7 @@
 /**
  * The assistant instance's callback API. The built-in assistant's baked-in
  * tools, its boot entrypoint, and its checkout sidecar call `POST|GET /api/assistant/<action>` with
- * a Bearer `EDEN_ASSISTANT_TOKEN`. The token authenticates a DEPLOYMENT; everything else
+ * a Bearer `HARNESST_ASSISTANT_TOKEN`. The token authenticates a DEPLOYMENT; everything else
  * (environment → agent → project) is derived from the DB, and the agent must be kind 'assistant'. A
  * bad token is the only 401 — business failures return `{ ok:false, error }` at HTTP 200 so the
  * model reads the text (the ask.server.ts convention).

@@ -67,8 +67,8 @@ interface FileEditView {
 /** Starter content for a brand-new file, by its category directory (null if none applies). */
 function templateFor(path: string): string | null {
   // The sandbox definition is a singleton directly under the agent root (both layouts), not
-  // a category — a repo running the framework default starts from Eden's scaffold, which is
-  // behaviorally identical until a secret is exposed (EDEN_SANDBOX_ENV convention).
+  // a category — a repo running the framework default starts from harnesst's scaffold, which is
+  // behaviorally identical until a secret is exposed (HARNESST_SANDBOX_ENV convention).
   if (/^(?:agent|agents\/[^/]+\/agent)\/sandbox\.[cm]?[jt]s$/.test(path)) {
     return DEFAULT_SANDBOX_MODULE;
   }
@@ -165,7 +165,7 @@ export async function action(args: ActionFunctionArgs) {
 }
 
 export function meta() {
-  return [{ title: "Edit file · eden" }];
+  return [{ title: "Edit file · harnesst" }];
 }
 
 export default function EditFile({

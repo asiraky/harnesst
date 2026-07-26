@@ -1,5 +1,5 @@
 /**
- * Type surface of the checkout sidecar's PURE export (checkout-sidecar.mjs) so Eden's unit tests
+ * Type surface of the checkout sidecar's PURE export (checkout-sidecar.mjs) so harnesst's unit tests
  * can import it under typecheck. The sidecar itself runs inside the assistant instance image; only
  * `classifyRawRecord` is meant for import — everything else is process-level.
  */

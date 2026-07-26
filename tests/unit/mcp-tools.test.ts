@@ -397,7 +397,7 @@ describe("MCP PR-enforced authoring tools", () => {
       title: "Update instructions",
       body: "",
       url: "https://github.example/acme/agents/pull/12",
-      branch: "eden/publish-123",
+      branch: "harnesst/publish-123",
       base: "trunk",
       createdAt: "2026-07-14T00:00:00Z",
       mergeable: true,
@@ -504,7 +504,7 @@ describe("MCP PR-enforced authoring tools", () => {
 
   it("publishes selected drafts through the connected project and default branch", async () => {
     const publishDrafts = vi.fn(async () => ({
-      branch: "eden/publish-123",
+      branch: "harnesst/publish-123",
       base: "trunk",
       pullRequestUrl: "https://github.example/acme/agents/pull/12",
       pullRequestNumber: 12,
@@ -524,7 +524,7 @@ describe("MCP PR-enforced authoring tools", () => {
     ).resolves.toMatchObject({
       projectId: "project_1",
       change: {
-        branch: "eden/publish-123",
+        branch: "harnesst/publish-123",
         base: "trunk",
         pullRequestNumber: 12,
       },
@@ -566,7 +566,7 @@ describe("MCP PR-enforced authoring tools", () => {
     ]);
   });
 
-  it("merges only the server-resolved Eden branch targeting the default branch", async () => {
+  it("merges only the server-resolved harnesst branch targeting the default branch", async () => {
     const listOpenChanges = vi.fn(async () => [openChange()]);
     const mergePullRequest = vi.fn(async () => ({
       mergeSha: "merge_sha",
@@ -583,7 +583,7 @@ describe("MCP PR-enforced authoring tools", () => {
     ).resolves.toMatchObject({
       change: {
         number: 12,
-        branch: "eden/publish-123",
+        branch: "harnesst/publish-123",
         base: "trunk",
       },
       merge: { mergeSha: "merge_sha", method: "squash" },
@@ -597,7 +597,7 @@ describe("MCP PR-enforced authoring tools", () => {
       "42",
       { owner: "acme", repo: "agents" },
       12,
-      "eden/publish-123",
+      "harnesst/publish-123",
     );
     expect(store.auditEntries.map((entry) => entry.action)).toEqual([
       "mcp.merge_change",

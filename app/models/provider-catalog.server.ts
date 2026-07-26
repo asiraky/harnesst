@@ -19,13 +19,13 @@ const DEFAULT_OPENAI_API_BASE_URL = "https://api.openai.com";
 
 export function anthropicApiBase(): string {
   return (
-    process.env.EDEN_ANTHROPIC_API_BASE_URL ?? DEFAULT_ANTHROPIC_API_BASE_URL
+    process.env.HARNESST_ANTHROPIC_API_BASE_URL ?? DEFAULT_ANTHROPIC_API_BASE_URL
   ).replace(/\/+$/, "");
 }
 
 export function openAiApiBase(): string {
   return (
-    process.env.EDEN_OPENAI_API_BASE_URL ?? DEFAULT_OPENAI_API_BASE_URL
+    process.env.HARNESST_OPENAI_API_BASE_URL ?? DEFAULT_OPENAI_API_BASE_URL
   ).replace(/\/+$/, "");
 }
 

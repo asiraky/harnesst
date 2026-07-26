@@ -35,7 +35,7 @@ describe("opaque GitHub installation grant boundary", () => {
     process.env.GITHUB_APP_PRIVATE_KEY = "test-key";
     process.env.GITHUB_APP_CLIENT_ID = "client";
     process.env.GITHUB_APP_CLIENT_SECRET = "secret";
-    process.env.GITHUB_APP_SLUG = "eden-test";
+    process.env.GITHUB_APP_SLUG = "harnesst-test";
   });
 
   it("rejects raw or unverified ids before constructing an App client", async () => {

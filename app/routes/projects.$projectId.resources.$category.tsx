@@ -260,7 +260,7 @@ export function meta({ params }: Route.MetaArgs) {
   const label =
     AGENT_CATEGORIES.find((c) => c.key === params.category)?.label ??
     "Resources";
-  return [{ title: `${label} · eden` }];
+  return [{ title: `${label} · harnesst` }];
 }
 
 const CATEGORY_HINTS: Record<string, string> = {

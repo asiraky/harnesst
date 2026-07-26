@@ -1,6 +1,6 @@
 /**
  * OSS Scheduler: persist schedules for visibility. In OSS/self-host, eve's own `schedules/`
- * run inside the always-on instance, so Eden doesn't need to fire them. Managed swaps in a
+ * run inside the always-on instance, so harnesst doesn't need to fire them. Managed swaps in a
  * scheduler that WAKES scaled-to-zero instances at cron time (ARCH §3.3) behind this seam.
  */
 import { eq } from "drizzle-orm";

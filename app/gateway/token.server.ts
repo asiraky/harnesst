@@ -1,9 +1,9 @@
 /**
- * Model-gateway tokens (issue #28, Phase 1). A deployed agent set to a Codex model reaches Eden's
- * translating gateway (`/api/gateway/v1/chat/completions`) carrying an `EDEN_MODEL_GATEWAY_TOKEN`
+ * Model-gateway tokens (issue #28, Phase 1). A deployed agent set to a Codex model reaches harnesst's
+ * translating gateway (`/api/gateway/v1/chat/completions`) carrying an `HARNESST_MODEL_GATEWAY_TOKEN`
  * that identifies its ORG; the gateway derives everything else (which connection, which upstream
  * account) from the request body + DB, so nothing but the org id is trusted from the client.
- * HMAC-SHA256 over the org id keyed by the same `EDEN_SECRETS_KEY` — mirrors
+ * HMAC-SHA256 over the org id keyed by the same `HARNESST_SECRETS_KEY` — mirrors
  * `app/assistant/token.server.ts` exactly, but with a DISTINCT prefix `edng_` so a gateway token
  * can never be replayed as an assistant token (`edna_`) or team-delegation token (`ednt_`).
  *
@@ -20,14 +20,14 @@ const PREFIX = "edng_";
 
 /** The signing key — reuses the secrets key source (never a new env var). */
 export function gatewayKey(): Buffer {
-  return decodeKey(process.env.EDEN_SECRETS_KEY);
+  return decodeKey(process.env.HARNESST_SECRETS_KEY);
 }
 
 function sign(orgId: string, key: Buffer): string {
   return crypto.createHmac("sha256", key).update(orgId).digest("base64url");
 }
 
-/** Mint the token an agent carries as EDEN_MODEL_GATEWAY_TOKEN. */
+/** Mint the token an agent carries as HARNESST_MODEL_GATEWAY_TOKEN. */
 export function mintGatewayToken(
   orgId: string,
   key: Buffer = gatewayKey(),

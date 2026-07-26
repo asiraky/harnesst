@@ -3,9 +3,9 @@
  * the eve OSS repo's `marketplace/` directory (PRD §7.8 Distribution).
  *
  * Env-driven, mirroring resolveDeployTarget()'s style (index.server.ts):
- *   EDEN_CATALOG_REPO   "owner/repo"   — required to activate this impl
- *   EDEN_CATALOG_PATH   default "marketplace"
- *   EDEN_CATALOG_REF    default "main"
+ *   HARNESST_CATALOG_REPO   "owner/repo"   — required to activate this impl
+ *   HARNESST_CATALOG_PATH   default "marketplace"
+ *   HARNESST_CATALOG_REF    default "main"
  *
  * The eve repo is public OSS, so we fetch over plain `https://raw.githubusercontent.com/...`
  * with no GitHub App auth. Every fetch is routed through the shared SWR cache (github/cache)
@@ -32,16 +32,16 @@ interface CatalogPointer {
 
 /** Read the env pointer, or throw if the catalog repo isn't configured (should never reach here). */
 function pointer(): CatalogPointer {
-  const repo = process.env.EDEN_CATALOG_REPO;
+  const repo = process.env.HARNESST_CATALOG_REPO;
   if (!repo) {
     throw new Error(
-      "EDEN_CATALOG_REPO is not set — the GitHub catalog source needs an owner/repo pointer.",
+      "HARNESST_CATALOG_REPO is not set — the GitHub catalog source needs an owner/repo pointer.",
     );
   }
   return {
     repo,
-    path: process.env.EDEN_CATALOG_PATH ?? "marketplace",
-    ref: process.env.EDEN_CATALOG_REF ?? "main",
+    path: process.env.HARNESST_CATALOG_PATH ?? "marketplace",
+    ref: process.env.HARNESST_CATALOG_REF ?? "main",
   };
 }
 
@@ -60,7 +60,7 @@ async function fetchText(url: string): Promise<string> {
   if (!res.ok) {
     throw new Error(
       `Catalog fetch failed (${res.status} ${res.statusText}) for ${url}. ` +
-        `Check EDEN_CATALOG_REPO / EDEN_CATALOG_REF and that the path exists.`,
+        `Check HARNESST_CATALOG_REPO / HARNESST_CATALOG_REF and that the path exists.`,
     );
   }
   return res.text();

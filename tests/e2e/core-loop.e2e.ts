@@ -6,8 +6,8 @@
  * persist the durable transcript (playground_events), land the session `waiting`, and file
  * the `finished` inbox item, with no client attached.
  *
- * Opt-in: EDEN_DB_SMOKE=1 with DATABASE_URL pointing at the live dev database
- * (`set -a; source .env.local; set +a; EDEN_DB_SMOKE=1 npm run test:e2e`).
+ * Opt-in: HARNESST_DB_SMOKE=1 with DATABASE_URL pointing at the live dev database
+ * (`set -a; source .env.local; set +a; HARNESST_DB_SMOKE=1 npm run test:e2e`).
  */
 import { describe, expect, it } from "vitest";
 
@@ -157,7 +157,7 @@ describe.runIf(LIVE)("FOH core loop (real routes + drain + fake eve)", () => {
 });
 
 describe.runIf(!LIVE)("FOH core loop e2e (skipped)", () => {
-  it("runs only with EDEN_DB_SMOKE=1 against a live database", () => {
+  it("runs only with HARNESST_DB_SMOKE=1 against a live database", () => {
     expect(LIVE).toBe(false);
   });
 });

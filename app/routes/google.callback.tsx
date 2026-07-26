@@ -36,7 +36,7 @@ export const loader = (args: LoaderFunctionArgs) =>
   });
 
 export function meta() {
-  return [{ title: "Connect Google · eden" }, ...noindexMeta];
+  return [{ title: "Connect Google · harnesst" }, ...noindexMeta];
 }
 
 export default function GoogleCallback({ loaderData }: Route.ComponentProps) {

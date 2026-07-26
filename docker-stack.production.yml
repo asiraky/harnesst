@@ -12,15 +12,15 @@ services:
       - -c
       - listen_addresses=127.0.0.1,172.17.0.1
     environment:
-      POSTGRES_USER: eden
-      POSTGRES_PASSWORD: ${EDEN_PG_PASSWORD:?set EDEN_PG_PASSWORD}
-      POSTGRES_DB: eden
+      POSTGRES_USER: harnesst
+      POSTGRES_PASSWORD: ${HARNESST_PG_PASSWORD:?set HARNESST_PG_PASSWORD}
+      POSTGRES_DB: harnesst
     networks:
       - host
     volumes:
-      - /opt/eden/volumes/postgres:/var/lib/postgresql/data
+      - /opt/harnesst/volumes/postgres:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -p 5442 -U eden -d eden"]
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -p 5442 -U harnesst -d harnesst"]
       interval: 5s
       timeout: 5s
       retries: 5
@@ -46,8 +46,8 @@ services:
         failure_action: pause
         order: stop-first
 
-  eden:
-    image: ghcr.io/zero8ai/eden:${IMAGE_TAG:?set IMAGE_TAG}
+  harnesst:
+    image: ghcr.io/asiraky/harnesst:${IMAGE_TAG:?set IMAGE_TAG}
     env_file:
       - ./production.env
     networks:
@@ -65,7 +65,7 @@ services:
       retries: 3
       start_period: 20s
     deploy:
-      replicas: ${EDEN_REPLICAS:-1}
+      replicas: ${HARNESST_REPLICAS:-1}
       placement:
         constraints:
           - node.role == manager

@@ -21,7 +21,7 @@ function middlewareArgs(request: Request, context: RouterContextProvider) {
 
 function originlessPost(pathname: string): Request {
   // No Origin header — the defining trait of a non-browser caller.
-  return new Request(`https://eden.example.com${pathname}`, {
+  return new Request(`https://harnesst.example.com${pathname}`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: "{}",
@@ -31,9 +31,9 @@ function originlessPost(pathname: string): Request {
 describe("mutation-origin guard: bearer machine endpoints bypass the browser CSRF check", () => {
   beforeEach(() => {
     getSession.mockReset();
-    process.env.EDEN_SECRETS_KEY =
+    process.env.HARNESST_SECRETS_KEY =
       "1f8b16e6a46dd3ac12ef7a328f1ce35c67b5bc8f1acdd76280e3674c3a4f19b2";
-    process.env.BETTER_AUTH_URL = "https://eden.example.com";
+    process.env.BETTER_AUTH_URL = "https://harnesst.example.com";
   });
 
   const machinePaths = [
@@ -84,7 +84,7 @@ describe("mutation-origin guard: bearer machine endpoints bypass the browser CSR
   it("rejects a browser POST whose Origin does not match the configured origin", async () => {
     const { betterAuthSessionMiddleware } =
       await import("~/auth/session.server");
-    const request = new Request("https://eden.example.com/org/settings", {
+    const request = new Request("https://harnesst.example.com/org/settings", {
       method: "POST",
       headers: { origin: "https://evil.example.com" },
     });

@@ -1,9 +1,9 @@
 /**
- * Assistant — Eden's built-in, project-level authoring agent as a durable, streaming chat.
+ * Assistant — harnesst's built-in, project-level authoring agent as a durable, streaming chat.
  *
  * A real eve instance, not an in-process loop: the composer POSTs to the
  * streaming resource route (api.projects.$projectId.assistant.stream) and this component reads the
- * same NDJSON turn feed the playground uses. Eden's durable event cache is the transcript source;
+ * same NDJSON turn feed the playground uses. harnesst's durable event cache is the transcript source;
  * the owning Eve instance is consulted only for bounded recovery and legacy backfill. First use
  * shows a provisioning state while the instance builds/deploys.
  */
@@ -132,7 +132,7 @@ export const loader = (args: LoaderFunctionArgs) =>
             snapshot.target ? [snapshot.target] : [],
           );
 
-          // Recover a drain that died with Eden only from the exact assistant instance that owns
+          // Recover a drain that died with harnesst only from the exact assistant instance that owns
           // the Eve session. A replacement instance does not know the old external session id.
           if (
             (currentSession.status === "running" ||
@@ -182,7 +182,7 @@ export const loader = (args: LoaderFunctionArgs) =>
               }
             } else {
               historyError =
-                "Eden is showing the history it cached, but some older messages may be missing while the original assistant instance is unavailable.";
+                "harnesst is showing the history it cached, but some older messages may be missing while the original assistant instance is unavailable.";
             }
           }
 
@@ -254,7 +254,7 @@ export async function action(args: ActionFunctionArgs) {
 }
 
 export function meta() {
-  return [{ title: "Assistant · eden" }];
+  return [{ title: "Assistant · harnesst" }];
 }
 
 interface LiveTurn {
@@ -1068,9 +1068,9 @@ function SyncNote({ sync }: { sync: NonNullable<LiveTurn["sync"]> }) {
       <p className="flex items-start gap-1.5 text-xs text-amber-700 dark:text-amber-400">
         <TriangleAlert className="mt-0.5 size-3.5 shrink-0" aria-hidden />
         <span>
-          Eden couldn&apos;t sync this turn&apos;s changes to the pull request (
-          {sync.error}). They&apos;re safe in the conversation checkout and will
-          sync after the next turn.
+          harnesst couldn&apos;t sync this turn&apos;s changes to the pull
+          request ({sync.error}). They&apos;re safe in the conversation checkout
+          and will sync after the next turn.
         </span>
       </p>
     );

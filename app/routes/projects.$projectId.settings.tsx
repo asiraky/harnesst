@@ -8,7 +8,7 @@
  *    (remove agent — a change-set PR deleting its directory).
  *  - REPO sections (team repos at /repos/:id/settings; appended for single-agent repos):
  *    Marketplace installs, General (the GitHub connection), Run ingestion tokens, and the repo
- *    danger zone — Delete repository, a FULL Eden-side teardown (instances stopped and
+ *    danger zone — Delete repository, a FULL harnesst-side teardown (instances stopped and
  *    destroyed, every row cascaded). The GitHub repository itself is never touched.
  */
 import { getSessionAuth, sessionLoader } from "~/auth/session.server";
@@ -346,7 +346,7 @@ export const loader = (args: LoaderFunctionArgs) =>
         content: d.content,
       }));
       const lock = overlayLock(
-        source.files["eden-lock.json"] ?? null,
+        source.files["harnesst-lock.json"] ?? null,
         draftPaths,
       );
       let index: { id: string; type: TemplateType; version: string }[] = [];
@@ -424,8 +424,8 @@ export const loader = (args: LoaderFunctionArgs) =>
           listAgentEnvironments(active.id),
           resolveAgentModel(project.orgId, active.name).catch(() => null),
         ]);
-        // Model + effort are workspace configuration, resolved from Eden's control plane by
-        // agent name (the `edenAgentModel('<name>')` identity the running agent resolves itself
+        // Model + effort are workspace configuration, resolved from harnesst's control plane by
+        // agent name (the `harnesstAgentModel('<name>')` identity the running agent resolves itself
         // by) — never parsed out of agent.ts. An explicit per-agent override wins; otherwise the
         // shown value is the workspace default ("inherited default").
         base.model = resolved?.model ?? null;
@@ -609,7 +609,7 @@ export async function action(args: ActionFunctionArgs) {
         content: d.content,
       }));
       const lock = overlayLock(
-        source.files["eden-lock.json"] ?? null,
+        source.files["harnesst-lock.json"] ?? null,
         draftPaths,
       );
       // A staged package.json draft wins over the branch copy — otherwise a second staged
@@ -706,7 +706,7 @@ export async function action(args: ActionFunctionArgs) {
         content: d.content,
       }));
       const lock = overlayLock(
-        source.files["eden-lock.json"] ?? null,
+        source.files["harnesst-lock.json"] ?? null,
         draftPaths,
       );
       const plan = planUninstall({
@@ -716,7 +716,7 @@ export async function action(args: ActionFunctionArgs) {
         repoPaths: source.paths,
       });
       if (plan.notFound) {
-        return { error: "That install isn't recorded in eden-lock.json." };
+        return { error: "That install isn't recorded in harnesst-lock.json." };
       }
       if (plan.deletions.length > 0) {
         await stageDeletions({
@@ -828,7 +828,7 @@ export async function action(args: ActionFunctionArgs) {
       }
       const change = await proposeChange(project.repoInstallationId, repo, {
         base: project.defaultBranch,
-        branch: `eden/remove-member-${name}`,
+        branch: `harnesst/remove-member-${name}`,
         files,
         title: `Remove agent: ${name}`,
         body:
@@ -851,7 +851,7 @@ export async function action(args: ActionFunctionArgs) {
       if (!newName) return { error: "New name is required." };
       if (newName === "assistant") {
         return {
-          error: `"assistant" is reserved for eden's built-in assistant — pick another name.`,
+          error: `"assistant" is reserved for harnesst's built-in assistant — pick another name.`,
         };
       }
       const { roster, active } = await resolveAgentContext(
@@ -920,8 +920,8 @@ export async function action(args: ActionFunctionArgs) {
         files.push({ path: p, content: null });
       });
 
-      // eden-lock.json lives at the repo root: retag this member's installs old → new.
-      const lockRaw = source.files["eden-lock.json"] ?? null;
+      // harnesst-lock.json lives at the repo root: retag this member's installs old → new.
+      const lockRaw = source.files["harnesst-lock.json"] ?? null;
       if (lockRaw) {
         const rewritten = renameMember(
           overlayLock(lockRaw, []),
@@ -930,7 +930,7 @@ export async function action(args: ActionFunctionArgs) {
         );
         if (rewritten.changed) {
           files.push({
-            path: "eden-lock.json",
+            path: "harnesst-lock.json",
             content: serializeLock(rewritten.lock),
           });
         }
@@ -945,12 +945,12 @@ export async function action(args: ActionFunctionArgs) {
       try {
         change = await proposeChange(project.repoInstallationId, repo, {
           base: project.defaultBranch,
-          branch: `eden/rename-member-${oldName}-${newName}`,
+          branch: `harnesst/rename-member-${oldName}-${newName}`,
           files,
           title: `Rename agent: ${oldName} → ${newName}`,
           body:
             `Moves \`agents/${oldName}/\` to \`agents/${newName}/\` (${memberPaths.length} files) ` +
-            `and retargets its package.json and marketplace installs. eden renames the agent in ` +
+            `and retargets its package.json and marketplace installs. harnesst renames the agent in ` +
             `place on merge — its environments, versions, secrets and run history are preserved.\n\n` +
             `Note: mentions of \`${oldName}\` in other agents' instructions or tools are not ` +
             `rewritten automatically — update those separately if needed.`,
@@ -976,7 +976,7 @@ export async function action(args: ActionFunctionArgs) {
       return { ok: true as const, token };
     }
 
-    // ── Repo danger zone: full Eden-side teardown ──
+    // ── Repo danger zone: full harnesst-side teardown ──
     if (intent === "delete-repository") {
       const confirm = String(form.get("confirm") ?? "");
       if (confirm !== project.name) {
@@ -999,7 +999,7 @@ export async function action(args: ActionFunctionArgs) {
 }
 
 export function meta() {
-  return [{ title: "Settings · eden" }];
+  return [{ title: "Settings · harnesst" }];
 }
 
 export default function Settings({
@@ -1081,8 +1081,8 @@ export default function Settings({
         <Alert className="mb-6">
           <AlertTitle>Deleting repository</AlertTitle>
           <AlertDescription>
-            Cleaning up deployments and eden data. This can take a few minutes;
-            you&apos;ll be sent back to the Dashboard when it finishes.
+            Cleaning up deployments and harnesst data. This can take a few
+            minutes; you&apos;ll be sent back to the Dashboard when it finishes.
           </AlertDescription>
         </Alert>
       )}
@@ -1090,7 +1090,7 @@ export default function Settings({
         <Alert className="mb-6">
           <AlertTitle>Renamed to {renamed}</AlertTitle>
           <AlertDescription>
-            This agent&rsquo;s name is updated across eden.
+            This agent&rsquo;s name is updated across harnesst.
           </AlertDescription>
         </Alert>
       )}
@@ -1269,7 +1269,7 @@ function ModelSection({
 }
 
 /**
- * Marketplace provenance from eden-lock.json. Updates and uninstalls stage normal repo changes;
+ * Marketplace provenance from harnesst-lock.json. Updates and uninstalls stage normal repo changes;
  * Deployment remains the review/publish surface for those staged files.
  */
 function MarketplaceInstallsSection({
@@ -1456,7 +1456,7 @@ function GeneralSection({
   );
 }
 
-/** Ingest tokens — BYO instances use these to ship run telemetry back to Eden. */
+/** Ingest tokens — BYO instances use these to ship run telemetry back to harnesst. */
 function IngestSection({
   loaderData,
   newToken,
@@ -1566,7 +1566,7 @@ function RenameSection({
             <p className="text-sm text-muted-foreground">
               {isTeam
                 ? `Opens a change request that moves agents/${activeAgent}/ to the new name. Environments, versions, secrets and history are preserved on merge. Mentions of "${activeAgent}" in other agents' instructions or tools are not rewritten automatically.`
-                : "Applies immediately across eden. The agent's repository directory is unaffected."}
+                : "Applies immediately across harnesst. The agent's repository directory is unaffected."}
             </p>
           </CardContent>
         </Card>
@@ -1635,13 +1635,13 @@ function DangerSection({
             <div className="flex flex-wrap items-center justify-between gap-3 py-4">
               <div>
                 <p className="text-sm font-medium">
-                  Delete this repository from eden
+                  Delete this repository from harnesst
                 </p>
                 <p className="text-sm text-muted-foreground">
                   Stops and destroys every running instance, then permanently
                   deletes {isTeam ? "all agents' " : "the agent's "}
                   versions, environments, secrets, drafts, and run history from
-                  eden. The GitHub repository itself is not touched.
+                  harnesst. The GitHub repository itself is not touched.
                 </p>
               </div>
               <DeleteRepositoryDialog
@@ -1691,13 +1691,13 @@ function DeleteRepositoryDialog({
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
           <DialogTitle>
-            Delete &ldquo;{projectName}&rdquo; from eden?
+            Delete &ldquo;{projectName}&rdquo; from harnesst?
           </DialogTitle>
           <DialogDescription>
             This stops everything that&rsquo;s running and permanently deletes
-            all eden data for this repository — versions, environments, secrets,
-            drafts, run history. It cannot be undone. The GitHub repository
-            itself is not touched.
+            all harnesst data for this repository — versions, environments,
+            secrets, drafts, run history. It cannot be undone. The GitHub
+            repository itself is not touched.
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-1.5">

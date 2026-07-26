@@ -35,7 +35,7 @@ beforeAll(() => {
   // Fake real client: record argv (one arg per line) into the capture file, then succeed.
   writeFileSync(
     fakeDocker,
-    '#!/bin/sh\nprintf \'%s\\n\' "$@" > "$EDEN_TEST_CAPTURE"\n',
+    '#!/bin/sh\nprintf \'%s\\n\' "$@" > "$HARNESST_TEST_CAPTURE"\n',
   );
   chmodSync(fakeDocker, 0o755);
 
@@ -54,7 +54,7 @@ function runShimFull(
   env: Record<string, string>,
 ): { argv: string[]; stdout: string; stderr: string } {
   const res = spawnSync(shimPath, args, {
-    env: { EDEN_TEST_CAPTURE: capturePath, EVE_DOCKER_REAL: fakeDocker, ...env },
+    env: { HARNESST_TEST_CAPTURE: capturePath, EVE_DOCKER_REAL: fakeDocker, ...env },
     encoding: "utf8",
   });
   expect(res.status).toBe(0);
@@ -91,8 +91,8 @@ const SESSION_RUN = [
 
 describe("eve-docker shim", () => {
   it("injects -v <vol>:/workspace/home right after run for a session-role run", () => {
-    const got = runShim(SESSION_RUN, { EDEN_HOME_VOLUME: "eden-home-x" });
-    expect(got.slice(0, 3)).toEqual(["run", "-v", "eden-home-x:/workspace/home"]);
+    const got = runShim(SESSION_RUN, { HARNESST_HOME_VOLUME: "harnesst-home-x" });
+    expect(got.slice(0, 3)).toEqual(["run", "-v", "harnesst-home-x:/workspace/home"]);
     // Everything after run is preserved in original order.
     expect(got.slice(3)).toEqual(SESSION_RUN.slice(1));
   });
@@ -107,21 +107,21 @@ describe("eve-docker shim", () => {
       "eve.sandbox.role=template-build",
       "ghcr.io/vercel/eve:latest",
     ];
-    expect(runShim(argv, { EDEN_HOME_VOLUME: "eden-home-x" })).toEqual(argv);
+    expect(runShim(argv, { HARNESST_HOME_VOLUME: "harnesst-home-x" })).toEqual(argv);
   });
 
   it("leaves non-run verbs untouched (start / exec / ps)", () => {
     for (const argv of [
       ["start", "sess1"],
       ["exec", "sess1", "/bin/sh", "-c", "echo hi"],
-      ["ps", "-aq", "--filter", "volume=eden-home-x"],
+      ["ps", "-aq", "--filter", "volume=harnesst-home-x"],
     ]) {
-      expect(runShim(argv, { EDEN_HOME_VOLUME: "eden-home-x" })).toEqual(argv);
+      expect(runShim(argv, { HARNESST_HOME_VOLUME: "harnesst-home-x" })).toEqual(argv);
     }
   });
 
-  it("is a no-op when EDEN_HOME_VOLUME is empty, even for a session run", () => {
-    expect(runShim(SESSION_RUN, { EDEN_HOME_VOLUME: "" })).toEqual(SESSION_RUN);
+  it("is a no-op when HARNESST_HOME_VOLUME is empty, even for a session run", () => {
+    expect(runShim(SESSION_RUN, { HARNESST_HOME_VOLUME: "" })).toEqual(SESSION_RUN);
   });
 
   it("echoes a session-sandbox start line to STDERR (issue #118), capturing channel + session", () => {
@@ -137,17 +137,17 @@ describe("eve-docker shim", () => {
       "eve.sandbox.tag.sessionId=wrun_ABC123",
       "ghcr.io/vercel/eve:latest",
     ];
-    const res = runShimFull(argv, { EDEN_HOME_VOLUME: "eden-home-x" });
+    const res = runShimFull(argv, { HARNESST_HOME_VOLUME: "harnesst-home-x" });
     expect(res.stderr).toContain(
-      "[eden] session sandbox starting: channel=schedule session=wrun_ABC123",
+      "[harnesst] session sandbox starting: channel=schedule session=wrun_ABC123",
     );
     // STDOUT must stay clean — eve reads `run -d`'s stdout for the container id.
     expect(res.stdout).toBe("");
     // The volume injection still happens for a session run.
-    expect(res.argv.slice(0, 3)).toEqual(["run", "-v", "eden-home-x:/workspace/home"]);
+    expect(res.argv.slice(0, 3)).toEqual(["run", "-v", "harnesst-home-x:/workspace/home"]);
   });
 
-  it("emits the start line even when EDEN_HOME_VOLUME is unset (no injection, still visible)", () => {
+  it("emits the start line even when HARNESST_HOME_VOLUME is unset (no injection, still visible)", () => {
     const argv = [
       "run",
       "--label",
@@ -156,7 +156,7 @@ describe("eve-docker shim", () => {
       "eve.sandbox.tag.channel=discord",
       "ghcr.io/vercel/eve:latest",
     ];
-    const res = runShimFull(argv, { EDEN_HOME_VOLUME: "" });
+    const res = runShimFull(argv, { HARNESST_HOME_VOLUME: "" });
     expect(res.stderr).toContain("channel=discord session=");
     expect(res.argv).toEqual(argv); // no volume injected
   });
@@ -164,19 +164,19 @@ describe("eve-docker shim", () => {
   it("emits NO start line for non-session invocations", () => {
     const tmplRun = runShimFull(
       ["run", "--label", "eve.sandbox.role=template-build", "ghcr.io/vercel/eve:latest"],
-      { EDEN_HOME_VOLUME: "eden-home-x" },
+      { HARNESST_HOME_VOLUME: "harnesst-home-x" },
     );
-    expect(tmplRun.stderr).not.toContain("[eden] session sandbox starting");
+    expect(tmplRun.stderr).not.toContain("[harnesst] session sandbox starting");
 
     const nonRun = runShimFull(["exec", "sess1", "/bin/sh", "-c", "echo hi"], {
-      EDEN_HOME_VOLUME: "eden-home-x",
+      HARNESST_HOME_VOLUME: "harnesst-home-x",
     });
-    expect(nonRun.stderr).not.toContain("[eden] session sandbox starting");
+    expect(nonRun.stderr).not.toContain("[harnesst] session sandbox starting");
   });
 
   it("streams the real client's exit code through (exec, not fork)", () => {
     const res = spawnSync(shimPath, ["start", "sess1"], {
-      env: { EDEN_TEST_CAPTURE: capturePath, EVE_DOCKER_REAL: exit7Docker },
+      env: { HARNESST_TEST_CAPTURE: capturePath, EVE_DOCKER_REAL: exit7Docker },
       encoding: "utf8",
     });
     expect(res.status).toBe(7);

@@ -2,7 +2,7 @@
  * Codex base system instructions — vendored VERBATIM from openai/codex
  * (codex-rs/core/gpt_5_codex_prompt.md, Apache-2.0), by way of the ChatMock reference
  * (github.com/RayBytes/ChatMock). The Codex ChatGPT backend validates that a /responses
- * request's `instructions` field looks like the Codex CLI system prompt, so Eden's gateway
+ * request's `instructions` field looks like the Codex CLI system prompt, so harnesst's gateway
  * sends this unchanged. Any client system/developer message travels instead as the FIRST
  * input item (see codex-translate.ts). DO NOT EDIT — it must match upstream Codex.
  *

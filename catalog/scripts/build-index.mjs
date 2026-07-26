@@ -1,12 +1,12 @@
 #!/usr/bin/env node
 /**
- * Regenerate marketplace/index.json from the templates/ tree — the browse projection Eden
+ * Regenerate marketplace/index.json from the templates/ tree — the browse projection harnesst
  * lists from (PRD §7.8, "browse from index.json only").
  *
  * Deterministic by construction so the file only churns on real content changes: entries are
  * sorted by type then id, and each template's hash is the sha1 (hex) of its canonicalized
  * manifest plus its file contents in sorted path order. That hash rule is the drift guarantee —
- * validate.mjs and the Eden unit tests recompute it and compare.
+ * validate.mjs and the harnesst unit tests recompute it and compare.
  *
  * Plain Node, zero imports from app/: this whole directory is destined to travel to the eve OSS
  * repo as `marketplace/`, so it must stand alone (see README.md).

@@ -54,7 +54,7 @@ export const loader = (args: LoaderFunctionArgs) => {
         state.sessionId !== auth.session.id
       ) {
         return fail(
-          "This GitHub authorization was started in a different Eden session. Start again from Connect.",
+          "This GitHub authorization was started in a different harnesst session. Start again from Connect.",
         );
       }
       const active = await resolveActiveWorkspace(auth);
@@ -120,7 +120,7 @@ export const loader = (args: LoaderFunctionArgs) => {
 };
 
 export function meta() {
-  return [{ title: "Authorize GitHub · eden" }, ...noindexMeta];
+  return [{ title: "Authorize GitHub · harnesst" }, ...noindexMeta];
 }
 
 export default function GitHubInstallationCallback({

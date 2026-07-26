@@ -23,7 +23,7 @@ import {
   selectedGroupIds,
   serializeLock,
   setSelectedGroups,
-  type EdenLock,
+  type HarnesstLock,
   type InstallEntry,
 } from "~/marketplace/lock";
 import type { CatalogTemplate } from "~/seams/types";
@@ -129,7 +129,7 @@ function gmailEntry(selectedGroups?: string[]): InstallEntry {
   });
 }
 
-function lockOf(...installs: InstallEntry[]): EdenLock {
+function lockOf(...installs: InstallEntry[]): HarnesstLock {
   return { version: 1, installs };
 }
 
@@ -201,7 +201,7 @@ describe("lock — group-less regression (google-sheets unchanged)", () => {
       memberCtx({ template: sheetsTpl, authSelections: { google: ["read"] } }),
     );
     const lockOfPlan = (p: typeof plain) =>
-      p.writes.find((w) => w.path === "eden-lock.json")!.content;
+      p.writes.find((w) => w.path === "harnesst-lock.json")!.content;
     expect(lockOfPlan(withSelections)).toBe(lockOfPlan(plain));
     const entry = findInstall(
       parseLock(JSON.parse(lockOfPlan(plain))),
@@ -230,7 +230,7 @@ describe("lock — group-less regression (google-sheets unchanged)", () => {
 describe("planInstall — scope-group selection lands in the lock (issue #165)", () => {
   const entryOf = (ctx: PlanContext) => {
     const plan = planInstall(ctx);
-    const write = plan.writes.find((w) => w.path === "eden-lock.json")!;
+    const write = plan.writes.find((w) => w.path === "harnesst-lock.json")!;
     return findInstall(parseLock(JSON.parse(write.content)), "gmail", "pm")!;
   };
 
@@ -300,7 +300,7 @@ describe("selection edit → coverage state transitions (issue #165)", () => {
   // The grant covers read-only (plus Google's identity scopes) — the state after connecting
   // with the default selection.
   const grantScopes = `${READ} openid email`;
-  const stateFor = (lock: EdenLock) => {
+  const stateFor = (lock: HarnesstLock) => {
     // Mirrors the deployments loader: undefined = no snapshot (fall back to covered), empty =
     // every group explicitly deselected (issue #173 — the row renders "disabled").
     const required = requiredScopesByProvider(lock, "pm").get("google");

@@ -62,10 +62,10 @@ describe("assistant authoring: bundle", () => {
   it("assembles published config into the entrypoint bundle shape", async () => {
     const { deps } = harness({
       repoFiles: {
-        ".eden/assistant/instructions.md": "Be helpful.",
-        ".eden/assistant/skills/deploys.md": "# deploys",
-        ".eden/assistant/schedules/daily.md": "# daily",
-        ".eden/assistant/assistant.json": JSON.stringify({
+        ".harnesst/assistant/instructions.md": "Be helpful.",
+        ".harnesst/assistant/skills/deploys.md": "# deploys",
+        ".harnesst/assistant/schedules/daily.md": "# daily",
+        ".harnesst/assistant/assistant.json": JSON.stringify({
           model: "anthropic/claude-sonnet-5",
           effort: "high",
         }),
@@ -84,7 +84,7 @@ describe("assistant authoring: bundle", () => {
   it("ignores an unrecognized effort in manually edited published config", async () => {
     const { deps } = harness({
       repoFiles: {
-        ".eden/assistant/assistant.json": JSON.stringify({
+        ".harnesst/assistant/assistant.json": JSON.stringify({
           model: "anthropic/claude-sonnet-5",
           effort: "maximum-plus",
         }),
@@ -100,7 +100,7 @@ describe("assistant authoring: bundle", () => {
 describe("assistant authoring: project-context", () => {
   it("lists members, config, and staged human drafts", async () => {
     const { store, deps } = harness({
-      repoFiles: { ".eden/assistant/instructions.md": "hi" },
+      repoFiles: { ".harnesst/assistant/instructions.md": "hi" },
     });
     await store.drafts.upsert({
       projectId: "p",
@@ -175,7 +175,7 @@ describe("assistant authoring: caller resolution", () => {
     const assistant = await store.agents.createAssistant({
       projectId: "p",
       name: "assistant",
-      root: ".eden/assistant",
+      root: ".harnesst/assistant",
     });
     const env = store.seedEnvironment({
       id: "e1",

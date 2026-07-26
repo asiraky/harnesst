@@ -4,8 +4,8 @@
  * the team as a workspace `member`, member repo scoping (listMemberProjectIds), and team
  * teardown — the Drizzle + Better Auth adapter behavior the unit mocks can't prove.
  *
- * Opt-in: runs only when EDEN_DB_SMOKE=1 and DATABASE_URL point at a live dev database
- * (`EDEN_DB_SMOKE=1 npx vitest run tests/integration/foh-teams.db.test.ts` with .env.local
+ * Opt-in: runs only when HARNESST_DB_SMOKE=1 and DATABASE_URL point at a live dev database
+ * (`HARNESST_DB_SMOKE=1 npx vitest run tests/integration/foh-teams.db.test.ts` with .env.local
  * sourced). Creates its own org/user/project rows and deletes them, so it's safe to re-run.
  */
 import { mkdtempSync } from "node:fs";
@@ -14,11 +14,11 @@ import { join } from "node:path";
 import { and, eq } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 
-const LIVE = process.env.EDEN_DB_SMOKE === "1";
+const LIVE = process.env.HARNESST_DB_SMOKE === "1";
 const ORIGIN = "http://localhost:5277";
 
 process.env.BETTER_AUTH_SECRET ??=
-  "eden-auth-integration-secret-at-least-32-characters";
+  "harnesst-auth-integration-secret-at-least-32-characters";
 process.env.BETTER_AUTH_URL ??= ORIGIN;
 // The invitation flow sends a real email through the module-load-singleton email client;
 // route it to a throwaway file mailbox so the test never needs SMTP/Postmark.
@@ -448,7 +448,7 @@ describe.runIf(LIVE)("FOH teams against real Postgres", () => {
 });
 
 describe.runIf(!LIVE)("foh teams db smoke (skipped)", () => {
-  it("runs only with EDEN_DB_SMOKE=1 against a live database", () => {
+  it("runs only with HARNESST_DB_SMOKE=1 against a live database", () => {
     expect(LIVE).toBe(false);
   });
 });

@@ -1,13 +1,13 @@
 import { eq } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 
-const LIVE = process.env.EDEN_DB_SMOKE === "1";
+const LIVE = process.env.HARNESST_DB_SMOKE === "1";
 const ORIGIN = "http://localhost:5277";
 
 process.env.BETTER_AUTH_SECRET ??=
-  "eden-github-install-state-integration-secret-at-least-32-characters";
+  "harnesst-github-install-state-integration-secret-at-least-32-characters";
 process.env.BETTER_AUTH_URL ??= ORIGIN;
-process.env.EDEN_SECRETS_KEY ??= Buffer.alloc(32, 5).toString("base64");
+process.env.HARNESST_SECRETS_KEY ??= Buffer.alloc(32, 5).toString("base64");
 
 function signupRequest(email: string): Request {
   return new Request(`${ORIGIN}/api/auth/sign-up/email`, {

@@ -1,7 +1,7 @@
 /**
  * Front of House presence — per-agent ●/○ derivation (§3 sidebar, §6 legibility).
  *
- * Two halves, both from state Eden already keeps:
+ * Two halves, both from state harnesst already keeps:
  * - Container half: `deployments.status` per environment, read WITHOUT the live filter —
  *   `live` = reachable (●), `stopped`/`draining`/in-flight = wakeable-idle (○), failed-only =
  *   error. A deploy cutover transiently holds two live rows; any live row counts as live.

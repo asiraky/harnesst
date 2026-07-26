@@ -15,8 +15,8 @@ export function safeReturnTo(
     return fallback;
   }
   try {
-    const url = new URL(value, "http://eden.local");
-    if (url.origin !== "http://eden.local") return fallback;
+    const url = new URL(value, "http://harnesst.local");
+    if (url.origin !== "http://harnesst.local") return fallback;
     // URL normalization removes dot segments, so "/.//evil.com" passes the checks above yet
     // normalizes to the protocol-relative "//evil.com". Re-check the NORMALIZED path before
     // trusting it.

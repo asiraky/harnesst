@@ -1,5 +1,5 @@
 /**
- * Repository lifecycle (M5.8). Deleting a repository is a FULL Eden-side teardown (owner
+ * Repository lifecycle (M5.8). Deleting a repository is a FULL harnesst-side teardown (owner
  * decision): every member environment's instances are destroyed (containers via
  * DeployTarget.destroy, stop fallback) and each environment's shared Workflow world DB is
  * dropped (destroyWorld), then the project row is deleted and the FK cascade takes agents,
@@ -16,7 +16,7 @@ export interface RepositoryDeps {
 }
 
 export const REPOSITORY_TEARDOWN_TIMEOUT_MS = Number(
-  process.env.EDEN_REPOSITORY_TEARDOWN_TIMEOUT_MS ?? 60 * 1000,
+  process.env.HARNESST_REPOSITORY_TEARDOWN_TIMEOUT_MS ?? 60 * 1000,
 );
 
 function repoDeps(): RepositoryDeps {

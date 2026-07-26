@@ -1,6 +1,6 @@
 /**
  * Teammate delegation relay (Team delegation — D1/§2). A team member's `ask-teammate` tool POSTs
- * `{ teammate, message }` here with its `EDEN_TEAM_TOKEN`; the route verifies the token to a
+ * `{ teammate, message }` here with its `HARNESST_TEAM_TOKEN`; the route verifies the token to a
  * deployment id and hands that plus the body to `runAsk`. Everything else — caller resolution,
  * authorization, concurrency caps, target env/deployment resolution, the eve turn, run recording,
  * and the correlation row — lives here so the flow is unit-testable against an injected store +
@@ -43,7 +43,7 @@ const PROJECT_CAP = 10;
 const MAX_MESSAGE_BYTES = 100_000;
 
 export function delegationTimeoutMs(): number {
-  const raw = Number(process.env.EDEN_DELEGATION_TIMEOUT_MS);
+  const raw = Number(process.env.HARNESST_DELEGATION_TIMEOUT_MS);
   return Number.isFinite(raw) && raw > 0 ? raw : DEFAULT_DELEGATION_TIMEOUT_MS;
 }
 
@@ -97,7 +97,7 @@ export type AskResult =
     }
   /**
    * The peer parked on a human question (§5 relay parking). The delegation stays open
-   * (`waiting`) and resumes on its own when a human answers in Eden — the caller should NOT
+   * (`waiting`) and resumes on its own when a human answers in harnesst — the caller should NOT
    * re-ask. Rides the same HTTP 200 path as every business outcome.
    */
   | {
@@ -131,9 +131,9 @@ export async function runAsk(input: AskInput, deps: AskDeps): Promise<AskResult>
 
   // 1. Resolve the caller from the token's deployment: deployment → env → agent → project.
   const deployment = await store.deployments.findById(input.deploymentId);
-  if (!deployment) return deny("Your deployment is no longer known to Eden.");
+  if (!deployment) return deny("Your deployment is no longer known to harnesst.");
   const callerEnv = await store.environments.findById(deployment.environmentId);
-  if (!callerEnv) return deny("Your environment is no longer known to Eden.");
+  if (!callerEnv) return deny("Your environment is no longer known to harnesst.");
   const caller = await store.agents.findById(callerEnv.agentId);
   if (!caller) return deny("Your agent is no longer part of this repository.");
   const project = await store.projects.findById(caller.projectId);
@@ -356,7 +356,7 @@ export async function runAsk(input: AskInput, deps: AskDeps): Promise<AskResult>
         status: "waiting_on_human",
         teammate: target.name,
         question,
-        note: "The delegation is parked until a human answers in Eden; it will resume and finish on its own — do not re-ask.",
+        note: "The delegation is parked until a human answers in harnesst; it will resume and finish on its own — do not re-ask.",
       };
     } catch (error) {
       // The parking machinery failed — a `waiting` delegation nobody can answer would dangle

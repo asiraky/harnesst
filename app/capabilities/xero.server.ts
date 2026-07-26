@@ -3,7 +3,7 @@
  * framework. The bookkeeping use case books DRAFT ACCPAY bills with attached invoice files; its
  * safety story assumes the container NEVER holds Xero credentials and cannot reach any operation
  * beyond this whitelist. Anything absent here — delete, void, payments, bank feeds, payroll —
- * does not exist through Eden.
+ * does not exist through harnesst.
  *
  * Restrict operations, not composition: `create_draft_bill` accepts the full legitimate bill
  * shape (multi-line, per-line tax, foreign currency + explicit rate); validation checks the bill

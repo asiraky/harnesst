@@ -13,7 +13,7 @@ describe("assistant agent roster semantics", () => {
     const assistant = await store.agents.createAssistant({
       projectId: "p",
       name: "assistant",
-      root: ".eden/assistant",
+      root: ".harnesst/assistant",
     });
 
     // A tree re-detection that only sees "pm" (qa was deleted from the repo).
@@ -34,7 +34,7 @@ describe("assistant agent roster semantics", () => {
     await store.agents.createAssistant({
       projectId: "p",
       name: "assistant",
-      root: ".eden/assistant",
+      root: ".harnesst/assistant",
     });
 
     expect((await listAgents("p", store)).map((a) => a.name)).toEqual(["pm"]);
@@ -49,23 +49,23 @@ describe("assistant agent roster semantics", () => {
 describe("assistant config path policy", () => {
   it("accepts the assistant markdown/JSON config surface, rejects code and traversal", () => {
     for (const ok of [
-      ".eden/assistant/instructions.md",
-      ".eden/assistant/skills/building-eve-agents.md",
-      ".eden/assistant/schedules/daily.md",
-      ".eden/assistant/assistant.json",
+      ".harnesst/assistant/instructions.md",
+      ".harnesst/assistant/skills/building-eve-agents.md",
+      ".harnesst/assistant/schedules/daily.md",
+      ".harnesst/assistant/assistant.json",
     ]) {
       expect(normalizeAgentPath(ok)).toBe(ok);
     }
     for (const bad of [
-      ".eden/assistant/agent.ts",
-      ".eden/assistant/tools/x.ts",
-      ".eden/assistant/../secrets",
-      ".eden/other/instructions.md",
+      ".harnesst/assistant/agent.ts",
+      ".harnesst/assistant/tools/x.ts",
+      ".harnesst/assistant/../secrets",
+      ".harnesst/other/instructions.md",
     ]) {
       expect(normalizeAgentPath(bad)).toBeNull();
     }
-    expect(isAssistantConfigPath(".eden/assistant/skills/x.md")).toBe(true);
-    expect(isAssistantConfigPath(".eden/assistant/x.ts")).toBe(false);
+    expect(isAssistantConfigPath(".harnesst/assistant/skills/x.md")).toBe(true);
+    expect(isAssistantConfigPath(".harnesst/assistant/x.ts")).toBe(false);
     // Member surface still works.
     expect(normalizeAgentPath("agent/tools/foo.ts")).toBe("agent/tools/foo.ts");
   });

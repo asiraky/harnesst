@@ -1,9 +1,9 @@
 import { defineTool } from "eve/tools";
 import { z } from "zod";
 
-// Runs via Eden's brokered-capability route (issue #166) instead of talking to Xero directly:
-// no Xero credential ever reaches this container. EDEN_API_URL and EDEN_TEAM_TOKEN are injected
-// at deploy; Eden validates the call server-side — the bill is ALWAYS created as a DRAFT ACCPAY
+// Runs via harnesst's brokered-capability route (issue #166) instead of talking to Xero directly:
+// no Xero credential ever reaches this container. HARNESST_API_URL and HARNESST_TEAM_TOKEN are injected
+// at deploy; harnesst validates the call server-side — the bill is ALWAYS created as a DRAFT ACCPAY
 // invoice (a human approves it in Xero), account codes and currency must exist in the
 // organisation, and line amounts must sum to the stated total.
 export default defineTool({
@@ -84,8 +84,8 @@ export default defineTool({
       .describe("Sum of the line amounts (pre-tax) — cross-checked server-side."),
   }),
   async execute(input) {
-    const base = process.env.EDEN_API_URL;
-    const token = process.env.EDEN_TEAM_TOKEN;
+    const base = process.env.HARNESST_API_URL;
+    const token = process.env.HARNESST_TEAM_TOKEN;
     if (!base || !token) {
       return {
         ok: false,

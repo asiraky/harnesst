@@ -11,20 +11,20 @@ const KEY = "1f8b16e6a46dd3ac12ef7a328f1ce35c67b5bc8f1acdd76280e3674c3a4f19b2";
 const NOW = 1_800_000_000_000;
 
 function requestWithCookie(cookie: string): Request {
-  return new Request("https://eden.example.com/google/callback", {
+  return new Request("https://harnesst.example.com/google/callback", {
     headers: { cookie },
   });
 }
 
 describe("Google callback staging", () => {
   beforeEach(() => {
-    process.env.EDEN_SECRETS_KEY = KEY;
-    process.env.BETTER_AUTH_URL = "https://eden.example.com";
+    process.env.HARNESST_SECRETS_KEY = KEY;
+    process.env.BETTER_AUTH_URL = "https://harnesst.example.com";
   });
 
   it("immediately redirects to a clean URL with an encrypted, short-lived HttpOnly cookie", () => {
     const source = new Request(
-      "https://eden.example.com/google/callback" +
+      "https://harnesst.example.com/google/callback" +
         "?code=raw-code-sentinel&state=raw-state-sentinel",
     );
 
@@ -55,7 +55,7 @@ describe("Google callback staging", () => {
   it("rejects tampered and cryptographically expired staged values", () => {
     const response = stageGoogleCallback(
       new Request(
-        "https://eden.example.com/google/callback?error=access_denied&state=signed-state",
+        "https://harnesst.example.com/google/callback?error=access_denied&state=signed-state",
       ),
       NOW,
     );
@@ -74,7 +74,7 @@ describe("Google callback staging", () => {
 
   it("expires the staging cookie on the clean callback response", () => {
     const clearing = clearGoogleCallbackCookie(
-      new Request("https://eden.example.com/google/callback"),
+      new Request("https://harnesst.example.com/google/callback"),
     );
     expect(clearing).toContain("Max-Age=0");
     expect(clearing).toContain("Expires=Thu, 01 Jan 1970 00:00:00 GMT");
@@ -83,11 +83,11 @@ describe("Google callback staging", () => {
   });
 
   it("still redirects clean and removes stale staging when configuration is invalid", () => {
-    delete process.env.EDEN_SECRETS_KEY;
+    delete process.env.HARNESST_SECRETS_KEY;
     process.env.BETTER_AUTH_URL = "not a URL";
     const response = stageGoogleCallback(
       new Request(
-        "https://eden.example.com/google/callback?code=must-not-render&state=must-not-render",
+        "https://harnesst.example.com/google/callback?code=must-not-render&state=must-not-render",
       ),
       NOW,
     );

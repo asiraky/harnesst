@@ -10,7 +10,7 @@
  * Client-safe: pure functions over lock data, no server imports — the Deployment tab's editor
  * and the capability route's server logic share them.
  */
-import type { EdenLock, InstallAuth } from "~/marketplace/lock";
+import type { HarnesstLock, InstallAuth } from "~/marketplace/lock";
 
 /**
  * The capability-group ids currently SELECTED for one auth snapshot: the stored choice filtered
@@ -31,7 +31,7 @@ export function selectedCapabilityGroupIds(auth: InstallAuth): string[] {
  * `requiredScopesByProvider`). This is the set the capability route checks per call.
  */
 export function enabledCapabilityGroupsByProvider(
-  lock: EdenLock,
+  lock: HarnesstLock,
   member: string | null,
 ): Map<string, string[]> {
   const byProvider = new Map<string, Set<string>>();
@@ -65,7 +65,7 @@ export interface CapabilityGroupChoice {
  * caller joins labels/descriptions/risk from the capability registry (server-side).
  */
 export function capabilityChoicesByProvider(
-  lock: EdenLock,
+  lock: HarnesstLock,
   member: string | null,
 ): Map<string, CapabilityGroupChoice[]> {
   const byProvider = new Map<string, CapabilityGroupChoice[]>();
@@ -100,11 +100,11 @@ export function capabilityChoicesByProvider(
  * untouched. Pure; returns a new lock and whether anything changed.
  */
 export function setSelectedCapabilityGroups(
-  lock: EdenLock,
+  lock: HarnesstLock,
   member: string | null,
   provider: string,
   selected: string[],
-): { lock: EdenLock; changed: boolean } {
+): { lock: HarnesstLock; changed: boolean } {
   let changed = false;
   const installs = lock.installs.map((entry) => {
     if (entry.member !== member || !entry.auth) return entry;

@@ -2,10 +2,10 @@
  * Provider-generic OAuth broker (issues #30, #163) — the pure URL/state shapes plus the
  * code→token network calls, parameterized by a ProviderDefinition from the registry.
  *
- * Eden owns ONE OAuth client per (installation, provider), operator-registered as
- * EDEN_<PREFIX>_*. The connect flow sends the user through the provider's consent screen for
+ * harnesst owns ONE OAuth client per (installation, provider), operator-registered as
+ * HARNESST_<PREFIX>_*. The connect flow sends the user through the provider's consent screen for
  * that client; the provider redirects back to the registered callback with a `code`, which this
- * module exchanges server-side for a refresh token (the durable grant Eden seals in
+ * module exchanges server-side for a refresh token (the durable grant harnesst seals in
  * `connection_grants`). Unlike Discord — where the connect proof is a bot-token side effect and
  * no code is ever exchanged — these providers REQUIRE a real code→token exchange with the client
  * id + secret. Providers that declare `pkce` additionally get an S256 code_challenge on the
@@ -142,7 +142,7 @@ export interface ConnectState {
 
 /** The HMAC key: the same tenant-wide key that seals secrets. */
 export function connectStateKey(): Buffer {
-  return decodeKey(process.env.EDEN_SECRETS_KEY);
+  return decodeKey(process.env.HARNESST_SECRETS_KEY);
 }
 
 /** Sign a connect state. `returnTo` must already be a validated same-origin path. */
@@ -432,7 +432,7 @@ export async function registerOAuthClient(
  *
  * Rotating grants (issue #167): providers like mayi return a NEW `refresh_token` on every refresh
  * and revoke the whole token family if the old one is reused. When the response carries one it is
- * returned as `refreshToken` — every Eden-side caller MUST persist it back onto the grant before
+ * returned as `refreshToken` — every harnesst-side caller MUST persist it back onto the grant before
  * using the new access token. Google returns none; the field stays undefined and nothing changes.
  */
 export async function refreshAccessToken(

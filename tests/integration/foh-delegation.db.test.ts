@@ -4,8 +4,8 @@
  * resume drain — everything below them (delegations, playground_sessions, inbox_items,
  * finalizeDelegationOnResume via the real drizzle store) is real.
  *
- * Opt-in: EDEN_DB_SMOKE=1 with DATABASE_URL pointing at a live dev database
- * (`set -a; source .env.local; set +a; EDEN_DB_SMOKE=1 npx vitest run
+ * Opt-in: HARNESST_DB_SMOKE=1 with DATABASE_URL pointing at a live dev database
+ * (`set -a; source .env.local; set +a; HARNESST_DB_SMOKE=1 npx vitest run
  * tests/integration/foh-delegation.db.test.ts`). Seeds and removes its own rows.
  */
 import { eq } from "drizzle-orm";
@@ -13,7 +13,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import type { TalkEvent, TurnResult } from "~/agent/talk.server";
 
-const LIVE = process.env.EDEN_DB_SMOKE === "1";
+const LIVE = process.env.HARNESST_DB_SMOKE === "1";
 
 const mocks = vi.hoisted(() => ({ streamTurn: vi.fn() }));
 

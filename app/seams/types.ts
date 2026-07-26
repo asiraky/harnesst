@@ -4,7 +4,7 @@
  * Every capability that differs between the open-source/self-host build and the commercial
  * managed service hides behind one of these interfaces. OSS ships local/no-op/BYO
  * implementations; managed ships the real ones (KMS, model-gateway proxy, Stripe, Nomad).
- * There is no fork — `getRuntime()` (index.server.ts) selects implementations by `EDEN_MODE`.
+ * There is no fork — `getRuntime()` (index.server.ts) selects implementations by `HARNESST_MODE`.
  *
  * Pure types only (no server imports) so they can be referenced anywhere.
  */
@@ -15,7 +15,7 @@ import type {
 } from "~/marketplace/manifest";
 import type { DataStore } from "~/data/ports";
 
-export type EdenMode = "oss" | "managed";
+export type HarnesstMode = "oss" | "managed";
 
 // ── DeployTarget ────────────────────────────────────────────────────────────
 // Build/provision/deploy/health for a running eve instance. OSS: ContainerPostgres (BYO).
@@ -35,7 +35,7 @@ export interface BuildRequest {
    */
   agentRoot?: string;
   /**
-   * Bake Eden's generated `ask-teammate` tool into this member's image (Team delegation — D2).
+   * Bake harnesst's generated `ask-teammate` tool into this member's image (Team delegation — D2).
    * Set by the controller only for a team member (roster > 1); the build skips injection if the
    * repo already ships a file at that path (user override wins).
    */
@@ -301,15 +301,15 @@ export interface CatalogTemplate {
 
 export interface CatalogSource {
   readonly name: string;
-  /** The browse index — the light projection Eden lists from (never the file bodies). */
+  /** The browse index — the light projection harnesst lists from (never the file bodies). */
   index(): Promise<CatalogIndex>;
   /** One template with its files loaded, for the detail page (and, phase 2, install). */
   template(type: TemplateType, id: string): Promise<CatalogTemplate>;
 }
 
 /** The full set of runtime implementations selected for the current mode. */
-export interface EdenRuntime {
-  mode: EdenMode;
+export interface HarnesstRuntime {
+  mode: HarnesstMode;
   data: DataStore;
   deployTarget: DeployTarget;
   secrets: SecretsProvider;
