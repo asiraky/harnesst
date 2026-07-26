@@ -218,14 +218,15 @@ describe("workspace invite — access is explicit", () => {
 });
 
 describe("workspace invite — resend replays the stored grant", () => {
-  it("carries the pending invitation's role and repo teams", async () => {
+  it("re-sends a grant that still reaches a repository", async () => {
     mocks.listInvitations.mockResolvedValue([
       {
         id: "inv_1",
         email: EMAIL,
         status: "pending",
         role: "member",
-        teamId: "team_a,team_b",
+        // team_b is still wired to proj_b, so this grant is live.
+        teamId: "team_b",
       },
     ]);
 
@@ -238,15 +239,64 @@ describe("workspace invite — resend replays the stored grant", () => {
       ),
     );
 
-    // The old code re-minted a bare `member` here, dropping the repos and recreating the
-    // no-access limbo this issue exists to remove.
+    // Better Auth ignores role/teamId under `resend: true` — it re-sends the stored invitation
+    // and extends its expiry — so the body carries no grant to re-write, and the guard above is
+    // what keeps a dead invitation from being extended.
     expect(mocks.createInvitation.mock.calls[0][0].body).toEqual({
       email: EMAIL,
       role: "member",
       organizationId: ORG_ID,
-      teamId: ["team_a", "team_b"],
       resend: true,
     });
+  });
+
+  it("refuses to extend a member invitation that reaches no repository", async () => {
+    mocks.listInvitations.mockResolvedValue([
+      {
+        id: "inv_1",
+        email: EMAIL,
+        status: "pending",
+        role: "member",
+        // The shape a pre-#220 invite has, and the shape Better Auth leaves behind when the
+        // last selected repo is deleted.
+        teamId: null,
+      },
+    ]);
+
+    const result = await action(
+      actionArgs([
+        ["intent", "resend-invite"],
+        ["email", EMAIL],
+      ]),
+    );
+
+    expect(result).toEqual({
+      error:
+        "That invitation no longer gives access to any repository. Cancel it and send a new one.",
+    });
+    expect(mocks.createInvitation).not.toHaveBeenCalled();
+  });
+
+  it("refuses one whose team outlived the repository it belonged to", async () => {
+    mocks.listInvitations.mockResolvedValue([
+      {
+        id: "inv_1",
+        email: EMAIL,
+        status: "pending",
+        role: "member",
+        teamId: "team_deleted",
+      },
+    ]);
+
+    const result = await action(
+      actionArgs([
+        ["intent", "resend-invite"],
+        ["email", EMAIL],
+      ]),
+    );
+
+    expect(result).toMatchObject({ error: expect.stringContaining("Cancel") });
+    expect(mocks.createInvitation).not.toHaveBeenCalled();
   });
 
   it("will not invent a grant when nothing is pending", async () => {

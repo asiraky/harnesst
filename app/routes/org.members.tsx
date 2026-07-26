@@ -2,6 +2,10 @@ import { useState } from "react";
 import { Building2, MailPlus, Users } from "lucide-react";
 import { Form, redirect } from "react-router";
 
+import {
+  grantsNoAccess,
+  splitInvitationTeamIds,
+} from "~/auth/invitation-grant.server";
 import { requireSession, sessionLoader } from "~/auth/session.server";
 import { ensureProjectTeam } from "~/auth/teams.server";
 import {
@@ -46,16 +50,6 @@ function parseInviteRole(value: unknown): InviteRole | null {
   return INVITE_ROLES.includes(value as InviteRole)
     ? (value as InviteRole)
     : null;
-}
-
-/** Better Auth stores multi-team invitations comma-separated. */
-function splitInvitationTeamIds(
-  invitationTeamId: string | null | undefined,
-): string[] {
-  return (invitationTeamId ?? "")
-    .split(",")
-    .map((part) => part.trim())
-    .filter(Boolean);
 }
 
 /** Page through Better Auth's member list so workspaces beyond one page don't truncate. */
@@ -135,24 +129,29 @@ export const loader = (args: Route.LoaderArgs) =>
           name: membership.user.name,
           role: membership.role,
         })),
-        pendingInvites: invitations.flatMap((invitation) =>
-          invitation.status === "pending"
-            ? [
-                {
-                  id: invitation.id,
-                  email: invitation.email,
-                  role: invitation.role || "member",
-                  repos: splitInvitationTeamIds(invitation.teamId).flatMap(
-                    (teamId) => {
-                      const name = repoNameByTeamId.get(teamId);
-                      return name ? [name] : [];
-                    },
-                  ),
-                  expiresAt: invitation.expiresAt,
-                },
-              ]
-            : [],
-        ),
+        pendingInvites: invitations.flatMap((invitation) => {
+          if (invitation.status !== "pending") return [];
+          const role = invitation.role || "member";
+          const repos = splitInvitationTeamIds(invitation.teamId).flatMap(
+            (teamId) => {
+              const name = repoNameByTeamId.get(teamId);
+              return name ? [name] : [];
+            },
+          );
+          return [
+            {
+              id: invitation.id,
+              email: invitation.email,
+              role,
+              repos,
+              // The repo names ARE the live teams — each one came from a project in this
+              // workspace — so an empty list on a member invitation is exactly the decayed
+              // grant the accept boundary refuses. Surface it here so an admin can see why.
+              grantsAccess: role !== "member" || repos.length > 0,
+              expiresAt: invitation.expiresAt,
+            },
+          ];
+        }),
         repos: projectList.map((project) => ({
           id: project.id,
           name: project.name,
@@ -305,14 +304,22 @@ export async function action(args: Route.ActionArgs) {
             "That invitation is no longer pending. Send a new invitation instead.",
         };
       }
-      const teamIds = splitInvitationTeamIds(pending.teamId);
+      // Resending a decayed grant just extends the window in which someone can accept their
+      // way into an empty workspace. Refuse, and point at the fix an admin can actually make.
+      if (await grantsNoAccess(pending)) {
+        return {
+          error:
+            "That invitation no longer gives access to any repository. Cancel it and send a new one.",
+        };
+      }
       await betterAuth.api.createInvitation({
         body: {
+          // With `resend: true` Better Auth (1.6.23) re-sends the STORED invitation and updates
+          // only its expiry — the role and teams here are never written. That is precisely why
+          // the stored grant has to be validated above rather than corrected in this body.
           email,
-          // Replay the stored role verbatim — never downgrade an unexpected one.
           role: (pending.role || "member") as InviteRole,
           organizationId: active.org.id,
-          ...(teamIds.length > 0 ? { teamId: teamIds } : {}),
           resend: true,
         },
         headers: session.requestHeaders,
@@ -369,8 +376,13 @@ export function meta() {
  * picked here — and nothing can be sent without that choice being made.
  */
 function InviteTeammate({ repos }: { repos: { id: string; name: string }[] }) {
-  const [role, setRole] = useState<"admin" | "member">("member");
   const noRepos = repos.length === 0;
+  // Never start on the option that is about to be disabled: a disabled radio still paints as
+  // selected but is omitted from the submission, so the form would look ready and then come
+  // back with "choose what access this grants".
+  const [role, setRole] = useState<"admin" | "member">(
+    noRepos ? "admin" : "member",
+  );
 
   return (
     <Card>
@@ -606,31 +618,35 @@ export default function Members({
                       <span className="ml-2 text-muted-foreground">
                         expires <LocalizedDate value={invitation.expiresAt} />
                       </span>
-                      <span className="mt-0.5 block text-xs text-muted-foreground">
+                      <span
+                        className={`mt-0.5 block text-xs ${invitation.grantsAccess ? "text-muted-foreground" : "text-destructive"}`}
+                      >
                         {invitation.role === "member"
-                          ? invitation.repos.length > 0
+                          ? invitation.grantsAccess
                             ? `Member · ${invitation.repos.join(", ")}`
-                            : "Member · no repositories"
+                            : "Member · no repositories — this invitation grants no access. Cancel it and send a new one."
                           : `${invitation.role.charAt(0).toUpperCase()}${invitation.role.slice(1)} · full workspace access`}
                       </span>
                     </span>
                     {canManage && (
                       <span className="flex items-center gap-2">
-                        <Form method="post">
-                          <input
-                            type="hidden"
-                            name="intent"
-                            value="resend-invite"
-                          />
-                          <input
-                            type="hidden"
-                            name="email"
-                            value={invitation.email}
-                          />
-                          <Button type="submit" variant="outline" size="sm">
-                            Resend
-                          </Button>
-                        </Form>
+                        {invitation.grantsAccess && (
+                          <Form method="post">
+                            <input
+                              type="hidden"
+                              name="intent"
+                              value="resend-invite"
+                            />
+                            <input
+                              type="hidden"
+                              name="email"
+                              value={invitation.email}
+                            />
+                            <Button type="submit" variant="outline" size="sm">
+                              Resend
+                            </Button>
+                          </Form>
+                        )}
                         <Form method="post">
                           <input
                             type="hidden"

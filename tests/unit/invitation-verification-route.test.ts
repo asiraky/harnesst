@@ -11,6 +11,14 @@ const mocks = vi.hoisted(() => ({
   dbWhere: vi.fn(),
   dbSelect: vi.fn(),
   dbSelectLimit: vi.fn(),
+  invitationGrantsNoAccess: vi.fn(),
+}));
+
+/** The decayed-grant check is exercised directly in invitation-grant.test.ts. */
+const NO_ACCESS = "no access message";
+vi.mock("~/auth/invitation-grant.server", () => ({
+  invitationGrantsNoAccess: mocks.invitationGrantsNoAccess,
+  NO_ACCESS_INVITATION_MESSAGE: NO_ACCESS,
 }));
 
 vi.mock("~/auth/session.server", () => ({
@@ -94,6 +102,8 @@ describe("invitation verification route", () => {
     mocks.dbUpdate.mockReset().mockImplementation(() => ({
       set: () => ({ where: mocks.dbWhere }),
     }));
+    // The invitation still grants real access unless a test says otherwise.
+    mocks.invitationGrantsNoAccess.mockReset().mockResolvedValue(false);
     // No account exists for the invited address unless a test says otherwise.
     mocks.dbSelectLimit.mockReset().mockResolvedValue([]);
     mocks.dbSelect.mockReset().mockImplementation(() => ({
@@ -257,6 +267,23 @@ describe("invitation verification route", () => {
     expect(response.headers.get("set-cookie")).toContain("Max-Age=0");
   });
 
+  it("refuses to accept an invitation that grants no access (issue #220)", async () => {
+    // A `member` invitation whose teams are gone — a legacy row, or one whose repo was deleted
+    // after it was sent. Accepting it would land the invitee in the exact no-access limbo the
+    // final acceptance criterion rules out, so the accept never reaches Better Auth.
+    mocks.invitationGrantsNoAccess.mockResolvedValue(true);
+    mocks.acceptInvitation.mockResolvedValue({});
+    const { action } = await import("~/routes/accept-invitation.$invitationId");
+
+    const request = acceptRequest({
+      token: await mintToken(INVITATION_ID, EMAIL),
+    });
+    const result = await action(actionArgs(request));
+
+    expect(result).toEqual({ error: NO_ACCESS });
+    expect(mocks.acceptInvitation).not.toHaveBeenCalled();
+  });
+
   it("offers the account switch when Better Auth rejects the recipient", async () => {
     mocks.acceptInvitation.mockRejectedValue({
       body: { code: "YOU_ARE_NOT_THE_RECIPIENT_OF_THE_INVITATION" },
@@ -371,6 +398,34 @@ describe("invitation verification route", () => {
         new URL(response.headers.get("location")!, "http://x").pathname,
       ).toBe("/signup");
       expect(mocks.dbSelect).not.toHaveBeenCalled();
+    });
+  });
+
+  it("explains a decayed grant instead of offering a dead Accept button", async () => {
+    mocks.invitationGrantsNoAccess.mockResolvedValue(true);
+    mocks.getInvitation.mockResolvedValue({
+      id: INVITATION_ID,
+      email: EMAIL,
+      organizationName: "Acme",
+      inviterEmail: "owner@example.com",
+    });
+    const { loader } = await import("~/routes/accept-invitation.$invitationId");
+
+    const request = new Request(
+      `https://harnesst.example.com/accept-invitation/${INVITATION_ID}`,
+    );
+    const result = await loader({
+      request,
+      url: new URL(request.url),
+      pattern: "/accept-invitation/:invitationId",
+      params: { invitationId: INVITATION_ID },
+      context: {} as never,
+    });
+
+    expect(result).toMatchObject({
+      error: NO_ACCESS,
+      verificationRequired: false,
+      wrongAccount: false,
     });
   });
 

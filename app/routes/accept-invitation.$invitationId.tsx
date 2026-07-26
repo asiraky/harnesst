@@ -1,6 +1,10 @@
 import { Form, Link, redirect } from "react-router";
 import { eq, sql } from "drizzle-orm";
 
+import {
+  NO_ACCESS_INVITATION_MESSAGE,
+  invitationGrantsNoAccess,
+} from "~/auth/invitation-grant.server";
 import { verifyInvitationToken } from "~/auth/invitation-token.server";
 import {
   getSessionAuth,
@@ -210,6 +214,11 @@ export async function loader(args: Route.LoaderArgs) {
       query: { id: invitationId },
       headers: session.requestHeaders,
     });
+    // A grant can decay after it is sent (see invitation-grant.server). Say so here rather than
+    // offering an Accept button whose only outcome is a workspace with nothing in it.
+    if (await invitationGrantsNoAccess(invitationId)) {
+      return { ...base, invitation, error: NO_ACCESS_INVITATION_MESSAGE };
+    }
     return { ...base, invitation };
   } catch (error) {
     // Without a token the invited address is unknown, so Better Auth's own recipient check is
@@ -285,6 +294,13 @@ export async function action(args: Route.ActionArgs) {
       args.request,
       signInForInvitation(invitationId, token, delivery.email),
     );
+  }
+
+  // The acceptance boundary is the only place the "no member without a team" invariant can
+  // actually hold: the grant is checked against the workspace as it stands right now, not as it
+  // stood when the invitation was written.
+  if (await invitationGrantsNoAccess(invitationId)) {
+    return { error: NO_ACCESS_INVITATION_MESSAGE };
   }
 
   try {
