@@ -20,6 +20,10 @@ import {
   subagentDirNames,
   type AgentSource,
 } from "~/eve/parse";
+import {
+  LEGACY_ROOT_FILES,
+  LEGACY_SOURCE_PREFIXES,
+} from "~/eve/legacy-names";
 import { getInstallationOctokit } from "./client.server";
 
 /** Repo-root marketplace install ledger (PRD §7.8) — carried alongside the agent tree. */
@@ -101,17 +105,22 @@ export async function fetchAgentSource(
   // (detectAgentRoots ignores it), but the config editors and the assistant's own tools need to
   // see and read these files, so include them in the source tree.
   const assistantPrefix = `${ASSISTANT_CONFIG_ROOT}/`;
-  const paths = tree.data.tree.flatMap((e) =>
-    e.type === "blob" &&
-    typeof e.path === "string" &&
-    (e.path === AGENT_ROOT ||
-      e.path === HARNESST_LOCK ||
-      e.path.startsWith(agentPrefix) ||
-      e.path.startsWith(teamPrefix) ||
-      e.path.startsWith(assistantPrefix))
-      ? [e.path]
-      : [],
-  );
+  // Pre-#213-rename repos (issue #235) keep the same files under their old names — the lock at
+  // `eden-lock.json`, the assistant config under `.eden/assistant/`. They are included here so the
+  // drift scan can SEE them; every other reader keys off the current names and ignores them.
+  const paths = tree.data.tree.flatMap((e) => {
+    if (e.type !== "blob" || typeof e.path !== "string") return [];
+    const path = e.path;
+    const wanted =
+      path === AGENT_ROOT ||
+      path === HARNESST_LOCK ||
+      LEGACY_ROOT_FILES.includes(path) ||
+      path.startsWith(agentPrefix) ||
+      path.startsWith(teamPrefix) ||
+      path.startsWith(assistantPrefix) ||
+      LEGACY_SOURCE_PREFIXES.some((prefix) => path.startsWith(prefix));
+    return wanted ? [path] : [];
+  });
 
   const eager = [
     ...detectAgentRoots(paths).flatMap(({ root }) => [
@@ -207,6 +216,37 @@ export async function readAgentFile(
   const branch =
     ref ?? (await octokit.rest.repos.get({ owner, repo })).data.default_branch;
   return readTextFile(octokit, { owner, repo, ref: branch }, path);
+}
+
+/**
+ * Read many text files at once, concurrency-capped like `fetchLastCommitForPaths` (GitHub has no
+ * batch content API). Missing/binary paths are simply absent from the result rather than throwing —
+ * a scan over a repo listing races real deletions, and one unreadable blob must not sink the batch.
+ */
+export async function readAgentFiles(
+  installationId: string | number,
+  { owner, repo, ref }: RepoRef,
+  paths: string[],
+): Promise<Record<string, string>> {
+  const octokit = await getInstallationOctokit(installationId);
+  const branch =
+    ref ?? (await octokit.rest.repos.get({ owner, repo })).data.default_branch;
+  const out: Record<string, string> = {};
+  const queue = [...paths];
+  const CONCURRENCY = 8;
+
+  async function worker() {
+    for (let path = queue.shift(); path; path = queue.shift()) {
+      const content = await readTextFile(
+        octokit,
+        { owner, repo, ref: branch },
+        path,
+      );
+      if (content !== null) out[path] = content;
+    }
+  }
+  await Promise.all(Array.from({ length: CONCURRENCY }, worker));
+  return out;
 }
 
 /** The repo-relative paths changed by a commit (e.g. a merge commit), or [] on any error. */

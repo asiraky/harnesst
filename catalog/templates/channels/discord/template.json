@@ -3,7 +3,7 @@
   "type": "channel",
   "name": "Discord",
   "description": "Talk to this agent from Discord — one-click connect via harnesst's shared Discord app, a slash command named after the agent, and signature-verified interactions via eve's discordChannel.",
-  "version": "0.3.2",
+  "version": "0.3.3",
   "eve": ">=0.20.0",
   "files": ["channels/discord.ts"],
   "setup": "**Connect (recommended):** open the agent's **Deployment** tab and click **Connect Discord**. Pick your server and approve one authorization screen. harnesst registers a `/<agent-name>` slash command and routes interactions to the agent automatically — use it as `/<agent-name> message: ...`.\n\nharnesst owns one shared Discord app per installation, so there is nothing to create in the Developer Portal and no secrets to copy: `DISCORD_APPLICATION_ID` and `DISCORD_PUBLIC_KEY` are provisioned for you at deploy, and the bot token stays on the control plane (interaction replies use the interaction token, so instances never need it).\n\n**Self-host note (operators):** configure the shared Discord app once — set `HARNESST_DISCORD_APPLICATION_ID`, `HARNESST_DISCORD_BOT_TOKEN`, and `HARNESST_DISCORD_PUBLIC_KEY` on the control plane, point the app's **Interactions Endpoint URL** at `<origin>/api/discord/interactions`, and add `<origin>/discord/callback` to its **OAuth2 Redirects**.",

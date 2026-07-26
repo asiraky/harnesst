@@ -1,0 +1,8 @@
+import { defineAgent } from 'eve';
+
+import { edenAgentModel } from './eden-model';
+
+export default defineAgent({
+  model: edenAgentModel('sam'),
+  modelContextWindowTokens: 200000,
+});

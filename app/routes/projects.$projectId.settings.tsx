@@ -77,9 +77,18 @@ import {
   listIngestTokens,
 } from "~/observability/store.server";
 import { listDrafts, stageDeletions, stageDraft } from "~/drafts/drafts.server";
+import {
+  detectsLegacyDrift,
+  legacyRepairCandidates,
+  planLegacyRepair,
+} from "~/eve/legacy-repair";
 import { EMPTY_TEAM_MARKER } from "~/eve/parse";
 import { getAgentSource } from "~/github/cached.server";
-import { fetchAgentSource, readAgentFile } from "~/github/repo.server";
+import {
+  fetchAgentSource,
+  readAgentFile,
+  readAgentFiles,
+} from "~/github/repo.server";
 import { proposeChange, type FileChange } from "~/github/write.server";
 import { contextPath } from "~/lib/paths";
 import {
@@ -192,6 +201,12 @@ interface SettingsView {
   repoShared: RepoSharedSecret[];
   /** Marketplace installs in the current settings scope. */
   installs: InstallDisplay[];
+  /**
+   * Repo: this repository still contains harnesst-generated code from before the #213 rename, so
+   * its deployed agents read env names the control plane no longer sets (issue #235). Repo-level
+   * because the drift is repo-wide — one repair covers every member.
+   */
+  legacyDrift: boolean;
   /** Repo: ingest tokens. */
   tokens: {
     id: string;
@@ -235,7 +250,11 @@ interface InstallDisplay {
   depsLeft: string[];
   /** The newer catalog version when an update is available, else null. */
   update: string | null;
-  /** Current catalog version matches, but the installed lock is missing flattened catalog content. */
+  /**
+   * Current catalog version matches, but the install is behind its catalog row anyway — either the
+   * lock is missing flattened catalog content, or the template's content hash moved without a
+   * version bump (issue #235).
+   */
   repair: boolean;
 }
 
@@ -258,7 +277,7 @@ function resolveScope(
  */
 function buildInstalls(
   lock: ReturnType<typeof overlayLock>,
-  index: { id: string; type: TemplateType; version: string }[],
+  index: { id: string; type: TemplateType; version: string; hash: string }[],
   resolved: Map<string, ResolvedTemplate>,
   keep: (member: string | null) => boolean,
 ): InstallDisplay[] {
@@ -285,6 +304,14 @@ function buildInstalls(
     const missingFiles =
       expectedFiles.size > 0 &&
       [...expectedFiles].some((file) => !installedFiles.has(file));
+    // Content drift at the SAME version (issue #235): the catalog's files changed without the
+    // template's version moving, so `semver.gt` sees nothing to update and the install sits on
+    // superseded content forever. The index row's hash covers manifest + file contents, and the
+    // lock records the hash the install was cut from — a mismatch at equal versions is exactly
+    // that case. Costs nothing extra: the index is already loaded for the update check.
+    const contentDrift = Boolean(
+      row && row.version === entry.version && row.hash !== entry.hash,
+    );
     const expectedIncludes = template?.includes ?? [];
     const installedIncludes = entry.includes ?? [];
     const missingIncludes =
@@ -307,7 +334,7 @@ function buildInstalls(
       files: entry.files,
       depsLeft: Object.keys(entry.dependencies ?? {}),
       update,
-      repair: !update && (missingFiles || missingIncludes),
+      repair: !update && (missingFiles || missingIncludes || contentDrift),
     });
     return rows;
   }, []);
@@ -349,7 +376,12 @@ export const loader = (args: LoaderFunctionArgs) =>
         source.files["harnesst-lock.json"] ?? null,
         draftPaths,
       );
-      let index: { id: string; type: TemplateType; version: string }[] = [];
+      let index: {
+        id: string;
+        type: TemplateType;
+        version: string;
+        hash: string;
+      }[] = [];
       const resolvedTemplates = new Map<string, ResolvedTemplate>();
       if (lock.installs.length > 0) {
         try {
@@ -413,6 +445,7 @@ export const loader = (args: LoaderFunctionArgs) =>
             : (member) =>
                 member === active?.name || (member === null && !isTeam),
         ),
+        legacyDrift: detectsLegacyDrift(source),
         tokens: [],
         teamMembers: [],
         teamLinks: [],
@@ -693,6 +726,54 @@ export async function action(args: ActionFunctionArgs) {
       }
       throw redirect(`${back}?${mode}=${encodeURIComponent(id)}`);
     }
+    // ── Repair generated code left behind by the #213 rename (issue #235) ──
+    // The control plane's env contract moved to HARNESST_*; the code reading it lives in files
+    // harnesst generated INTO this repo and never regenerates, so pre-rename repos silently lose
+    // every sandbox-exposed secret, the Discord send URL, the team token and the model gateway.
+    // Redeploying can't fix that (the image is built FROM these files) — the files have to change.
+    // Staged like every other edit so the human reviews the diff before it lands.
+    if (intent === "repair-generated") {
+      const [source, drafts] = await Promise.all([
+        fetchAgentSource(project.repoInstallationId, repo),
+        listDrafts(project.id),
+      ]);
+      const candidates = legacyRepairCandidates(source.paths);
+      const fetched = await readAgentFiles(
+        project.repoInstallationId,
+        repo,
+        candidates,
+      );
+      // A staged draft supersedes the branch copy — migrating the branch bytes instead would
+      // silently revert work the human has already queued for review.
+      for (const draft of drafts) {
+        if (!candidates.includes(draft.path)) continue;
+        if (draft.content === null) delete fetched[draft.path];
+        else fetched[draft.path] = draft.content;
+      }
+      const plan = planLegacyRepair(fetched);
+      if (plan.writes.length === 0) {
+        return { error: "No pre-rename generated files were found to repair." };
+      }
+      await Promise.all(
+        plan.writes.map((write) =>
+          stageDraft({
+            projectId: project.id,
+            path: write.path,
+            content: write.content,
+            createdBy: auth.user.id,
+          }),
+        ),
+      );
+      if (plan.deletions.length > 0) {
+        await stageDeletions({
+          projectId: project.id,
+          paths: plan.deletions,
+          createdBy: auth.user.id,
+        });
+      }
+      throw redirect(`${back}?repaired-generated=${plan.writes.length}`);
+    }
+
     if (intent === "uninstall") {
       const id = String(form.get("id") ?? "");
       const member = String(form.get("member") ?? "") || null;
@@ -1022,6 +1103,7 @@ export default function Settings({
   const [params] = useSearchParams();
   const justUpdated = params.get("updated");
   const justRepaired = params.get("repaired");
+  const justRepairedGenerated = params.get("repaired-generated");
   const justUninstalled = params.get("uninstalled");
   const newToken =
     actionData && "token" in actionData
@@ -1103,6 +1185,18 @@ export default function Settings({
           </AlertDescription>
         </Alert>
       )}
+      {justRepairedGenerated && (
+        <Alert className="mb-6">
+          <AlertTitle>
+            {justRepairedGenerated} generated file
+            {justRepairedGenerated === "1" ? "" : "s"} staged
+          </AlertTitle>
+          <AlertDescription>
+            Review and publish the change-set from the Deployment tab, then
+            redeploy each agent so the rebuilt image picks it up.
+          </AlertDescription>
+        </Alert>
+      )}
       {(justUpdated || justRepaired || justUninstalled) && (
         <Alert className="mb-6">
           <AlertTitle>
@@ -1163,6 +1257,7 @@ export default function Settings({
             links={loaderData.teamLinks}
           />
         )}
+        {loaderData.legacyDrift && <GeneratedCodeSection />}
         <MarketplaceInstallsSection loaderData={loaderData} />
         {canRenameMember && (
           <RenameSection
@@ -1264,6 +1359,54 @@ function ModelSection({
             : "Staged — ship or publish it from the Deployment tab."}
         </p>
       )}
+    </section>
+  );
+}
+
+/**
+ * The self-serve recovery for pre-rename generated code (issue #235).
+ *
+ * Shown only when the repo actually carries it. The wording avoids the word "migration": from the
+ * human's side this is a repair of files harnesst wrote and harnesst broke, and the recovery is
+ * three ordinary clicks — repair, publish, redeploy — not a support ticket.
+ */
+function GeneratedCodeSection() {
+  const navigation = useNavigation();
+  const busy =
+    navigation.state !== "idle" &&
+    navigation.formData?.get("intent") === "repair-generated";
+
+  return (
+    <section>
+      <SectionHeader
+        icon={Boxes}
+        accent="amber"
+        title="Generated code needs repair"
+      />
+      <Card>
+        <CardContent className="space-y-4 py-4">
+          <p className="text-sm text-muted-foreground">
+            This repository contains code harnesst generated before it was
+            renamed, which still reads the old <code>EDEN_*</code> environment
+            variables. Deployed agents no longer receive those names, so
+            sandbox-exposed secrets, Discord replies, teammate delegation and
+            the model gateway fail silently. Redeploying does not fix it — the
+            image is built from these files.
+          </p>
+          <p className="text-sm text-muted-foreground">
+            Repairing stages a reviewable change-set that renames those
+            references and moves the generated files onto their current names.
+            Your own code, instructions and skills are left alone. Publish it
+            from the Deployment tab, then redeploy each agent.
+          </p>
+          <Form method="post">
+            <input type="hidden" name="intent" value="repair-generated" />
+            <Button type="submit" disabled={busy}>
+              {busy ? "Scanning repository…" : "Repair generated files"}
+            </Button>
+          </Form>
+        </CardContent>
+      </Card>
     </section>
   );
 }

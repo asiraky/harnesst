@@ -4,9 +4,9 @@
       "id": "engineer",
       "type": "agent",
       "name": "Engineer",
-      "version": "0.6.1",
+      "version": "0.6.2",
       "description": "A general-purpose software engineer agent that works GitHub issues across authorized repositories, creates feature branches, and opens pull requests into main.",
-      "hash": "4d82a7c2882ae4bcdaa7ba168799061e305ae46b"
+      "hash": "d6768c8e9346d4efcdaea931e5752ecbe2531fda"
     },
     {
       "id": "github-bundle",
@@ -28,9 +28,9 @@
       "id": "discord",
       "type": "channel",
       "name": "Discord",
-      "version": "0.3.2",
+      "version": "0.3.3",
       "description": "Talk to this agent from Discord — one-click connect via harnesst's shared Discord app, a slash command named after the agent, and signature-verified interactions via eve's discordChannel.",
-      "hash": "cca69ed447148b0fe1d8ba990de756d180c4646a"
+      "hash": "da2172a4008a9e8943d0107fcb38ced3dc3caff0"
     },
     {
       "id": "github",
@@ -68,17 +68,17 @@
       "id": "mayi",
       "type": "connection",
       "name": "May I?",
-      "version": "0.2.0",
+      "version": "0.2.1",
       "description": "Human approvals for agent actions via May I? (mayi.sh). Install it, click Connect on the agent's Deployment tab (harnesst registers the OAuth client automatically — no operator app to create), and gated tools park until a human approves in the May I? app, then resume with a signed receipt. Scheduled work that may need an approval must use the handler form of an eve schedule and hand the run to the channel with receive(mayi, ...) — task-mode schedules can't park for a human.",
-      "hash": "b778b606644040ebd9a4e3d7130c9fa6ab045f98"
+      "hash": "f9389c0f43633ebae1ff02ed0134154f6d6c8954"
     },
     {
       "id": "xero",
       "type": "connection",
       "name": "Xero",
-      "version": "0.1.1",
+      "version": "0.1.2",
       "description": "Bookkeeping operations against a Xero organisation through harnesst's brokered-capability framework: the agent's container never holds any Xero credential. harnesst keeps the OAuth grant and executes only a whitelisted set of operations — read reference data, search bills, look up and create contacts, and create DRAFT bills (a human approves them in Xero) with attached source files. Which operation groups are enabled is your choice at install time and editable any time from the Deployment tab, with instant effect.",
-      "hash": "8aba539a50f4e88223a75984e9663d35e8607435"
+      "hash": "15cc2e682fb7a6de4ed4206068878c208bbcbff5"
     },
     {
       "id": "agent-browser",
@@ -156,9 +156,9 @@
       "id": "discord-send-message",
       "type": "tool",
       "name": "Discord Send Message",
-      "version": "0.2.0",
+      "version": "0.2.1",
       "description": "Send a message to a Discord channel by channel id via harnesst's control plane, using the installation's shared Discord app — scoped to servers this agent is connected to.",
-      "hash": "da04f11360c41de6e9e11d974972b74ee76b809f"
+      "hash": "8aeb6b5365fcfb35b4c6bec95c38a11debc1b8ea"
     },
     {
       "id": "firecrawl-search",

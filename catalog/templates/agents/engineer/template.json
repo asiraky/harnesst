@@ -3,7 +3,7 @@
   "type": "agent",
   "name": "Engineer",
   "description": "A general-purpose software engineer agent that works GitHub issues across authorized repositories, creates feature branches, and opens pull requests into main.",
-  "version": "0.6.1",
+  "version": "0.6.2",
   "eve": ">=0.22.0",
   "model": "workspace default (selected at install)",
   "includes": [

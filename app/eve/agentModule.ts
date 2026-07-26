@@ -7,6 +7,8 @@
  * When `agent.ts` is absent we scaffold a minimal valid module.
  */
 
+import { migrateLegacySource } from "./legacy-names";
+
 export const ANTHROPIC_PROVIDER_PACKAGE = "@ai-sdk/anthropic";
 export const ANTHROPIC_PROVIDER_VERSION = "^4.0.12";
 export const OPENAI_PROVIDER_PACKAGE = "@ai-sdk/openai";
@@ -214,22 +216,39 @@ function dynamicModelValue(model: string, effort?: string | null): string {
 }
 
 /**
+ * Every reader and writer below sees the module through this lens: a repo scaffolded before the
+ * #213 rename carries `edenModel(…)` / `EDEN_MODEL_DIRECTIVE_SECRET` / `edenAgentModel(…)`, which
+ * the `harnesst*` patterns above cannot match. Left alone, that made harnesst's own self-healing
+ * silently no-op on exactly the modules that needed healing — `hasDynamicModel` read false,
+ * `usesOrgModelResolver` read false, and `HARNESST_MODEL_HELPER_BLOCK` failed to find the region it
+ * owns, so a re-save APPENDED a second helper instead of replacing the stale one (issue #235).
+ *
+ * Normalizing at the boundary fixes all of them at once, and makes every model save double as the
+ * repair: `setModel` returns migrated source, so the written file carries the new names.
+ */
+function normalize(source: string): string {
+  return migrateLegacySource(source);
+}
+
+/**
  * True when the module's `model:` is the harnesst dynamic wrapper — i.e. a build of this source
  * honors the playground's per-conversation model directive. A static module (plain provider
  * call or bare string) ignores the directive and always runs its baked-in model.
  */
 export function hasDynamicModel(source: string | null | undefined): boolean {
   if (usesOrgModelResolver(source)) return true;
+  if (typeof source !== "string") return false;
+  const normalized = normalize(source);
   return (
-    typeof source === "string" &&
-    MODEL_DYNAMIC.test(source) &&
-    source.includes("HARNESST_MODEL_DIRECTIVE_SECRET") &&
-    source.includes("timingSafeEqual")
+    MODEL_DYNAMIC.test(normalized) &&
+    normalized.includes("HARNESST_MODEL_DIRECTIVE_SECRET") &&
+    normalized.includes("timingSafeEqual")
   );
 }
 
 /** Read the model string from an agent module, or null if not found. */
-export function readModel(source: string): string | null {
+export function readModel(rawSource: string): string | null {
+  const source = normalize(rawSource);
   // A workspace-resolver module has no baked-in model: the id lives in harnesst's org
   // configuration, and the resolver argument is an agent NAME, not a model.
   if (usesOrgModelResolver(source)) return null;
@@ -256,19 +275,20 @@ const ORG_MODEL_RESOLVER = /\bmodel\s*:\s*harnesstAgentModel\s*\(\s*(['"`])([^'"
  * model: harnesst's Settings save writes the org override map instead of rewriting this file.
  */
 export function usesOrgModelResolver(source: string | null | undefined): boolean {
-  return typeof source === "string" && ORG_MODEL_RESOLVER.test(source);
+  return typeof source === "string" && ORG_MODEL_RESOLVER.test(normalize(source));
 }
 
 /** The agent name a `model: harnesstAgentModel('<name>')` module resolves itself by, or null. */
 export function orgResolverAgentName(source: string): string | null {
-  const match = source.match(ORG_MODEL_RESOLVER);
+  const match = normalize(source).match(ORG_MODEL_RESOLVER);
   return match ? match[2] : null;
 }
 
 /** Read harnesst's explicit fallback reasoning effort, or null for provider default. */
 export function readReasoningEffort(
-  source: string,
+  rawSource: string,
 ): "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | null {
+  const source = normalize(rawSource);
   const fallback = source.match(FALLBACK_EFFORT);
   if (fallback) return fallback[3] as ReturnType<typeof readReasoningEffort>;
   const topLevel = source.match(
@@ -278,8 +298,10 @@ export function readReasoningEffort(
 }
 
 /** Read the declared `modelContextWindowTokens` from an agent module, or null if absent. */
-export function readModelContextWindow(source: string): number | null {
-  const match = source.match(/\bmodelContextWindowTokens\s*:\s*([\d_]+)/);
+export function readModelContextWindow(rawSource: string): number | null {
+  const match = normalize(rawSource).match(
+    /\bmodelContextWindowTokens\s*:\s*([\d_]+)/,
+  );
   if (!match) return null;
   const tokens = Number(match[1].replaceAll("_", ""));
   return Number.isFinite(tokens) && tokens > 0 ? tokens : null;
@@ -452,10 +474,13 @@ function withHarnesstDynamicWiring(source: string): string {
  *  4. Scaffold a fresh module.
  */
 export function setModel(
-  source: string,
+  rawSource: string,
   model: string,
   options?: { contextWindowTokens?: number | null; effort?: string | null },
 ): string {
+  // A pre-#213-rename module is migrated FIRST (issue #235), so every pattern below matches the
+  // shape it was written for and the saved file lands on the current env contract.
+  let source = normalize(rawSource);
   // The fallback effort lives on harnesst's model wrapper so a playground directive can replace it
   // per turn. Remove a static property first; otherwise clearing effort would leave it active.
   source = source.replace(STATIC_REASONING_PROP, "");

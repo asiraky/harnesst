@@ -584,3 +584,39 @@ describe("harnesstModel missing-credential deferral", () => {
     expect(source).toContain("harnesst-missing-credential");
   });
 });
+
+describe("pre-rename modules (issue #235)", () => {
+  const PRE_RENAME = readFileSync(
+    path.join(__dirname, "../fixtures/pre-rename/agent.ts.txt"),
+    "utf8",
+  );
+
+  it("recognises a pre-#213-rename dynamic module", () => {
+    // Written against the OLD env contract: EDEN_MODEL_DIRECTIVE_SECRET, edenModel, edenGateway.
+    // Before #235 every detector below silently read it as "not ours", so the model editor showed
+    // no model and a save would have appended a second helper block beside the first.
+    expect(hasDynamicModel(PRE_RENAME)).toBe(true);
+    expect(readModel(PRE_RENAME)).toBe("anthropic/claude-opus-5");
+    expect(readModelContextWindow(PRE_RENAME)).toBe(200_000);
+  });
+
+  it("saving a model migrates the module onto the current env contract", () => {
+    const saved = setModel(PRE_RENAME, "anthropic/abcdefghijkl/claude-sonnet-5");
+    expect(readModel(saved)).toBe("anthropic/abcdefghijkl/claude-sonnet-5");
+    expect(saved).not.toMatch(/EDEN_/);
+    expect(saved).not.toMatch(/\bedenModel\b/);
+    expect(saved).toContain("process.env.HARNESST_MODEL_DIRECTIVE_SECRET");
+    // Exactly one helper block — the rewriters found the migrated markers to replace.
+    expect(saved.split("harnesst playground model override:").length - 1).toBe(1);
+    // And exactly one gateway const — the same duplication #230 hit when its idempotence guard
+    // couldn't match its own emitted factory.
+    expect(saved.split("const harnesstGateway =").length - 1).toBe(1);
+  });
+
+  it("reads the effort of a pre-rename module", () => {
+    const withEffort = setModel(PRE_RENAME, "anthropic/claude-opus-5", {
+      effort: "high",
+    });
+    expect(readReasoningEffort(withEffort)).toBe("high");
+  });
+});

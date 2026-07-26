@@ -1,0 +1,15 @@
+import { defaultBackend, defineSandbox } from "eve/sandbox";
+
+// This agent's sandbox: the isolated shell its bash/read/write tools run in. Add a
+// bootstrap() hook to preinstall CLIs (gh, wrangler, ...) — it runs ONCE and is snapshotted
+// into a reusable template, so sessions start fast with the tools already in place.
+//
+// harnesst convention: EDEN_SANDBOX_ENV is a comma-separated allowlist of env var NAMES
+// (managed from the Secrets page — "available in the agent's sandbox shell") forwarded from
+// the instance into the sandbox. Everything else stays sealed out of the shell.
+const names = (process.env.EDEN_SANDBOX_ENV ?? "").split(",").filter(Boolean);
+const env = Object.fromEntries(names.map((n) => [n, process.env[n] ?? ""]));
+
+export default defineSandbox({
+  backend: () => defaultBackend({ docker: { env }, vercel: { env } }),
+});

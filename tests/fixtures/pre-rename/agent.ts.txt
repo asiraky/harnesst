@@ -1,0 +1,116 @@
+import { createHmac, timingSafeEqual } from 'node:crypto';
+import { createAnthropic } from '@ai-sdk/anthropic';
+import { createOpenAI } from '@ai-sdk/openai';
+import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
+import { wrapLanguageModel, type LanguageModel } from 'ai';
+import { defineAgent, defineDynamic } from 'eve';
+
+const openrouter = createOpenAICompatible({ name: 'openrouter', baseURL: 'https://openrouter.ai/api/v1', apiKey: process.env.OPENROUTER_API_KEY ?? '' });
+const edenGateway = createOpenAICompatible({ name: 'eden', baseURL: process.env.EDEN_MODEL_GATEWAY_URL ?? '', apiKey: process.env.EDEN_MODEL_GATEWAY_TOKEN ?? '' });
+
+// Eden playground model override: the playground pins a model per conversation by
+// prefixing the sent message with one machine-readable line, e.g.
+//   <!-- eden:model anthropic/<connection>/claude-sonnet-5 ctx=200000 effort=high -->
+//   <!-- eden:sig <hmac> -->
+// Eden strips that line from every transcript surface; here it picks the model per step.
+const EDEN_MODEL_DIRECTIVE = /^<!--\s*eden:model\s+(\S+?)(?:\s+ctx=(\d+))?(?:\s+effort=(none|minimal|low|medium|high|xhigh))?\s*-->\n<!--\s*eden:sig\s+([a-f0-9]{64})\s*-->\n\n([\s\S]*)$/;
+function edenSelectedModel(
+  messages: ReadonlyArray<{ role: string; content: unknown }>,
+): { id: string; contextWindowTokens: number | undefined; effort: 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | undefined } | null {
+  for (let i = messages.length - 1; i >= 0; i -= 1) {
+    const entry = messages[i];
+    if (!entry || entry.role !== 'user') continue;
+    const text =
+      typeof entry.content === 'string'
+        ? entry.content
+        : Array.isArray(entry.content)
+          ? entry.content
+              .map((part) =>
+                part && typeof part === 'object' && typeof (part as { text?: unknown }).text === 'string'
+                  ? (part as { text: string }).text
+                  : '',
+              )
+              .join('\n')
+          : '';
+    const match = text.match(EDEN_MODEL_DIRECTIVE);
+    const secret = process.env.EDEN_MODEL_DIRECTIVE_SECRET;
+    if (match?.[1] && match[4] && secret) {
+      const effortBytes = match[3] ? match[3] + '\n' : '';
+      const expected = createHmac('sha256', secret)
+        .update(match[1] + '\n' + (match[2] ?? '') + '\n' + effortBytes + match[5])
+        .digest();
+      const received = Buffer.from(match[4], 'hex');
+      if (received.length !== expected.length || !timingSafeEqual(received, expected)) continue;
+      return { id: match[1], contextWindowTokens: match[2] ? Number(match[2]) : undefined, effort: match[3] as 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | undefined };
+    }
+  }
+  return null;
+}
+// Eden model router: qualified API-key references go directly to their provider with the exact
+// connection credential. Codex OAuth alone uses Eden's translating gateway. A bare id is an old
+// OpenRouter reference and remains runnable so repos created before the connection model can be
+// upgraded on their next model save.
+function edenModel(id: string, effort?: 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh') {
+  const qualified = id.match(/^(anthropic|codex|openai|openrouter)\/([a-z]{12})\/(.+)$/);
+  if (!qualified) return edenReasoningModel(openrouter.chatModel(id), effort);
+  const provider = qualified[1];
+  const connectionId = qualified[2];
+  const upstreamModelId = qualified[3];
+  if (provider === 'codex') return edenReasoningModel(edenGateway.chatModel(id), effort);
+  const envName =
+    'EDEN_PROVIDER_' + provider.toUpperCase() + '_' + connectionId.toUpperCase() + '_API_KEY';
+  const apiKey = process.env[envName];
+  // `eve build` evaluates this module INSIDE `docker build`, where Eden deliberately injects no
+  // connection credentials (they reach only the running container's env). A missing key must not
+  // throw here — that would fail every publish-gate and deploy image build. Construct the model
+  // with a placeholder and raise the same error on the first actual request instead.
+  const key = apiKey ?? 'eden-missing-credential';
+  const model =
+    provider === 'anthropic'
+      ? createAnthropic({ name: 'anthropic/' + connectionId, apiKey: key }).chat(upstreamModelId)
+      : provider === 'openai'
+        ? createOpenAI({ name: 'openai/' + connectionId, apiKey: key }).responses(upstreamModelId)
+        : createOpenAICompatible({
+            name: 'openrouter/' + connectionId,
+            baseURL: 'https://openrouter.ai/api/v1',
+            apiKey: key,
+          }).chatModel(upstreamModelId);
+  if (!apiKey) {
+    return wrapLanguageModel({
+      model,
+      middleware: {
+        specificationVersion: 'v4',
+        transformParams: async () => {
+          throw new Error('No credential was deployed for the selected ' + provider + ' connection.');
+        },
+      },
+    });
+  }
+  return edenReasoningModel(model, effort);
+}
+// `ai`'s LanguageModel union admits bare gateway id strings, which eve's defineDynamic model slot
+// rejects — exclude them so edenModel's inferred return type stays assignable.
+function edenReasoningModel(model: Exclude<LanguageModel, string>, effort?: 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh') {
+  if (!effort) return model;
+  return wrapLanguageModel({
+    model,
+    middleware: {
+      specificationVersion: 'v4',
+      transformParams: async ({ params }) => ({ ...params, reasoning: effort }),
+    },
+  });
+}
+
+export default defineAgent({
+  model: defineDynamic({
+    fallback: edenModel('anthropic/claude-opus-5'),
+    events: {
+      'step.started': (_event, ctx) => {
+        const selected = edenSelectedModel(ctx.messages);
+        if (!selected) return null; // no directive -> the fallback model above
+        return { model: edenModel(selected.id, selected.effort), modelContextWindowTokens: selected.contextWindowTokens };
+      },
+    },
+  }),
+  modelContextWindowTokens: 200000,
+});
