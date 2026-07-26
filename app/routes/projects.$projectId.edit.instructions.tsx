@@ -166,7 +166,7 @@ export default function EditInstructions({
         title={
           isTeam ? `Edit instructions — ${activeAgent}` : "Edit instructions"
         }
-        description="Save keeps the change here until you publish — the Publish button in the header takes everything you've saved live."
+        description="Save keeps the change here until you publish — Publish, on the Deployment tab, takes everything you've saved live."
       />
 
       {actionData?.error && (

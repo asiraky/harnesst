@@ -1,12 +1,21 @@
 /**
  * The Publish control + panel (issue #225 §4.1/§4.2) — the ONE way changes go live.
  *
- * PublishControl sits in AppShell's header on every back-of-house page. It is project-scoped
- * (derives the projectId from the URL, like WorkspaceTasksIndicator), self-fetches the
+ * PublishControl mounts in AppShell on every back-of-house page. It is project-scoped (derives
+ * the projectId from the URL, like WorkspaceTasksIndicator), self-fetches the
  * `repos/:projectId/publish` resource route with a keyed fetcher (data survives in-workspace
  * navigation), and polls — 3s while a publish runs, 10s otherwise, paused while the tab is
- * hidden. It renders one of five states: quiet "Live · v12", "Not deployed yet" + a Publish
- * button (deploys HEAD), "Publish N changes", a live running status, or "Publish failed".
+ * hidden.
+ *
+ * It renders TWO things. (1) PublishNudgeBanner: a dismissible strip below the header, the same
+ * shape as the workspace task strip, and ONLY for the states that have no task backing them —
+ * saved-but-unpublished changes, and a never-deployed repo. Running/failed/succeeded publishes
+ * are already task rows in WorkspaceTasksIndicator, so surfacing them here too would double them
+ * up. (2) PublishPanel, always mounted, so any `?publish=1` link on any page opens it.
+ *
+ * The permanent, never-dismissible entry point is PublishDeploymentButton on the repo-level
+ * Deployment tab. The header carries no Publish button at all: it was competing with the
+ * wordmark, breadcrumbs, primary nav and account controls inside one max-w-5xl row, and lost.
  *
  * PublishPanel is the control's dialog. Review mode shows every saved change before anything
  * goes live: grouped by owning member (+ shared), per-file action badge (Edited/New/Deleted),
@@ -131,7 +140,11 @@ export function PublishControl() {
   const state = publishControlState(data);
   return (
     <>
-      <PublishControlButton state={state} onOpen={() => handleOpenChange(true)} />
+      <PublishNudgeBanner
+        state={state}
+        projectId={projectId}
+        onOpen={() => handleOpenChange(true)}
+      />
       <PublishPanel
         projectId={projectId}
         data={data}
@@ -156,66 +169,181 @@ export function usePublishHref(): string {
   return `?${params.toString()}`;
 }
 
-/** The header rendering of one §4.1 state. Presentational; exported for unit tests. */
-export function PublishControlButton({
+/**
+ * Which §4.1 states the nudge banner speaks for. Deliberately NOT all of them: running, failed
+ * and just-succeeded publishes each own a workspace task, and WorkspaceTasksIndicator already
+ * renders that task as a strip row directly above this one. Live and deploying are quiet status,
+ * not a call to action — they belong on the Deployment tab, not in the app chrome. What is left
+ * is the pair with no task and a real next step: changes saved but not live, and a repository
+ * that has never been deployed.
+ */
+function nudgeCopy(
+  state: PublishControlState,
+): { headline: string; cta: string } | null {
+  if (state.kind === "ready") {
+    return {
+      headline: `${state.count} saved change${state.count === 1 ? "" : "s"} ${
+        state.count === 1 ? "isn't" : "aren't"
+      } live yet`,
+      cta: "Review & publish",
+    };
+  }
+  if (state.kind === "never-deployed") {
+    return {
+      headline: "This repository hasn't been deployed yet",
+      cta: "Publish it",
+    };
+  }
+  return null;
+}
+
+/**
+ * sessionStorage key for a dismissed nudge. Per project, and the VALUE is the change count that
+ * was dismissed: saving another change moves the count, which un-dismisses the banner. Dismissing
+ * is "I know, not now", not "never tell me about this repository again". sessionStorage (not
+ * local) so it lasts the tab, not forever.
+ */
+function nudgeDismissKey(projectId: string): string {
+  return `harnesst:publish-nudge:${projectId}`;
+}
+
+/** The signature a dismissal is remembered against — changes when the nudge's substance changes. */
+function nudgeSignature(state: PublishControlState): string {
+  return state.kind === "ready" ? `ready:${state.count}` : state.kind;
+}
+
+/**
+ * The dismissible publish nudge (the strip under the header). Presentational apart from its own
+ * dismissal memory; exported for unit tests.
+ */
+export function PublishNudgeBanner({
   state,
+  projectId,
   onOpen,
 }: {
   state: PublishControlState;
+  projectId: string;
   onOpen: () => void;
 }) {
+  const signature = nudgeSignature(state);
+  const [dismissed, setDismissed] = useState<string | null>(() => {
+    if (typeof sessionStorage === "undefined") return null;
+    return sessionStorage.getItem(nudgeDismissKey(projectId));
+  });
+  // Re-read when the project changes — this component follows the URL, so navigating between
+  // repositories must not carry the previous repository's dismissal across.
+  useEffect(() => {
+    if (typeof sessionStorage === "undefined") return;
+    setDismissed(sessionStorage.getItem(nudgeDismissKey(projectId)));
+  }, [projectId]);
+
+  const copy = nudgeCopy(state);
+  if (!copy || dismissed === signature) return null;
+
+  const dismiss = () => {
+    setDismissed(signature);
+    if (typeof sessionStorage !== "undefined") {
+      sessionStorage.setItem(nudgeDismissKey(projectId), signature);
+    }
+  };
+
+  return (
+    <div className="border-t bg-muted/30" role="status" aria-live="polite">
+      <div className="mx-auto max-w-5xl px-4 sm:px-6">
+        <div className="flex items-center gap-2 py-1.5 text-xs sm:text-sm">
+          <span className="size-1.5 shrink-0 rounded-full bg-primary" aria-hidden />
+          <span className="min-w-0 truncate font-medium">{copy.headline}</span>
+          <button
+            type="button"
+            onClick={onOpen}
+            className="shrink-0 text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
+          >
+            {copy.cta} →
+          </button>
+          <button
+            type="button"
+            onClick={dismiss}
+            aria-label="Dismiss"
+            className="ml-auto flex size-5 shrink-0 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+          >
+            <X className="size-3.5" aria-hidden />
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * The permanent Publish entry point, on the repo-level Deployment tab (§4.1). Unlike the header
+ * nudge this is ALWAYS rendered — it is the answer to "where do I publish from?", so it cannot be
+ * dismissed, and it cannot be absent while the publish state is still loading. It reads the state
+ * from the same keyed fetcher PublishControl polls (AppShell mounts that on every page, including
+ * this one), so it costs no extra request and never disagrees with the banner.
+ *
+ * Opening the panel goes through the URL (`?publish=1`), the same mechanism every other
+ * "Review & publish →" link uses — the panel itself lives in AppShell, not here.
+ */
+export function PublishDeploymentButton({ className }: { className?: string }) {
+  const data = useFetcher<PublishStatePayload>({ key: "publish-state" }).data;
+  const publishHref = usePublishHref();
+  const state = data?.connected ? publishControlState(data) : null;
+  return (
+    <div className={cn("flex items-center gap-3", className)}>
+      {/* Never disabled, including mid-publish: the panel is also the pipeline view, so during a
+          running publish this button is how you get to the live stepper. The panel's own primary
+          action is what refuses to start a second publish. */}
+      <Button asChild size="sm">
+        <Link to={publishHref} prefetch="none">
+          <Rocket className="h-4 w-4" aria-hidden />
+          {state?.kind === "ready"
+            ? `Publish ${state.count} change${state.count === 1 ? "" : "s"}`
+            : "Publish"}
+        </Link>
+      </Button>
+      <PublishStatusText state={state} />
+    </div>
+  );
+}
+
+/** The quiet status line beside the Deployment tab's Publish button. */
+function PublishStatusText({ state }: { state: PublishControlState | null }) {
+  if (!state) return null;
   if (state.kind === "live") {
     return (
-      <span className="whitespace-nowrap text-xs text-muted-foreground">
+      <span className="text-xs text-muted-foreground">
         Live{state.version ? ` · ${state.version}` : ""}
       </span>
     );
   }
-  // No publish task owns this deploy (a HEAD publish, a rollback), so there is no pipeline to
-  // open — quiet status text, like "Live", rather than a button that leads nowhere.
   if (state.kind === "deploying") {
     return (
-      <span className="flex items-center gap-1.5 whitespace-nowrap text-xs text-muted-foreground">
+      <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
         <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
         Starting your agents
       </span>
     );
   }
-  if (state.kind === "never-deployed") {
+  if (state.kind === "running") {
     return (
-      <span className="flex items-center gap-2">
-        <span className="hidden whitespace-nowrap text-xs text-muted-foreground sm:inline">
-          Not deployed yet
-        </span>
-        <Button size="sm" onClick={onOpen}>
-          <Rocket className="h-4 w-4" aria-hidden />
-          Publish
-        </Button>
+      <span className="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
+        <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" aria-hidden />
+        <span className="truncate">{state.summary ?? "Publishing…"}</span>
       </span>
     );
   }
-  if (state.kind === "ready") {
+  if (state.kind === "failed") {
     return (
-      <Button size="sm" onClick={onOpen}>
-        <Rocket className="h-4 w-4" aria-hidden />
-        Publish {state.count} change{state.count === 1 ? "" : "s"}
-      </Button>
+      <span className="flex items-center gap-1.5 text-xs text-destructive">
+        <XCircle className="h-3.5 w-3.5" aria-hidden />
+        Last publish failed
+      </span>
     );
   }
-  if (state.kind === "running") {
-    return (
-      <Button variant="outline" size="sm" onClick={onOpen}>
-        <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
-        <span className="max-w-48 truncate">{state.summary ?? "Publishing…"}</span>
-      </Button>
-    );
+  if (state.kind === "never-deployed") {
+    return <span className="text-xs text-muted-foreground">Not deployed yet</span>;
   }
-  return (
-    <Button variant="destructive" size="sm" onClick={onOpen}>
-      <XCircle className="h-4 w-4" aria-hidden />
-      Publish failed
-    </Button>
-  );
+  return null;
 }
 
 export function PublishPanel({

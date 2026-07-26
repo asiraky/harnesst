@@ -1,6 +1,8 @@
 /**
- * Deployment — the advanced, mostly read-only operations surface (issue #225). Publishing lives
- * in the header Publish control; this tab is what's RUNNING: environments (with team CRUD), each
+ * Deployment — the operations surface (issue #225), and the permanent home of Publish: the
+ * PublishDeploymentButton in this page's header is the one always-present way to ship, with the
+ * app chrome carrying only a dismissible nudge. Everything else here is what's RUNNING:
+ * environments (with team CRUD), each
  * environment's running version, version history with Roll back as the primary action, deploy
  * failure detail with retry/dismiss, and the per-member channel/connection setup cards.
  *
@@ -46,6 +48,7 @@ import {
   FreshnessBadge,
   releaseFreshness,
 } from "~/components/deploy-freshness";
+import { PublishDeploymentButton } from "~/components/publish";
 import {
   AgentNav,
   AppShell,
@@ -1036,6 +1039,10 @@ export default function Deployment({
       <PageHeader
         icon={Rocket}
         accent="emerald"
+        // The permanent home of Publish (§4.1). Repo level only: a publish ships every saved
+        // change across the whole repository, so offering it from one member's page would
+        // misstate its scope. "single" IS the repo level — that repo just has one agent.
+        actions={level !== "member" ? <PublishDeploymentButton /> : undefined}
         title={
           level === "member" ? `Deployment — ${activeAgent}` : "Deployment"
         }
@@ -1051,7 +1058,7 @@ export default function Deployment({
           <AlertTitle>{justInstalled} install saved</AlertTitle>
           <AlertDescription>
             Review and publish it with your other saved changes — the Publish
-            button in the header.
+            button at the top of this page.
           </AlertDescription>
         </Alert>
       )}
@@ -1743,8 +1750,8 @@ function TeamVersionHistory({
         )}
         {teamVersions.length === 0 ? (
           <p className="text-sm text-muted-foreground">
-            No versions yet. Use the Publish button in the header to deploy the
-            repository.
+            No versions yet. Use the Publish button at the top of this page to
+            deploy the repository.
           </p>
         ) : (
           <ul className="divide-y rounded-lg border text-sm">
@@ -2022,8 +2029,8 @@ function EnvironmentsCard({
                     </>
                   ) : (
                     <span className="text-muted-foreground">
-                      Nothing deployed — use the Publish button in the header,
-                      or Deploy a version below.
+                      Nothing deployed — use the Publish button at the top of this
+                      page, or Deploy a version below.
                     </span>
                   )}
                   {canAct && (
@@ -2469,8 +2476,8 @@ function VersionHistory({
         )}
         {releases.length === 0 ? (
           <p className="text-sm text-muted-foreground">
-            No versions yet. Use the Publish button in the header to deploy the
-            repository.
+            No versions yet. Use the Publish button at the top of this page to
+            deploy the repository.
           </p>
         ) : (
           <ul className="divide-y rounded-lg border text-sm">

@@ -1152,7 +1152,7 @@ export default function Settings({
                 : `${justUninstalled} uninstall saved`}
           </AlertTitle>
           <AlertDescription>
-            Review and publish it with the Publish button in the header.
+            Review and publish it from the Deployment tab.
           </AlertDescription>
         </Alert>
       )}
@@ -1300,7 +1300,7 @@ function ModelSection({
         <p className="mt-2 text-sm text-muted-foreground">
           {fetcher.data.mode === "applied"
             ? "Saved — the agent picks this up on its next step, no redeploy needed."
-            : "Saved — publish it with the Publish button in the header."}
+            : "Saved — publish it from the Deployment tab."}
         </p>
       )}
     </section>
