@@ -19,6 +19,7 @@ import {
 } from "react-router";
 
 import { ConfirmDialog } from "~/components/confirm-dialog";
+import { usePublishHref } from "~/components/publish";
 import { RelativeTime } from "~/components/localized-values";
 import { NewResourceDialog } from "~/components/new-resource-dialog";
 import { categoryMeta } from "~/components/resource-category";
@@ -279,6 +280,7 @@ export default function ResourceCategory({
   const { project, category, roster, activeAgent, activeRoot, isTeam, rows } =
     loaderData;
   const ctx = contextPath(project.id, isTeam ? activeAgent : null);
+  const publishHref = usePublishHref();
   const submit = useSubmit();
   const navigation = useNavigation();
   const busy = navigation.state !== "idle";
@@ -324,7 +326,7 @@ export default function ResourceCategory({
             deletion — it rides with your other saved changes and nothing
             touches the repository until you publish.{" "}
             <Link
-              to="?publish=1"
+              to={publishHref}
               className="font-medium underline underline-offset-4"
             >
               Review &amp; publish →

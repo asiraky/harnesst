@@ -388,8 +388,14 @@ export const loader = (args: LoaderFunctionArgs) =>
           }
         }
         // Version history grouped by commit (releaseRows are newest-first; first per sha wins).
+        // Members only: the built-in assistant has its own release stream (t1, t2, … at
+        // `tmpl-*` shas), and rolling back to one can only fail — deployTeamVersion looks the
+        // sha up against each ROSTER member and finds nothing. §2.10 makes rollback the only
+        // safety net, so it must never offer a version it cannot restore.
+        const memberIds = new Set(roster.map((a) => a.id));
         const versionByCommit = new Map<string, TeamVersionRow>();
         for (const r of releaseRows) {
+          if (!memberIds.has(r.agentId)) continue;
           if (versionByCommit.has(r.gitSha)) continue;
           versionByCommit.set(r.gitSha, {
             gitSha: r.gitSha,

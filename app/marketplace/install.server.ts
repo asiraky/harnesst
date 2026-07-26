@@ -353,7 +353,7 @@ function mergeDependencies(
     }
     if (rangesIntersect(existing, wantRange)) continue;
     warnings.push(
-      `\`${name}\`: agent pins \`${existing}\`, template wants \`${wantRange}\` — kept the agent's; review before merging.`,
+      `\`${name}\`: agent pins \`${existing}\`, template wants \`${wantRange}\` — kept the agent's; review before publishing.`,
     );
   }
   const sorted = Object.fromEntries(

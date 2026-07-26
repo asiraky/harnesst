@@ -1152,7 +1152,7 @@ export default function InstallWizard({
 
               {preview.warnings.length > 0 && (
                 <Alert>
-                  <AlertTitle>Review before merging</AlertTitle>
+                  <AlertTitle>Review before publishing</AlertTitle>
                   <AlertDescription>
                     <ul className="space-y-1">
                       {preview.warnings.map((w) => (

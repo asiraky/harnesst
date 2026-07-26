@@ -147,6 +147,11 @@ export interface DraftGroup {
  * then a trailing shared block (agentId null) when any unattributed changes exist. Members with
  * no changes are omitted; file order is preserved within each group. Changes are attributed to
  * roster members by agentId, so the breakdown names match the roster the user sees.
+ *
+ * Fail safe: a change whose agentId matches nothing in the roster falls into the shared block
+ * rather than being dropped. The panel's list is what the Publish button ships (§2.3 publishes
+ * everything), so a file the roster can't name must still be shown — silently omitting it would
+ * let the header's count and the panel's list disagree and publish a file nobody reviewed.
  */
 export function groupDrafts(
   drafts: DraftChange[],
@@ -167,8 +172,12 @@ export function groupDrafts(
   for (const member of roster) {
     const files = byId.get(member.id);
     if (files && files.length > 0) groups.push({ member: member.name, files });
+    byId.delete(member.id);
   }
-  if (shared.length > 0) groups.push({ member: null, files: shared });
+  // Anything still in byId belongs to no known roster entry — keep it visible.
+  const orphaned = [...byId.values()].flat();
+  const unnamed = [...shared, ...orphaned];
+  if (unnamed.length > 0) groups.push({ member: null, files: unnamed });
   return groups;
 }
 
@@ -194,9 +203,15 @@ export interface PublishStatePayload {
   connected: boolean;
   changeCount: number;
   groups: PublishGroup[];
-  /** The project has ever deployed (any deployment row). False → the Publish-HEAD state. */
+  /** The team has ever deployed (any deployment row). False → the Publish-HEAD state. */
   deployed: boolean;
-  /** Version label currently live (newest live deployment), when one is running. */
+  /**
+   * A team deployment is pending/building right now. Deploys started outside a publish task — a
+   * HEAD publish, a rollback — have no pipeline to watch, so this is what keeps the control from
+   * reporting "Live" while the agents are still coming up.
+   */
+  deploying: boolean;
+  /** Version label currently live (newest live TEAM deployment), when one is running. */
   liveVersion: string | null;
   /** The team's environment names — only rendered when the panel must ask (§2.8). */
   envNames: string[];
@@ -231,13 +246,14 @@ export type PublishControlState =
   | { kind: "running"; summary: string | null }
   | { kind: "failed" }
   | { kind: "ready"; count: number }
+  | { kind: "deploying" }
   | { kind: "live"; version: string | null }
   | { kind: "never-deployed" };
 
 export function publishControlState(
   data: Pick<
     PublishStatePayload,
-    "changeCount" | "deployed" | "liveVersion" | "running" | "failed"
+    "changeCount" | "deployed" | "deploying" | "liveVersion" | "running" | "failed"
   >,
 ): PublishControlState {
   if (data.running) {
@@ -245,6 +261,9 @@ export function publishControlState(
   }
   if (data.failed) return { kind: "failed" };
   if (data.changeCount > 0) return { kind: "ready", count: data.changeCount };
+  // Agents still coming up with no publish task to watch (a HEAD publish, a rollback): say so
+  // rather than claiming "Live" for a version that isn't serving yet.
+  if (data.deploying) return { kind: "deploying" };
   if (data.deployed) return { kind: "live", version: data.liveVersion };
   return { kind: "never-deployed" };
 }

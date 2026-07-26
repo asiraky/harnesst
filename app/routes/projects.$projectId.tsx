@@ -19,6 +19,7 @@ import {
 } from "react-router";
 
 import { NewResourceDialog } from "~/components/new-resource-dialog";
+import { usePublishHref } from "~/components/publish";
 import { EmptyTeamState } from "~/components/empty-team-state";
 import {
   AgentNav,
@@ -422,6 +423,7 @@ export default function ProjectDetail({
     draftPaths,
     running,
   } = loaderData;
+  const publishHref = usePublishHref();
   const base = `/repos/${project.id}`;
   // The page's hierarchy level decides its tab set and where its links point (M5.8).
   const level = view === "team" ? "repo" : teamLayout ? "member" : "single";
@@ -590,7 +592,7 @@ export default function ProjectDetail({
           <AlertDescription>
             The new agent&rsquo;s files are saved with your other changes.{" "}
             <Link
-              to="?publish=1"
+              to={publishHref}
               className="font-medium underline underline-offset-4"
             >
               Review &amp; publish →

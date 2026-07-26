@@ -36,6 +36,7 @@ import {
 import semver from "semver";
 
 import { ConfirmDialog } from "~/components/confirm-dialog";
+import { usePublishHref } from "~/components/publish";
 import { EmptyTeamState } from "~/components/empty-team-state";
 import { LocalizedDate } from "~/components/localized-values";
 import { ModelSelection } from "~/components/model-select";
@@ -1030,6 +1031,7 @@ export default function Settings({
     canRenameMember,
     pendingName,
   } = loaderData;
+  const publishHref = usePublishHref();
   const base = contextPath(project.id, level === "member" ? activeAgent : null);
   const [params] = useSearchParams();
   const justUpdated = params.get("updated");
@@ -1117,7 +1119,7 @@ export default function Settings({
             The directory move is saved with your other changes — nothing is
             renamed until you publish.{" "}
             <Link
-              to="?publish=1"
+              to={publishHref}
               className="font-medium underline underline-offset-4"
             >
               Review &amp; publish →
@@ -1132,7 +1134,7 @@ export default function Settings({
             The deletion is saved with your other changes — nothing is removed
             until you publish.{" "}
             <Link
-              to="?publish=1"
+              to={publishHref}
               className="font-medium underline underline-offset-4"
             >
               Review &amp; publish →
@@ -1428,7 +1430,7 @@ function MarketplaceInstallsSection({
                     }
                     title={`Uninstall ${install.name}?`}
                     description={
-                      `Stages a change-set deleting ${install.files.length} file${install.files.length === 1 ? "" : "s"}:\n` +
+                      `Saves the deletion of ${install.files.length} file${install.files.length === 1 ? "" : "s"}:\n` +
                       install.files.join("\n") +
                       (install.depsLeft.length > 0
                         ? `\n\nnpm packages left for review: ${install.depsLeft.join(", ")}`

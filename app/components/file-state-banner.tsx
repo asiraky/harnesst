@@ -9,6 +9,7 @@
 import { PencilLine, Trash2 } from "lucide-react";
 import { Link } from "react-router";
 
+import { usePublishHref } from "~/components/publish";
 import { Alert, AlertDescription, AlertTitle } from "~/components/ui/alert";
 import type { FileView } from "~/drafts/drafts.server";
 
@@ -23,6 +24,8 @@ export function FileStateBanner({
   /** A deletion is saved for this file (the form shows the repo content). */
   stagedDeletion?: boolean;
 }) {
+  const publishHref = usePublishHref();
+
   if (stagedDeletion && !saved) {
     return (
       <Alert className="mb-6 border-amber-500/40">
@@ -36,7 +39,7 @@ export function FileStateBanner({
             content. Saving here replaces the deletion with an edit.
           </span>
           <Link
-            to="?publish=1"
+            to={publishHref}
             className="font-medium underline underline-offset-4"
           >
             Review &amp; publish →
@@ -56,7 +59,7 @@ export function FileStateBanner({
         <AlertDescription className="flex flex-wrap items-center gap-x-3 gap-y-1">
           <span>This file has an unpublished save; the form shows it.</span>
           <Link
-            to="?publish=1"
+            to={publishHref}
             className="font-medium underline underline-offset-4"
           >
             Review &amp; publish →

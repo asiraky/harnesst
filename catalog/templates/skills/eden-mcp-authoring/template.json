@@ -2,7 +2,7 @@
   "id": "eden-mcp-authoring",
   "type": "skill",
   "name": "Authoring eve agents with Eden MCP",
-  "description": "End-to-end guidance for authoring eve agents through Eden's MCP server: stage complete files, publish one reviewable PR, merge after review, deploy the exact merge, and poll every deployment until live.",
+  "description": "End-to-end guidance for authoring eve agents through Eden's MCP server: save complete files, review every pending change, publish once, and poll every deployment until live.",
   "version": "0.1.0",
   "eve": ">=0.1.0",
   "files": ["skills/eden-mcp-authoring/SKILL.md"]

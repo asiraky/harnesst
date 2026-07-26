@@ -10,6 +10,7 @@ import { getSessionAuth, sessionLoader } from "~/auth/session.server";
 import { redirect, type ActionFunctionArgs, type LoaderFunctionArgs } from "react-router";
 
 import { requireProject } from "~/project/guard.server";
+import { presentTasks } from "~/publish/present.server";
 import { getRuntime } from "~/seams/index.server";
 import { dismissTask, listWorkspaceTasks } from "~/tasks/tasks.server";
 
@@ -19,14 +20,18 @@ export const loader = (args: LoaderFunctionArgs) =>
     async ({ auth }) => {
       const project = await requireProject(auth, args.params.projectId);
       const tasks = await listWorkspaceTasks(project.id);
+      // Present through the same resolver the publish panel uses (§4.3): the compact indicator
+      // must not call a publish succeeded while its agents are still coming up, nor miss a
+      // deploy that failed after the pipeline queued it.
+      const presented = await presentTasks(tasks);
       return {
         tasks: tasks.map((t) => ({
           id: t.id,
           kind: t.kind,
           subjectKey: t.subjectKey,
           label: t.label,
-          steps: t.steps,
-          status: t.status,
+          steps: presented.get(t.id)?.steps ?? t.steps,
+          status: presented.get(t.id)?.status ?? t.status,
           originUrl: t.originUrl,
           resultUrl: t.resultUrl,
           error: t.error,

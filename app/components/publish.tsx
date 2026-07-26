@@ -142,6 +142,20 @@ export function PublishControl() {
   );
 }
 
+/**
+ * A link target that opens the publish panel: `publish=1` added ON TOP of the params already in
+ * the URL. A bare `to="?publish=1"` replaces the whole query string, which drops the params the
+ * page is keyed on — the `file` a code or schedule editor is showing, the conversation on the
+ * assistant page — so the route bounces elsewhere and takes `publish=1` with it. Every
+ * "Review & publish →" link goes through here.
+ */
+export function usePublishHref(): string {
+  const [searchParams] = useSearchParams();
+  const params = new URLSearchParams(searchParams);
+  params.set("publish", "1");
+  return `?${params.toString()}`;
+}
+
 /** The header rendering of one §4.1 state. Presentational; exported for unit tests. */
 export function PublishControlButton({
   state,
@@ -154,6 +168,16 @@ export function PublishControlButton({
     return (
       <span className="whitespace-nowrap text-xs text-muted-foreground">
         Live{state.version ? ` · ${state.version}` : ""}
+      </span>
+    );
+  }
+  // No publish task owns this deploy (a HEAD publish, a rollback), so there is no pipeline to
+  // open — quiet status text, like "Live", rather than a button that leads nowhere.
+  if (state.kind === "deploying") {
+    return (
+      <span className="flex items-center gap-1.5 whitespace-nowrap text-xs text-muted-foreground">
+        <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
+        Starting your agents
       </span>
     );
   }
@@ -274,14 +298,26 @@ export function PublishPanel({
   }, [open]);
 
   // Never-deployed repos with nothing saved publish the branch HEAD instead (§4.1). A HEAD
-  // publish has no pipeline task — close the panel when the POST redirects home clean.
+  // publish has no pipeline task — close the panel when the POST comes back clean.
   const headMode = data.changeCount === 0 && !data.deployed;
+  // Which intent the in-flight POST actually carried. Re-deriving headMode when the fetcher
+  // settles doesn't work: shipRepoHead inserts the deployment rows before that, so the next
+  // revalidation flips `deployed` true and headMode false — which used to strand the panel
+  // showing five pending steps that no task would ever advance.
+  const submittedHead = useRef(false);
   const wasPublishing = useRef(false);
   useEffect(() => {
-    const finished = wasPublishing.current && !publishing && !publish.data?.error;
+    const finished = wasPublishing.current && !publishing;
     wasPublishing.current = publishing;
-    if (finished && headMode) onOpenChange(false);
-  }, [publishing, publish.data, headMode, onOpenChange]);
+    if (!finished) return;
+    if (submittedHead.current) {
+      submittedHead.current = false;
+      if (!publish.data?.error) onOpenChange(false);
+      return;
+    }
+    // A publish that came back without a task id never started one — don't wait on it.
+    if (!publish.data?.taskId) setAwaitingStart(false);
+  }, [publishing, publish.data, onOpenChange]);
 
   const handleOpenChange = (next: boolean) => {
     if (next) setErrorStale(true);
@@ -290,7 +326,9 @@ export function PublishPanel({
 
   const submit = () => {
     setErrorStale(false);
-    setAwaitingStart(true);
+    submittedHead.current = headMode;
+    // Only a pipeline publish has a task to wait for; a HEAD publish must never show one.
+    setAwaitingStart(!headMode);
     publish.submit(
       {
         intent: headMode ? "publish-head" : "publish",
@@ -302,7 +340,7 @@ export function PublishPanel({
 
   const mode: "success" | "pipeline" | "review" = success
     ? "success"
-    : data.running || failed || (awaitingStart && !headMode)
+    : data.running || failed || awaitingStart
       ? "pipeline"
       : "review";
   const steps = data.running?.steps ?? failed?.steps ?? initialPublishSteps();

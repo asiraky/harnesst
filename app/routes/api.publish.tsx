@@ -27,7 +27,7 @@ import {
 import { user } from "~/db/auth-schema";
 import { db } from "~/db/client.server";
 import { listAgents } from "~/db/queries.server";
-import { deployments, environments, releases } from "~/db/schema";
+import { agents as agentsTable, deployments, environments, releases } from "~/db/schema";
 import { listTeamEnvNames } from "~/deploy/environments.server";
 import { shipRepoHead } from "~/deploy/ship.server";
 import { discardDrafts, getDraft, listDrafts } from "~/drafts/drafts.server";
@@ -35,7 +35,6 @@ import { getAgentSource } from "~/github/cached.server";
 import { readAgentFile } from "~/github/repo.server";
 import { ensureWorkerStarted } from "~/jobs/worker.server";
 import { contextPath } from "~/lib/paths";
-import { resolveAgentContext } from "~/project/agent-context.server";
 import {
   isAssistantConfigPath,
   requireProject,
@@ -44,14 +43,11 @@ import {
 } from "~/project/guard.server";
 import { cleanupOrphanedPendingSecrets } from "~/project/secrets.server";
 import { startPublish } from "~/publish/pipeline.server";
+import { presentTasks } from "~/publish/present.server";
 import {
   changeAction,
-  deploymentIdsOf,
   groupDrafts,
-  resolveDeployProgress,
   stepsFailure,
-  stepsSettled,
-  type DeploymentSnapshot,
   type PublishChangeRow,
   type PublishDiffPayload,
   type PublishStatePayload,
@@ -60,11 +56,18 @@ import { unifiedDiff } from "~/publish/unified-diff";
 import { getRuntime } from "~/seams/index.server";
 import { listWorkspaceTasks } from "~/tasks/tasks.server";
 
+/** Group label for changes the built-in assistant owns (`.eden/assistant/**`). */
+const ASSISTANT_GROUP = "Assistant configuration";
+
+/** How many staged paths the badge will probe individually before it stops asking (§4.2). */
+const EXISTENCE_PROBE_LIMIT = 25;
+
 const DISCONNECTED: PublishStatePayload = {
   connected: false,
   changeCount: 0,
   groups: [],
   deployed: false,
+  deploying: false,
   liveVersion: null,
   envNames: [],
   needsEnvironmentChoice: false,
@@ -115,25 +118,28 @@ export const loader = (args: LoaderFunctionArgs) =>
 
 /** Build the GET payload the control polls: changes, live status, env question, task state. */
 async function publishState(connected: ConnectedProject): Promise<PublishStatePayload> {
-  const [drafts, tasks, envNames, { roster }] = await Promise.all([
+  const [drafts, tasks, envNames, agents] = await Promise.all([
     listDrafts(connected.id),
     listWorkspaceTasks(connected.id),
     listTeamEnvNames(connected.id),
-    resolveAgentContext(connected.id, null),
+    getRuntime().data.agents.listByProject(connected.id),
   ]);
 
-  // Repo tree for the New-vs-Edited badge — one cached read, never a per-file fetch. A
-  // failure degrades badges to "edited" rather than blocking the control.
-  let repoPaths: Set<string> | null = null;
-  try {
-    const source = await getAgentSource(connected.repoInstallationId, {
-      owner: connected.repoOwner,
-      repo: connected.repoName,
-    });
-    repoPaths = new Set(source.paths);
-  } catch {
-    repoPaths = null;
-  }
+  // The panel groups by EVERY agent that can own a change, not just the member roster: the
+  // built-in assistant owns `.eden/assistant/**`, and a change the grouping can't name is a
+  // change the user never sees but Publish still ships (§4.2 — every pending change, with a
+  // diff and its owner).
+  const roster = [
+    ...agents.filter((a) => a.kind === "member").map((a) => ({ id: a.id, name: a.name })),
+    ...agents
+      .filter((a) => a.kind === "assistant")
+      .map((a) => ({ id: a.id, name: ASSISTANT_GROUP })),
+  ];
+
+  const existsInRepo = await resolveExistence(
+    connected,
+    drafts.map((d) => d.path),
+  );
 
   // Who saved each change: a user id resolves to a display name; null = the assistant
   // (§2.7 — assistant-saved drafts are the authorless ones).
@@ -152,36 +158,52 @@ async function publishState(connected: ConnectedProject): Promise<PublishStatePa
       d.path,
       {
         path: d.path,
-        action: changeAction(d.content, repoPaths ? repoPaths.has(d.path) : null),
-        savedBy: d.createdBy ? (userNames.get(d.createdBy) ?? "a teammate") : null,
+        action: changeAction(d.content, existsInRepo.get(d.path) ?? null),
+        savedBy: d.createdBy ? (userNames.get(d.createdBy) || "a teammate") : null,
         savedAt: d.updatedAt.toISOString(),
       },
     ]),
   );
-  const groups = groupDrafts(
-    drafts,
-    roster.map((a) => ({ id: a.id, name: a.name })),
-  ).map((g) => ({
+  const groups = groupDrafts(drafts, roster).map((g) => ({
     member: g.member,
     files: g.files.map((path) => rowByPath.get(path)!),
   }));
 
-  // Live status: the newest live deployment's version, and whether ANY deployment exists
-  // (never-deployed repos get the Publish-HEAD state instead of "Live").
-  const [liveRow] = await db
-    .select({ version: releases.version })
-    .from(deployments)
-    .innerJoin(environments, eq(deployments.environmentId, environments.id))
-    .innerJoin(releases, eq(deployments.releaseId, releases.id))
-    .where(and(eq(environments.projectId, connected.id), eq(deployments.status, "live")))
-    .orderBy(desc(deployments.updatedAt))
-    .limit(1);
-  const [anyDeployment] = await db
-    .select({ id: deployments.id })
-    .from(deployments)
-    .innerJoin(environments, eq(deployments.environmentId, environments.id))
-    .where(eq(environments.projectId, connected.id))
-    .limit(1);
+  // Live status, read across the TEAM's environments only. The built-in assistant runs as its
+  // own instance with its own release stream (t1, t2, …); letting an assistant redeploy win
+  // this query makes the header read "Live · t3" for a team running v19 (§4.1 — the version
+  // the team is running). `deploying` covers the deploys that no publish task owns (a HEAD
+  // publish, a rollback), so the control reports progress instead of claiming "Live" with no
+  // version while every row is still pending.
+  const teamDeployments = and(
+    eq(environments.projectId, connected.id),
+    eq(agentsTable.kind, "member"),
+  );
+  const [[liveRow], [anyDeployment], [inFlight]] = await Promise.all([
+    db
+      .select({ version: releases.version })
+      .from(deployments)
+      .innerJoin(environments, eq(deployments.environmentId, environments.id))
+      .innerJoin(agentsTable, eq(environments.agentId, agentsTable.id))
+      .innerJoin(releases, eq(deployments.releaseId, releases.id))
+      .where(and(teamDeployments, eq(deployments.status, "live")))
+      .orderBy(desc(deployments.updatedAt))
+      .limit(1),
+    db
+      .select({ id: deployments.id })
+      .from(deployments)
+      .innerJoin(environments, eq(deployments.environmentId, environments.id))
+      .innerJoin(agentsTable, eq(environments.agentId, agentsTable.id))
+      .where(teamDeployments)
+      .limit(1),
+    db
+      .select({ id: deployments.id })
+      .from(deployments)
+      .innerJoin(environments, eq(deployments.environmentId, environments.id))
+      .innerJoin(agentsTable, eq(environments.agentId, agentsTable.id))
+      .where(and(teamDeployments, inArray(deployments.status, ["pending", "building"])))
+      .limit(1),
+  ]);
 
   const running = tasks.find((t) => t.subjectKey === "publish" && t.status === "running");
   // Newest failed/succeeded, undismissed publish (listWorkspaceTasks filters dismissed rows).
@@ -194,50 +216,35 @@ async function publishState(connected: ConnectedProject): Promise<PublishStatePa
     .reverse()
     .find((t) => t.subjectKey === "publish" && t.status === "succeeded");
 
-  // Present each task's steps against the LIVE deployment rows (§3.2 honesty): the pipeline
-  // resolves when every deploy is queued, but "your agents started" is only true once those
-  // rows reach `live` — and a post-queue deploy failure must surface here, not just on the
-  // Deployment tab. A completed task whose deploys are still coming up is presented as the
-  // running publish; one whose deploy failed is presented as the failed publish.
-  const deploymentIds = [
-    ...new Set([running, failed, succeeded].flatMap((t) => deploymentIdsOf(t?.steps))),
-  ];
-  const deploymentRows = deploymentIds.length
-    ? await db
-        .select({
-          id: deployments.id,
-          status: deployments.status,
-          errorDetail: deployments.errorDetail,
-        })
-        .from(deployments)
-        .where(inArray(deployments.id, deploymentIds))
-    : [];
-  const snapshots = new Map<string, DeploymentSnapshot>(
-    deploymentRows.map((d) => [d.id, { status: d.status, errorDetail: d.errorDetail }]),
+  // Present each task's steps against the LIVE deployment rows (§3.2 honesty), through the same
+  // resolver the compact header indicator reads — a completed task whose deploys are still
+  // coming up presents as running, one whose deploy failed after the queue presents as failed.
+  const presented = await presentTasks(
+    [running, failed, succeeded].filter((t): t is NonNullable<typeof t> => t != null),
   );
   let runningPayload = running
-    ? { taskId: running.id, steps: resolveDeployProgress(running.steps, snapshots) }
+    ? { taskId: running.id, steps: presented.get(running.id)?.steps ?? running.steps }
     : null;
   let failedPayload = failed
     ? {
         taskId: failed.id,
-        steps: resolveDeployProgress(failed.steps, snapshots),
+        steps: presented.get(failed.id)?.steps ?? failed.steps,
         error: failed.error,
       }
     : null;
   let succeededPayload: PublishStatePayload["succeeded"] = null;
   if (succeeded) {
-    const resolved = resolveDeployProgress(succeeded.steps, snapshots);
-    const failure = stepsFailure(resolved);
-    if (failure && (!failed || succeeded.createdAt > failed.createdAt)) {
+    const view = presented.get(succeeded.id);
+    const resolved = view?.steps ?? succeeded.steps;
+    if (view?.status === "failed" && (!failed || succeeded.createdAt > failed.createdAt)) {
       failedPayload = {
         taskId: succeeded.id,
         steps: resolved,
-        error: failure.error ?? null,
+        error: stepsFailure(resolved)?.error ?? null,
       };
-    } else if (!failure && !stepsSettled(resolved)) {
+    } else if (view?.status === "running") {
       runningPayload ??= { taskId: succeeded.id, steps: resolved };
-    } else if (!failure) {
+    } else if (view?.status !== "failed") {
       succeededPayload = { taskId: succeeded.id, steps: resolved };
     }
   }
@@ -254,6 +261,7 @@ async function publishState(connected: ConnectedProject): Promise<PublishStatePa
     changeCount: drafts.length,
     groups,
     deployed: !!anyDeployment,
+    deploying: !!inFlight,
     liveVersion: liveRow?.version ?? null,
     envNames,
     needsEnvironmentChoice: envNames.length > 1 && !resolved && !assistantConfigOnly,
@@ -261,6 +269,48 @@ async function publishState(connected: ConnectedProject): Promise<PublishStatePa
     failed: failedPayload,
     succeeded: succeededPayload,
   };
+}
+
+/**
+ * Which staged paths already exist on the default branch — the New-vs-Edited badge (§4.2).
+ *
+ * The cached agent-source tree only carries agent directories, so a staged repo-root file (Eden
+ * stages `package.json` alongside a model change) is simply absent from it and would badge "New"
+ * while its own diff shows existing lines being replaced. Paths that tree can't account for are
+ * probed individually — cheap, since only staged paths are asked about and agent-directory paths
+ * are already answered. Unknown (a read that errored, or more paths than the probe budget) maps
+ * to null, which `changeAction` degrades to "edited" rather than mislabelling as new.
+ */
+async function resolveExistence(
+  connected: ConnectedProject,
+  paths: string[],
+): Promise<Map<string, boolean | null>> {
+  const result = new Map<string, boolean | null>();
+  const repo = { owner: connected.repoOwner, repo: connected.repoName };
+  let known: Set<string>;
+  try {
+    const source = await getAgentSource(connected.repoInstallationId, repo);
+    known = new Set(source.paths);
+  } catch {
+    return result; // every badge degrades to "edited"
+  }
+  const unaccounted: string[] = [];
+  for (const path of paths) {
+    if (known.has(path)) result.set(path, true);
+    else unaccounted.push(path);
+  }
+  if (unaccounted.length > EXISTENCE_PROBE_LIMIT) return result;
+  await Promise.all(
+    unaccounted.map(async (path) => {
+      try {
+        const content = await readAgentFile(connected.repoInstallationId, repo, path);
+        result.set(path, content !== null);
+      } catch {
+        result.set(path, null);
+      }
+    }),
+  );
+  return result;
 }
 
 /** Discard abandonment sweep: drop held pending secrets whose member install can't land now. */

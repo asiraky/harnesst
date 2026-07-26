@@ -76,6 +76,32 @@ describe("groupDrafts", () => {
   it("is empty for no changes", () => {
     expect(groupDrafts([], roster)).toEqual([]);
   });
+
+  it("keeps a change whose owner is not in the roster, in the shared block", () => {
+    // The built-in assistant owns `.eden/assistant/**` and is not a roster member. Dropping
+    // its changes here made the header count "1 change" over an empty panel — and Publish
+    // shipped a file the user was never shown.
+    expect(
+      groupDrafts(
+        [draft("agent_a", "alpha/model.md"), draft("agent_x", ".eden/assistant/instructions.md")],
+        roster,
+      ),
+    ).toEqual([
+      { member: "alpha", files: ["alpha/model.md"] },
+      { member: null, files: [".eden/assistant/instructions.md"] },
+    ]);
+  });
+
+  it("never drops a change: every path in, every path out", () => {
+    const drafts = [
+      draft("agent_a", "alpha/a.md"),
+      draft(null, "package.json"),
+      draft("ghost_1", "gone/one.md"),
+      draft("ghost_2", "gone/two.md"),
+    ];
+    const grouped = groupDrafts(drafts, roster).flatMap((g) => g.files);
+    expect(grouped.sort()).toEqual(drafts.map((d) => d.path).sort());
+  });
 });
 
 describe("changeAction", () => {
@@ -101,6 +127,7 @@ describe("publishControlState", () => {
   const base = {
     changeCount: 0,
     deployed: true,
+    deploying: false,
     liveVersion: "v12" as string | null,
     running: null as { taskId: string; steps: PipelineStep[] | null } | null,
     failed: null as { taskId: string; steps: PipelineStep[] | null; error: string | null } | null,
@@ -113,6 +140,21 @@ describe("publishControlState", () => {
   it("is the never-deployed state when no deployment has ever run", () => {
     expect(publishControlState({ ...base, deployed: false, liveVersion: null })).toEqual({
       kind: "never-deployed",
+    });
+  });
+
+  it("reports the deploy in flight rather than claiming Live with no version", () => {
+    // A HEAD publish or a rollback deploys with no publish task to watch: between queueing and
+    // going live the project HAS deployment rows but none of them is `live` yet.
+    expect(
+      publishControlState({ ...base, deploying: true, liveVersion: null }),
+    ).toEqual({ kind: "deploying" });
+  });
+
+  it("prefers a saved-changes Publish button over the in-flight deploy state", () => {
+    expect(publishControlState({ ...base, deploying: true, changeCount: 1 })).toEqual({
+      kind: "ready",
+      count: 1,
     });
   });
 

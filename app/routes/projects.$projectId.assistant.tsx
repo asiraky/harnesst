@@ -48,6 +48,7 @@ import {
   UserBubble,
 } from "~/components/chat";
 import { TurnError } from "~/components/turn-error";
+import { usePublishHref } from "~/components/publish";
 import { EmptyTeamState } from "~/components/empty-team-state";
 import { LocalizedDate } from "~/components/localized-values";
 import { AgentNav, AppShell, PageHeader, repoCrumbs } from "~/components/shell";
@@ -1099,6 +1100,7 @@ function LiveBubble({
 
 /** Post-turn checkout sync outcome as a quiet, icon-led confirmation line — not a banner. */
 function SyncNote({ sync }: { sync: NonNullable<LiveTurn["sync"]> }) {
+  const publishHref = usePublishHref();
   if (sync.error) {
     return (
       <p className="flex items-start gap-1.5 text-xs text-amber-700 dark:text-amber-400">
@@ -1125,7 +1127,7 @@ function SyncNote({ sync }: { sync: NonNullable<LiveTurn["sync"]> }) {
         )}{" "}
         —{" "}
         {/* `?publish=1` opens the publish panel from the workspace-header Publish control. */}
-        <Link to="?publish=1" className="font-medium underline underline-offset-4">
+        <Link to={publishHref} className="font-medium underline underline-offset-4">
           review and publish
         </Link>{" "}
         when you&apos;re ready.
