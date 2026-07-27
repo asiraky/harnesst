@@ -25,6 +25,7 @@ import {
 } from "lucide-react";
 
 import { Badge } from "~/components/ui/badge";
+import { stripChannelContext } from "~/chat/channel-context";
 import { formatMs } from "~/lib/time";
 
 /** A run step as it arrives from the loader (drizzle row; `data` is free-form jsonb). */
@@ -542,8 +543,13 @@ function MessageBubble({
     text?: string;
     truncated?: boolean;
   };
-  const text = data.text ?? "";
   const role = data.role === "user" ? "user" : "assistant";
+  // A channel-triggered turn's user message leads with eve's `<github_context>` envelope — the
+  // model's addressing metadata, not the person's words. Display-only: the recorded step keeps it.
+  const text =
+    role === "user"
+      ? stripChannelContext(data.text ?? "")
+      : (data.text ?? "");
   if (!text) return null;
 
   if (role === "user") {

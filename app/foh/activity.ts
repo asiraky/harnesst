@@ -10,6 +10,7 @@
  * is best-effort (recording is try/caught), agent FKs are set-null, and delegation env refs
  * have no FK at all — every name lookup may miss.
  */
+import { stripChannelContext } from "~/chat/channel-context";
 
 export interface ActivitySessionRow {
   id: string;
@@ -192,7 +193,9 @@ export function projectActivity(
       agentName: name(agentNames, r.agentId),
       channel: r.channel,
       status: r.status,
-      input: typeof input === "string" ? input : null,
+      // A channel-triggered run's stored input leads with eve's `<github_context>` envelope; the
+      // feed quotes this as "what was said", so the envelope has to come off first.
+      input: typeof input === "string" ? stripChannelContext(input) : null,
       actorUserName: actorByRunId.get(r.id) ?? null,
       error: r.error,
     });

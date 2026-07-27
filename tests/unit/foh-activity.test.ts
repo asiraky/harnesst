@@ -165,6 +165,27 @@ describe("projectActivity", () => {
     ]);
   });
 
+  it("quotes what the human said, not eve's channel envelope", () => {
+    // A GitHub-triggered run's stored input leads with `<github_context>` — repository ids and
+    // webhook delivery ids. The feed row quotes `input` as "what was said", so unstripped it
+    // reads as a machine talking to itself.
+    const page = projectActivity(
+      sources({
+        runs: [
+          run({
+            channel: "github",
+            metadata: {
+              input:
+                "<github_context>\nrepository: acme/widgets\nissue_number: 1\n</github_context>\n\ncheck the deploy",
+            },
+          }),
+        ],
+      }),
+      { limit: 10, agentNames: AGENT_NAMES },
+    );
+    expect(page.events[0]).toMatchObject({ input: "check the deploy" });
+  });
+
   it("suppresses delegation-linked runs so an ask is one entry, not two", () => {
     const page = projectActivity(
       sources({
