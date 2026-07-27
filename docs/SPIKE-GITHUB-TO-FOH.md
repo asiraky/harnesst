@@ -280,6 +280,29 @@ exists to close. Note the agent keeps every ordinary way of talking on the threa
 `turn.started` and `input.requested` are overridden, so `message.completed` still posts
 replies as comments, and the `github-app-auth` skill still gives it `gh`.
 
+**J. The answered turn was recoverable, and both things we told the human were wrong
+(2026-07-27).** The first answer submitted from the inbox resolved question `nvkjxeqphvhq`
+at 04:57:48 and resumed the session; run `aupmdbjepfak` started 04:57:49.696 and failed
+31s later with `Our servers are currently overloaded. Please try again later. /
+MODEL_CALL_FAILED`. That is a genuine upstream provider error — every earlier github run
+completed, and other sessions answered normally at the same moment — so the park/resume
+loop itself is proven end to end. What was defective was the recovery we offered:
+
+- **The retry could never work.** `normalizeTurnError` classified "overloaded" as transient
+  and set `retryable`, so the UI offered *"Retry your message."* But the retry button
+  re-sends the last user message as an ORDINARY message, and `talk.server.ts` refuses any
+  ordinary message on a channel-homed row (`via && !inputResponses.length`) — the user
+  pressed it and got "This conversation lives on the agent's own channel thread…". Nor
+  would re-delivering the same `inputResponses` have helped: that request was consumed by
+  the turn that then failed. `normalizeTurnError` now takes the homing channel's label and,
+  when there is one, drops `retryable` and names the recovery that does work — post on the
+  thread, which starts a fresh turn on the same session.
+- **The parked question was labelled as a broken turn.** The replay projection borrowed the
+  SESSION-level `status === "failed"` for every reply-less turn, so once turn 1 failed, turn
+  0 — which ended by asking, and has no reply by design — rendered "The turn stopped before
+  harnesst recorded a final reply", directly above the question the human had been sent
+  there to answer. Only the tail turn, with no reply and no pending request, may borrow it.
+
 **Authoring note from G/H.** A template change only reaches an installed agent when the
 install is updated — templates are materialized into the agent's repo at install time
 (`app/marketplace/manifest.ts`), so no deploy mode picks up a catalog edit. A bundle whose

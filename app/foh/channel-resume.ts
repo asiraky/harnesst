@@ -42,6 +42,19 @@ export function answerRouteFor(channel: string): string | null {
   return isResumeChannel(channel) ? CHANNEL_ANSWER_ROUTES[channel] : null;
 }
 
+/** How each channel is spelled in text a person reads. */
+const CHANNEL_LABELS = {
+  github: "GitHub",
+} as const satisfies Record<ResumeChannel, string>;
+
+/**
+ * Human-facing name for a channel. An unknown id comes back verbatim rather than as a blank —
+ * a row written by a newer build must still produce a readable sentence.
+ */
+export function channelLabelFor(channel: string): string {
+  return isResumeChannel(channel) ? CHANNEL_LABELS[channel] : channel;
+}
+
 /**
  * Drop the `"<channel>:"` namespace eve prepends, exactly once. A token that does not carry the
  * prefix comes back verbatim — never guess, and never strip twice (`github:repo:1:issue:2` must

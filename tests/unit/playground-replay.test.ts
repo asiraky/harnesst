@@ -449,6 +449,105 @@ describe("loadPlaygroundEntriesFromEve", () => {
     expect(entries[1].errorDetail).toContain("eve.mjs");
   });
 
+  // The exact trail a GitHub-homed FOH session produced in production on 2026-07-27: turn 0 asked a
+  // question and parked (no reply, by design), the human answered from the inbox, and turn 1 died on
+  // an overloaded provider. Both entries were then wrong — the parked question was labelled as a
+  // turn that "stopped before harnesst recorded a final reply", and the failure offered a Retry that
+  // the channel-homed send path refuses.
+  const parkedThenFailedOnChannel = (at: string) => [
+    { type: "turn.started", data: { turnId: "turn_0" }, meta: { at } },
+    {
+      type: "message.received",
+      data: { turnId: "turn_0", message: "write me a .gitignore" },
+      meta: { at },
+    },
+    {
+      type: "input.requested",
+      data: {
+        turnId: "turn_0",
+        requests: [
+          {
+            requestId: "r1",
+            display: "select",
+            prompt: "Which language toolchain should the .gitignore target?",
+            options: [{ id: "node", label: "Node.js" }],
+          },
+        ],
+      },
+      meta: { at },
+    },
+    { type: "turn.completed", data: { turnId: "turn_0" }, meta: { at } },
+    { type: "turn.started", data: { turnId: "turn_1" }, meta: { at } },
+    {
+      type: "message.received",
+      data: { turnId: "turn_1", message: "Node.js" },
+      meta: { at },
+    },
+    {
+      type: "turn.failed",
+      data: {
+        turnId: "turn_1",
+        message: "Our servers are currently overloaded. Please try again later.",
+        code: "MODEL_CALL_FAILED",
+      },
+      meta: { at },
+    },
+  ];
+
+  const githubSession = () =>
+    session({
+      status: "failed",
+      streamIndex: 7,
+      resumeVia: {
+        channel: "github",
+        routePath: "/eve/v1/github/harnesst/answer",
+        rawToken: "repo:1310524517:issue:1",
+        state: {},
+      },
+    });
+
+  it("does not offer a retry that a channel-homed session would refuse", async () => {
+    const at = new Date().toISOString();
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn<typeof fetch>()
+        .mockResolvedValueOnce(streamResponse(parkedThenFailedOnChannel(at))),
+    );
+
+    const entries = await loadPlaygroundEntriesFromEve({
+      session: githubSession(),
+      target,
+    });
+
+    const failed = entries.at(-1)!;
+    expect(failed.errorRetryable).toBe(false);
+    expect(failed.error).toContain("GitHub thread");
+    expect(failed.error).not.toContain("Retry your message");
+    expect(failed.errorDetail).toContain("overloaded");
+  });
+
+  it("does not defame the parked turn when a LATER turn fails the session", async () => {
+    const at = new Date().toISOString();
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn<typeof fetch>()
+        .mockResolvedValueOnce(streamResponse(parkedThenFailedOnChannel(at))),
+    );
+
+    const entries = await loadPlaygroundEntriesFromEve({
+      session: githubSession(),
+      target,
+    });
+
+    // A turn that ended by ASKING has no reply by design; only the tail turn can borrow the
+    // session-level failure. Before the fix this read "The turn stopped before harnesst recorded a
+    // final reply" — printed directly above the question the human was sent there to answer.
+    const parked = entries.find((e) => e.inputRequests?.length)!;
+    expect(parked.error).toBeNull();
+  });
+
   it("keeps a non-transient turn.failed specific and non-retryable", async () => {
     const at = new Date().toISOString();
     vi.stubGlobal(

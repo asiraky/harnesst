@@ -22,6 +22,7 @@ import {
   playgroundSessions,
   type SessionResumeVia,
 } from "~/db/schema";
+import { channelLabelFor } from "~/foh/channel-resume";
 import { openInboxQuestion, resolveInboxForSession } from "~/foh/inbox.server";
 import { reconcileNeedsYouFromTail } from "~/foh/needs-you";
 import { fohSessionStatus, sortSessionsForList } from "~/foh/status";
@@ -1460,6 +1461,10 @@ function projectEventsToEntries(
   }
 
   const entries: ChatEntry[] = [];
+  const channelLabel = session.resumeVia
+    ? channelLabelFor(session.resumeVia.channel)
+    : null;
+  const lastTurn = ordered.at(-1);
   for (const turn of ordered) {
     if (turn.userText) {
       entries.push({
@@ -1481,12 +1486,21 @@ function projectEventsToEntries(
       turn.steps.length > 0
     ) {
       const normalized = normalizeReply(reply);
+      // `session.status` is a property of the SESSION, not of this turn, so it may only stand in
+      // for a missing error on the turn that was actually running when it failed. Applied to every
+      // reply-less turn (as it once was) it defames the completed ones: a turn that ended by ASKING
+      // has no reply by design, so a parked GitHub question read "The turn stopped before harnesst
+      // recorded a final reply" as soon as a later turn failed — above the question itself.
+      const isUnfinishedTail =
+        turn === lastTurn &&
+        !normalized.reply &&
+        turn.inputRequests.length === 0;
       const replayError =
         turn.error ??
-        (session.status === "failed" && !normalized.reply
+        (session.status === "failed" && isUnfinishedTail
           ? "The turn stopped before harnesst recorded a final reply. Reloading may recover it if Eve finished after the last saved cursor."
           : null);
-      const normalizedError = normalizeTurnError(replayError);
+      const normalizedError = normalizeTurnError(replayError, { channelLabel });
       entries.push({
         id: `${turn.turnId}:assistant`,
         role: "assistant",

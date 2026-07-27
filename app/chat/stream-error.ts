@@ -19,8 +19,28 @@ export interface NormalizedTurnError {
   retryable: boolean;
 }
 
+export interface NormalizeTurnErrorOptions {
+  /**
+   * Display name of the channel that HOMES this session ("GitHub"), when one does.
+   *
+   * A channel-homed conversation cannot be retried from harnesst, transient though the error was.
+   * harnesst may only deliver an ANSWER to a question the agent is parked on, and the retry button
+   * re-sends the last user message as an ordinary one — which `talk.server.ts` refuses outright.
+   * Re-delivering the same answer is no better: the input request was consumed by the very turn
+   * that then failed. So the offer is a dead end, and we name the recovery that does work instead
+   * — say it again on the thread, which starts a fresh turn on the same session.
+   *
+   * Observed in production 2026-07-27: an answered GitHub question resumed, the turn died on
+   * "Our servers are currently overloaded", and Retry landed the user in the refusal.
+   */
+  channelLabel?: string | null;
+}
+
 const TRANSIENT_MESSAGE =
   "The model provider had a temporary error. Retry your message.";
+
+const transientOnChannel = (label: string) =>
+  `The model provider had a temporary error. harnesst cannot retry a conversation that lives on the agent's ${label} thread — post there to pick it back up.`;
 
 const TRANSIENT_PATTERNS: RegExp[] = [
   /server had an error processing your request/i,
@@ -44,12 +64,20 @@ export function isTransientProviderError(raw: string): boolean {
 
 export function normalizeTurnError(
   raw: string | null | undefined,
+  options: NormalizeTurnErrorOptions = {},
 ): NormalizedTurnError | null {
   if (!raw) return null;
   const text = raw.trim();
   if (!text) return null;
+  const channelLabel = options.channelLabel?.trim() || null;
   if (isTransientProviderError(text)) {
-    return { message: TRANSIENT_MESSAGE, detail: text, retryable: true };
+    return channelLabel
+      ? {
+          message: transientOnChannel(channelLabel),
+          detail: text,
+          retryable: false,
+        }
+      : { message: TRANSIENT_MESSAGE, detail: text, retryable: true };
   }
   return { message: text, detail: null, retryable: false };
 }

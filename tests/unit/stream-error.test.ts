@@ -70,6 +70,47 @@ describe("normalizeTurnError — genuine config/validation errors are left untou
   });
 });
 
+describe("normalizeTurnError — a channel-homed session cannot be retried", () => {
+  // Production, 2026-07-27: a GitHub question was answered from the harnesst inbox, the resumed
+  // turn died on "Our servers are currently overloaded", and harnesst offered "Retry your message."
+  // Pressing it re-sends the answer as an ORDINARY message, which talk.server.ts refuses outright
+  // ("harnesst can only send it an answer to a question it is waiting on") — so the only button on
+  // screen was a dead end. Re-delivering the same answer is no better: the input request was
+  // consumed by the turn that then failed.
+  const OVERLOADED =
+    "Our servers are currently overloaded. Please try again later.\nCode: MODEL_CALL_FAILED";
+
+  it("does not offer retry, and names the recovery that works", () => {
+    const result = normalizeTurnError(OVERLOADED, { channelLabel: "GitHub" });
+    expect(result!.retryable).toBe(false);
+    expect(result!.message).toContain("temporary error");
+    expect(result!.message).toContain("GitHub thread");
+    expect(result!.message).not.toContain("Retry your message");
+    // Operators still get the provider's own words.
+    expect(result!.detail).toContain("MODEL_CALL_FAILED");
+  });
+
+  it("still offers retry on an ordinary session — the same error, no channel", () => {
+    expect(normalizeTurnError(OVERLOADED)!.retryable).toBe(true);
+    expect(normalizeTurnError(OVERLOADED, { channelLabel: null })!.retryable).toBe(
+      true,
+    );
+    expect(normalizeTurnError(OVERLOADED, { channelLabel: "  " })!.retryable).toBe(
+      true,
+    );
+  });
+
+  it("leaves a config error's specific text alone on a channel too", () => {
+    // Nothing about being channel-homed makes a bad model id less actionable — and it was never
+    // retryable, so the channel sentence would only bury the real cause.
+    const result = normalizeTurnError("Model 'gpt-9-turbo' not found", {
+      channelLabel: "GitHub",
+    });
+    expect(result!.message).toBe("Model 'gpt-9-turbo' not found");
+    expect(result!.retryable).toBe(false);
+  });
+});
+
 describe("normalizeTurnError — empty inputs", () => {
   it("returns null for null, empty, and whitespace-only input", () => {
     expect(normalizeTurnError(null)).toBeNull();
