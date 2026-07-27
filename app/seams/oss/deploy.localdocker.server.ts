@@ -167,6 +167,36 @@ async function provisionWorldDb(worldKey: string): Promise<string> {
 }
 
 /**
+ * Warn once per world per process when the world DB cannot answer. Once-per-process, not
+ * per-tick: the reconciler sweeps every 60s and a permanently-missing table would otherwise
+ * produce 1,440 identical warnings a day per environment, which is the same as silence.
+ */
+const warnedWorlds = new Set<string>();
+
+export function warnWorldUnavailable(worldKey: string, code: string): void {
+  const dbName = worldDbName(worldKey);
+  if (warnedWorlds.has(dbName)) return;
+  warnedWorlds.add(dbName);
+  const cause =
+    code === "42P01"
+      ? `database "${dbName}" exists but has no workflow.workflow_runs table (42P01). ` +
+        "The deployed eve does not write a Postgres workflow world — it persists sessions to " +
+        "WORKFLOW_LOCAL_DATA_DIR inside the container, so WORKFLOW_POSTGRES_URL is inert. Run " +
+        "discovery via the world DB is INOPERATIVE for this environment"
+      : `database "${dbName}" does not exist (3D000) — this environment has never been ` +
+        "deployed by a target that provisions a world";
+  console.warn(
+    `[worlds] ${cause}. No channel runs will be reconciled from it; runs now arrive by push ` +
+      "instead (POST /api/agent/runs from the agent's baked run hook).",
+  );
+}
+
+/** Test seam: forget which worlds have already warned. */
+export function resetWorldWarnings(): void {
+  warnedWorlds.clear();
+}
+
+/**
  * List the durable eve sessions in an environment's Workflow world (issue #119). The world is a
  * Postgres database on the SAME control-plane server (host stays as-is — this runs on the control
  * plane, not inside a container, so unlike `provisionWorldDb` it does NOT swap to
@@ -221,7 +251,19 @@ async function listWorldSessions(
     }));
   } catch (error) {
     const code = (error as { code?: string }).code;
-    if (code === "3D000" || code === "42P01") return []; // world absent / no runs table yet
+    // These two used to return [] in silence, and that silence hid a total outage: a production
+    // review on 2026-07-26/27 found ZERO reconciled runs for ANY channel across every
+    // environment, because eve 0.22.6 ships no Postgres workflow backend — it persists sessions
+    // to WORKFLOW_LOCAL_DATA_DIR on the container filesystem and ignores the WORKFLOW_POSTGRES_URL
+    // harnesst injects. So `provisionWorldDb` creates the database, `runWorldMigrations` skips
+    // (no @workflow/world-postgres in the image), and every tick hits 42P01 forever. Returning []
+    // is still right — throwing would take out the whole sweep for every other target — but an
+    // operator has to be able to tell "this environment ran nothing" from "the table this reads
+    // has never existed". Warn LOUDLY, and name the cause rather than the symptom.
+    if (code === "3D000" || code === "42P01") {
+      warnWorldUnavailable(worldKey, code);
+      return [];
+    }
     throw error;
   } finally {
     await sql.end();
@@ -317,8 +359,17 @@ export async function runWorldMigrations(
       WORLD_POSTGRES_SETUP_SCRIPT,
     ]);
   } catch {
+    // This is the OTHER half of the silent outage. eve 0.22.6 does not depend on
+    // @workflow/world-postgres at all, so this probe fails for every agent image harnesst builds
+    // — and the old wording ("skipping Workflow world migrations") read like a benign no-op for a
+    // test image. It is not: the world database is still created and still injected, but it never
+    // gets a `workflow` schema, so `listWorldSessions` hits 42P01 forever and the pull-based run
+    // reconciler produces nothing for this environment. Name the consequence.
     console.warn(
-      `[deploy] ${WORLD_POSTGRES_SETUP_SCRIPT} not found in ${buildTag}; skipping Workflow world migrations.`,
+      `[deploy] ${WORLD_POSTGRES_SETUP_SCRIPT} not found in ${buildTag}: this image has no ` +
+        "Postgres workflow world, so no workflow.* schema will exist and the world DB can " +
+        "discover no runs. Session state lives on the container filesystem (lost on redeploy) " +
+        "and run visibility comes from the agent's baked run hook (POST /api/agent/runs).",
     );
     return;
   }

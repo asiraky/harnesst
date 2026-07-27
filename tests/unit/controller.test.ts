@@ -1161,7 +1161,12 @@ describe("team delegation env injection (D3)", () => {
       },
     );
     expect(deployedEnvs[0].HARNESST_TEAM_URL).toBeUndefined();
-    expect(deployedEnvs[0].HARNESST_TEAM_TOKEN).toBeUndefined();
+    expect(deployedEnvs[0].HARNESST_TEAMMATES).toBeUndefined();
+    // HARNESST_TEAM_TOKEN is NOT asserted absent: since WS2 every deployment carries one so its
+    // baked run-reporting hook can identify itself. The token conveys a deployment id and no
+    // capability — every endpoint that accepts it (relay, Discord send, park, runs) re-derives
+    // the caller and scopes to that caller's own agent — so team membership is decided by the
+    // two vars above, which a single-agent repo still does not get.
   });
 });
 
@@ -1471,7 +1476,9 @@ describe("shared Discord app env injection (issue #32)", () => {
     expect(env.DISCORD_BOT_TOKEN).toBe("user_bot");
     expect(env.DISCORD_APPLICATION_ID).toBe("user_app");
     expect(env).not.toHaveProperty("HARNESST_DISCORD_SEND_URL");
-    expect(env).not.toHaveProperty("HARNESST_TEAM_TOKEN"); // no operator app → nothing minted
+    // The send proxy is what this test is about, and its absence is the whole story: without a
+    // URL to send to, the token cannot reach Discord. (Since WS2 every deployment carries a
+    // token for run reporting, so its presence no longer distinguishes anything here.)
   });
 });
 
@@ -1695,8 +1702,11 @@ describe("Google connection env injection (issue #30)", () => {
     );
     const env = deployedEnvs[0];
     expect(env.GOOGLE_OAUTH_REFRESH_TOKEN).toBe("g_token");
+    // The regression this pins is the BROKER coordinate: a refresh-token provider must not be
+    // handed HARNESST_API_URL, so nothing in the image tries to broker Google at runtime.
     expect(env).not.toHaveProperty("HARNESST_API_URL");
-    expect(env).not.toHaveProperty("HARNESST_TEAM_TOKEN");
+    // (HARNESST_TEAM_TOKEN is no longer a signal here — since WS2 every deployment carries one
+    // for run reporting, and with no HARNESST_API_URL there is no broker for it to call.)
   });
 });
 
@@ -2137,5 +2147,73 @@ describe("channel park env injection (WS1)", () => {
     const second = await deployWith({ lock: JSON.stringify({ version: 1, installs: [] }) });
 
     expect(second).not.toHaveProperty("HARNESST_FOH_PARK_URL");
+  });
+});
+
+/**
+ * WS2 — run-reporting env. The hook baked into every image is inert without these two vars, so
+ * this is the wiring that decides whether channel work is visible at all. Unlike the park env it
+ * is UNGATED: no lock, no channel, no team membership.
+ */
+describe("run reporting env injection (WS2)", () => {
+  const OLD_KEY = process.env.HARNESST_SECRETS_KEY;
+  const OLD_RELAY = process.env.HARNESST_TEAM_RELAY_URL;
+
+  beforeEach(() => {
+    process.env.HARNESST_SECRETS_KEY = "a".repeat(64);
+    process.env.HARNESST_TEAM_RELAY_URL = "https://harnesst.example";
+    store.seedProject({
+      id: PROJECT,
+      orgId: ORG,
+      repoOwner: "acme",
+      repoName: "agent",
+      repoInstallationId: "inst_1",
+    });
+  });
+  afterEach(() => {
+    if (OLD_KEY === undefined) delete process.env.HARNESST_SECRETS_KEY;
+    else process.env.HARNESST_SECRETS_KEY = OLD_KEY;
+    if (OLD_RELAY === undefined) delete process.env.HARNESST_TEAM_RELAY_URL;
+    else process.env.HARNESST_TEAM_RELAY_URL = OLD_RELAY;
+  });
+
+  async function deployWith(
+    secrets: Record<string, string> = {},
+  ): Promise<Record<string, string>> {
+    const deployedEnvs: Record<string, string>[] = [];
+    const release = await createRelease(
+      { projectId: PROJECT, agentId: AGENT, gitSha: "d1".repeat(20) },
+      store,
+    );
+    const dep = await deployRelease(
+      { environmentId: ENV, releaseId: release.id },
+      {
+        store,
+        deployTarget: fakeDeployTarget({ health: { status: "live" }, deployedEnvs }),
+        secrets: fakeSecrets({ OPENROUTER_API_KEY: "k", ...secrets }),
+      },
+    );
+    expect(dep.status).toBe("live");
+    return deployedEnvs[0];
+  }
+
+  it("wires the runs URL and a delegation token into a plain, channel-less deployment", async () => {
+    const env = await deployWith();
+
+    expect(env.HARNESST_RUNS_URL).toBe("https://harnesst.example/api/agent/runs");
+    // The endpoint authenticates the deployment by this token alone — it must name THIS one.
+    expect(verifyDelegationToken(env.HARNESST_TEAM_TOKEN)).toBe(
+      (await listDeployments(ENV, store))[0].id,
+    );
+  });
+
+  it("strips a user secret of the same name before setting its own (anti-shadowing)", async () => {
+    // Left standing, this would post every turn's full transcript — and the agent's delegation
+    // token — to a URL of the user's choosing.
+    const env = await deployWith({
+      HARNESST_RUNS_URL: "https://attacker.example/collect",
+    });
+
+    expect(env.HARNESST_RUNS_URL).toBe("https://harnesst.example/api/agent/runs");
   });
 });

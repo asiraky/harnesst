@@ -363,6 +363,24 @@ function claimDiscordPlaceholder(
 
 /* ── the sweep ── */
 
+/**
+ * Deployments already warned about an empty/absent world. The sweep runs every 60s forever, so an
+ * unconditional warn here would emit ~1,440 identical lines a day per deployment — which an
+ * operator learns to filter, making it exactly as useful as the silence it replaced.
+ */
+const warnedDeployments = new Set<string>();
+
+function warnOnce(deploymentId: string, message: string): void {
+  if (warnedDeployments.has(deploymentId)) return;
+  warnedDeployments.add(deploymentId);
+  console.warn(message);
+}
+
+/** Test seam: forget which deployments have already warned. */
+export function resetReconcileWarnings(): void {
+  warnedDeployments.clear();
+}
+
 /** Reconcile every non-http session on one live deployment. Best-effort per session. */
 export async function reconcileDeploymentSessions(
   target: ReconcileTarget,
@@ -370,7 +388,24 @@ export async function reconcileDeploymentSessions(
 ): Promise<void> {
   const since = new Date(Date.now() - RECONCILE_BACKFILL_MS);
   const sessions = await deps.listWorldSessions(target.worldKey, since);
-  if (!sessions || sessions.length === 0) return;
+  if (!sessions || sessions.length === 0) {
+    // This return used to be silent, and it is where every production tick has died: the world
+    // databases are empty (deployed eve has no Postgres workflow backend) and three of four
+    // deploy targets do not implement `listWorldSessions` at all. Distinguish the two — "this
+    // target exposes no world" is a permanent architectural fact, "the world is empty" is a
+    // maybe-transient one — and say it ONCE per deployment, not once per 60s tick.
+    warnOnce(
+      target.deploymentId,
+      sessions === null
+        ? `[reconcile] deployment ${target.deploymentId}: the active deploy target exposes no ` +
+            "world-session listing, so pull-based run discovery can never see this deployment. " +
+            "Runs are reported by push instead (the agent's baked run hook → POST /api/agent/runs)."
+        : `[reconcile] deployment ${target.deploymentId}: world "${target.worldKey}" reports no ` +
+            "sessions. If this deployment has actually run work, its world DB is not being " +
+            "written (see the [worlds] warning) and runs arrive by push instead.",
+    );
+    return;
+  }
 
   // Resolve each session's channel + cursor and drop http (already recorded) and no-activity ones.
   const pending: {
@@ -545,7 +580,23 @@ function startReconciler(): { stop: () => void } {
       running = false;
     }
   })();
-  console.log(`[reconcile] reconciler started (interval ${RECONCILE_INTERVAL_MS}ms)`);
+  // Name the deploy target and whether it can actually answer, so the one unconditional line the
+  // subsystem emits tells an operator up front whether the pull is even wired — three of four
+  // targets implement no `listWorldSessions`, and that used to be invisible.
+  let targetName = "unknown";
+  let canList = false;
+  try {
+    const target = getRuntime().deployTarget;
+    targetName = target.name ?? "unknown";
+    canList = typeof target.listWorldSessions === "function";
+  } catch {
+    // Runtime not resolvable at boot (tests, partial env) — the interval still starts.
+  }
+  console.log(
+    `[reconcile] reconciler started (interval ${RECONCILE_INTERVAL_MS}ms, ` +
+      `target ${targetName}, world-session listing ${canList ? "available" : "UNAVAILABLE — " +
+        "pull-based run discovery is inoperative on this target; runs arrive by push"})`,
+  );
   return { stop: () => clearInterval(interval) };
 }
 

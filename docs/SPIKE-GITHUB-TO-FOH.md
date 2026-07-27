@@ -539,6 +539,48 @@ GitHub-specific, and all three were invisible until the runbook was executed:
   Until fixed, dev verification uses the quick tunnel (§7 Phase 0). Small code fix,
   separate PR.
 
+### 6.1 Tier 2 — durable park storage: designed, deliberately not built **[WS2]**
+
+P2 ("session state dies with the container", §4.5-D) is real but is **not** what run
+visibility needed, so Tier 1 shipped without it. The design that was worked out while
+building Tier 1 is recorded here so the next person does not re-derive it.
+
+**The failure it addresses.** A park (WS1) writes a durable row on the harnesst side:
+session, `continuationToken`, `resumeVia`, the channel's `state`, and a backfilled
+transcript. Answering it POSTs to the channel's answer route on the *instance*, where eve
+resumes the session from `WORKFLOW_LOCAL_DATA_DIR` (`.workflow-data`) on the container
+filesystem. That directory does not survive a redeploy. So after any redeploy harnesst
+still shows an answerable question whose eve-side session no longer exists — the human
+answers into a void.
+
+**What is NOT available as a fix.** Making eve's own state durable across deploy targets
+would mean changing eve, which is out of bounds. `WORKFLOW_POSTGRES_URL` is inert in
+0.22.6 (§4.5-D): there is no Postgres workflow backend to point at.
+
+Three harnesst-owned moves, in increasing cost:
+
+- **T2-a — tell the truth in the UI (cheap, do this first).** A parked session already
+  records the `deploymentId` that parked it. If that deployment is no longer the live one,
+  the answer box knows the resume will fail *before* the human types. No migration, no new
+  storage: it is a join. Even with T2-b or T2-c shipped, this is the honest-state layer.
+- **T2-b — replay instead of resume.** When the parking deployment is gone, do not call
+  the channel answer route. Re-pose the work as a NEW inbound channel turn on the current
+  live deployment, carrying the original request, the park's channel `state` (issue/PR
+  coordinates), and the human's answer. This loses eve-side mid-turn context (tool state,
+  partial reasoning) but survives redeploys and works on every deploy target, because it
+  uses only the channel's ordinary inbound path. Tier 1 makes this materially better than
+  it would have been: channel turns now land in `runs`/`run_steps`, so the replay has a
+  real transcript to quote instead of a bare prompt.
+- **T2-c — persist eve's data dir.** Mount `WORKFLOW_LOCAL_DATA_DIR` on a per-environment
+  volume so a redeploy reattaches the same session store (the local-docker target already
+  does exactly this shape for agent home directories). Highest fidelity — the original
+  session really does resume — but it is one deploy target out of four, it makes rollbacks
+  carry state, and it only holds while the volume and the image agree about the format.
+
+**Recommendation:** T2-a now; T2-b when a redeploy-orphaned park is actually observed in
+the wild; T2-c only as a local-docker convenience, never as the contract. None of the
+three needs a schema change — the park row already carries everything they read.
+
 ## 7. Verification runbook
 
 > **[R2] This runbook was executed against production on 2026-07-26/27 and its results

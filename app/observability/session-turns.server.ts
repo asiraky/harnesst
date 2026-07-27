@@ -139,13 +139,36 @@ function normalizeReply(reply: string | null): {
 /* ── channel classification ── */
 
 /**
- * eve's `$eve.trigger` → harnesst run channel. `http` is playground/assistant/teammate traffic that
- * harnesst already records in-process, so it maps to null (the reconciler SKIPS it). `schedule` is
- * cron. Every other channel (discord, github, slack, …) passes through verbatim. An
- * empty/absent trigger can't be classified, so it is skipped too.
+ * The namespace eve puts on an AUTHORED channel adapter's kind. Verified against eve 0.22.6:
+ * `resolveChannelDefinition` sets `adapter.kind = \`channel:${name}\``, and only the built-in
+ * HTTP adapter keeps a bare kind (`HTTP_ADAPTER_KIND = "http"`). A production run on 2026-07-26
+ * observed `$eve.trigger: "channel:github"` — NOT `"github"`.
  */
-export function channelForTrigger(trigger: string): string | null {
-  const t = trigger.trim();
+const CHANNEL_KIND_PREFIX = "channel:";
+
+/**
+ * eve's channel kind (`$eve.trigger` on a world row, `ctx.channel.kind` inside a hook) → the
+ * harnesst run channel stored on `runs.channel`.
+ *
+ * - `channel:<name>` → `<name>`. eve 0.22.6 namespaces every authored channel adapter, so this
+ *   strip is what makes a GitHub-homed run land as `github` and not as the literal
+ *   `channel:github` (which every Runs-tab filter, badge and query would miss). The raw kind is
+ *   kept verbatim on run metadata (`eveTrigger`) so nothing is lost.
+ * - `http` (namespaced or not) → null. That is playground/assistant/teammate traffic, which
+ *   harnesst already records in-process; a second writer would fight the terminal-state guard
+ *   in `ingestRunWith`.
+ * - `schedule` → `cron`, kept from the pre-0.22 shape. eve 0.22.6 dispatches schedules as
+ *   workflow tasks with no channel adapter, so a scheduled session's kind is expected to be
+ *   absent — which lands in the null branch below, exactly as it does today. Do NOT invent a
+ *   mapping for the empty kind without observing a real cron session first: a wrong guess writes
+ *   playground-owned rows a second time.
+ * - empty/absent → null (unclassifiable; skip).
+ */
+export function channelForTrigger(trigger: string | null | undefined): string | null {
+  const raw = (trigger ?? "").trim();
+  const t = raw.startsWith(CHANNEL_KIND_PREFIX)
+    ? raw.slice(CHANNEL_KIND_PREFIX.length).trim()
+    : raw;
   if (!t || t === "http") return null;
   if (t === "schedule") return "cron";
   return t;

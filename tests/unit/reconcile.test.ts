@@ -5,10 +5,11 @@
  * hung turn surfaced as `running`, cursor saves + the no-activity short-circuit on a second tick,
  * and graceful skips when world access is null or throws.
  */
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   reconcileTick,
+  resetReconcileWarnings,
   type DiscordPlaceholder,
   type ReconcileCursor,
   type ReconcileDeps,
@@ -252,5 +253,68 @@ describe("reconcileTick", () => {
     await expect(reconcileTick(deps)).resolves.toBeUndefined();
     expect(warn).toHaveBeenCalled();
     warn.mockRestore();
+  });
+});
+
+/**
+ * WS2 — the silent failure this workstream exists to end.
+ *
+ * `reconcileDeploymentSessions` returned on an empty/absent world without a word, so an operator
+ * reading logs could not tell "this agent has done no channel work" from "the database this reads
+ * has never existed, and never will, because the deployed eve has no Postgres workflow backend".
+ * Every production tick since the reconciler shipped has taken this branch. It must now say which
+ * of the two it is — and say it ONCE, since the sweep repeats every 60s forever and a line
+ * repeated 1,440 times a day is filtered, i.e. silent again.
+ */
+describe("empty-world diagnostics", () => {
+  beforeEach(() => {
+    resetReconcileWarnings();
+  });
+
+  async function sweep(sessions: WorldSessionSummary[] | null) {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const { deps } = makeDeps({ sessions, streams: {} });
+    await reconcileTick(deps);
+    const lines = warn.mock.calls.map((c) => String(c[0]));
+    warn.mockRestore();
+    return { deps, lines };
+  }
+
+  it("names the architectural case when the deploy target exposes no world listing", async () => {
+    const { lines } = await sweep(null);
+
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toContain("dep1");
+    expect(lines[0]).toContain("exposes no world-session listing");
+    // An operator must be told runs still arrive — otherwise this reads as total breakage.
+    expect(lines[0]).toContain("/api/agent/runs");
+  });
+
+  it("distinguishes an empty world from an absent one", async () => {
+    const { lines } = await sweep([]);
+
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toContain('world "env1" reports no sessions');
+    expect(lines[0]).not.toContain("exposes no world-session listing");
+  });
+
+  it("warns once per deployment, not once per 60s tick", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const { deps } = makeDeps({ sessions: [], streams: {} });
+
+    await reconcileTick(deps);
+    await reconcileTick(deps);
+    await reconcileTick(deps);
+
+    expect(warn.mock.calls.filter((c) => String(c[0]).includes("dep1"))).toHaveLength(1);
+    warn.mockRestore();
+  });
+
+  it("says nothing when the world does have sessions", async () => {
+    const { lines } = await sweep([
+      session({ sessionId: "wrun_h1", trigger: "http" }),
+    ]);
+
+    expect(lines).toHaveLength(0);
   });
 });

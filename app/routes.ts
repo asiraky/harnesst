@@ -216,6 +216,10 @@ export default [
     "routes/connections.$provider.resource.tsx",
   ),
   route("api/ingest/runs", "routes/api.ingest.runs.tsx"),
+  // Pushed run reporting (WS2): every harnesst-built image's baked `agent/hooks/harnesst-runs.ts`
+  // POSTs each turn's events here with the same delegation bearer the team relay uses. Distinct
+  // from /api/ingest/runs, which is the BYO-instance path with its own ingest token.
+  route("api/agent/runs", "routes/api.agent.runs.ts"),
   // Hosted MCP Streamable HTTP transport. Bearer API keys are verified per stateless request.
   route("api/mcp", "routes/api.mcp.ts"),
   // Teammate delegation relay: a team member's ask-teammate tool POSTs here (Bearer token).

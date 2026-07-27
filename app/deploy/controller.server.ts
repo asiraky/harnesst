@@ -530,6 +530,19 @@ export async function deployRelease(
       envVars.HARNESST_TEAM_TOKEN ??= mintDelegationToken(dep.id);
     }
 
+    // Run visibility (WS2): where the baked `agent/hooks/harnesst-runs.ts` reports each turn's
+    // events. Set for EVERY deployment, with no gate — an agent's runs are observable whatever it
+    // is wired to, and the hook itself decides nothing (the control plane skips `http`-homed
+    // turns, which harnesst already records in-process). This replaces a pull that could never
+    // have worked: the world databases the reconciler reads are empty because deployed eve has no
+    // Postgres workflow backend, and only one of four deploy targets implements the read at all.
+    // Same delegation bearer as the team relay / Discord proxy / channel park — no new secret,
+    // and the endpoint re-derives project/agent/environment from the token's deployment id.
+    // Harnesst-owned, so anti-shadowing (delete, then set) as above.
+    delete envVars.HARNESST_RUNS_URL;
+    envVars.HARNESST_RUNS_URL = `${controlPlaneBase}/api/agent/runs`;
+    envVars.HARNESST_TEAM_TOKEN ??= mintDelegationToken(dep.id);
+
     // Auth-brokered connections (issues #30, #163): for every provider this agent holds an active
     // grant for, inject the operator client creds + sealed refresh token (`<PREFIX>_OAUTH_*`) so
     // the shipped eve connections can self-refresh access tokens at runtime. The provider validates

@@ -55,6 +55,10 @@ const sessionContext = createContext<SessionState | null>(null);
 
 const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
 const SIGNED_OR_BEARER_ENDPOINTS = new Set([
+  // Pushed run reporting (WS2): every harnesst-built agent's baked run hook POSTs its turn events
+  // with the same delegation bearer. Server-to-server, so there is no browser Origin to check;
+  // the route verifies the token itself — listing it here bypasses the CSRF check, not auth.
+  "/api/agent/runs",
   "/api/connections/token",
   "/api/discord/interactions",
   "/api/discord/send",
