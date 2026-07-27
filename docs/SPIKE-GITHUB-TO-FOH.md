@@ -679,6 +679,59 @@ only the loud-failure handler:
 4. **Widen `DockerSandboxNetworkPolicy`** to honour header transforms for a domain allow-list.
    Largest change, and the only one that preserves the credential-brokering property.
 
+### 6.3 Known gaps in what shipped
+
+Defects and blind spots that survive the WS1–WS3 branch. None of these is a caveat that
+excuses the design; each is a thing that is wrong, with the file it is wrong in.
+
+**The database integration tests do not run.** `tests/integration/*.db.test.ts` — including
+`foh-park.db.test.ts`, the only place the park's idempotency, the `resume_via` jsonb round
+trip, the cross-agent refusal and the fenced upsert are exercised against real Postgres — are
+wrapped in `describe.runIf(process.env.HARNESST_DB_SMOKE === "1")`. Nothing in
+`.github/workflows/` sets that variable, so on every CI run they report as *skipped*, not as
+*failed*. The upsert guards are pure Postgres semantics (`ON CONFLICT … DO UPDATE … WHERE`
+matching nothing returns no row); the unit tests substitute a hand-written fake for exactly the
+behaviour in question, so a change that broke the real SQL would go green everywhere. Closing
+this needs a Postgres service container in CI, which the repo does not have today.
+
+**`headSha` is pinned to a shallow checkout, so mid-conversation commits are invisible.** In
+`catalog/templates/channels/github/files/channels/github.ts`, `turn.started` skips the fetch
+when `git rev-parse HEAD` already equals `channel.state.headSha`. That is right for the second
+turn of a thread against an unchanged branch and wrong the moment somebody pushes to it: the
+agent keeps answering from the commit it first fetched, with nothing on the thread saying so.
+The fetch is `--depth 1`, so there is no history in the sandbox to notice the divergence from
+either. A correct version would re-resolve the target ref against the API each turn and refetch
+when it moved; that is a second network round trip per turn and was not built here.
+
+**The eyes reaction ignores `progress.reactions`.** The same `turn.started` override reacts
+`eyes` unconditionally. eve's built-in handler — which the override *replaces* — reacts only
+when the channel's `progress.reactions` option is on. An operator who deliberately turned
+reactions off still gets reacted to, on every turn, and the only way to stop it is to edit the
+template. The override does not receive the resolved config, so honouring the option means
+threading it through the template's own `githubChannel({...})` call site.
+
+**Delegation tokens are deterministic and never expire.** `mintDelegationToken` in
+`app/team/token.server.ts` is a bare HMAC over the deployment id: same deployment, same key,
+byte-identical token forever, with no nonce, no issued-at and no expiry. It is the credential
+for the team relay, the Discord send proxy, the runs ingest and — new on this branch — the
+channel park and the channel answer route, and it is baked into container env, so it also
+appears in deploy logs and in any image inspection. A leaked token is valid until
+`HARNESST_SECRETS_KEY` is rotated, which invalidates every other agent's token at the same
+time. Adding an expiry means a re-mint path for long-lived containers; that is a change to the
+existing delegation design, not to this workstream, so it was left alone.
+
+**Nothing typechecks the GitHub channel template.** `catalog/templates/**/*` is excluded from
+`tsconfig.json`, and `eve` is not a dependency of this repository — so the 518-line
+`channels/github.ts` that ships to customer repos is never compiled by `npm run typecheck`, and
+could not be even if it were included. `tests/unit/github-channel-checkout.test.ts` reaches it
+by compiling the file with esbuild (type *stripping*, no checking) and evaluating it against
+hand-written stubs for `eve/channels`, `eve/channels/github` and `node:crypto`. Those stubs are
+now typed against eve 0.22.6's documented shapes, so a drift in the signatures the template uses
+shows up as a compile error *in the test file* — but the stubs are a transcription, not the real
+typings, and a template that used an eve API the stubs do not model would still compile and
+still fail in a container. The only real fix is adding `eve` as a devDependency and typechecking
+the catalog against it.
+
 ## 7. Verification runbook
 
 > **[R2] This runbook was executed against production on 2026-07-26/27 and its results
