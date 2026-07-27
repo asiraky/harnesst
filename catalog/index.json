@@ -12,9 +12,9 @@
       "id": "github-bundle",
       "type": "bundle",
       "name": "GitHub",
-      "version": "0.1.0",
+      "version": "0.2.0",
       "description": "Everything an agent needs to work GitHub as itself: the GitHub App channel (its @mention identity and credentials), the gh CLI in its sandbox, and the skill that turns the App's private key into a working token.",
-      "hash": "2ea8e1e74fce02f7fc28b87493850a788d7ac28e"
+      "hash": "5fcb1cff3110350199e9938a9c570fbfc60a6c42"
     },
     {
       "id": "google-sheets-bundle",
@@ -36,9 +36,9 @@
       "id": "github",
       "type": "channel",
       "name": "GitHub",
-      "version": "0.4.0",
+      "version": "0.4.1",
       "description": "Talk to this agent by @mentioning it in GitHub issue and pull-request comments — a GitHub App with webhook signature verification via eve's githubChannel.",
-      "hash": "c85772269f885c16f3bc5a55716f92a5ef41f67e"
+      "hash": "8861d73d4aca478f3a0928b5d0ff63797bfad72a"
     },
     {
       "id": "agentmail",

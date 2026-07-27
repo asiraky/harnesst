@@ -244,6 +244,37 @@ real park: `inbox_items` row `ljbqbltlqohs` (`kind: question`) raised 23:40:58 a
 resolved 23:41:10 against session `gcfsywvbgewk`. The park → inbox → answer loop works;
 only the path from a GitHub-homed session into it is missing.
 
+**G. The park was gated behind a lock lookup no bundle install satisfies (2026-07-27).**
+The first run of the shipped WS1 code posted the question on the issue thread and filed
+nothing to the inbox — the `input.requested` handler was firing correctly, but with an
+empty `PARK_URL`. `deployRelease` decided whether to inject `HARNESST_FOH_PARK_URL` with
+`findInstall(lock, "github", member)?.type === "channel"`, and `deputy-jaden` installed
+the **GitHub bundle**, not the standalone channel. A composite install DROPS its parts'
+own lock entries (`planInstall`: "the composite's `includes` provenance replaces it"), so
+the lock's only row is `{type: "bundle", id: "github-bundle", includes: [{type: "channel",
+id: "github"}, …]}` and the lookup returned `undefined`. The marketplace steers people
+into the bundle, so the gate was closed for the common path and open only for the rare
+one. Fixed by `hasChannelInstalled()`, which looks through `includes` while still
+insisting on `type === "channel"` on both branches (a tool named `github` must not be
+handed a delegation token).
+
+**H. Every checkout died on `dubious ownership` (2026-07-27).** With the WS3 checkout in
+place the agent announced, on the thread, `configuring the git remote failed (exit 128):
+fatal: detected dubious ownership in repository at '/workspace'`. The sandbox mounts the
+workspace under a uid git does not run as, so the first git command in it fails — and
+because WS3 replaced silence with a loud comment, this surfaced immediately instead of
+becoming another blind answer. Fixed by adding the checkout path to `safe.directory`
+before any git command, in **both** the real global config (the agent runs its own `git
+status` there for the rest of the session) and the scoped credential config the fetch
+runs under (`GIT_CONFIG_GLOBAL` replaces `~/.gitconfig`; it does not layer over it).
+
+**Authoring note from G/H.** A template change only reaches an installed agent when the
+install is updated — templates are materialized into the agent's repo at install time
+(`app/marketplace/manifest.ts`), so no deploy mode picks up a catalog edit. A bundle whose
+*include* changed but whose own `version` did not shows up as **Repair install**, not
+**Update** (`repair: !update && (missingFiles || missingIncludes)`), which reads as
+corruption rather than as new work. Bump the bundle's version alongside the channel's.
+
 ### 4.6 The delivery experiment: resume is channel-scoped at runtime **[R2]**
 
 §4.1 asserted from source that only a send built from the homing channel can deliver

@@ -539,6 +539,73 @@ describe("the GitHub channel template's turn.started override", () => {
   });
 });
 
+/**
+ * The dubious-ownership failure, observed in production on 2026-07-27: the sandbox mounts the
+ * workspace under a uid git does not run as, so the FIRST git command in it — `git remote add` —
+ * exits 128 with `fatal: detected dubious ownership in repository at '/workspace'` and the whole
+ * checkout is lost. The turn then answers the issue without the repository, which is exactly the
+ * failure mode WS3 exists to prevent, only now announced instead of silent.
+ */
+describe("github channel template — dubious ownership", () => {
+  it("marks the checkout directory safe before it runs any other git command", async () => {
+    const harness = loadTemplate({
+      run: (command) => (command.includes("rev-parse") ? { stdout: "b".repeat(40) } : undefined),
+    });
+    await harness.turnStarted();
+
+    const commands = harness.commands.map((c) => c.command);
+    const guard = commands.findIndex((c) => c.includes("safe.directory"));
+    expect(guard).toBe(0);
+    // Before the reuse probe too: an ownership rejection there reads as "not on the target
+    // commit", so the channel would re-clone on every single event.
+    expect(commands.findIndex((c) => c.includes("rev-parse"))).toBeGreaterThan(guard);
+    expect(commands.findIndex((c) => c.includes("git remote add"))).toBeGreaterThan(guard);
+  });
+
+  it("only appends the entry when git does not already list it", async () => {
+    // The sandbox outlives a single checkout and `git config --add` is not idempotent, so a long
+    // session would otherwise accumulate one duplicate line per turn.
+    const harness = loadTemplate({
+      run: (command) => (command.includes("rev-parse") ? { stdout: "b".repeat(40) } : undefined),
+    });
+    await harness.turnStarted();
+
+    expect(harness.commands[0]!.command).toBe(
+      "git config --global --get-all safe.directory 2>/dev/null | grep -qxF '/workspace' || git config --global --add safe.directory '/workspace'",
+    );
+  });
+
+  it("repeats the entry in the scoped config the fetch runs under", async () => {
+    // `GIT_CONFIG_GLOBAL` REPLACES ~/.gitconfig rather than layering over it, so the fetch and
+    // checkout would be blind to the global entry written above.
+    const harness = loadTemplate({
+      run: (command) => (command.includes("rev-parse") ? { stdout: "b".repeat(40) } : undefined),
+    });
+    await harness.turnStarted();
+
+    const [configPath] = Object.keys(harness.files);
+    expect(harness.files[configPath!]).toContain("[safe]\n\tdirectory = /workspace");
+  });
+
+  it("logs and carries on when the guard itself fails", async () => {
+    // A workspace git is already happy with needs none of this, and the scoped config still
+    // carries the entry — so a read-only HOME must not cost the agent its checkout.
+    const harness = loadTemplate({
+      run: (command) => {
+        if (command.includes("safe.directory")) {
+          return { exitCode: 1, stderr: "error: could not lock config file" };
+        }
+        return command.includes("rev-parse") ? { stdout: "b".repeat(40) } : undefined;
+      },
+    });
+    await harness.turnStarted();
+
+    expect(harness.state.checkoutPath).toBe("/workspace");
+    expect(harness.posts).toEqual([]);
+    expect(harness.errors.join("\n")).toContain("safe git directory failed");
+  });
+});
+
 const REQUESTS: EveInputRequest[] = [
   {
     requestId: "req_1",
