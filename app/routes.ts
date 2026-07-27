@@ -24,6 +24,10 @@ export default [
   // FOH resource routes: the streaming turn + stop for one repo's sessions, and the global
   // inbox badge/flyout endpoint (D12 polling).
   route("api/foh/inbox", "routes/api.foh.inbox.ts"),
+  // Channel park (WS1): a channel-homed agent files its `input.requested` question here. Bearer
+  // (HARNESST_TEAM_TOKEN) auth, no browser session — kept above the :projectId routes so the
+  // static segment can't be swallowed by them.
+  route("api/foh/park", "routes/api.foh.park.ts"),
   route("api/foh/:projectId/stream", "routes/api.foh.stream.ts"),
   route("api/foh/:projectId/stop", "routes/api.foh.stop.ts"),
   route("api/foh/:projectId/read", "routes/api.foh.read.ts"),

@@ -314,6 +314,25 @@ export async function* streamTurn(input: {
   /** Both present → follow-up turn on the existing session (context retained). */
   sessionId?: string | null;
   continuationToken?: string | null;
+  /**
+   * Channel-homed delivery (WS1). When set, the follow-up POST goes to the agent's own
+   * channel-registered answer route instead of `/eve/v1/session/:id`. This is not an
+   * optimization: eve owns a channel session through the channel that homed it, so delivering
+   * `inputResponses` anywhere else fails with "the target session was not found via
+   * continuation token" (observed as a 500 in production). Built in one place —
+   * `~/foh/channel-resume` — so no surface above here learns which channels exist.
+   *
+   * Everything after delivery is unchanged: the resumed session is the SAME eve session, read
+   * from the same `/eve/v1/session/:id/stream` at the same cursor.
+   */
+  deliverVia?: {
+    routePath: string;
+    /** Continuation token with the channel namespace stripped — eve's `send()` re-adds it. */
+    rawToken: string;
+    state: Record<string, unknown>;
+    /** The instance's own HARNESST_TEAM_TOKEN; the channel route is otherwise unauthenticated. */
+    bearer: string;
+  } | null;
   /** Remote event cursor from the last consumed session stream event. */
   streamIndex?: number | null;
   /** Abort the local stream consumer, e.g. when the user presses Stop. */
@@ -397,26 +416,55 @@ export async function* streamTurn(input: {
   let continuationToken: string | null = null;
   try {
     throwIfAborted();
-    const res = await fetch(
-      isFollowUp
-        ? `${base}/eve/v1/session/${input.sessionId}`
-        : `${base}/eve/v1/session`,
-      {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          message: input.message,
-          ...(isFollowUp ? { continuationToken: input.continuationToken } : {}),
-          ...(isFollowUp && input.inputResponses && input.inputResponses.length > 0
-            ? { inputResponses: input.inputResponses }
-            : {}),
-        }),
-        signal: AbortSignal.timeout(15_000),
-      },
-    );
+    // A channel-homed session resumes through its own channel route; a first turn NEVER does
+    // (there is no session to resume, and the answer route would have nothing to deliver into).
+    const via = isFollowUp ? (input.deliverVia ?? null) : null;
+    const res = via
+      ? await fetch(`${base}${via.routePath}`, {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            authorization: `Bearer ${via.bearer}`,
+          },
+          body: JSON.stringify({
+            continuationToken: via.rawToken,
+            state: via.state,
+            inputResponses: input.inputResponses ?? [],
+            ...(input.message ? { message: input.message } : {}),
+          }),
+          signal: AbortSignal.timeout(15_000),
+        })
+      : await fetch(
+          isFollowUp
+            ? `${base}/eve/v1/session/${input.sessionId}`
+            : `${base}/eve/v1/session`,
+          {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({
+              message: input.message,
+              ...(isFollowUp ? { continuationToken: input.continuationToken } : {}),
+              ...(isFollowUp && input.inputResponses && input.inputResponses.length > 0
+                ? { inputResponses: input.inputResponses }
+                : {}),
+            }),
+            signal: AbortSignal.timeout(15_000),
+          },
+        );
     if (!res.ok && res.status !== 202) {
+      // A channel route answers 409 when the token names no live session — the container was
+      // redeployed and the eve session died with it (findings C/D). Say so in words a human can
+      // act on rather than leaking a bare status.
+      if (via && res.status === 409) {
+        yield fail(
+          "This conversation is homed on the agent's GitHub thread, and the agent has been redeployed since the question was asked — its session no longer exists, so the answer could not be delivered.",
+        );
+        return;
+      }
       yield fail(
-        `Agent returned ${res.status} ${res.statusText} for POST /eve/v1/session.`,
+        via
+          ? `Agent returned ${res.status} ${res.statusText} for POST ${via.routePath}.`
+          : `Agent returned ${res.status} ${res.statusText} for POST /eve/v1/session.`,
       );
       return;
     }

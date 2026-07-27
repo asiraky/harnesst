@@ -21,7 +21,9 @@ import {
   recordTurnFinish,
   recordTurnStart,
 } from "~/observability/record.server";
+import { channelDeliveryFor } from "~/foh/channel-resume";
 import { settleFohTurn } from "~/foh/needs-you";
+import { mintDelegationToken } from "~/team/token.server";
 import {
   openInboxQuestion,
   recordInboxFinished,
@@ -83,6 +85,29 @@ export function toChatStep(step: TurnStep): ChatStep {
 
 export function asString(value: FormDataEntryValue | null): string {
   return typeof value === "string" ? value : "";
+}
+
+/**
+ * How this turn is delivered (WS1): null for every ordinary session — the unchanged
+ * `/eve/v1/session/:id` path — and a channel-route descriptor for a session eve homed on a
+ * channel. Deliberately NOT gated on `inputResponses`: a plain follow-up message on a
+ * channel-homed session must go through the same channel, because eve resolves that session's
+ * continuation token nowhere else.
+ *
+ * The delegation mint reads HARNESST_SECRETS_KEY; if that is unavailable the turn should fail
+ * with the ordinary "couldn't reach the agent" path rather than throwing out of the drain.
+ */
+function channelDelivery(
+  session: PlaygroundSession,
+  target: Target,
+): ReturnType<typeof channelDeliveryFor> {
+  if (!session.resumeVia) return null;
+  try {
+    return channelDeliveryFor(session, mintDelegationToken(target.deploymentId));
+  } catch (error) {
+    console.error("[foh] could not mint the channel-answer bearer:", error);
+    return null;
+  }
 }
 
 /**
@@ -257,6 +282,11 @@ export function streamTurnResponse(input: {
             inputResponses: input.inputResponses,
             sessionId,
             continuationToken: activeSession.continuationToken,
+            // Channel-homed rows (WS1) deliver through the channel that owns the eve session.
+            // The bearer is minted for the deployment resolved for THIS turn, never the one
+            // recorded at park time: a redeploy rotates the container's baked
+            // HARNESST_TEAM_TOKEN, and a stale token would 401 at the answer route.
+            deliverVia: channelDelivery(activeSession, target),
             streamIndex: activeSession.streamIndex,
             signal: turnController.signal,
             timeoutMs: TURN_IDLE_TIMEOUT_MS,

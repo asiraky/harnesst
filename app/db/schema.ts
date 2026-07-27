@@ -1117,6 +1117,34 @@ export const modelProviderConnections = pgTable(
 );
 
 /**
+ * Channel-homed resume descriptor — the ONE place that answers "how do we deliver an answer
+ * back into this session?" for a session eve homed on a channel (GitHub today, Discord/Slack
+ * later) rather than on its plain HTTP session route.
+ *
+ * Why it exists: eve namespaces a channel session's continuation token (`github:repo:…`) and
+ * resolves it only through the channel that owns it. Proven at runtime — POSTing a
+ * GitHub-homed session's own stored token to eve's built-in `POST /eve/v1/session/:id` with
+ * `inputResponses` returns 500 "Cannot deliver inputResponses — the target session was not
+ * found via continuation token". So the answer must be delivered to a route registered ON the
+ * channel, which holds that channel's own `send`.
+ *
+ * `rawToken` is the token with the `"<channel>:"` namespace STRIPPED: eve's `send()` re-prefixes
+ * the channel name, so handing back the namespaced form yields `github:github:…` and fails.
+ * `state` is the channel's own durable state (eve `GitHubChannelState` for github) — compile-time
+ * mandatory on `SendOptions` for a stateful channel, so it must survive the park.
+ */
+export type SessionResumeVia = {
+  /** Channel name as eve namespaces it, e.g. "github". */
+  channel: string;
+  /** Absolute path of the channel-registered answer route on the instance. */
+  routePath: string;
+  /** Continuation token with the `"<channel>:"` prefix stripped. */
+  rawToken: string;
+  /** The channel's durable state, round-tripped verbatim. */
+  state: Record<string, unknown>;
+};
+
+/**
  * harnesst's index of Eve playground sessions. The transcript itself lives in Eve's durable
  * event stream; this table stores the app-owned thread/cursor needed to list and resume
  * sessions for a project/agent/user.
@@ -1174,6 +1202,12 @@ export const playgroundSessions = pgTable(
     externalSessionId: text("external_session_id"),
     /** Eve channel-owned resume handle. */
     continuationToken: text("continuation_token"),
+    /**
+     * Channel-homed resume descriptor (see `SessionResumeVia`). Null for ordinary rows whose
+     * eve session lives on the HTTP session route. When set, the answer path delivers through
+     * the agent's channel route instead of `/eve/v1/session/:id`.
+     */
+    resumeVia: jsonb("resume_via").$type<SessionResumeVia>(),
     /**
      * Fencing token for the active turn (issue #221 finding 5): set by the atomic
      * new/waiting/stopped→running claim in `claimPlaygroundSessionForTurn`; the drain's

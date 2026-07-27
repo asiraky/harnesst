@@ -2031,3 +2031,111 @@ describe("EVE_PUBLIC_ORIGIN injection (issue #163)", () => {
     );
   });
 });
+
+describe("channel park env injection (WS1)", () => {
+  const OLD_KEY = process.env.HARNESST_SECRETS_KEY;
+  const OLD_RELAY = process.env.HARNESST_TEAM_RELAY_URL;
+
+  /** A lock naming the github channel install — the only signal harnesst gates the env on. */
+  function lockWith(id: string, member: string | null = null) {
+    return JSON.stringify({
+      version: 1,
+      installs: [
+        {
+          id,
+          type: "channel",
+          name: id,
+          version: "0.3.0",
+          hash: "h",
+          registry: "fixture",
+          member,
+          files: [`channels/${id}.ts`],
+        },
+      ],
+    });
+  }
+
+  beforeEach(() => {
+    process.env.HARNESST_SECRETS_KEY = "a".repeat(64);
+    process.env.HARNESST_TEAM_RELAY_URL = "https://harnesst.example";
+    store.seedProject({
+      id: PROJECT,
+      orgId: ORG,
+      repoOwner: "acme",
+      repoName: "agent",
+      // agentLock only runs with full repo coordinates.
+      repoInstallationId: "inst_1",
+    });
+  });
+  afterEach(() => {
+    if (OLD_KEY === undefined) delete process.env.HARNESST_SECRETS_KEY;
+    else process.env.HARNESST_SECRETS_KEY = OLD_KEY;
+    if (OLD_RELAY === undefined) delete process.env.HARNESST_TEAM_RELAY_URL;
+    else process.env.HARNESST_TEAM_RELAY_URL = OLD_RELAY;
+  });
+
+  async function deployWith(input: {
+    lock?: string;
+    secrets?: Record<string, string>;
+  }): Promise<Record<string, string>> {
+    const deployedEnvs: Record<string, string>[] = [];
+    const release = await createRelease(
+      { projectId: PROJECT, agentId: AGENT, gitSha: "c1".repeat(20) },
+      store,
+    );
+    const dep = await deployRelease(
+      { environmentId: ENV, releaseId: release.id },
+      {
+        store,
+        deployTarget: fakeDeployTarget({ health: { status: "live" }, deployedEnvs }),
+        secrets: fakeSecrets({ OPENROUTER_API_KEY: "k", ...(input.secrets ?? {}) }),
+        ...(input.lock ? { agentLock: async () => input.lock! } : {}),
+      },
+    );
+    expect(dep.status).toBe("live");
+    return deployedEnvs[0];
+  }
+
+  it("wires the park URL and a delegation token when the lock installs the github channel", async () => {
+    const env = await deployWith({ lock: lockWith("github") });
+
+    expect(env.HARNESST_FOH_PARK_URL).toBe("https://harnesst.example/api/foh/park");
+    // The channel's answer route is otherwise unauthenticated: it compares the presented bearer
+    // against this baked token, so the two MUST be the same value.
+    expect(verifyDelegationToken(env.HARNESST_TEAM_TOKEN)).toBe(
+      (await listDeployments(ENV, store))[0].id,
+    );
+  });
+
+  it("leaves the park env off an agent with no park-capable channel installed", async () => {
+    const env = await deployWith({ lock: lockWith("discord") });
+
+    expect(env).not.toHaveProperty("HARNESST_FOH_PARK_URL");
+  });
+
+  it("leaves the park env off a repo with no lock at all", async () => {
+    const env = await deployWith({});
+
+    expect(env).not.toHaveProperty("HARNESST_FOH_PARK_URL");
+  });
+
+  it("strips a user secret of the same name before setting its own (anti-shadowing)", async () => {
+    // A user-set HARNESST_FOH_PARK_URL would otherwise aim every parked question at a URL of
+    // the user's choosing, carrying the agent's delegation token with it.
+    const env = await deployWith({
+      lock: lockWith("github"),
+      secrets: { HARNESST_FOH_PARK_URL: "https://attacker.example/collect" },
+    });
+
+    expect(env.HARNESST_FOH_PARK_URL).toBe("https://harnesst.example/api/foh/park");
+  });
+
+  it("removes the park URL when the channel is uninstalled and the agent redeployed", async () => {
+    const first = await deployWith({ lock: lockWith("github") });
+    expect(first.HARNESST_FOH_PARK_URL).toBeTruthy();
+
+    const second = await deployWith({ lock: JSON.stringify({ version: 1, installs: [] }) });
+
+    expect(second).not.toHaveProperty("HARNESST_FOH_PARK_URL");
+  });
+});

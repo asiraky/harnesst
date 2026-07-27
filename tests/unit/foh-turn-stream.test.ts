@@ -423,3 +423,79 @@ describe("streamTurnResponse — delegation wake-on-answer (WP4)", () => {
     error.mockRestore();
   });
 });
+
+/**
+ * WS1 — the drain is where "which channel homes this session" turns into "how do we deliver".
+ * The row carries the descriptor; the drain adds only the bearer, minted for the deployment
+ * resolved for THIS turn (a redeploy rotates the container's baked token).
+ */
+describe("streamTurnResponse — channel-homed delivery", () => {
+  const RESUME_VIA = {
+    channel: "github",
+    routePath: "/eve/v1/github/harnesst/answer",
+    rawToken: "repo:1310524517:issue:7",
+    state: { owner: "acme", repo: "widgets", issueNumber: 7 },
+  };
+
+  beforeEach(() => {
+    process.env.HARNESST_SECRETS_KEY =
+      "1f8b16e6a46dd3ac12ef7a328f1ce35c67b5bc8f1acdd76280e3674c3a4f19b2";
+  });
+
+  it("hands streamTurn the channel route, the stripped token and a live bearer", async () => {
+    script([
+      { kind: "session", sessionId: "sess_ext", continuationToken: "tok_1" },
+      { kind: "done", result: result({ reply: "ok" }) },
+    ]);
+
+    await run({
+      session: session({
+        externalSessionId: "sess_ext",
+        continuationToken: "github:repo:1310524517:issue:7",
+        resumeVia: RESUME_VIA,
+      } as Partial<PlaygroundSession>),
+      channel: "foh",
+    });
+
+    const { mintDelegationToken } = await import("~/team/token.server");
+    expect(mocks.streamTurn.mock.calls[0][0]).toMatchObject({
+      deliverVia: {
+        routePath: "/eve/v1/github/harnesst/answer",
+        rawToken: "repo:1310524517:issue:7",
+        state: RESUME_VIA.state,
+        // Minted for the target of this turn, not for whatever deployment parked the question.
+        bearer: mintDelegationToken("dep_1"),
+      },
+    });
+  });
+
+  it("leaves an ordinary session on the unchanged HTTP path", async () => {
+    script([
+      { kind: "session", sessionId: "sess_ext", continuationToken: "tok_1" },
+      { kind: "done", result: result({ reply: "ok" }) },
+    ]);
+
+    await run({ session: session(), channel: "foh" });
+
+    expect(mocks.streamTurn.mock.calls[0][0].deliverVia).toBeNull();
+  });
+
+  it("degrades to the HTTP path instead of throwing when the bearer cannot be minted", async () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    delete process.env.HARNESST_SECRETS_KEY;
+    script([
+      { kind: "session", sessionId: "sess_ext", continuationToken: "tok_1" },
+      { kind: "done", result: result({ reply: "ok" }) },
+    ]);
+
+    const events = await run({
+      session: session({ resumeVia: RESUME_VIA } as Partial<PlaygroundSession>),
+      channel: "foh",
+    });
+
+    expect(mocks.streamTurn.mock.calls[0][0].deliverVia).toBeNull();
+    // The turn still completes — a misconfigured key must not take the drain down.
+    expect(events.at(-1)).toMatchObject({ type: "done" });
+    error.mockRestore();
+  });
+});

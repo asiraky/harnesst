@@ -19,10 +19,12 @@ import { randomBytes } from "node:crypto";
 
 import type { DataStore, Deployment, Release } from "~/data/ports";
 import {
+  findInstall,
   overlayLock,
   requiredScopesByProvider,
   type HarnesstLock,
 } from "~/marketplace/lock";
+import { CHANNEL_ANSWER_ROUTES } from "~/foh/channel-resume";
 import { lockSecretsForMember } from "~/project/secrets.server";
 import { listProviders } from "~/connections/providers.server";
 import { envIngressUrl } from "~/lib/ingress";
@@ -457,12 +459,14 @@ export async function deployRelease(
     ]) {
       delete envVars[key];
     }
+    // Where an instance reaches the control plane. Every agent→harnesst surface (team relay,
+    // Discord send proxy, channel park) shares this one derivation. Default port matches
+    // harnesst's production host (3000) and the Vite dev server (5173, vite.config.ts); PORT wins.
+    const controlPlaneBase =
+      process.env.HARNESST_TEAM_RELAY_URL ??
+      `http://host.docker.internal:${process.env.PORT ?? (process.env.NODE_ENV === "production" ? "3000" : "5173")}`;
     if (isTeamMember && project && agent) {
-      // Default relay port matches harnesst's production host (3000) and Vite dev server (5173,
-      // vite.config.ts). PORT wins when set.
-      envVars.HARNESST_TEAM_URL =
-        process.env.HARNESST_TEAM_RELAY_URL ??
-        `http://host.docker.internal:${process.env.PORT ?? (process.env.NODE_ENV === "production" ? "3000" : "5173")}`;
+      envVars.HARNESST_TEAM_URL = controlPlaneBase;
       envVars.HARNESST_TEAM_TOKEN = mintDelegationToken(dep.id);
       const teammates = await teammateRoster({
         project: {
@@ -499,14 +503,30 @@ export async function deployRelease(
       }
       envVars.DISCORD_APPLICATION_ID = discord.applicationId;
       envVars.DISCORD_PUBLIC_KEY = discord.publicKey;
-      // Same control-plane base-URL derivation as HARNESST_TEAM_URL above.
-      const controlPlaneBase =
-        process.env.HARNESST_TEAM_RELAY_URL ??
-        `http://host.docker.internal:${process.env.PORT ?? (process.env.NODE_ENV === "production" ? "3000" : "5173")}`;
       envVars.HARNESST_DISCORD_SEND_URL = `${controlPlaneBase}/api/discord/send`;
       // The send proxy authenticates the CALLER DEPLOYMENT with the same delegation token the
       // team relay uses, so single-agent deployments (not team members — no HARNESST_TEAM_* above)
       // need one too. The team relay independently authorizes, so this grants no team powers.
+      envVars.HARNESST_TEAM_TOKEN ??= mintDelegationToken(dep.id);
+    }
+
+    // Channel park (WS1): an agent whose work is homed on a channel (a GitHub issue thread
+    // today) files its `input.requested` questions into the Front of House inbox so a human can
+    // answer them in harnesst — without this the question only ever reaches the issue thread,
+    // and before this workstream it reached nothing at all. Same control-plane base URL and the
+    // same per-deployment delegation token as the team relay / Discord proxy: no new secret, and
+    // the park endpoint re-derives project/agent/environment from the token's deployment id, so
+    // it grants no team powers. Harnesst-owned, so anti-shadowing (delete, then set) as above.
+    // Gated on the committed lock actually naming the channel install — the env is inert
+    // otherwise, and a repo with no lock has no marketplace-installed channel to serve.
+    delete envVars.HARNESST_FOH_PARK_URL;
+    const parkChannels = lock
+      ? Object.keys(CHANNEL_ANSWER_ROUTES).filter(
+          (id) => !!findInstall(lock, id, member),
+        )
+      : [];
+    if (parkChannels.length > 0) {
+      envVars.HARNESST_FOH_PARK_URL = `${controlPlaneBase}/api/foh/park`;
       envVars.HARNESST_TEAM_TOKEN ??= mintDelegationToken(dep.id);
     }
 

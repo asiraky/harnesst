@@ -40,6 +40,9 @@ describe("mutation-origin guard: bearer machine endpoints bypass the browser CSR
     "/api/capabilities/xero/list-accounts",
     "/api/capabilities/mayi/anything",
     "/api/connections/token",
+    // WS1: a channel-homed agent parks its `input.requested` question here with the delegation
+    // bearer. Dropping it from the allowlist would 403 every park with no other symptom.
+    "/api/foh/park",
   ];
 
   for (const path of machinePaths) {
