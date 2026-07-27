@@ -236,6 +236,8 @@ the parked session with it. Any park that outlives a deploy is lost, which makes
 local Docker sandbox supports only allow-all / deny-all, and the error is swallowed. The
 agent then answers **with no repo checked out** — plausibly, and wrongly. Any acceptance
 test that only reads the reply text will pass while the agent is working blind.
+**[WS3] Closed** by the channel template doing the checkout itself; the exact eve code
+path, and what an upstream fix would have to change, are in §6.2.
 
 **F. The FOH landing surface itself is fine.** A control-plane probe filed and resolved a
 real park: `inbox_items` row `ljbqbltlqohs` (`kind: question`) raised 23:40:58 and
@@ -519,7 +521,9 @@ GitHub-specific, and all three were invisible until the runbook was executed:
   durable store; any redeploy discards parked sessions.
 - **P3 — repo checkout fails every turn** (§4.5-E). `setDockerNetworkPolicy` throws on
   the local Docker sandbox (allow-all/deny-all only) and the error is swallowed, so the
-  agent answers without its repo.
+  agent answers without its repo. **[WS3] Closed harnesst-side** — the channel template
+  now overrides `turn.started` and checks out with a tokenized fetch, and announces a
+  failure on the thread instead of swallowing it. §6.2 is the upstream write-up.
 
 - **Webhook cutover:** a GitHub App has one webhook URL. New Apps get the control-plane
   URL from the manifest; existing Apps must be re-pointed by hand (there is still no
@@ -581,13 +585,109 @@ Three harnesst-owned moves, in increasing cost:
 the wild; T2-c only as a local-docker convenience, never as the contract. None of the
 three needs a schema change — the park row already carries everything they read.
 
+### 6.2 P3 — the silent checkout failure: the code path, the fix, the upstream ask **[WS3]**
+
+**What eve does.** `githubChannel`'s built-in `turn.started` (`createDefaultEvents`,
+`public/channels/github/defaults.js`) reacts 👀 and then calls `checkoutRepositoryForTurn`,
+which wraps `checkoutGitHubRepository` (`public/channels/github/checkout.js`) in a
+`try/catch` whose entire handler is `logError(log, "GitHub checkout failed — swallowed", e)`.
+
+Inside `checkoutGitHubRepository`, the **first** await is
+`sandbox.setNetworkPolicy(buildBrokerNetworkPolicy(token))`. That policy is not hardening —
+it is the *only* credential in the operation: `publicRemoteUrl()` returns a bare
+`https://github.com/<owner>/<repo>.git` with no token, and the installation token reaches
+GitHub solely through the firewall's `Authorization: Basic …` header transform.
+
+`setDockerNetworkPolicy` (`execution/sandbox/bindings/docker-network.js`) throws for any
+policy other than the two literals:
+
+> The local Docker sandbox backend supports only the "allow-all" and "deny-all" network
+> policies. Domain-level allow-lists and credential brokering require the Vercel backend
+> (vercel()) or microsandbox().
+
+(Type-level confirmation: `DockerSandboxNetworkPolicy = "allow-all" | "deny-all"`.)
+
+Because that throw happens before `mkdir -p` and before `git init`, the failure is total
+and leaves **no** partial state — no directory, no repo, no marker. The catch then eats it,
+the turn proceeds, and the agent answers about code it never read.
+
+**Why harnesst cannot reach it by configuration.** Three independent walls:
+
+1. `GitHubChannelConfig` has no checkout option whatsoever (`api`, `botName`,
+   `credentials`, `events`, `progress`, `pullRequestContext`, `route`, plus the `on*`
+   inbound hooks). Nothing disables, redirects or parameterises the checkout.
+2. Supplying `credentials.installationToken` does not help: checkout resolves the token and
+   *then* calls `setNetworkPolicy` unconditionally.
+3. The backend cannot be swapped. `defaultBackend`'s probe order is Vercel → Docker →
+   microsandbox → just-bash. Vercel abandons self-hosting; microsandbox needs KVM, which a
+   typical VPS does not expose; and harnesst mounts the host docker socket and installs the
+   Docker CLI in the agent image *specifically* to win the Docker probe
+   (`app/seams/oss/deploy.localdocker.server.ts`, `app/deploy/eve-image.server.ts`) so eve
+   does not degrade to `just-bash`. `docker.networkPolicy` is a real eve knob but irrelevant:
+   its default is already `allow-all`, and the failing policy is the per-turn broker policy
+   pushed by checkout, not the sandbox's standing one.
+
+**Nor could harnesst detect it.** No event is emitted (`turn.started` completes normally;
+there is no `turn.failed`). The only artifact is `state.checkoutPath` staying `null`, and
+that state lives in the container's `.workflow-data` (§4.5-D), never in harnesst's database.
+The single real signal is a structured `error` line tagged `github.defaults` in the
+container log — and harnesst's only log reader, `containerLogsTail`, is called from two
+deploy-time health paths and nowhere else. There is no runtime log surface.
+
+**What was built instead (WS3).** The one harnesst-owned surface that reaches this is the
+channel template's `turn.started` override — eve documents that a supplied handler *replaces*
+the built-in for that key, and `catalog/templates/channels/discord/.../discord.ts` already
+uses the same lever. `catalog/templates/channels/github/files/channels/github.ts` now:
+
+- re-asserts `thread.react("eyes")`, which the override would otherwise silently drop;
+- mints an installation token in the instance process (RS256 App JWT from `GITHUB_APP_ID` /
+  `GITHUB_APP_PRIVATE_KEY` → `POST /app/installations/:id/access_tokens`, cached per
+  installation) and runs `git init` / `fetch --depth 1` / `checkout --detach` in
+  `ctx.getSandbox()`, passing the credential as an `http.extraHeader` in a throwaway
+  `GIT_CONFIG_GLOBAL` file that is deleted in a `finally`. This works because the sandbox's
+  standing policy is already `allow-all` and `setNetworkPolicy` is never called;
+- skips the whole thing when the workspace already sits on the target commit, so no token is
+  minted on a repeat turn;
+- and, on failure, **posts on the thread**, immediately above the answer it is about to give,
+  that it could not check the repository out and that what follows is not based on the code.
+  A `confused` reaction and a `[harnesst] github checkout failed` log line go with it.
+
+That last point is the part that survives regardless of whether the tokenized fetch is the
+right long-term answer: it converts "confidently wrong, invisibly" into a visible failure at
+the exact place a reader is about to be misled.
+
+Two honest costs. Losing firewall brokering means the token is briefly readable inside the
+sandbox — scoped to the installation, ~1h lived, never in `.git/config`, never on a command
+line, file deleted after the fetch, but a genuine regression against upstream's design. And
+`checkoutGitHubRepository` / `resolveGitHubInstallationToken` are not importable
+(`public/channels/github/index.d.ts` re-exports only *types* from `auth.js`, and the package
+`exports` map has no wildcard subpath), so the JWT mint is a reimplementation, not reuse.
+
+**The upstream ask.** Any one of these would let the template delete its checkout and keep
+only the loud-failure handler:
+
+1. **Make the swallow visible.** At minimum, emit an event (or set a documented marker on
+   channel state) when the built-in checkout fails, so a caller can react. A `logError` in a
+   container nobody reads is not an error report.
+2. **Let the checkout fall back.** When `setNetworkPolicy` rejects the broker policy, retry
+   with the credential in the request — `http.extraHeader` or an `x-access-token@` remote —
+   rather than aborting. The Docker backend is eve's own default for self-hosted deployments;
+   its GitHub channel should work on it.
+3. **Give `GitHubChannelConfig` a checkout seam** (`checkout: false`, or a
+   `checkout(sandbox, descriptor)` override) so a caller can supply the policy that suits
+   its backend without reimplementing ref resolution and token minting.
+4. **Widen `DockerSandboxNetworkPolicy`** to honour header transforms for a domain allow-list.
+   Largest change, and the only one that preserves the credential-brokering property.
+
 ## 7. Verification runbook
 
 > **[R2] This runbook was executed against production on 2026-07-26/27 and its results
 > are §4.5.** It remains valid as the *before* baseline, with two corrections found by
 > running it: Phase 6 will show **no** Runs row (not "a row within ~60s" — §4.5-C), and
 > any observation of the agent's reply should not be read as evidence the repo was
-> checked out (§4.5-E).
+> checked out (§4.5-E). **[WS3]** On an image carrying the 0.4.0 GitHub channel template
+> that last correction inverts: a failed checkout now posts "I could not check out …" on
+> the thread, so the *absence* of that comment is the evidence the repo was read.
 
 Everything below is executable **today, on `main`, with no spike code** — it verifies the
 factual claims this document makes (§3's visibility table, including the silent-park gap)
