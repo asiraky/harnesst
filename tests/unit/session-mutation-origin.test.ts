@@ -40,6 +40,14 @@ describe("mutation-origin guard: bearer machine endpoints bypass the browser CSR
     "/api/capabilities/xero/list-accounts",
     "/api/capabilities/mayi/anything",
     "/api/connections/token",
+    // WS1: a channel-homed agent parks its `input.requested` question here with the delegation
+    // bearer. Dropping it from the allowlist would 403 every park with no other symptom.
+    "/api/foh/park",
+    // WS2: every harnesst-built image's `harnesst-runs` hook POSTs its turns here with the same
+    // delegation bearer. The hook is fire-and-forget and swallows failures, so a 403 here would
+    // silently produce zero channel runs — the exact class of invisible failure this workstream
+    // exists to end.
+    "/api/agent/runs",
   ];
 
   for (const path of machinePaths) {

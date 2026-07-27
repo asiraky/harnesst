@@ -212,4 +212,30 @@ describe("channelForTrigger", () => {
     expect(channelForTrigger("github")).toBe("github");
     expect(channelForTrigger("slack")).toBe("slack");
   });
+
+  /**
+   * eve 0.22.6 namespaces every AUTHORED channel adapter: `resolveChannelDefinition` sets
+   * `adapter.kind = "channel:" + name`, and only the built-in HTTP adapter keeps a bare kind.
+   * A production run on 2026-07-26 observed `$eve.trigger: "channel:github"`. Before this fix
+   * the classifier returned that literal, which would have written `runs.channel` values no
+   * filter, badge or query in the app matches.
+   */
+  it("strips eve's `channel:` adapter namespace", () => {
+    expect(channelForTrigger("channel:github")).toBe("github");
+    expect(channelForTrigger("channel:discord")).toBe("discord");
+    expect(channelForTrigger("channel:slack")).toBe("slack");
+    expect(channelForTrigger("channel:schedule")).toBe("cron");
+  });
+
+  it("never yields the raw namespaced kind as a channel", () => {
+    expect(channelForTrigger("channel:github")).not.toBe("channel:github");
+  });
+
+  it("skips http however it is spelled, and anything unclassifiable", () => {
+    expect(channelForTrigger("channel:http")).toBeNull();
+    expect(channelForTrigger("  ")).toBeNull();
+    expect(channelForTrigger("channel:")).toBeNull();
+    expect(channelForTrigger(null)).toBeNull();
+    expect(channelForTrigger(undefined)).toBeNull();
+  });
 });

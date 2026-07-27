@@ -83,6 +83,13 @@ export interface TurnResult {
    */
   messages: { afterStepIndex: number; text: string }[];
   error: string | null;
+  /**
+   * WS1: the turn failed because the CHANNEL-HOMED eve session this row resumes into no longer
+   * exists (the container was redeployed and took its in-process session state with it). The
+   * drain reads this to unbind the row so the next message reseeds a fresh session (#71) —
+   * without it a redeploy dead-ends the conversation permanently. Absent on every other path.
+   */
+  resumeExpired?: boolean;
 }
 
 /** The raw Eve durable-stream event (type + data + meta), as parsed from an NDJSON line. */
@@ -272,6 +279,30 @@ function styleOf(value: string | null): ChatInputOption["style"] {
     : null;
 }
 
+/**
+ * Read a channel answer route's failure body: `{ ok:false, code?, error? }`, with the message
+ * capped and a non-JSON body accepted verbatim. `code` is what lets `streamTurn` tell "the
+ * session this token names is gone" (recoverable, and the user is told exactly that) from every
+ * other failure, which must NOT be reported as a redeploy.
+ */
+async function readChannelFailure(
+  res: Response,
+): Promise<{ code: string | null; message: string | null }> {
+  const text = await res.text().catch(() => "");
+  const trimmed = text.trim();
+  if (!trimmed) return { code: null, message: null };
+  try {
+    const parsed = JSON.parse(trimmed) as Record<string, unknown>;
+    const error = typeof parsed.error === "string" ? parsed.error.trim() : "";
+    return {
+      code: typeof parsed.code === "string" ? parsed.code : null,
+      message: error ? error.slice(0, 500) : null,
+    };
+  } catch {
+    return { code: null, message: trimmed.slice(0, 500) };
+  }
+}
+
 /** Detect + prettify a JSON reply (structured output) so the UI can render it as code. */
 function normalizeReply(reply: string | null): {
   reply: string | null;
@@ -314,6 +345,25 @@ export async function* streamTurn(input: {
   /** Both present → follow-up turn on the existing session (context retained). */
   sessionId?: string | null;
   continuationToken?: string | null;
+  /**
+   * Channel-homed delivery (WS1). When set, the follow-up POST goes to the agent's own
+   * channel-registered answer route instead of `/eve/v1/session/:id`. This is not an
+   * optimization: eve owns a channel session through the channel that homed it, so delivering
+   * `inputResponses` anywhere else fails with "the target session was not found via
+   * continuation token" (observed as a 500 in production). Built in one place —
+   * `~/foh/channel-resume` — so no surface above here learns which channels exist.
+   *
+   * Everything after delivery is unchanged: the resumed session is the SAME eve session, read
+   * from the same `/eve/v1/session/:id/stream` at the same cursor.
+   */
+  deliverVia?: {
+    routePath: string;
+    /** Continuation token with the channel namespace stripped — eve's `send()` re-adds it. */
+    rawToken: string;
+    state: Record<string, unknown>;
+    /** The instance's own HARNESST_TEAM_TOKEN; the channel route is otherwise unauthenticated. */
+    bearer: string;
+  } | null;
   /** Remote event cursor from the last consumed session stream event. */
   streamIndex?: number | null;
   /** Abort the local stream consumer, e.g. when the user presses Stop. */
@@ -336,6 +386,8 @@ export async function* streamTurn(input: {
     ids?: {
       sessionId?: string | null;
       continuationToken?: string | null;
+      /** See `TurnResult.resumeExpired` — set ONLY when the channel session is provably gone. */
+      resumeExpired?: boolean;
     },
   ): TalkEvent => ({
     kind: "done",
@@ -352,6 +404,7 @@ export async function* streamTurn(input: {
       steps: [],
       messages: [],
       error,
+      ...(ids?.resumeExpired ? { resumeExpired: true } : {}),
     },
   });
 
@@ -395,26 +448,84 @@ export async function* streamTurn(input: {
   // 1. Start a session with the message — or continue the existing one.
   let sessionId: string | null = null;
   let continuationToken: string | null = null;
+  // A channel-homed session resumes through its own channel route; a first turn NEVER does
+  // (there is no session to resume, and the answer route would have nothing to deliver into).
+  const via = isFollowUp ? (input.deliverVia ?? null) : null;
+
+  // A channel resume is ONLY ever an answer to a pending request. eve 0.22.6's channel `send()`
+  // throws on a failed `deliver()` only when `inputResponses` is non-empty; with an empty array
+  // it silently falls back to `run()` and starts a BRAND-NEW session from the supplied `state` —
+  // which, for the GitHub channel, means posting a comment on an `owner/repo/issue` taken from
+  // state a container supplied at park time. So an ordinary follow-up on a channel-homed row is
+  // refused here rather than gambling on eve's fallback. It cannot be sent down eve's HTTP
+  // session route either: that route cannot resolve a channel-homed session's continuation
+  // token at all (it 500s), which is the whole reason this delivery path exists.
+  if (via && !(input.inputResponses && input.inputResponses.length > 0)) {
+    yield fail(
+      "This conversation lives on the agent's own channel thread, so harnesst can only send it an answer to a question it is waiting on — not a new message. Reply on the thread itself to say something else.",
+      { sessionId: input.sessionId, continuationToken: input.continuationToken },
+    );
+    return;
+  }
+
   try {
     throwIfAborted();
-    const res = await fetch(
-      isFollowUp
-        ? `${base}/eve/v1/session/${input.sessionId}`
-        : `${base}/eve/v1/session`,
-      {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          message: input.message,
-          ...(isFollowUp ? { continuationToken: input.continuationToken } : {}),
-          ...(isFollowUp && input.inputResponses && input.inputResponses.length > 0
-            ? { inputResponses: input.inputResponses }
-            : {}),
-        }),
-        signal: AbortSignal.timeout(15_000),
-      },
-    );
+    const res = via
+      ? await fetch(`${base}${via.routePath}`, {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            authorization: `Bearer ${via.bearer}`,
+          },
+          body: JSON.stringify({
+            continuationToken: via.rawToken,
+            state: via.state,
+            inputResponses: input.inputResponses ?? [],
+            ...(input.message ? { message: input.message } : {}),
+          }),
+          signal: AbortSignal.timeout(15_000),
+        })
+      : await fetch(
+          isFollowUp
+            ? `${base}/eve/v1/session/${input.sessionId}`
+            : `${base}/eve/v1/session`,
+          {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({
+              message: input.message,
+              ...(isFollowUp ? { continuationToken: input.continuationToken } : {}),
+              ...(isFollowUp && input.inputResponses && input.inputResponses.length > 0
+                ? { inputResponses: input.inputResponses }
+                : {}),
+            }),
+            signal: AbortSignal.timeout(15_000),
+          },
+        );
     if (!res.ok && res.status !== 202) {
+      if (via) {
+        const failure = await readChannelFailure(res);
+        // 409 + `session_gone` is the ONE thing we can honestly name: the token resolves to no
+        // live session, which on a channel means the container was replaced and took its
+        // in-process session state with it. Every OTHER failure — a GitHub outage, an expired
+        // installation token, a malformed state, a model error — used to be reported with the
+        // same confident "the agent was redeployed" sentence, which was simply wrong. Those now
+        // surface the route's own message, and the drain leaves the row bound so a retry can
+        // still work.
+        if (res.status === 409 && failure.code !== "send_failed") {
+          yield fail(
+            "This conversation is homed on the agent's own channel thread, and the agent has been redeployed since the question was asked — its session no longer exists, so the answer could not be delivered. Send another message to start a fresh conversation with the same history.",
+            { resumeExpired: true },
+          );
+          return;
+        }
+        yield fail(
+          `The agent could not deliver your answer through its ${via.routePath} route (HTTP ${res.status})${
+            failure.message ? `: ${failure.message}` : "."
+          }`,
+        );
+        return;
+      }
       yield fail(
         `Agent returned ${res.status} ${res.statusText} for POST /eve/v1/session.`,
       );

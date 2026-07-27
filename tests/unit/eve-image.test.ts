@@ -409,6 +409,95 @@ describe("ask-teammate tool injection (D2)", () => {
   });
 });
 
+/**
+ * WS2 — the run-reporting hook is injected into EVERY agent image, with no flag. That is the
+ * point: run visibility must not depend on an agent being a team member, on a channel, or on the
+ * deploy target. It is the same build-context injection the ask-teammate tool uses, and it obeys
+ * the same rule — a repo file at that path wins.
+ */
+describe("harnesst-runs hook injection (WS2)", () => {
+  beforeEach(() => {
+    execFile.mockClear();
+    execFile.mockImplementation(defaultExecFile);
+  });
+
+  async function writeCalls() {
+    const fsp = await import("node:fs/promises");
+    return (fsp.writeFile as unknown as ReturnType<typeof vi.fn>).mock.calls as [
+      string,
+      string,
+    ][];
+  }
+
+  async function build(over: Record<string, unknown> = {}) {
+    const { buildEveImage } = await import("~/deploy/eve-image.server");
+    const fsp = await import("node:fs/promises");
+    (fsp.writeFile as unknown as ReturnType<typeof vi.fn>).mockClear();
+    await buildEveImage({
+      projectId: "proj_1",
+      repo: { owner: "acme", repo: "agents" },
+      ref: "abc123",
+      installationId: "inst_1",
+      ...over,
+    } as never).catch(() => {});
+    return writeCalls();
+  }
+
+  it("bakes the hook into a plain single-agent build context", async () => {
+    const hookWrite = (await build()).find(([p]) =>
+      String(p).endsWith("agent/hooks/harnesst-runs.ts"),
+    );
+
+    expect(hookWrite).toBeTruthy();
+    expect(String(hookWrite![1])).toContain("defineHook");
+    expect(String(hookWrite![1])).toContain("HARNESST_RUNS_URL");
+  });
+
+  it("bakes it beside a team member's agent, not at the repo root", async () => {
+    const hookWrite = (await build({ agentRoot: "agents/deployer/agent" })).find(([p]) =>
+      String(p).endsWith("harnesst-runs.ts"),
+    );
+
+    expect(String(hookWrite?.[0])).toContain("agents/deployer/agent/hooks/harnesst-runs.ts");
+  });
+
+  it("does not overwrite a repo's own file at that path", async () => {
+    const { mkdir: realMkdir, writeFile: realWriteFile } =
+      await vi.importActual<typeof import("node:fs/promises")>("node:fs/promises");
+    const path = await import("node:path");
+    // The staged tree is created by the mocked `tar`/`mkdir` exec; drop a repo-authored hook into
+    // it the moment the extraction directory appears.
+    execFile.mockImplementation((cmd, args, optionsOrCallback, maybeCallback) => {
+      if (cmd === "tar") {
+        const target = args[args.indexOf("-C") + 1];
+        const callback = execCallback(optionsOrCallback, maybeCallback);
+        realMkdir(path.join(target, "agent/hooks"), { recursive: true })
+          .then(() =>
+            realWriteFile(
+              path.join(target, "agent/hooks/harnesst-runs.ts"),
+              "// the repo's own hook\n",
+            ),
+          )
+          .then(
+            () => callback(null, "", ""),
+            (error: Error) => callback(error, "", ""),
+          );
+        return;
+      }
+      defaultExecFile(cmd, args, optionsOrCallback, maybeCallback);
+    });
+
+    const writes = await build();
+
+    // The Dockerfile write happens earlier in the same function, so its presence proves staging
+    // actually reached the injection block rather than bailing out first.
+    expect(writes.some(([p]) => String(p).endsWith("Dockerfile"))).toBe(true);
+    expect(
+      writes.find(([p]) => String(p).endsWith("agent/hooks/harnesst-runs.ts")),
+    ).toBeUndefined();
+  });
+});
+
 describe("HARNESST_EVE_DOCKERFILE", () => {
   it("boots via the eve bin (`eve start`), not the raw Nitro entry", async () => {
     const { HARNESST_EVE_DOCKERFILE } = await import("~/deploy/eve-image.server");

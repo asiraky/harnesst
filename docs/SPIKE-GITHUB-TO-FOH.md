@@ -6,7 +6,8 @@
 > from any entry point files to the control plane and resumes via signed callback — and
 > whether eve's `cross-channel-receive` lets externally triggered work (schedules,
 > GitHub) be homed on it.
-> **Status:** Complete — verdicts below · **Owner:** asiraky@gmail.com · **Date:** 2026-07-27
+> **Status:** Complete — verdicts below, **revised 2026-07-27 against a production run**
+> · **Owner:** asiraky@gmail.com · **Date:** 2026-07-27
 >
 > Evidence basis: harnesst `main` @ `33e0f79`, eve `0.24.2` (read from the published
 > package's `dist/` + shipped docs), `@mayiapp/eve` `0.3.0` source. File:line references
@@ -14,6 +15,13 @@
 > adversarially reviewed (fact-check pass against the code, then an independent
 > adversarial review); §5's "contracts to settle" and several §7 corrections came out of
 > that review.
+>
+> **Revision 2 (2026-07-27):** §7's runbook was executed against production
+> (`deputy-jaden` on a private target repo, eve `0.22.6` in the deployed image). Four
+> findings changed the document: one verdict was wrong (§2 row 3 / §4.2), one §3
+> visibility row was wrong (Runs), the recommendation flipped from Option A to Option B,
+> and three separate defects were found that no option can paper over (§4.5). Sections
+> carrying revised text are marked **[R2]**.
 
 ---
 
@@ -33,16 +41,18 @@ The PRD asks, specifically:
 
 Outcome required: a design note + go/no-go.
 
-## 2. Verdicts
+## 2. Verdicts **[R2]**
 
-Four separate verdicts — they do not collapse into one:
+Six separate verdicts — they do not collapse into one:
 
 | Claim | Verdict |
 | --- | --- |
 | A harnesst-authored channel (mayi pattern) is buildable with zero eve changes | **Proven** — every API it needs (`defineChannel`, `receive`, channel-owned `input.requested`, resume via a channel-registered route calling `args.send({inputResponses})`) exists in eve 0.24.2 and is exercised in production by `@mayiapp/eve` (§4.3). Gated on raising harnesst's eve floor (§4.4) |
 | `cross-channel-receive` re-homes **schedule**-triggered work onto it | **Proven, handler-form schedules only** — `schedule.d.ts:17` gives `defineSchedule` handlers `receive: CrossChannelReceiveFn`; markdown schedules stay task-mode and unparkable (§4.2) |
-| `cross-channel-receive` re-homes **GitHub**-triggered work onto it | **Denied** — eve's `githubChannel` inbound hooks (`onComment`, `onIssue`, …) are dispatch *gates* (`return {auth}` or `null`); they never see `args.receive`, so work arriving at the GitHub channel cannot be handed to another channel (§4.2). **Any** GitHub→FOH design therefore starts with the control plane receiving the webhook itself |
-| GitHub → FOH overall | **GO on feasibility** — the control-plane receiver is forced (above), and every downstream mechanism it needs exists and is proven in-tree. **Where the received work is homed is a weighted sequencing decision, not a foregone conclusion** — §5 lays out the options, the contracts any of them must settle, and a recommendation with its conditions stated |
+| Work **arriving at** eve's GitHub channel can be handed off to another channel | **Denied** (unchanged) — `githubChannel`'s inbound hooks (`onComment`, `onIssue`, …) are dispatch *gates* (`return {auth}` or `null`); they never see `args.receive` (§4.2). **Any** GitHub→FOH design therefore starts with the control plane receiving the webhook itself |
+| ~~`githubChannel` can never be a `receive` **target**~~ | **RETRACTED — this was wrong.** Revision 1 generalised the HTTP channel's missing `receive` hook to `githubChannel`. It is false in **both** the deployed `0.22.6` and `0.24.2`: `githubChannel` exports a `receive` hook with a documented `GitHubReceiveTarget` (`owner`, `repo`, exactly one of `issueNumber`/`pullRequestNumber`, optional `initialMessage`/`installationId`/`repositoryId`) — "Target accepted by `receive(github, { target })` for proactive sessions". A harnesst-homed session **can** be re-homed onto a GitHub thread (§4.2) |
+| A GitHub-homed session can be resumed through eve's built-in HTTP session route | **Denied — proven at runtime, not inferred** (§4.6). `POST /eve/v1/session/:id` with the byte-exact stored continuation token returns HTTP 500 `Cannot deliver inputResponses — the target session was not found via continuation token`. Resume **must** originate from a route registered on the homing channel |
+| GitHub → FOH overall | **GO on feasibility, with three blocking defects to fix first** (§4.5). The GitHub half works in production today — mention → dispatch → session → multi-turn continuation are all proven. What is broken is everything harnesst was assumed to already provide: the run reconciler has never populated a single row, run state is destroyed on every redeploy, and the repo checkout fails on every turn |
 
 ## 3. Current state (what actually happens today)
 
@@ -69,10 +79,10 @@ What the operator sees of a GitHub-triggered turn:
 | Surface | Visibility |
 | --- | --- |
 | The GitHub issue | ✅ 👀 reaction on dispatch, reply comment as `<slug>[bot]` on completion, error comment on failure (eve built-ins) |
-| Back-of-house Runs | ✅ within ~60s, via the pull reconciler (`app/observability/reconcile.server.ts:367-497`). The channel string is passed through from eve's `$eve.trigger` verbatim (`app/observability/session-turns.server.ts:147-152`); eve rewrites authored-channel adapter kinds to `channel:<name>`, so expect `github` or `channel:github` — the runbook records the actual value |
+| Back-of-house Runs | ❌ **nothing, ever** — this row said "✅ within ~60s via the pull reconciler" in revision 1. **Wrong**: the reconciler has never produced a row for any channel (§4.5 defect C). The passthrough claim about `$eve.trigger` → `channel:github` (`app/observability/session-turns.server.ts:147-152`) is correct and was confirmed in the container's own event log; it simply never reaches the reconciler |
 | FOH activity feed | ⚠️ a generic "`<agent>` ran" row (`app/routes/foh.activity.tsx:148-168` has no `github` case); input/error redacted for members (`app/foh/activity.server.ts:14-20`) |
 | FOH sessions / sidebar / inbox | ❌ nothing — no `playground_sessions` row is ever created |
-| A mid-turn question (`input.requested`) | ❌ **not deliverable to any actionable surface.** GitHub dispatch runs in conversation mode (`requestInput: true` — eve `dist/src/channel/send.js`, mode defaults to `"conversation"`), so the session parks durably — but `githubChannel` installs no built-in `input.requested` handler (its built-ins are `turn.started`, `message.completed`, `session.failed`/`turn.failed` — `githubChannel.d.ts:72-78`). No issue comment, no FOH item, no answer path. Note the reconciler still *settles the run row*: `session.waiting` with a pending request completes the folded turn (`app/observability/session-turns.server.ts:343-374`), so Runs shows a **completed** run (the question may appear as a step input) while the eve session sits parked forever behind it |
+| A mid-turn question (`input.requested`) | ❌ **not deliverable to any actionable surface.** GitHub dispatch runs in conversation mode (`requestInput: true` — eve `dist/src/channel/send.js`, mode defaults to `"conversation"`), so the session parks durably — but `githubChannel` installs no built-in `input.requested` handler (its built-ins are `turn.started`, `message.completed`, `session.failed`/`turn.failed` — `githubChannel.d.ts:72-78`). No issue comment, no FOH item, no answer path. **Confirmed in production** (§4.5 defect B): two `input.requested` events with real `ask_question` prompts, each followed by `turn.completed` with **no** `message.completed` — the question was raised, parked, and delivered nowhere. Revision 1's follow-on note ("the reconciler still settles the run row as *completed* while the session sits parked") describes code that is real (`app/observability/session-turns.server.ts:343-374`) but never runs, because no run row is ever created (§4.5 defect C) |
 | Webhook delivery to a stopped (scaled-to-zero) instance | ❌ **lost.** The splitter proxies only `live` deployments and 503s otherwise (`app/deploy/splitter.server.ts:26-56`); nothing on this path wakes the container (`ensureLiveDeploymentForEnvironment` is only called from FOH/control-plane sends), and GitHub does **not** automatically redeliver failed webhooks. A mention while the agent is asleep silently goes nowhere |
 
 The last two rows are the sharpest forms of the problem; §7's runbook reproduces the
@@ -93,7 +103,7 @@ need a human must run as a harnesst-driven session — the FOH answer path
 (`POST /eve/v1/session/:id` with `inputResponses`, `app/agent/talk.server.ts:400-416`)
 can only resume sessions homed on the **HTTP channel**.
 
-### 4.2 `cross-channel-receive` — exact semantics
+### 4.2 `cross-channel-receive` — exact semantics **[R2]**
 
 Not a flag or permission: it is the `args.receive(channel, {message, target, auth})`
 function handed to **channel route handlers** and **handler-form schedules**
@@ -111,6 +121,16 @@ homed on the target channel (adapter, token namespace, event handlers — the ta
   103-137`). Its `events` handlers get `GitHubEventContext` (the GitHub channel context
   plus `ChannelSessionOps`) — again no `send`, no `receive`.
   **Work arriving at eve's GitHub channel cannot be re-homed. Denied.**
+- **[R2] But the GitHub channel *is* a valid `receive` target — revision 1 said
+  otherwise and was wrong.** `githubChannel` ships a `receive` hook in the deployed
+  `0.22.6` and in `0.24.2`, taking a `GitHubReceiveTarget`: `owner`, `repo`, exactly one
+  of `issueNumber` / `pullRequestNumber`, optional `initialMessage`, `installationId`,
+  `repositoryId` — documented as "Target accepted by `receive(github, { target })` for
+  proactive sessions". The error in revision 1 was generalising the built-in **HTTP**
+  channel's missing hook to every non-authored channel. Consequence: the direction that
+  matters for a *proactive* agent (harnesst-homed session → post/continue on a GitHub
+  thread) is available, and a harnesst channel route can hand work **to** GitHub. It does
+  not rescue the inbound direction, which stays denied.
 - Handler-form schedules (`defineSchedule({cron, run({receive, waitUntil, appAuth})})`)
   *do* get it, and markdown schedules run `mode: "task"` which cannot park for a human —
   so re-homing scheduled work onto a parkable channel is both possible and the only way
@@ -152,7 +172,136 @@ adapter peer-pins eve **exactly** `0.24.2`. A harnesst channel means raising the
 (and inheriting the mayi-collision constraint until `@mayiapp/eve` widens its range).
 Option A below needs none of this.
 
+**[R2]** Option B needs none of it either: the composition it relies on
+(`githubChannel({events})`, `Channel.routes`, `input.requested` as a channel event) is
+present in the **deployed 0.22.6**, verified against the running container — so B ships
+without moving the floor or inheriting the mayi exact-pin collision. The floor question
+belongs to C alone.
+
+### 4.5 What the production run actually showed (2026-07-26/27) **[R2]**
+
+§7's runbook was executed end to end: `deputy-jaden`, a private target repo, a
+per-agent GitHub App, three `@deputy-jaden` mentions on one issue. Everything below is
+from the live deployment's event log, container filesystem, and the production database —
+not from reading source.
+
+**A. The GitHub half works.** Webhook deliveries 200'd. All three mentions landed on a
+single eve session (`wrun_01KYGBY0AM9EG04P269QAA36JP`) carrying
+`$eve.trigger: channel:github`, i.e. three turns continuing one thread-homed session.
+Mention gating, HMAC verification, 👀 reaction, reply comments, and multi-turn thread
+continuation are proven in production. **This is the part of the system nobody needs to
+build.**
+
+**B. `input.requested` reaches no surface — confirmed, not inferred.** Two
+`input.requested` events (`call_Tw9ItEnLTd6kwLlGLGEduheg`,
+`call_2D2skVyLmS9sZmmnpzCaHgEO`) carried real `ask_question` prompts with option lists.
+Each was followed by `turn.completed` with **no** `message.completed`. Nothing was posted
+to GitHub; nothing appeared in harnesst. The user asked the agent a deliberately
+ambiguous question, the agent correctly decided to ask back, and the question died
+inside the container. This is exactly the gap §1 names, now with a receipt.
+
+*Correction to an inference made during the investigation:* `session.waiting` in the
+event stream is **not** evidence that eve discarded the question.
+`createSessionWaitingEvent()` takes no arguments and always emits
+`{wait: "next-user-message"}` — a constant. It carries no parking information either way,
+and no design should read it as a signal.
+
+**C. The run reconciler has never worked — for any channel.** Not a GitHub bug; a
+platform one, and the reason "Runs shows the turn" in §3 was wrong.
+
+- The reconciler discovers sessions via `deps.listWorldSessions(worldKey, since)`
+  (`app/observability/reconcile.server.ts`), which queries
+  `workflow.workflow_runs` in the per-environment world Postgres
+  (`app/seams/oss/deploy.localdocker.server.ts:179+`).
+- **All nine `harnesst_env_*` databases in production contain zero tables.** Nothing has
+  ever written to them.
+- Because the deployed eve (`0.22.6`) **has no Postgres workflow backend at all** — zero
+  `POSTGRES` matches in the bundle, no `pg`/`postgres` dependency, nothing matching
+  `postgres` under `/app/.output/server/`. It persists to
+  `WORKFLOW_LOCAL_DATA_DIR || .workflow-data` on the container filesystem.
+  `WORKFLOW_POSTGRES_URL` is dead config.
+- `listWorldSessions` catches `42P01` (relation missing) and `3D000` (database missing)
+  and returns `[]` **with no log line**, so the failure is silent by construction.
+- `run_reconcile_cursors` is empty across the whole production database. The
+  `schedule`/`discord` rows that do exist in `runs` came from older in-process paths;
+  none is newer than 2026-07-18.
+
+**D. Run state is destroyed by every redeploy.** Corollary of C: the only record of a
+session lives in the container's `.workflow-data`. This was demonstrated involuntarily —
+a v5 rollout at 23:43–23:44 replaced all four agent containers mid-investigation and took
+the parked session with it. Any park that outlives a deploy is lost, which makes
+"a human answers tomorrow" unimplementable until state moves off the container.
+
+**E. The repo checkout fails on every turn.** `setDockerNetworkPolicy` throws because the
+local Docker sandbox supports only allow-all / deny-all, and the error is swallowed. The
+agent then answers **with no repo checked out** — plausibly, and wrongly. Any acceptance
+test that only reads the reply text will pass while the agent is working blind.
+**[WS3] Closed** by the channel template doing the checkout itself; the exact eve code
+path, and what an upstream fix would have to change, are in §6.2.
+
+**F. The FOH landing surface itself is fine.** A control-plane probe filed and resolved a
+real park: `inbox_items` row `ljbqbltlqohs` (`kind: question`) raised 23:40:58 and
+resolved 23:41:10 against session `gcfsywvbgewk`. The park → inbox → answer loop works;
+only the path from a GitHub-homed session into it is missing.
+
+### 4.6 The delivery experiment: resume is channel-scoped at runtime **[R2]**
+
+§4.1 asserted from source that only a send built from the homing channel can deliver
+`inputResponses`. That was tested directly, because the whole design hinges on it.
+
+1. `gh issue comment` created session `wrun_01KYGDB5SM5CY7BTTTEMXP298S` with a parked
+   request `call_Ayq6fXrusrF37FPV54szwkWG`.
+2. The session's own stored hook file records
+   `"token": "github:repo:1310524517:issue:1"`.
+3. That **byte-identical** token was POSTed to the instance's built-in HTTP session route
+   (`POST /eve/v1/session/wrun_01KYGDB5SM5CY7BTTTEMXP298S`) with
+   `{message, continuationToken, inputResponses:[{requestId, text}]}` — the same shape
+   `app/agent/talk.server.ts:395-425` sends for FOH resumes.
+4. Result: **HTTP 500**, `{"error":"Channel handler failed."}`. Container log:
+   `channel: 'eve'` … `Cannot deliver inputResponses — the target session was not found
+   via continuation token`.
+
+The token was correct; the *caller's channel* was not. Resolution is scoped to the
+handling channel. **Therefore the answer route must be registered on the GitHub channel
+itself** — no amount of control-plane plumbing can resume a GitHub-homed session through
+eve's HTTP route. This single result is what flips §5.5.
+
+Two composition facts settle how that route gets there, both with zero eve changes:
+
+- **The `input.requested` handler is one config key.**
+  `githubChannel(config)` builds `{...createDefaultEvents({api, credentials, progress}),
+  ...config.events}` — caller events override built-ins — and `"input.requested"` is a
+  first-class `GitHubChannelEvents` key. Handlers receive `GitHubEventContext extends
+  GitHubChannelContext, ChannelSessionOps`, so the handler has `channel.continuationToken`
+  and `channel.thread`: everything needed to file a park.
+- **harnesst already owns the file.** The deployed `/app/agent/channels/github.ts` is a
+  harnesst catalog template
+  (`catalog/templates/channels/github/files/channels/github.ts`), currently the bare
+  `export default githubChannel({})`. Adding the handler is editing our own template.
+- **Routes are composable.** `Channel` exposes `readonly routes: readonly
+  RouteDefinition<TState>[]` (`public/definitions/channel.d.ts:205-213`), so the resume
+  route is appended by spreading, not wrapping:
+
+  ```ts
+  const base = githubChannel({
+    events: { "input.requested": fileParkToControlPlane },
+  });
+  export default { ...base, routes: [...base.routes, harnesstAnswerRoute] };
+  ```
+
+  The appended route holds the GitHub channel's own `args.send`, so
+  `args.send({inputResponses}, {continuationToken: raw})` resolves — the mayi resume
+  shape (§4.3), on eve's GitHub channel.
+
 ## 5. Design: the receiver is forced; the homing target is a decision
+
+> **[R2] Scope correction.** Revision 1 said the control-plane receiver is forced *by
+> homing*. It is not: §4.5-A shows the direct-to-instance webhook homing a session
+> correctly today. The receiver is forced by **durability and wake-up** — GitHub does not
+> redeliver, so a mention to a scaled-to-zero instance is lost (§3, last row), and a park
+> that must survive a redeploy cannot live only in the container (§4.5-D). Under Option B
+> (now recommended) the receiver's job shrinks to: durably accept, wake the instance,
+> forward the signed payload. It no longer decides where work is homed.
 
 Everything below shares a first stage: the **agent App's webhook points at the control
 plane** (manifest `hook_attributes.url` → a new receiver route). What differs is where
@@ -209,7 +358,7 @@ real engineering. §5.2–5.4 are the homing options; §5.5 is the recommendatio
    `openedByAgentId` field (which would render as "opened by the agent" and misattribute
    activity).
 
-### 5.2 Option A — home on the eve HTTP channel (existing FOH machinery)
+### 5.2 Option A — home on the eve HTTP channel (existing FOH machinery) **[R2] — no longer recommended, see §5.5**
 
 The receiver homes the work as an ordinary FOH session:
 `createPlaygroundSession({surface: "foh", userId: null})` →
@@ -238,7 +387,7 @@ exactly **one** continuation mechanism in the product. What it costs: harnesst o
 mention gating and GitHub transport (§5.1 items 4/6 — machinery eve's channel had), and
 eve's PR-context assembly is reimplemented if/when PR events dispatch.
 
-### 5.3 Option B — keep eve's GitHub channel, control plane in front
+### 5.3 Option B — keep eve's GitHub channel, control plane in front **[R2] — RECOMMENDED**
 
 The receiver accepts durably, wakes, then **forwards the original signed payload** to the
 instance's `/eve/v1/github` route (Discord-relay precedent) — eve keeps mention gating,
@@ -254,6 +403,36 @@ adapter (a server-side `SessionHome` seam can hide this from the UI, but it exis
 park-filing depends on template adoption per-repo rather than a control-plane deploy.
 Strongest where GitHub-native UX dominates and FOH is a read-and-answer surface.
 
+**[R2] What the production run changed here.** Both of B's costs got smaller and A's
+central advantage evaporated:
+
+- The "second kind of session" cost is now **unavoidable in every option**, because
+  resume-through-the-HTTP-route is denied at runtime (§4.6). A per-session delivery
+  adapter (`SessionHome` seam) is table stakes, not a B-specific tax.
+- "Template adoption per-repo" was wrong: the template is **ours**, shipped from
+  `catalog/templates/channels/github/` and injected at image build. Rolling the handler
+  out is a template edit plus a redeploy, the same shape as any other catalog change.
+- A's advantage was "the homing half is already proven in production code." §4.5-C/D
+  showed that the FOH-adjacent machinery A leans on (run reconciliation, durable session
+  state) **does not work in production at all**, while GitHub-channel homing and
+  multi-turn continuation **do** (§4.5-A). The proof burden inverted.
+
+**Concrete shape of B, all zero-eve-change (§4.6):**
+
+1. `catalog/templates/channels/github/files/channels/github.ts` becomes
+   `githubChannel({events: {"input.requested": …}})` plus an appended resume route.
+2. The `input.requested` handler seals `{rawContinuationToken, requestId, sessionId,
+   thread, expiresAt}` (AES-256-GCM, key from agent env — mayi's envelope, §4.3),
+   memoizes per `requestId` for redelivery idempotence, and POSTs the question plus a
+   callback URL to the control plane, which files an `inbox_items` question against an
+   adopted FOH session (the surface proven working in §4.5-F).
+3. Answering in FOH calls the callback; the channel-registered route opens the envelope
+   and calls `args.send({inputResponses: [{requestId, optionId?, text?}]}, {auth: null,
+   continuationToken: raw})` — resolving, because the send is the GitHub channel's own.
+4. Optionally the handler also posts the question to the issue thread, so the GitHub-side
+   user sees it too. Both surfaces, one park; whichever answers first wins, the other
+   shows resolved.
+
 ### 5.4 Option C — home on the harnesst channel (mayi pattern)
 
 The receiver dispatches to the agent's `/eve/v1/harnesst/dispatch` route
@@ -267,7 +446,44 @@ handler-form schedules — the only mechanism by which scheduled work can ever a
 parity against a non-HTTP-homed session must be built (same class of problem as B's),
 and the channel file + callback crypto are new surface area.
 
-### 5.5 Recommendation and conditions
+### 5.5 Recommendation and conditions **[R2] — REVISED: B, not A**
+
+**Current recommendation: Option B.** Two runtime results moved it:
+
+1. **Resume is channel-scoped in fact, not just in the type signatures** (§4.6). Option
+   A's implicit premise — that GitHub work re-homed onto the HTTP channel keeps one
+   continuation mechanism — survives only if the *original* GitHub session is thrown away
+   and re-created, which forfeits eve's thread continuity, PR context, and the 👀/reply
+   built-ins that already work. Every option now needs a per-home delivery adapter.
+2. **The half A treats as free is the half that is broken** (§4.5-C/D). GitHub homing,
+   mention gating, and multi-turn continuation work in production today; run
+   reconciliation and durable session state do not work for *any* channel. Option B
+   preserves the working half and forces us to fix the broken half explicitly, instead of
+   building a second consumer of machinery that has never once produced a row.
+
+Cost of B, stated honestly: FOH holds two kinds of session and needs a `SessionHome`
+seam for delivery; the composer against a GitHub-homed session is a build (as it is under
+C); and the park path only exists for agents whose image carries the updated channel
+template.
+
+**Blocking prerequisites — B is not startable until these land** (§4.5):
+
+| # | Defect | Why it blocks |
+| --- | --- | --- |
+| P1 | Run reconciler produces nothing (world DBs empty, eve has no Postgres backend, `listWorldSessions` swallows `42P01` silently) | Without it there is no back-of-house record of GitHub work, and the FOH adoption step has nothing to adopt |
+| P2 | Session state lives only in the container's `.workflow-data` and dies on redeploy | A park that cannot survive a deploy is not a park |
+| P3 | `setDockerNetworkPolicy` throws → repo checkout silently skipped | The agent answers with no repo; acceptance tests that read only the reply text pass falsely |
+
+P1 and P2 are the same fix if session/run state is pushed from the agent to the control
+plane rather than pulled from a database eve never writes to — which is also the shape
+`input.requested` push-parking needs, so B and the platform fix share a mechanism.
+
+Option C (harnesst channel) remains the right home for **schedules** that must ask a
+human (§4.2) and can reuse B's control-plane park endpoint verbatim. Option A is
+retained below for the record; it is no longer recommended.
+
+<details>
+<summary>Revision 1 recommendation (superseded — kept for the record)</summary>
 
 **Sequencing recommendation: build the receiver + Option A first; build the harnesst
 channel (C) when schedules-that-ask-humans or push-based parks are actually scheduled —
@@ -285,7 +501,29 @@ only with §5.1 items 1–7 and §5.2's two corrections settled in the implement
 design; acceptance criteria must cover the fault matrix in §7's closing note, not just
 the happy path.
 
+</details>
+
+Conditions carried forward to B: §5.1 items 1–7 still apply unchanged (they are
+receiver contracts, option-independent), P1–P3 above are prerequisites, and acceptance
+must cover §7's fault matrix — plus one new case: a park filed, the agent redeployed, and
+the answer still delivered.
+
 ## 6. Risks and open questions
+
+**[R2] Promoted from risks to confirmed defects** — each needs its own issue; none is
+GitHub-specific, and all three were invisible until the runbook was executed:
+
+- **P1 — the run reconciler has never worked** (§4.5-C). Fix direction: stop pulling from
+  a world Postgres eve never writes to; have the agent push run/turn state to the control
+  plane (same channel as the park push), and at minimum make
+  `listWorldSessions`' `42P01`/`3D000` swallow **log** instead of returning `[]` silently.
+- **P2 — session state dies with the container** (§4.5-D). `.workflow-data` is not a
+  durable store; any redeploy discards parked sessions.
+- **P3 — repo checkout fails every turn** (§4.5-E). `setDockerNetworkPolicy` throws on
+  the local Docker sandbox (allow-all/deny-all only) and the error is swallowed, so the
+  agent answers without its repo. **[WS3] Closed harnesst-side** — the channel template
+  now overrides `turn.started` and checks out with a tokenized fetch, and announces a
+  failure on the thread instead of swallowing it. §6.2 is the upstream write-up.
 
 - **Webhook cutover:** a GitHub App has one webhook URL. New Apps get the control-plane
   URL from the manifest; existing Apps must be re-pointed by hand (there is still no
@@ -305,7 +543,204 @@ the happy path.
   Until fixed, dev verification uses the quick tunnel (§7 Phase 0). Small code fix,
   separate PR.
 
+### 6.1 Tier 2 — durable park storage: designed, deliberately not built **[WS2]**
+
+P2 ("session state dies with the container", §4.5-D) is real but is **not** what run
+visibility needed, so Tier 1 shipped without it. The design that was worked out while
+building Tier 1 is recorded here so the next person does not re-derive it.
+
+**The failure it addresses.** A park (WS1) writes a durable row on the harnesst side:
+session, `continuationToken`, `resumeVia`, the channel's `state`, and a backfilled
+transcript. Answering it POSTs to the channel's answer route on the *instance*, where eve
+resumes the session from `WORKFLOW_LOCAL_DATA_DIR` (`.workflow-data`) on the container
+filesystem. That directory does not survive a redeploy. So after any redeploy harnesst
+still shows an answerable question whose eve-side session no longer exists — the human
+answers into a void.
+
+**What is NOT available as a fix.** Making eve's own state durable across deploy targets
+would mean changing eve, which is out of bounds. `WORKFLOW_POSTGRES_URL` is inert in
+0.22.6 (§4.5-D): there is no Postgres workflow backend to point at.
+
+Three harnesst-owned moves, in increasing cost:
+
+- **T2-a — tell the truth in the UI (cheap, do this first).** A parked session already
+  records the `deploymentId` that parked it. If that deployment is no longer the live one,
+  the answer box knows the resume will fail *before* the human types. No migration, no new
+  storage: it is a join. Even with T2-b or T2-c shipped, this is the honest-state layer.
+- **T2-b — replay instead of resume.** When the parking deployment is gone, do not call
+  the channel answer route. Re-pose the work as a NEW inbound channel turn on the current
+  live deployment, carrying the original request, the park's channel `state` (issue/PR
+  coordinates), and the human's answer. This loses eve-side mid-turn context (tool state,
+  partial reasoning) but survives redeploys and works on every deploy target, because it
+  uses only the channel's ordinary inbound path. Tier 1 makes this materially better than
+  it would have been: channel turns now land in `runs`/`run_steps`, so the replay has a
+  real transcript to quote instead of a bare prompt.
+- **T2-c — persist eve's data dir.** Mount `WORKFLOW_LOCAL_DATA_DIR` on a per-environment
+  volume so a redeploy reattaches the same session store (the local-docker target already
+  does exactly this shape for agent home directories). Highest fidelity — the original
+  session really does resume — but it is one deploy target out of four, it makes rollbacks
+  carry state, and it only holds while the volume and the image agree about the format.
+
+**Recommendation:** T2-a now; T2-b when a redeploy-orphaned park is actually observed in
+the wild; T2-c only as a local-docker convenience, never as the contract. None of the
+three needs a schema change — the park row already carries everything they read.
+
+### 6.2 P3 — the silent checkout failure: the code path, the fix, the upstream ask **[WS3]**
+
+**What eve does.** `githubChannel`'s built-in `turn.started` (`createDefaultEvents`,
+`public/channels/github/defaults.js`) reacts 👀 and then calls `checkoutRepositoryForTurn`,
+which wraps `checkoutGitHubRepository` (`public/channels/github/checkout.js`) in a
+`try/catch` whose entire handler is `logError(log, "GitHub checkout failed — swallowed", e)`.
+
+Inside `checkoutGitHubRepository`, the **first** await is
+`sandbox.setNetworkPolicy(buildBrokerNetworkPolicy(token))`. That policy is not hardening —
+it is the *only* credential in the operation: `publicRemoteUrl()` returns a bare
+`https://github.com/<owner>/<repo>.git` with no token, and the installation token reaches
+GitHub solely through the firewall's `Authorization: Basic …` header transform.
+
+`setDockerNetworkPolicy` (`execution/sandbox/bindings/docker-network.js`) throws for any
+policy other than the two literals:
+
+> The local Docker sandbox backend supports only the "allow-all" and "deny-all" network
+> policies. Domain-level allow-lists and credential brokering require the Vercel backend
+> (vercel()) or microsandbox().
+
+(Type-level confirmation: `DockerSandboxNetworkPolicy = "allow-all" | "deny-all"`.)
+
+Because that throw happens before `mkdir -p` and before `git init`, the failure is total
+and leaves **no** partial state — no directory, no repo, no marker. The catch then eats it,
+the turn proceeds, and the agent answers about code it never read.
+
+**Why harnesst cannot reach it by configuration.** Three independent walls:
+
+1. `GitHubChannelConfig` has no checkout option whatsoever (`api`, `botName`,
+   `credentials`, `events`, `progress`, `pullRequestContext`, `route`, plus the `on*`
+   inbound hooks). Nothing disables, redirects or parameterises the checkout.
+2. Supplying `credentials.installationToken` does not help: checkout resolves the token and
+   *then* calls `setNetworkPolicy` unconditionally.
+3. The backend cannot be swapped. `defaultBackend`'s probe order is Vercel → Docker →
+   microsandbox → just-bash. Vercel abandons self-hosting; microsandbox needs KVM, which a
+   typical VPS does not expose; and harnesst mounts the host docker socket and installs the
+   Docker CLI in the agent image *specifically* to win the Docker probe
+   (`app/seams/oss/deploy.localdocker.server.ts`, `app/deploy/eve-image.server.ts`) so eve
+   does not degrade to `just-bash`. `docker.networkPolicy` is a real eve knob but irrelevant:
+   its default is already `allow-all`, and the failing policy is the per-turn broker policy
+   pushed by checkout, not the sandbox's standing one.
+
+**Nor could harnesst detect it.** No event is emitted (`turn.started` completes normally;
+there is no `turn.failed`). The only artifact is `state.checkoutPath` staying `null`, and
+that state lives in the container's `.workflow-data` (§4.5-D), never in harnesst's database.
+The single real signal is a structured `error` line tagged `github.defaults` in the
+container log — and harnesst's only log reader, `containerLogsTail`, is called from two
+deploy-time health paths and nowhere else. There is no runtime log surface.
+
+**What was built instead (WS3).** The one harnesst-owned surface that reaches this is the
+channel template's `turn.started` override — eve documents that a supplied handler *replaces*
+the built-in for that key, and `catalog/templates/channels/discord/.../discord.ts` already
+uses the same lever. `catalog/templates/channels/github/files/channels/github.ts` now:
+
+- re-asserts `thread.react("eyes")`, which the override would otherwise silently drop;
+- mints an installation token in the instance process (RS256 App JWT from `GITHUB_APP_ID` /
+  `GITHUB_APP_PRIVATE_KEY` → `POST /app/installations/:id/access_tokens`, cached per
+  installation) and runs `git init` / `fetch --depth 1` / `checkout --detach` in
+  `ctx.getSandbox()`, passing the credential as an `http.extraHeader` in a throwaway
+  `GIT_CONFIG_GLOBAL` file that is deleted in a `finally`. This works because the sandbox's
+  standing policy is already `allow-all` and `setNetworkPolicy` is never called;
+- skips the whole thing when the workspace already sits on the target commit, so no token is
+  minted on a repeat turn;
+- and, on failure, **posts on the thread**, immediately above the answer it is about to give,
+  that it could not check the repository out and that what follows is not based on the code.
+  A `confused` reaction and a `[harnesst] github checkout failed` log line go with it.
+
+That last point is the part that survives regardless of whether the tokenized fetch is the
+right long-term answer: it converts "confidently wrong, invisibly" into a visible failure at
+the exact place a reader is about to be misled.
+
+Two honest costs. Losing firewall brokering means the token is briefly readable inside the
+sandbox — scoped to the installation, ~1h lived, never in `.git/config`, never on a command
+line, file deleted after the fetch, but a genuine regression against upstream's design. And
+`checkoutGitHubRepository` / `resolveGitHubInstallationToken` are not importable
+(`public/channels/github/index.d.ts` re-exports only *types* from `auth.js`, and the package
+`exports` map has no wildcard subpath), so the JWT mint is a reimplementation, not reuse.
+
+**The upstream ask.** Any one of these would let the template delete its checkout and keep
+only the loud-failure handler:
+
+1. **Make the swallow visible.** At minimum, emit an event (or set a documented marker on
+   channel state) when the built-in checkout fails, so a caller can react. A `logError` in a
+   container nobody reads is not an error report.
+2. **Let the checkout fall back.** When `setNetworkPolicy` rejects the broker policy, retry
+   with the credential in the request — `http.extraHeader` or an `x-access-token@` remote —
+   rather than aborting. The Docker backend is eve's own default for self-hosted deployments;
+   its GitHub channel should work on it.
+3. **Give `GitHubChannelConfig` a checkout seam** (`checkout: false`, or a
+   `checkout(sandbox, descriptor)` override) so a caller can supply the policy that suits
+   its backend without reimplementing ref resolution and token minting.
+4. **Widen `DockerSandboxNetworkPolicy`** to honour header transforms for a domain allow-list.
+   Largest change, and the only one that preserves the credential-brokering property.
+
+### 6.3 Known gaps in what shipped
+
+Defects and blind spots that survive the WS1–WS3 branch. None of these is a caveat that
+excuses the design; each is a thing that is wrong, with the file it is wrong in.
+
+**The database integration tests do not run.** `tests/integration/*.db.test.ts` — including
+`foh-park.db.test.ts`, the only place the park's idempotency, the `resume_via` jsonb round
+trip, the cross-agent refusal and the fenced upsert are exercised against real Postgres — are
+wrapped in `describe.runIf(process.env.HARNESST_DB_SMOKE === "1")`. Nothing in
+`.github/workflows/` sets that variable, so on every CI run they report as *skipped*, not as
+*failed*. The upsert guards are pure Postgres semantics (`ON CONFLICT … DO UPDATE … WHERE`
+matching nothing returns no row); the unit tests substitute a hand-written fake for exactly the
+behaviour in question, so a change that broke the real SQL would go green everywhere. Closing
+this needs a Postgres service container in CI, which the repo does not have today.
+
+**`headSha` is pinned to a shallow checkout, so mid-conversation commits are invisible.** In
+`catalog/templates/channels/github/files/channels/github.ts`, `turn.started` skips the fetch
+when `git rev-parse HEAD` already equals `channel.state.headSha`. That is right for the second
+turn of a thread against an unchanged branch and wrong the moment somebody pushes to it: the
+agent keeps answering from the commit it first fetched, with nothing on the thread saying so.
+The fetch is `--depth 1`, so there is no history in the sandbox to notice the divergence from
+either. A correct version would re-resolve the target ref against the API each turn and refetch
+when it moved; that is a second network round trip per turn and was not built here.
+
+**The eyes reaction ignores `progress.reactions`.** The same `turn.started` override reacts
+`eyes` unconditionally. eve's built-in handler — which the override *replaces* — reacts only
+when the channel's `progress.reactions` option is on. An operator who deliberately turned
+reactions off still gets reacted to, on every turn, and the only way to stop it is to edit the
+template. The override does not receive the resolved config, so honouring the option means
+threading it through the template's own `githubChannel({...})` call site.
+
+**Delegation tokens are deterministic and never expire.** `mintDelegationToken` in
+`app/team/token.server.ts` is a bare HMAC over the deployment id: same deployment, same key,
+byte-identical token forever, with no nonce, no issued-at and no expiry. It is the credential
+for the team relay, the Discord send proxy, the runs ingest and — new on this branch — the
+channel park and the channel answer route, and it is baked into container env, so it also
+appears in deploy logs and in any image inspection. A leaked token is valid until
+`HARNESST_SECRETS_KEY` is rotated, which invalidates every other agent's token at the same
+time. Adding an expiry means a re-mint path for long-lived containers; that is a change to the
+existing delegation design, not to this workstream, so it was left alone.
+
+**Nothing typechecks the GitHub channel template.** `catalog/templates/**/*` is excluded from
+`tsconfig.json`, and `eve` is not a dependency of this repository — so the 518-line
+`channels/github.ts` that ships to customer repos is never compiled by `npm run typecheck`, and
+could not be even if it were included. `tests/unit/github-channel-checkout.test.ts` reaches it
+by compiling the file with esbuild (type *stripping*, no checking) and evaluating it against
+hand-written stubs for `eve/channels`, `eve/channels/github` and `node:crypto`. Those stubs are
+now typed against eve 0.22.6's documented shapes, so a drift in the signatures the template uses
+shows up as a compile error *in the test file* — but the stubs are a transcription, not the real
+typings, and a template that used an eve API the stubs do not model would still compile and
+still fail in a container. The only real fix is adding `eve` as a devDependency and typechecking
+the catalog against it.
+
 ## 7. Verification runbook
+
+> **[R2] This runbook was executed against production on 2026-07-26/27 and its results
+> are §4.5.** It remains valid as the *before* baseline, with two corrections found by
+> running it: Phase 6 will show **no** Runs row (not "a row within ~60s" — §4.5-C), and
+> any observation of the agent's reply should not be read as evidence the repo was
+> checked out (§4.5-E). **[WS3]** On an image carrying the 0.4.0 GitHub channel template
+> that last correction inverts: a failed checkout now posts "I could not check out …" on
+> the thread, so the *absence* of that comment is the evidence the repo was read.
 
 Everything below is executable **today, on `main`, with no spike code** — it verifies the
 factual claims this document makes (§3's visibility table, including the silent-park gap)
@@ -455,9 +890,11 @@ Baseline loop (expected within ~a minute of the mention):
       (eve's `message.completed` built-in). If a *second*, near-duplicate comment
       appears, the model also ran `gh issue comment` despite rule 4 — record it; it is
       evidence for §5.1 item 6 (transport must not be model-owned).
-- [ ] **O3 — back of house:** Runs tab shows a new run within ~60s (the reconciler's
-      pull interval). **Record the exact channel string** — expected `github` or
-      `channel:github` (eve rewrites authored-channel adapter kinds; §3).
+- [ ] **O3 — back of house:** ~~Runs tab shows a new run within ~60s~~ **[R2] observed:
+      the Runs tab stays empty — permanently.** The reconciler produces nothing for any
+      channel (§4.5-C). The trigger string *is* `channel:github`, confirmed in the
+      container's event log; it never reaches the database. Treat an empty Runs tab as
+      the expected (broken) baseline, not as a failed setup.
 - [ ] **O4 — FOH activity:** the team's activity feed shows a generic "`deputy` ran"
       entry (unstyled for github — claim §3).
 - [ ] **O5 — thread continuity:** reply on the same issue with `@<slug> now shorten it
@@ -480,12 +917,16 @@ HITL probe (reproduces the undeliverable park):
 2. Expected per §3: the turn dispatches (👀), the agent files eve's `input.requested`,
    and the question reaches **no actionable surface**: no issue comment, no FOH inbox
    item, no answer path anywhere. Two important renderings to record precisely:
-   - **Runs will likely show the run as *completed***, possibly with the question
-     visible as a tool-step input — the reconciler settles a turn whose session went
-     `waiting` with a pending request (§3). The park lives on the *eve session*, behind
-     a "completed" run row. A completed run + a question nobody can answer **is** the
-     gap, rendered at its most deceptive.
-   - The issue thread simply goes quiet.
+   - ~~**Runs will likely show the run as *completed***~~ **[R2] observed: Runs shows
+     nothing at all** — no row to settle, because none is ever created (§4.5-C). The
+     predicted "completed run hiding a parked session" is real code that never executes.
+     The rendering is *more* deceptive than predicted: the question exists only inside
+     the container.
+   - The issue thread simply goes quiet. **[R2] confirmed** — `input.requested` followed
+     by `turn.completed` with no `message.completed` (§4.5-B).
+   - **[R2] The park does not survive a redeploy** (§4.5-D). If the agent is redeployed
+     between the probe and your inspection, the parked session is gone; re-run the probe
+     rather than concluding it never parked.
    - [ ] **G3 — the parked question is not delivered to any actionable surface (issue
          or FOH), while Runs shows the turn as settled.** Record exactly what each
          surface shows.
@@ -493,21 +934,31 @@ HITL probe (reproduces the undeliverable park):
      the model disobeyed the probe prompt — note it and re-run; the probe verifies
      surface behavior, and needs a real `input.requested` to do so.
 3. Cleanup: the parked eve session **persists** — the bare GitHub channel has no
-   issue-event handler (closing the issue changes nothing) and local redeploys
-   deliberately preserve the environment's durable state. There is no supported
+   issue-event handler (closing the issue changes nothing). There is no supported
    teardown; leave it parked and **use a fresh issue for every subsequent run**.
+   **[R2] correction:** "local redeploys deliberately preserve the environment's durable
+   state" is true of the *environment* (volumes, secrets) but **not** of eve session
+   state, which lives in the container's `.workflow-data` and is destroyed on every
+   redeploy (§4.5-D).
 
 ### Acceptance mapping
 
+**[R2] Result of the 2026-07-27 execution:** O1, O2, O4, O5 passed; **O3 failed** (no run
+row — §4.5-C, and the claim itself was wrong, not the run); G1–G3 confirmed. The spike's
+premise and gap are real, and three defects outside the spike's original scope were found
+(§4.5-C/D/E).
+
 O1–O5 passing plus G1–G3 confirmed = every §3 claim verified = the spike's premise and
-gap are real. For the Option A implementation, the happy-path criteria are the inversion
+gap are real. For the ~~Option A~~ **[R2] Option B** implementation, the happy-path
+criteria are the inversion
 of G1–G3 (mention → FOH session exists and streams; question → needs-you + inbox item,
 answerable inline, answer resumes the turn and the result lands back on the issue; O-row
-GitHub behavior preserved via control-plane transport). The **fault matrix** is part of
+GitHub behavior preserved — under B, by eve's own built-ins rather than by
+control-plane transport). The **fault matrix** is part of
 acceptance, not an appendix — the implementation PR must state expected delivery state,
 FOH state, GitHub response, and operator-visible diagnostics for at least: an
 unauthorized commenter; two agents' Apps on one repo; an edited comment; a PR review
 comment; two rapid mentions; a mention while the session is parked; control-plane
 downtime during delivery; a cold (scaled-to-zero) instance; App uninstall/reconnect;
-a crash before and after eve accepts the turn; queue retry exhaustion; and duplicate
-GitHub output.
+a crash before and after eve accepts the turn; queue retry exhaustion; duplicate
+GitHub output; **[R2] and a redeploy between park and answer**.

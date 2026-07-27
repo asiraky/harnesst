@@ -20,6 +20,7 @@ import {
   conversationReads,
   playgroundEvents,
   playgroundSessions,
+  type SessionResumeVia,
 } from "~/db/schema";
 import { openInboxQuestion, resolveInboxForSession } from "~/foh/inbox.server";
 import { reconcileNeedsYouFromTail } from "~/foh/needs-you";
@@ -272,6 +273,11 @@ export async function createPlaygroundSession(input: {
    */
   externalSessionId?: string | null;
   continuationToken?: string | null;
+  /**
+   * Channel-homed resume descriptor (see `SessionResumeVia`): set only when eve homed this
+   * session on a channel, so the answer path must deliver through that channel's route.
+   */
+  resumeVia?: SessionResumeVia | null;
   streamIndex?: number;
   status?: "running" | "waiting" | "completed" | "failed";
   pendingInputAt?: Date | null;
@@ -296,6 +302,7 @@ export async function createPlaygroundSession(input: {
       delegationId: input.delegationId ?? null,
       externalSessionId: input.externalSessionId ?? null,
       continuationToken: input.continuationToken ?? null,
+      resumeVia: input.resumeVia ?? null,
       streamIndex: input.streamIndex ?? 0,
       status: input.status ?? "new",
       pendingInputAt: input.pendingInputAt ?? null,
@@ -303,6 +310,144 @@ export async function createPlaygroundSession(input: {
     })
     .returning();
   return row;
+}
+
+/**
+ * Outcome of `adoptChannelHomedSession`.
+ *
+ * `parkDeferred` is not a failure: the row exists and its resume handles are current, but a LIVE
+ * FOH turn holds the session's claim, so the park did NOT flip `status`/`pendingInputAt` under
+ * the claim holder. That is the legitimate interleaving — a human answers in FOH, the agent asks
+ * a follow-up mid-turn, and the container parks while the drain is still streaming — and the
+ * drain's own needs-you chokepoint marks the park a moment later from inside the turn it owns.
+ */
+export type AdoptChannelHomedSessionResult =
+  | { ok: true; session: PlaygroundSession; parkDeferred: boolean }
+  | { ok: false; reason: "session_not_owned" };
+
+/**
+ * Create-or-adopt the FOH session that fronts a CHANNEL-HOMED eve session (WS1 GitHub park).
+ * Keyed on the `(project_id, external_session_id)` unique index, so a second question on the same
+ * eve session — a multi-turn GitHub thread parks repeatedly — refreshes the row's resume
+ * descriptor and park marks instead of opening a duplicate conversation. That upsert IS the park
+ * endpoint's idempotency for the session half (inbox items carry their own, per requestId).
+ *
+ * `createdBy: null` is deliberate: nobody in harnesst started this work (a GitHub user did), and
+ * the FOH visibility rule (`created_by = viewer OR created_by IS NULL`) makes null rows
+ * team-wide — exactly right for a question anyone on the team may answer.
+ *
+ * Never clobbers on conflict: `title`/`streamIndex` keep their stored value when the caller
+ * passes nothing, so adopting can't blank a title the drain already computed.
+ *
+ * TWO guards the caller cannot supply itself, because both are races the writer must lose:
+ *
+ *  - OWNERSHIP. The caller is a deployed container holding a delegation token, which proves which
+ *    DEPLOYMENT is calling and nothing about the eve session named in its body. Any container in
+ *    the project could otherwise name another agent's live `external_session_id` and overwrite
+ *    its resume handles, redirecting that session's next human answer to an issue thread of the
+ *    caller's choosing (`resumeVia.state` round-trips verbatim into `send()`). The `agent_id`
+ *    predicate in `setWhere` makes the write land on nothing, and the read-back below turns that
+ *    into an explicit refusal rather than a silent 200.
+ *  - TURN FENCING. Every other writer of `status`/`pendingInputAt` goes through
+ *    `claimPlaygroundSessionForTurn`. A park landing inside a live turn must not flip
+ *    `running` → `waiting` under the claim holder, so the fenced upsert skips and the narrow
+ *    fallback below refreshes ONLY the resume handles (which no turn owns).
+ */
+export async function adoptChannelHomedSession(input: {
+  projectId: string;
+  agentId: string;
+  environmentId: string | null;
+  deploymentId: string | null;
+  releaseId: string | null;
+  version: string | null;
+  /** The eve session id the channel homed the work on. */
+  externalSessionId: string;
+  /** Namespaced token exactly as eve reported it — `resumeVia.rawToken` holds the stripped form. */
+  continuationToken: string;
+  resumeVia: SessionResumeVia;
+  title?: string | null;
+  streamIndex?: number | null;
+  /** Claim staleness cutoff; callers pass TURN_IDLE_TIMEOUT_MS, as the turn claim does. */
+  staleAfterMs: number;
+  now: Date;
+}): Promise<AdoptChannelHomedSessionResult> {
+  const staleBefore = new Date(input.now.getTime() - input.staleAfterMs);
+  const [row] = await db
+    .insert(playgroundSessions)
+    .values({
+      projectId: input.projectId,
+      agentId: input.agentId,
+      createdBy: null,
+      surface: "foh",
+      environmentId: input.environmentId,
+      worldKey: input.environmentId,
+      lastDeploymentId: input.deploymentId,
+      lastReleaseId: input.releaseId,
+      lastVersion: input.version,
+      title: input.title ?? null,
+      externalSessionId: input.externalSessionId,
+      continuationToken: input.continuationToken,
+      resumeVia: input.resumeVia,
+      streamIndex: input.streamIndex ?? 0,
+      status: "waiting",
+      pendingInputAt: input.now,
+      lastEventAt: input.now,
+    })
+    .onConflictDoUpdate({
+      target: [
+        playgroundSessions.projectId,
+        playgroundSessions.externalSessionId,
+      ],
+      set: {
+        continuationToken: input.continuationToken,
+        resumeVia: input.resumeVia,
+        lastDeploymentId: input.deploymentId,
+        lastReleaseId: input.releaseId,
+        lastVersion: input.version,
+        status: "waiting",
+        pendingInputAt: input.now,
+        lastEventAt: input.now,
+        updatedAt: input.now,
+        ...(input.title ? { title: input.title } : {}),
+      },
+      setWhere: and(
+        eq(playgroundSessions.agentId, input.agentId),
+        or(
+          ne(playgroundSessions.status, "running"),
+          lt(playgroundSessions.updatedAt, staleBefore),
+        ),
+      ),
+    })
+    .returning();
+  if (row) return { ok: true, session: row, parkDeferred: false };
+
+  // The upsert wrote nothing. Read the row back to say WHY — the two reasons need opposite
+  // answers, and guessing either way is a bug (a silent 200 on a hijack, or a lost park).
+  const [existing] = await db
+    .select()
+    .from(playgroundSessions)
+    .where(
+      and(
+        eq(playgroundSessions.projectId, input.projectId),
+        eq(playgroundSessions.externalSessionId, input.externalSessionId),
+      ),
+    )
+    .limit(1);
+  if (!existing || existing.agentId !== input.agentId) {
+    return { ok: false, reason: "session_not_owned" };
+  }
+
+  // A live turn holds the claim. Refresh only what the turn does not own — the resume handles —
+  // and leave `status`/`pendingInputAt`/`turn_claim_id` to the claim holder.
+  const [refreshed] = await db
+    .update(playgroundSessions)
+    .set({
+      continuationToken: input.continuationToken,
+      resumeVia: input.resumeVia,
+    })
+    .where(eq(playgroundSessions.id, existing.id))
+    .returning();
+  return { ok: true, session: refreshed ?? existing, parkDeferred: true };
 }
 
 /** Persist the conversation's model override (tenancy-guarded like getPlaygroundSession). */
@@ -556,6 +701,11 @@ export async function savePlaygroundEvents(
  * replacement deployment (#71). The cached transcript is untouched; `cacheIndexOffset` moves to
  * the top of the cache so the new session's events (indexed from 1 by the drain) append after
  * the preserved history instead of colliding with it on the (session, streamIndex) PK.
+ *
+ * `resume_via` clears with the handles it describes (WS1). The reseeded session is an ordinary
+ * HTTP-homed eve session on the new deployment — leaving a channel descriptor behind would aim
+ * the NEXT turn at a channel answer route holding a continuation token for a session that died
+ * with the old container.
  */
 export async function unbindPlaygroundSessionForReseed(
   session: PlaygroundSession,
@@ -566,6 +716,7 @@ export async function unbindPlaygroundSessionForReseed(
     .set({
       externalSessionId: null,
       continuationToken: null,
+      resumeVia: null,
       streamIndex: 0,
       cacheIndexOffset: offset,
       updatedAt: new Date(),
@@ -635,6 +786,49 @@ export async function backfillPlaygroundEventsFromEve(input: {
     events.map((event, i) => ({ streamIndex: i + 1, ...event })),
     input.session.cacheIndexOffset,
   );
+}
+
+/**
+ * Copy a CHANNEL-HOMED session's transcript into the cache at park time (WS1). Unlike the relay
+ * park, nothing on harnesst's side ran the turn, so there is no cursor to bound the read:
+ * `backfillPlaygroundEventsFromEve` needs `streamIndex > 0` and would no-op forever. Read the
+ * tail from index 0 instead — it stops at the terminal event (`session.waiting`, which is what a
+ * parked session emits) or on idle — then advance the cursor to what landed.
+ *
+ * Advancing the cursor is not cosmetic: the human's answer opens eve's stream at
+ * `startIndex = streamIndex`, so leaving it at 0 would replay the whole GitHub conversation into
+ * the browser as if it were part of the answering turn. Guarded `stream_index < events.length`
+ * so a concurrent drain's larger cursor always wins.
+ */
+export async function backfillChannelHomedSessionTranscript(input: {
+  session: PlaygroundSession;
+  target: Target;
+  timeoutMs?: number;
+}): Promise<void> {
+  if (!input.session.externalSessionId) return;
+  // Already cached by an earlier park or a drain — the cursor is authoritative.
+  if (input.session.streamIndex > 0) return;
+  const { events } = await readEveSessionTail({
+    baseUrl: input.target.url,
+    sessionId: input.session.externalSessionId,
+    startIndex: 0,
+    timeoutMs: input.timeoutMs ?? 5_000,
+  });
+  if (events.length === 0) return;
+  await savePlaygroundEvents(
+    input.session.id,
+    events.map((event, i) => ({ streamIndex: i + 1, ...event })),
+    input.session.cacheIndexOffset,
+  );
+  await db
+    .update(playgroundSessions)
+    .set({ streamIndex: events.length, updatedAt: new Date() })
+    .where(
+      and(
+        eq(playgroundSessions.id, input.session.id),
+        lt(playgroundSessions.streamIndex, events.length),
+      ),
+    );
 }
 
 /**

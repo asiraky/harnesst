@@ -363,6 +363,54 @@ describe("FOH stream route", () => {
     expect(mocks.streamTurnResponse).not.toHaveBeenCalled();
   });
 
+  it("reseeds an ordinary session whose deployment was replaced (#71)", async () => {
+    mocks.getFohSessionForViewer.mockResolvedValue(
+      sessionRow({ lastDeploymentId: "dep_old" }),
+    );
+    mocks.unbindPlaygroundSessionForReseed.mockResolvedValue(
+      sessionRow({ externalSessionId: null, continuationToken: null }),
+    );
+
+    await action(args({ agentId: "agent_1", playgroundSessionId: "ps_1", message: "go" }));
+
+    expect(mocks.unbindPlaygroundSessionForReseed).toHaveBeenCalled();
+  });
+
+  it("does NOT reseed a channel-homed session when the deployment was replaced", async () => {
+    // A park can sit in the inbox for hours, so a redeploy between the question and the answer
+    // is the LIKELY timing. Reseeding would clear resume_via and quietly turn the human's answer
+    // into a brand-new HTTP conversation: they would read a plausible reply while the GitHub
+    // thread went unanswered and the eve-side session stayed parked forever. The answer is
+    // attempted on the channel route of the CURRENT deployment instead, and only a proven-dead
+    // session unbinds the row (in the drain, after the 409).
+    mocks.getFohSessionForViewer.mockResolvedValue(
+      sessionRow({
+        lastDeploymentId: "dep_old",
+        resumeVia: {
+          channel: "github",
+          routePath: "/eve/v1/github/harnesst/answer",
+          rawToken: "repo:1:issue:7",
+          state: { owner: "acme", repo: "widgets", issueNumber: 7 },
+        },
+      }),
+    );
+
+    await action(
+      args({
+        agentId: "agent_1",
+        playgroundSessionId: "ps_1",
+        message: "main",
+        inputResponses: JSON.stringify([{ requestId: "req_1", optionId: "main" }]),
+      }),
+    );
+
+    expect(mocks.unbindPlaygroundSessionForReseed).not.toHaveBeenCalled();
+    expect(mocks.loadPlaygroundEntriesFromCache).not.toHaveBeenCalled();
+    expect(mocks.streamTurnResponse).toHaveBeenCalledWith(
+      expect.objectContaining({ target: TARGET, messagePrefix: null }),
+    );
+  });
+
   it("404s an agent from another project", async () => {
     mocks.agentsFindById.mockResolvedValue({ ...AGENT, projectId: "proj_2" });
     await expect(

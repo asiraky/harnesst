@@ -25,6 +25,7 @@ const mocks = vi.hoisted(() => ({
   recordTurnStart: vi.fn(async () => {}),
   recordTurnFinish: vi.fn(async () => {}),
   finalizeDelegationOnResume: vi.fn(async () => {}),
+  unbindPlaygroundSessionForReseed: vi.fn(async (s: PlaygroundSession) => s),
 }));
 
 vi.mock("~/agent/talk.server", () => ({
@@ -36,6 +37,7 @@ vi.mock("~/playground/sessions.server", () => ({
   savePlaygroundSessionCursor: mocks.savePlaygroundSessionCursor,
   markSessionPendingInput: mocks.markSessionPendingInput,
   clearSessionPendingInput: mocks.clearSessionPendingInput,
+  unbindPlaygroundSessionForReseed: mocks.unbindPlaygroundSessionForReseed,
 }));
 vi.mock("~/foh/inbox.server", () => ({
   openInboxQuestion: mocks.openInboxQuestion,
@@ -420,6 +422,155 @@ describe("streamTurnResponse — delegation wake-on-answer (WP4)", () => {
     expect(mocks.finalizeDelegationOnResume).toHaveBeenCalledWith(
       expect.objectContaining({ outcome: "completed" }),
     );
+    error.mockRestore();
+  });
+});
+
+/**
+ * WS1 — the drain is where "which channel homes this session" turns into "how do we deliver".
+ * The row carries the descriptor; the drain adds only the bearer, minted for the deployment
+ * resolved for THIS turn (a redeploy rotates the container's baked token).
+ */
+describe("streamTurnResponse — channel-homed delivery", () => {
+  const RESUME_VIA = {
+    channel: "github",
+    routePath: "/eve/v1/github/harnesst/answer",
+    rawToken: "repo:1310524517:issue:7",
+    state: { owner: "acme", repo: "widgets", issueNumber: 7 },
+  };
+
+  beforeEach(() => {
+    process.env.HARNESST_SECRETS_KEY =
+      "1f8b16e6a46dd3ac12ef7a328f1ce35c67b5bc8f1acdd76280e3674c3a4f19b2";
+  });
+
+  it("hands streamTurn the channel route, the stripped token and a live bearer", async () => {
+    script([
+      { kind: "session", sessionId: "sess_ext", continuationToken: "tok_1" },
+      { kind: "done", result: result({ reply: "ok" }) },
+    ]);
+
+    await run({
+      session: session({
+        externalSessionId: "sess_ext",
+        continuationToken: "github:repo:1310524517:issue:7",
+        resumeVia: RESUME_VIA,
+      } as Partial<PlaygroundSession>),
+      channel: "foh",
+    });
+
+    const { mintDelegationToken } = await import("~/team/token.server");
+    expect(mocks.streamTurn.mock.calls[0][0]).toMatchObject({
+      deliverVia: {
+        routePath: "/eve/v1/github/harnesst/answer",
+        rawToken: "repo:1310524517:issue:7",
+        state: RESUME_VIA.state,
+        // Minted for the target of this turn, not for whatever deployment parked the question.
+        bearer: mintDelegationToken("dep_1"),
+      },
+    });
+  });
+
+  it("leaves an ordinary session on the unchanged HTTP path", async () => {
+    script([
+      { kind: "session", sessionId: "sess_ext", continuationToken: "tok_1" },
+      { kind: "done", result: result({ reply: "ok" }) },
+    ]);
+
+    await run({ session: session(), channel: "foh" });
+
+    expect(mocks.streamTurn.mock.calls[0][0].deliverVia).toBeNull();
+  });
+
+  it("fails the turn instead of falling back to HTTP when the bearer cannot be minted", async () => {
+    // The HTTP session route CANNOT resolve a channel-homed continuation token — it answers 500
+    // "the target session was not found via continuation token". Quietly degrading to it turned a
+    // missing server key into an unexplained agent error, so the drain now stops and says so.
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    delete process.env.HARNESST_SECRETS_KEY;
+    script([
+      { kind: "session", sessionId: "sess_ext", continuationToken: "tok_1" },
+      { kind: "done", result: result({ reply: "ok" }) },
+    ]);
+
+    const events = await run({
+      session: session({ resumeVia: RESUME_VIA } as Partial<PlaygroundSession>),
+      channel: "foh",
+    });
+
+    // Nothing was sent anywhere.
+    expect(mocks.streamTurn).not.toHaveBeenCalled();
+    const done = events.at(-1) as Record<string, unknown>;
+    expect(done).toMatchObject({ type: "done", ok: false });
+    expect(String(done.error)).toContain("HARNESST_SECRETS_KEY");
+    // The row is left bound — the thread is still alive, only this server is misconfigured.
+    expect(mocks.unbindPlaygroundSessionForReseed).not.toHaveBeenCalled();
+    error.mockRestore();
+  });
+
+  it("unbinds the row when the channel reports the resume handle is spent", async () => {
+    // A 409 `session_gone` means the container was replaced and took its in-process session with
+    // it. Leaving the descriptor in place would fail every future message the same way; unbinding
+    // lets the NEXT one take the ordinary #71 reseed path and carry the transcript forward.
+    script([
+      {
+        kind: "done",
+        result: result({ ok: false, error: "redeployed", resumeExpired: true }),
+      },
+    ]);
+
+    const row = session({
+      externalSessionId: "sess_ext",
+      continuationToken: "github:repo:1310524517:issue:7",
+      resumeVia: RESUME_VIA,
+    } as Partial<PlaygroundSession>);
+    await run({ session: row, channel: "foh" });
+
+    expect(mocks.unbindPlaygroundSessionForReseed).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "ps_1" }),
+    );
+  });
+
+  it("keeps the descriptor for an ordinary channel delivery failure", async () => {
+    script([
+      { kind: "done", result: result({ ok: false, error: "github 502" }) },
+    ]);
+
+    await run({
+      session: session({
+        externalSessionId: "sess_ext",
+        continuationToken: "github:repo:1310524517:issue:7",
+        resumeVia: RESUME_VIA,
+      } as Partial<PlaygroundSession>),
+      channel: "foh",
+    });
+
+    expect(mocks.unbindPlaygroundSessionForReseed).not.toHaveBeenCalled();
+  });
+
+  it("survives an unbind that throws — the cursor save has already happened", async () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    mocks.unbindPlaygroundSessionForReseed.mockRejectedValueOnce(
+      new Error("db down") as never,
+    );
+    script([
+      {
+        kind: "done",
+        result: result({ ok: false, error: "redeployed", resumeExpired: true }),
+      },
+    ]);
+
+    const events = await run({
+      session: session({
+        externalSessionId: "sess_ext",
+        continuationToken: "github:repo:1310524517:issue:7",
+        resumeVia: RESUME_VIA,
+      } as Partial<PlaygroundSession>),
+      channel: "foh",
+    });
+
+    expect(events.at(-1)).toMatchObject({ type: "done" });
+    expect(mocks.savePlaygroundSessionCursor).toHaveBeenCalled();
     error.mockRestore();
   });
 });

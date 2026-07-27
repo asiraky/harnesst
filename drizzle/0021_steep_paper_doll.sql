@@ -1,0 +1,1 @@
+ALTER TABLE "playground_sessions" ADD COLUMN "resume_via" jsonb;

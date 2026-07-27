@@ -36,9 +36,9 @@
       "id": "github",
       "type": "channel",
       "name": "GitHub",
-      "version": "0.2.0",
+      "version": "0.4.0",
       "description": "Talk to this agent by @mentioning it in GitHub issue and pull-request comments — a GitHub App with webhook signature verification via eve's githubChannel.",
-      "hash": "13ec26f71bee1e3562b34a7c9e4526c939aa52ea"
+      "hash": "c85772269f885c16f3bc5a55716f92a5ef41f67e"
     },
     {
       "id": "agentmail",

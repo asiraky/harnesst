@@ -43,6 +43,10 @@ import { promisify } from "node:util";
 
 import { getInstallationOctokit } from "~/github/client.server";
 import { lowercaseLegacyId } from "~/lib/id";
+import {
+  HARNESST_RUN_HOOK_PATH,
+  HARNESST_RUN_HOOK_SOURCE,
+} from "~/observability/run-hook-template";
 import type { BuiltArtifact } from "~/seams/types";
 import {
   ASK_TEAMMATE_TOOL_PATH,
@@ -277,6 +281,17 @@ async function fetchSource(
       await mkdir(path.dirname(toolPath), { recursive: true });
       await writeFile(toolPath, ASK_TEAMMATE_TOOL_SOURCE);
     }
+  }
+
+  // Run visibility (WS2): bake the generated run-reporting hook into EVERY build context —
+  // unconditionally, because the observability gap it closes is not a per-agent feature. eve's
+  // agent-level hooks fire on every channel, so one file covers github, discord, schedules and
+  // whatever comes next; the container no-ops when harnesst does not inject HARNESST_RUNS_URL.
+  // Same override rule as the teammate tool: a repo file already at this path wins, always.
+  const runHookPath = path.join(buildDir, HARNESST_RUN_HOOK_PATH);
+  if (!existsSync(runHookPath)) {
+    await mkdir(path.dirname(runHookPath), { recursive: true });
+    await writeFile(runHookPath, HARNESST_RUN_HOOK_SOURCE);
   }
   return srcDir;
 }

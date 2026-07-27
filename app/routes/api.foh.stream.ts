@@ -203,8 +203,21 @@ export async function action(args: ActionFunctionArgs) {
 
   // #71 reseed inherits unchanged: a session whose owning eve session died with a replaced
   // deployment is transparently reseeded from the durable cache on this target.
+  //
+  // NOT for a channel-homed row (WS1). `unbindPlaygroundSessionForReseed` clears `resumeVia`
+  // with the handles it describes, and a park can sit in the inbox for hours — so a redeploy
+  // between the question and the answer is the MOST likely timing, not an edge case. Reseeding
+  // here would silently turn the human's answer into a brand-new HTTP-homed conversation: they
+  // would read a plausible reply while the GitHub thread was never answered and the eve-side
+  // session stayed parked forever. Instead the answer is attempted through the channel route on
+  // the CURRENT deployment; a 409 there ("the session this token names is gone") produces an
+  // honest message, and the drain unbinds the row then, so the NEXT message reseeds.
   let seedContext: string | null = null;
-  if (session && !canContinueSessionOnTarget(session, target.deploymentId)) {
+  if (
+    session &&
+    !session.resumeVia &&
+    !canContinueSessionOnTarget(session, target.deploymentId)
+  ) {
     seedContext = buildSeedContext(await loadPlaygroundEntriesFromCache(session));
     session = await unbindPlaygroundSessionForReseed(session);
   }

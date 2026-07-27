@@ -21,7 +21,9 @@ import {
   recordTurnFinish,
   recordTurnStart,
 } from "~/observability/record.server";
+import { channelDeliveryFor } from "~/foh/channel-resume";
 import { settleFohTurn } from "~/foh/needs-you";
+import { mintDelegationToken } from "~/team/token.server";
 import {
   openInboxQuestion,
   recordInboxFinished,
@@ -34,6 +36,7 @@ import {
   savePlaygroundEvents,
   savePlaygroundSessionCursor,
   savePlaygroundSessionProgress,
+  unbindPlaygroundSessionForReseed,
   type PlaygroundSession,
 } from "~/playground/sessions.server";
 import type { RawEveEvent } from "~/agent/talk.server";
@@ -83,6 +86,52 @@ export function toChatStep(step: TurnStep): ChatStep {
 
 export function asString(value: FormDataEntryValue | null): string {
   return typeof value === "string" ? value : "";
+}
+
+/**
+ * How this turn is delivered (WS1). `http` for every ordinary session — the unchanged
+ * `/eve/v1/session/:id` path — and `channel` for a session eve homed on a channel.
+ *
+ * There is no third option for a channel-homed row, and that is the whole point of the union:
+ * eve resolves a channel-homed session's continuation token ONLY through the channel that owns
+ * it, so the HTTP session route answers 500 "the target session was not found via continuation
+ * token". Returning null here (as this once did when the bearer could not be minted) does not
+ * degrade gracefully — it aims the turn straight at the known-broken route and reports the eve
+ * 500 as if the agent had misbehaved. A row we cannot build a delivery for FAILS the turn with
+ * a message that names the real cause.
+ */
+type ChannelDeliveryResolution =
+  | { kind: "http" }
+  | { kind: "channel"; via: NonNullable<ReturnType<typeof channelDeliveryFor>> }
+  | { kind: "unavailable"; error: string };
+
+function resolveChannelDelivery(
+  session: PlaygroundSession,
+  target: Target,
+): ChannelDeliveryResolution {
+  if (!session.resumeVia) return { kind: "http" };
+  let bearer: string;
+  try {
+    // Minted for the deployment resolved for THIS turn, never the one recorded at park time: a
+    // redeploy rotates the container's baked HARNESST_TEAM_TOKEN, and a stale token would 401.
+    bearer = mintDelegationToken(target.deploymentId);
+  } catch (error) {
+    console.error("[foh] could not mint the channel-answer bearer:", error);
+    return {
+      kind: "unavailable",
+      error:
+        "This conversation lives on the agent's own channel thread and harnesst could not mint the credential needed to reach it — the server is missing HARNESST_SECRETS_KEY. Nothing was sent.",
+    };
+  }
+  const via = channelDeliveryFor(session, bearer);
+  if (!via) {
+    return {
+      kind: "unavailable",
+      error:
+        "This conversation lives on the agent's own channel thread, but the resume descriptor stored for it is not one harnesst can deliver to. Nothing was sent.",
+    };
+  }
+  return { kind: "channel", via };
 }
 
 /**
@@ -251,12 +300,48 @@ export function streamTurnResponse(input: {
         };
 
         try {
+          // Channel-homed rows (WS1) deliver through the channel that owns the eve session, and
+          // NEVER fall back to the HTTP session route when that cannot be arranged.
+          const delivery = resolveChannelDelivery(activeSession, target);
+          if (delivery.kind === "unavailable") {
+            result = {
+              ok: false,
+              sessionId,
+              continuationToken,
+              streamIndex,
+              reply: null,
+              replyIsStructured: false,
+              inputRequests: [],
+              modelId: null,
+              turnId: null,
+              steps: [],
+              messages: [],
+              error: delivery.error,
+            };
+            send({
+              type: "done",
+              ok: false,
+              playgroundSessionId: activeSession.id,
+              reply: null,
+              structured: false,
+              inputRequests: [],
+              error: delivery.error,
+              errorDetail: null,
+              errorRetryable: false,
+              modelId: null,
+              version: target.version,
+            });
+            // `finally` still runs: the cursor save, the FOH settle and the inbox bookkeeping
+            // all happen exactly as they do for any other failed turn.
+            return;
+          }
           for await (const event of streamTurn({
             baseUrl: target.url,
             message: sentMessage,
             inputResponses: input.inputResponses,
             sessionId,
             continuationToken: activeSession.continuationToken,
+            deliverVia: delivery.kind === "channel" ? delivery.via : null,
             streamIndex: activeSession.streamIndex,
             signal: turnController.signal,
             timeoutMs: TURN_IDLE_TIMEOUT_MS,
@@ -448,6 +533,19 @@ export function streamTurnResponse(input: {
               });
             } catch (e) {
               console.error(`${tag} persist session cursor failed`, e);
+            }
+            // WS1 recovery. The channel route told us the eve session this row resumes into is
+            // gone — the container was replaced. The descriptor can never resolve again, so
+            // unbind it here (and ONLY here: a GitHub outage or a bad token must leave the row
+            // bound so a retry still works). The next message on this conversation then takes
+            // the ordinary #71 reseed path — a fresh eve session seeded from the durable
+            // transcript — instead of failing with the same message forever.
+            if (activeSession.resumeVia && settled.resumeExpired) {
+              try {
+                await unbindPlaygroundSessionForReseed(activeSession);
+              } catch (e) {
+                console.error(`${tag} channel resume unbind failed`, e);
+              }
             }
             // FOH needs-you chokepoint #1, terminal half (D4/D13): a parked turn keeps its
             // pending flag and inbox items; a completed turn clears them and files the
