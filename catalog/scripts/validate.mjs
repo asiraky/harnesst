@@ -265,6 +265,68 @@ function validateManifest(where, m) {
   }
 }
 
+/**
+ * Authored skill markdown (issue: legal-advisor shipped `disable-model-invocation`, a Claude Code
+ * key eve doesn't know). eve's discovery rejects any unknown frontmatter key with a hard error, so
+ * a template carrying one installs cleanly and then breaks the customer's NEXT build — the failure
+ * surfaces at publish, far from the catalog. Keep authored skills to the public eve shape.
+ *
+ * Which files are skills mirrors eve's scan of `agent/skills/`: a packaged skill is
+ * `skills/<id>/SKILL.md` (frontmatter with `description` required); a flat skill is `skills/<id>.md`
+ * (frontmatter optional). Anything deeper — `references/`, `assets/`, `scripts/` — is a sibling
+ * file, not a skill, and is left alone.
+ */
+const SKILL_FRONTMATTER_KEYS = ["name", "description"];
+
+function skillKind(path) {
+  const parts = path.split("/");
+  if (parts[0] !== "skills" || !path.endsWith(".md")) return null;
+  if (parts.length === 2) return "flat"; // skills/<id>.md
+  if (parts.length === 3 && parts[2] === "SKILL.md") return "packaged"; // skills/<id>/SKILL.md
+  return null; // references/, assets/, scripts/, …
+}
+
+/**
+ * Top-level keys of a leading `---` frontmatter block, or null when there is none. Deliberately
+ * shallow (no YAML dependency — this directory stands alone): nested mapping lines are indented,
+ * so only column-0 `key:` lines count.
+ */
+function frontmatterKeys(content) {
+  const lines = content.split("\n");
+  if (lines[0]?.trim() !== "---") return null;
+  const end = lines.indexOf("---", 1);
+  if (end === -1) return null;
+  return lines
+    .slice(1, end)
+    .map((line) => /^([A-Za-z_][\w-]*)\s*:/.exec(line)?.[1])
+    .filter(Boolean);
+}
+
+/** Enforce the eve authored-skill shape on one shipped file. */
+function validateSkillMarkdown(where, path, content) {
+  const kind = skillKind(path);
+  if (!kind) return;
+  const keys = frontmatterKeys(content);
+  if (keys === null) {
+    if (kind === "packaged") {
+      fail(where, `"${path}" needs frontmatter with a description (packaged skills require it)`);
+    }
+    return; // a flat skill may omit frontmatter — eve infers the description from the first line.
+  }
+  for (const key of keys) {
+    if (!SKILL_FRONTMATTER_KEYS.includes(key)) {
+      fail(
+        where,
+        `"${path}" frontmatter key "${key}" is not part of the public eve skill shape ` +
+          `(only ${SKILL_FRONTMATTER_KEYS.join(", ")}) — eve's discovery fails the build on it`,
+      );
+    }
+  }
+  if (!keys.includes("description")) {
+    fail(where, `"${path}" frontmatter must declare a description`);
+  }
+}
+
 /** Every file path (relative to `base`) under `base`, using forward slashes. */
 function walkFiles(base) {
   const out = [];
@@ -318,6 +380,11 @@ function main() {
     for (const p of onDisk) {
       if (!declared.has(p))
         fail(where, `ships "${p}" under files/ but it is not in the manifest`);
+    }
+
+    // Shipped skill markdown must match the shape eve's discovery accepts.
+    for (const [p, content] of Object.entries(t.files)) {
+      validateSkillMarkdown(where, p, content);
     }
   }
 
