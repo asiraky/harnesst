@@ -20,8 +20,9 @@ import type { SandboxSession } from "eve/sandbox";
 // question dies inside the container. It is not posted to the issue and it never reaches
 // harnesst.
 //
-//   1. an `input.requested` handler that posts the question on the thread AND files it to
-//      harnesst's Front of House inbox, so it can be seen from either side;
+//   1. an `input.requested` handler that files the question to harnesst's Front of House inbox —
+//      or, when there is no inbox to file it to, posts it on the thread instead. One or the
+//      other, never both: see the handler for why the duplicate is worse than useless;
 //   2. an answer route registered ON THIS CHANNEL, which harnesst POSTs the human's answer to.
 //
 // (2) cannot be replaced by eve's built-in `POST /eve/v1/session/:id`. A session dispatched from
@@ -415,22 +416,36 @@ const base = githubChannel({
     },
 
     /**
-     * The agent stopped to ask. Post the question on the thread so the conversation stays
-     * readable where it happened, then file it to harnesst so a human can answer it there and
-     * resume this exact session. Best-effort: a park that fails must not take the turn down —
-     * the question is still on the issue.
+     * The agent stopped to ask. ONE question goes to ONE place: a person who needs an answer
+     * asks in the inbox or on the thread, not both — asking twice reads as two questions, and
+     * the copy on the issue is un-answerable anyway (a comment reply starts a NEW turn; only the
+     * park's answer route resumes the session that is actually waiting).
+     *
+     * So: park it when harnesst wired a park up, and post it on the thread only when that is not
+     * possible — no park configured (a self-hosted eve), or the park refused or never answered.
+     * The thread is the fallback, not the duplicate; better a question in the wrong place than a
+     * question that dies inside the container, which is the whole failure this handler exists to
+     * close. Either way the turn survives.
      */
     async "input.requested"(event, channel, ctx) {
       const body = event.requests.map(renderRequest).join("\n\n---\n\n");
-      try {
-        await channel.thread.post(
-          `I need input before I can continue:\n\n${body}`,
-        );
-      } catch (error) {
-        console.error("[harnesst] posting the question to GitHub failed", error);
-      }
+      const postToThread = async () => {
+        try {
+          await channel.thread.post(
+            `I need input before I can continue:\n\n${body}`,
+          );
+        } catch (error) {
+          console.error(
+            "[harnesst] posting the question to GitHub failed",
+            error,
+          );
+        }
+      };
 
-      if (!PARK_URL || !TEAM_TOKEN) return;
+      if (!PARK_URL || !TEAM_TOKEN) {
+        await postToThread();
+        return;
+      }
       try {
         const response = await fetch(PARK_URL, {
           method: "POST",
@@ -463,9 +478,11 @@ const base = githubChannel({
           console.error(
             `[harnesst] park returned ${response.status} ${response.statusText}`,
           );
+          await postToThread();
         }
       } catch (error) {
         console.error("[harnesst] park failed", error);
+        await postToThread();
       }
     },
   },

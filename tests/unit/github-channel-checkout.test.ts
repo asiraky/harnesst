@@ -620,16 +620,15 @@ const REQUESTS: EveInputRequest[] = [
 ];
 
 describe("the template's input.requested handler (the park)", () => {
-  it("posts the question on the thread, options and all", async () => {
+  it("asks in ONE place — parked, with nothing on the thread", async () => {
+    // A person needing an answer asks in the inbox or on the thread, not both. The copy on the
+    // issue would be un-answerable anyway: a comment reply starts a NEW turn, while the session
+    // that is actually waiting can only be resumed through the answer route.
     const harness = loadTemplate();
     await harness.inputRequested(REQUESTS);
 
-    expect(harness.posts).toHaveLength(1);
-    expect(harness.posts[0]).toContain("I need input before I can continue");
-    expect(harness.posts[0]).toContain("Which branch should I target?");
-    expect(harness.posts[0]).toContain("- **main** — the default");
-    expect(harness.posts[0]).toContain("- **develop**");
-    expect(harness.posts[0]).toContain("Squash the commits?");
+    expect(harness.parkPosts).toHaveLength(1);
+    expect(harness.posts).toEqual([]);
   });
 
   it("files the exact payload harnesst's park route parses", async () => {
@@ -677,38 +676,60 @@ describe("the template's input.requested handler (the park)", () => {
     expect((harness.parkPosts[0].body as { title: string }).title).toBe("acme/widgets");
   });
 
-  it("does not park when harnesst never wired one up", async () => {
+  it("falls back to the thread when harnesst never wired a park up", async () => {
+    // A self-hosted eve has nowhere to file the question, and a question nobody can see is the
+    // original bug. The thread is the fallback — never the duplicate.
     const harness = loadTemplate({ env: { HARNESST_FOH_PARK_URL: "" } });
     await harness.inputRequested(REQUESTS);
-    // The question is still on the issue — a self-hosted eve just has nowhere to file it.
-    expect(harness.posts).toHaveLength(1);
+
     expect(harness.parkPosts).toEqual([]);
+    expect(harness.posts).toHaveLength(1);
+    expect(harness.posts[0]).toContain("I need input before I can continue");
+    expect(harness.posts[0]).toContain("Which branch should I target?");
+    expect(harness.posts[0]).toContain("- **main** — the default");
+    expect(harness.posts[0]).toContain("- **develop**");
+    expect(harness.posts[0]).toContain("Squash the commits?");
   });
 
-  it("does not park without a token — an unauthenticated park is refused anyway", async () => {
+  it("falls back to the thread without a token — an unauthenticated park is refused anyway", async () => {
     const harness = loadTemplate({ env: { HARNESST_TEAM_TOKEN: "" } });
     await harness.inputRequested(REQUESTS);
+
     expect(harness.parkPosts).toEqual([]);
+    expect(harness.posts).toHaveLength(1);
   });
 
-  it("survives a park that answers non-2xx", async () => {
+  it("falls back to the thread when the park answers non-2xx", async () => {
     const harness = loadTemplate({ park: 503 });
     await expect(harness.inputRequested(REQUESTS)).resolves.toBeUndefined();
+
     expect(harness.errors.join("\n")).toContain("park returned 503");
+    expect(harness.posts).toHaveLength(1);
   });
 
-  it("survives a park that never connects", async () => {
+  it("falls back to the thread when the park never connects", async () => {
     const harness = loadTemplate({ park: "throw" });
     await expect(harness.inputRequested(REQUESTS)).resolves.toBeUndefined();
+
     expect(harness.errors.join("\n")).toContain("park failed");
+    expect(harness.posts).toHaveLength(1);
   });
 
-  it("still parks when the thread comment cannot be posted", async () => {
-    // The park is the half that gets a human involved; losing the comment must not lose it.
+  it("survives losing both — a failed park AND a thread that refuses the comment", async () => {
+    const harness = loadTemplate({ park: "throw", postThrows: true });
+    await expect(harness.inputRequested(REQUESTS)).resolves.toBeUndefined();
+
+    expect(harness.errors.join("\n")).toContain("park failed");
+    expect(harness.errors.join("\n")).toContain("posting the question to GitHub failed");
+  });
+
+  it("does not post to the thread just because a successful park's comment would have failed", async () => {
+    // `postThrows` must never be reached on the happy path: no post is attempted at all.
     const harness = loadTemplate({ postThrows: true });
     await harness.inputRequested(REQUESTS);
+
     expect(harness.parkPosts).toHaveLength(1);
-    expect(harness.errors.join("\n")).toContain("posting the question to GitHub failed");
+    expect(harness.errors).toEqual([]);
   });
 });
 
