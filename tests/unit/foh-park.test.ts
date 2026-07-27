@@ -59,7 +59,9 @@ async function seedDeployment(over: { agentId?: string } = {}): Promise<string> 
 
 /**
  * Deps whose session upsert is a real in-memory map keyed on (projectId, externalSessionId) —
- * the same key as the `playground_sessions_external_uq` index the production path relies on.
+ * the same key as the `playground_sessions_external_uq` index the production path upserts on. A
+ * park naming an eve session ANOTHER agent already owns collides on that key and is refused,
+ * exactly as the real adopt's `agent_id` predicate refuses it.
  */
 function makeDeps(): ParkDeps & {
   sessions: Map<string, PlaygroundSession>;
@@ -77,6 +79,14 @@ function makeDeps(): ParkDeps & {
     backfills,
     adoptSession: async (input) => {
       adopts.push(input);
+      const owner = [...sessions.values()].find(
+        (s) =>
+          s.projectId === input.projectId &&
+          s.externalSessionId === input.externalSessionId,
+      );
+      if (owner && owner.agentId !== input.agentId) {
+        return { ok: false, reason: "session_not_owned" };
+      }
       const key = `${input.projectId}|${input.externalSessionId}`;
       const existing = sessions.get(key);
       const row = {
@@ -95,12 +105,13 @@ function makeDeps(): ParkDeps & {
         lastEventAt: input.now,
       } as unknown as PlaygroundSession;
       sessions.set(key, row);
-      return row;
+      return { ok: true, session: row, parkDeferred: false };
     },
     backfillTranscript: async (input) => {
       backfills.push(input);
     },
     openQuestion: openInboxQuestion,
+    staleAfterMs: 300_000,
     now: () => NOW,
   };
 }
@@ -268,6 +279,99 @@ describe("parkChannelQuestion", () => {
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(result.inboxItemIds).toHaveLength(1);
+  });
+
+  it("does not WAIT for the backfill — the agent's park fetch has a 10s timeout", async () => {
+    // The backfill reads the tail of the same eve session whose turn is still open, over the
+    // network. Awaiting it put an unbounded read inside a request the container abandons after
+    // 10s, and the abandoned retry then re-ran the whole park.
+    const deploymentId = await seedDeployment();
+    const deps = makeDeps();
+    let release: () => void = () => {};
+    deps.backfillTranscript = () =>
+      new Promise<void>((resolve) => {
+        release = resolve;
+      });
+
+    const result = await parkChannelQuestion(input({ deploymentId }), deps);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.inboxItemIds).toHaveLength(1);
+    release();
+  });
+
+  it("survives a backfill that throws SYNCHRONOUSLY, before it ever returns a promise", async () => {
+    const deploymentId = await seedDeployment();
+    const deps = makeDeps();
+    deps.backfillTranscript = () => {
+      throw new Error("no target");
+    };
+
+    const result = await parkChannelQuestion(input({ deploymentId }), deps);
+
+    expect(result.ok).toBe(true);
+  });
+
+  it("refuses to park onto an eve session another agent already owns", async () => {
+    // The delegation token authenticates a DEPLOYMENT, and any container in the project can call
+    // the park. Without an owner check, one agent could name another's live external_session_id
+    // and overwrite its resume handles — redirecting the next human answer onto an issue thread
+    // of the caller's choosing.
+    const deploymentId = await seedDeployment();
+    const deps = makeDeps();
+    await parkChannelQuestion(input({ deploymentId }), deps);
+
+    // A second agent, in the same project, parking the SAME eve session id.
+    store.seedAgent({ id: "agent_2", projectId: PROJECT, name: "other" });
+    store.seedEnvironment({
+      id: "env_2",
+      projectId: PROJECT,
+      agentId: "agent_2",
+      name: "production",
+    });
+    const release = await store.releases.insert({
+      projectId: PROJECT,
+      agentId: "agent_2",
+      version: "v1",
+      gitSha: "b".repeat(40),
+    });
+    const intruder = await store.deployments.insert({
+      environmentId: "env_2",
+      releaseId: release.id,
+      status: "live",
+      trafficWeight: 100,
+    });
+    await store.deployments.update(intruder.id, { url: "http://inst2:4000" });
+
+    const result = await parkChannelQuestion(
+      input({
+        deploymentId: intruder.id,
+        routePath: GITHUB_ROUTE,
+        state: { ...STATE, owner: "attacker", repo: "elsewhere" },
+      }),
+      deps,
+    );
+
+    expect(result).toEqual({
+      ok: false,
+      error: "That eve session belongs to a different agent.",
+    });
+    // The victim's row is untouched: same descriptor, same thread.
+    const victim = deps.sessions.get(`${PROJECT}|sess_eve_1`)!;
+    expect(victim.resumeVia).toMatchObject({ state: STATE });
+    expect(deps.sessions.size).toBe(1);
+  });
+
+  it("tells the adopt how stale a running row must be before its status may be moved", async () => {
+    // The upsert only re-parks a row it can prove is not mid-turn; the drain's own needs-you
+    // chokepoint owns the row for the turn it is running.
+    const deploymentId = await seedDeployment();
+    const deps = makeDeps();
+
+    await parkChannelQuestion(input({ deploymentId }), deps);
+
+    expect(deps.adopts[0].staleAfterMs).toBe(300_000);
   });
 
   it("refuses a channel outside the allowlist, writing nothing", async () => {

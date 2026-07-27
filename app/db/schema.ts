@@ -1256,6 +1256,13 @@ export const playgroundSessions = pgTable(
       t.createdBy,
       t.updatedAt,
     ),
+    // Project-scoped ON PURPOSE, and it is what makes a cross-agent park REFUSABLE (WS1):
+    // `adoptChannelHomedSession` upserts on this index from a deployed container, so a park
+    // naming another agent's live `external_session_id` lands on the owner's row, fails the
+    // `agent_id` predicate in `setWhere`, writes nothing, and is answered "that eve session
+    // belongs to a different agent". Adding `agent_id` to the key would make that conflict
+    // disappear — the intruder would quietly INSERT a second row against the same eve session,
+    // whose resume descriptor points at a container where the token resolves to nothing.
     uniqueIndex("playground_sessions_external_uq").on(
       t.projectId,
       t.externalSessionId,

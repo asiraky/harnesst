@@ -197,6 +197,125 @@ describe.runIf(LIVE)("channel park against real Postgres", () => {
     await db.delete(user).where(eq(user.id, OTHER));
   });
 
+  it("refuses a cross-agent park and defers one that lands mid-turn", async () => {
+    // Both guards are pure Postgres semantics — an `ON CONFLICT … WHERE` that matches nothing
+    // returns no row — so a fake store cannot prove either of them.
+    const { db } = await import("~/db/client.server");
+    const { organization } = await import("~/db/auth-schema");
+    const { agents, playgroundSessions, projects } = await import("~/db/schema");
+    const { adoptChannelHomedSession } = await import("~/playground/sessions.server");
+
+    const ORG = "org_foh_park_owner";
+    const now = new Date();
+    await db.delete(organization).where(eq(organization.id, ORG));
+    await db.insert(organization).values({
+      id: ORG,
+      name: "foh park owner",
+      slug: "foh-park-owner",
+      createdAt: now,
+    });
+    const [project] = await db
+      .insert(projects)
+      .values({ orgId: ORG, name: "foh-park-owner", slug: "foh-park-owner" })
+      .returning();
+    const [owner] = await db
+      .insert(agents)
+      .values({ projectId: project.id, name: "ivy", root: "agents/ivy/agent" })
+      .returning();
+    const [intruder] = await db
+      .insert(agents)
+      .values({ projectId: project.id, name: "mal", root: "agents/mal/agent" })
+      .returning();
+
+    const adopt = (agentId: string, state: Record<string, unknown>) =>
+      adoptChannelHomedSession({
+        projectId: project.id,
+        agentId,
+        environmentId: null,
+        deploymentId: null,
+        releaseId: null,
+        version: null,
+        externalSessionId: "sess_eve_owned",
+        continuationToken: "github:repo:1:issue:7",
+        resumeVia: { channel: "github", routePath: ROUTE, rawToken: "repo:1:issue:7", state },
+        title: "acme/widgets#7",
+        staleAfterMs: 5 * 60_000,
+        now: new Date(),
+      });
+
+    const first = await adopt(owner.id, STATE);
+    expect(first.ok).toBe(true);
+    if (!first.ok) throw new Error(first.reason);
+
+    // 1. Another agent in the SAME project, naming the same eve session: the upsert conflicts on
+    //    `playground_sessions_external_uq`, the `agent_id` predicate rejects the update, and the
+    //    read-back names the refusal. Nothing about the owner's row moves.
+    const hijack = await adopt(intruder.id, { owner: "attacker", repo: "elsewhere" });
+    expect(hijack).toEqual({ ok: false, reason: "session_not_owned" });
+    const rows = await db
+      .select()
+      .from(playgroundSessions)
+      .where(eq(playgroundSessions.projectId, project.id));
+    expect(rows).toHaveLength(1);
+    expect(rows[0].agentId).toBe(owner.id);
+    expect(rows[0].resumeVia).toMatchObject({ state: STATE });
+
+    // 2. A park landing inside a LIVE turn must not flip running → waiting under the claim
+    //    holder. The resume handles still refresh — no turn owns those — and `parkDeferred` says
+    //    the pending flag was left to the drain that holds the claim.
+    await db
+      .update(playgroundSessions)
+      .set({ status: "running", turnClaimId: "claim_1", updatedAt: new Date() })
+      .where(eq(playgroundSessions.id, first.session.id));
+
+    const deferred = await adoptChannelHomedSession({
+      projectId: project.id,
+      agentId: owner.id,
+      environmentId: null,
+      deploymentId: null,
+      releaseId: null,
+      version: null,
+      externalSessionId: "sess_eve_owned",
+      continuationToken: "github:repo:1:issue:8",
+      resumeVia: {
+        channel: "github",
+        routePath: ROUTE,
+        rawToken: "repo:1:issue:8",
+        state: STATE,
+      },
+      staleAfterMs: 5 * 60_000,
+      now: new Date(),
+    });
+
+    expect(deferred.ok).toBe(true);
+    if (!deferred.ok) throw new Error(deferred.reason);
+    expect(deferred.parkDeferred).toBe(true);
+    const [after] = await db
+      .select()
+      .from(playgroundSessions)
+      .where(eq(playgroundSessions.id, first.session.id));
+    expect(after.status).toBe("running");
+    expect(after.turnClaimId).toBe("claim_1");
+    expect(after.continuationToken).toBe("github:repo:1:issue:8");
+    expect(after.resumeVia).toMatchObject({ rawToken: "repo:1:issue:8" });
+
+    // 3. …and once the claim has gone stale the ordinary park path takes over again.
+    await db
+      .update(playgroundSessions)
+      .set({ updatedAt: new Date(Date.now() - 10 * 60_000) })
+      .where(eq(playgroundSessions.id, first.session.id));
+    const stale = await adopt(owner.id, STATE);
+    expect(stale.ok && stale.parkDeferred).toBe(false);
+    const [reparked] = await db
+      .select()
+      .from(playgroundSessions)
+      .where(eq(playgroundSessions.id, first.session.id));
+    expect(reparked.status).toBe("waiting");
+    expect(reparked.pendingInputAt).not.toBeNull();
+
+    await db.delete(organization).where(eq(organization.id, ORG));
+  });
+
   it("clears resume_via when the owning deployment is reseeded (#71)", async () => {
     const { db } = await import("~/db/client.server");
     const { organization } = await import("~/db/auth-schema");

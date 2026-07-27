@@ -13,11 +13,17 @@
  * body is never trusted for identity, and `routePath` is allowlisted before it can become an
  * outbound URL. Collaborators are injected so the whole flow unit-tests with zero I/O.
  *
+ * The bearer AUTHENTICATES a deployment; it does not AUTHORISE the eve session named in the
+ * body. `adoptChannelHomedSession` is agent-scoped and refuses a session another agent owns —
+ * without that, one container in a project could take over another agent's live session and
+ * point its next human answer at an issue thread of the caller's choosing.
+ *
  * Idempotency is structural, because the agent's fetch is best-effort and WILL be retried:
  * the session upserts on `(project_id, external_session_id)` and each inbox item short-circuits
  * on `(session_id, request_id)`. A redelivered park returns the same ids and writes nothing new.
  */
 import type { Target } from "~/chat/playground.server";
+import { TURN_IDLE_TIMEOUT_MS } from "~/chat/turn-stream.server";
 import type { ChatInputOption, ChatInputRequest } from "~/chat/types";
 import type { DataStore } from "~/data/ports";
 import { buildResumeVia } from "~/foh/channel-resume";
@@ -44,6 +50,8 @@ export interface ParkDeps {
     target: Target;
   }) => Promise<void>;
   openQuestion: typeof openInboxQuestion;
+  /** Claim staleness cutoff handed to the adopt fence; the turn claim's own constant. */
+  staleAfterMs: number;
   now: () => Date;
 }
 
@@ -53,6 +61,7 @@ export function defaultParkDeps(): ParkDeps {
     adoptSession: adoptChannelHomedSession,
     backfillTranscript: backfillChannelHomedSessionTranscript,
     openQuestion: openInboxQuestion,
+    staleAfterMs: TURN_IDLE_TIMEOUT_MS,
     now: () => new Date(),
   };
 }
@@ -175,7 +184,7 @@ export async function parkChannelQuestion(
   ).find((d) => d.id === deployment.id);
 
   const now = deps.now();
-  const session = await deps.adoptSession({
+  const adopted = await deps.adoptSession({
     projectId: project.id,
     agentId: agent.id,
     environmentId: environment.id,
@@ -188,29 +197,59 @@ export async function parkChannelQuestion(
     continuationToken: input.continuationToken,
     resumeVia,
     title: input.title?.trim() || titleFromMessage(input.requests[0].prompt),
+    staleAfterMs: deps.staleAfterMs,
     now,
   });
+  // AUTHORISATION, not authentication. The bearer proved which deployment is calling; it does
+  // not prove that deployment has anything to do with the eve session named in the BODY. A
+  // container that parks another agent's live session would redirect that session's next human
+  // answer to an `owner/repo/issue` of its own choosing (`state` round-trips verbatim into
+  // `send()`). The adopt refuses; there is nothing here the agent can fix by retrying.
+  if (!adopted.ok) {
+    return deny("That eve session belongs to a different agent.");
+  }
+  const session = adopted.session;
+  if (adopted.parkDeferred) {
+    // The row was mid-turn, so only the resume handles were refreshed — the status and the
+    // pending-input flag belong to the drain that owns the turn, and its own needs-you
+    // chokepoint sets them when the same `input.requested` reaches it. Worth a line: it is the
+    // one path where a successful park does not immediately show as "needs you".
+    console.info(
+      `[foh] park ${session.id}: row is mid-turn, deferred the pending flag to the live drain`,
+    );
+  }
 
-  // Show the conversation that led to the question, not a bare prompt. Best-effort by design:
-  // the FOH loader re-backfills an incomplete cache, so a miss here defers the copy, never
-  // loses it — and a park that reached the inbox is worth more than a complete transcript.
+  // Show the conversation that led to the question, not a bare prompt.
+  //
+  // NOT AWAITED, deliberately. The backfill reads the tail of the SAME eve session whose
+  // `input.requested` handler is blocked on this very request: the handler is inside the turn,
+  // the turn's stream produces no terminal event until the handler returns, and the container's
+  // fetch aborts at 10s. Awaiting a 5s idle read inside that window is a two-timeout race with
+  // no ordering guarantee — and when the abort wins, the container believes the park failed
+  // while the row is already written. So the row is written, 200 goes back immediately, and the
+  // copy finishes (or does not) in the background. The FOH loader re-backfills an incomplete
+  // cache anyway, so a miss defers the copy, never loses it.
   const url = deployment.url ?? withRelease?.url ?? null;
   if (url) {
-    try {
-      await deps.backfillTranscript({
-        session,
-        target: {
-          deploymentId: deployment.id,
-          environmentId: environment.id,
-          releaseId: withRelease?.releaseId ?? "",
-          url,
-          version: withRelease?.version ?? "",
-          environmentName: environment.name,
-          gitSha: withRelease?.gitSha ?? "",
-        },
-      });
-    } catch (error) {
+    const onBackfillError = (error: unknown) =>
       console.error("[foh] channel park transcript backfill failed:", error);
+    try {
+      void deps
+        .backfillTranscript({
+          session,
+          target: {
+            deploymentId: deployment.id,
+            environmentId: environment.id,
+            releaseId: withRelease?.releaseId ?? "",
+            url,
+            version: withRelease?.version ?? "",
+            environmentName: environment.name,
+            gitSha: withRelease?.gitSha ?? "",
+          },
+        })
+        .catch(onBackfillError);
+    } catch (error) {
+      onBackfillError(error);
     }
   }
 
