@@ -2047,13 +2047,17 @@ describe("channel park env injection (WS1)", () => {
   const OLD_RELAY = process.env.HARNESST_TEAM_RELAY_URL;
 
   /** A lock naming the github channel install — the only signal harnesst gates the env on. */
-  function lockWith(id: string, member: string | null = null) {
+  function lockWith(
+    id: string,
+    member: string | null = null,
+    type: "channel" | "tool" | "hook" | "skill" = "channel",
+  ) {
     return JSON.stringify({
       version: 1,
       installs: [
         {
           id,
-          type: "channel",
+          type,
           name: id,
           version: "0.3.0",
           hash: "h",
@@ -2125,6 +2129,16 @@ describe("channel park env injection (WS1)", () => {
 
   it("leaves the park env off a repo with no lock at all", async () => {
     const env = await deployWith({});
+
+    expect(env).not.toHaveProperty("HARNESST_FOH_PARK_URL");
+  });
+
+  it("ignores a non-channel install that merely shares the channel's id", async () => {
+    // `findInstall` matches on id + member only. A tool (or hook, or skill) a user happens to
+    // call `github` has no channel-homed session and no answer route, so baking a park URL and a
+    // delegation token into its container would hand park rights to code that cannot use them
+    // for anything except naming somebody else's session.
+    const env = await deployWith({ lock: lockWith("github", null, "tool") });
 
     expect(env).not.toHaveProperty("HARNESST_FOH_PARK_URL");
   });

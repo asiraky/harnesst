@@ -299,4 +299,76 @@ describe("harnesst-runs hook template", () => {
     expect(h.posts).toHaveLength(1);
     expect(h.posts[0].body.final).toBe(false);
   });
+
+  it("declares the channel kind in a header so the control plane can refuse before the body", async () => {
+    const h = evalHook(ENV, okFetch);
+    await h.hook.events["*"](evt("turn.started", { turnId: "turn_0" }), ctx());
+    await h.settle();
+
+    expect(
+      (h.posts[0].init.headers as Record<string, string>)["x-harnesst-channel-kind"],
+    ).toBe("channel:github");
+  });
+
+  it("never reports an http-homed turn, in either spelling", async () => {
+    // Playground, assistant and teammate turns are recorded in-process and `ingestPushedTurn`
+    // discards them unconditionally. Reporting them meant uploading each transcript several
+    // times over (a flush resends the whole buffer, and there are seven flush events) purely to
+    // be parsed and thrown away.
+    for (const kind of ["http", "channel:http", " http ", "channel: http "]) {
+      const h = evalHook(ENV, okFetch);
+      await h.hook.events["*"](
+        evt("turn.started", { turnId: "turn_0" }),
+        ctx({ channel: { kind } }),
+      );
+      await h.hook.events["*"](
+        evt("turn.completed", { turnId: "turn_0" }),
+        ctx({ channel: { kind } }),
+      );
+      await h.settle();
+      expect(h.posts, `kind=${JSON.stringify(kind)}`).toEqual([]);
+    }
+  });
+
+  it("still reports a kind it does not recognise, and one it cannot see at all", async () => {
+    // The hook is baked into images that outlive a control-plane deploy, so classification stays
+    // on the control-plane side: only the one kind it is certain gets discarded is dropped here.
+    // Case included: the hook's test is character-for-character the control plane's
+    // `channelForTrigger`, which is also case-sensitive. Diverging here would mean the two ends
+    // disagree about what a run is.
+    for (const channel of [
+      { kind: "channel:slack" },
+      { kind: "HTTP" },
+      { kind: "" },
+      undefined,
+    ]) {
+      const h = evalHook(ENV, okFetch);
+      await h.hook.events["*"](
+        evt("turn.started", { turnId: "turn_0" }),
+        ctx({ channel }),
+      );
+      await h.settle();
+      expect(h.posts, `channel=${JSON.stringify(channel)}`).toHaveLength(1);
+    }
+  });
+
+  it("does not even BUFFER a discarded turn", async () => {
+    // Dropping at the POST would still have every http turn's transcript accumulating in the
+    // container's memory for the life of the process.
+    const h = evalHook(ENV, okFetch);
+    const httpCtx = ctx({ channel: { kind: "http" } });
+    for (let i = 0; i < 50; i += 1) {
+      await h.hook.events["*"](evt("message.part", { turnId: "turn_0", text: "x" }), httpCtx);
+    }
+    // A GitHub turn in the same process still reports its own events, and only its own.
+    await h.hook.events["*"](evt("turn.started", { turnId: "turn_1" }), ctx({
+      session: { id: "wrun_1", turn: { id: "turn_1", sequence: 1 } },
+    }));
+    await h.settle();
+
+    expect(h.posts).toHaveLength(1);
+    expect((h.posts[0].body.events as { type: string }[]).map((e) => e.type)).toEqual([
+      "turn.started",
+    ]);
+  });
 });

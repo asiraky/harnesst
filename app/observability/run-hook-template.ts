@@ -40,10 +40,15 @@
  * is compiled by eve's bundler, and staying syntax-compatible with JS keeps it evaluable in a
  * unit test without a TypeScript pass.
  *
- * The hook holds ZERO business logic: it forwards raw events and the control plane decides what
- * is a run (including that `http`-homed turns produce no row — those are already recorded
- * in-process). Keeping the policy server-side means a classifier fix ships with a control-plane
- * deploy instead of a rebuild of every agent image.
+ * The hook holds almost no business logic: it forwards raw events and the control plane decides
+ * what is a run. It makes exactly ONE judgement, and only to suppress work — an `http`-homed
+ * turn is dropped at the door. That is not policy the control plane could move later: harnesst
+ * records those turns in-process and `ingestPushedTurn` discards them unconditionally, so
+ * reporting them meant every playground and assistant turn uploading its whole transcript
+ * several times over (the buffer is resent whole on each of seven flush events) to be parsed and
+ * thrown away. Every other kind — including an absent or unrecognised one — is still reported,
+ * so a classifier fix still ships with a control-plane deploy rather than a rebuild of every
+ * agent image.
  */
 
 /** Repo-relative path the hook is written to inside an agent's build context. */
@@ -68,6 +73,20 @@ var MAX_BYTES = 1000000;
 var MAX_TURNS = 32;
 /** Head kept when a turn overflows — the MIDDLE is what gets dropped, never the outcome. */
 var KEEP_HEAD = 200;
+
+/**
+ * The ONE classification the hook makes, and it only ever suppresses work: an \`http\`-homed turn
+ * is playground/assistant/teammate traffic that harnesst already records in-process, so the
+ * control plane discards it — after reading and JSON-parsing a body that can reach megabytes.
+ * Every HTTP turn flushes several times, so reporting them meant uploading each transcript
+ * several times over to be thrown away. Nothing else is judged here: an unrecognised or absent
+ * kind is still reported, so the control plane stays the only place channel policy lives.
+ */
+function isDiscardedKind(kind) {
+  var k = String(kind || "").trim();
+  if (k.indexOf("channel:") === 0) k = k.slice("channel:".length).trim();
+  return k === "http";
+}
 
 /** Events worth reporting on. Everything else only appends to the buffer. */
 var FLUSH_ON = [
@@ -143,6 +162,9 @@ function post(target, body) {
     headers: {
       "content-type": "application/json",
       authorization: "Bearer " + target.token,
+      // Declared up front so the control plane can reject a turn it would discard without
+      // reading the body at all.
+      "x-harnesst-channel-kind": String(body.channelKind || ""),
     },
     body: JSON.stringify(body),
     signal: AbortSignal.timeout(timeoutMs()),
@@ -169,6 +191,12 @@ export default defineHook({
         var turn = session && session.turn ? session.turn : null;
         var turnId = turn && typeof turn.id === "string" ? turn.id : "";
         if (!sessionId || !turnId) return;
+
+        var channelKind =
+          ctx && ctx.channel && typeof ctx.channel.kind === "string" ? ctx.channel.kind : null;
+        // Before the buffer, not just before the POST: an http-homed turn should cost this
+        // process no memory either.
+        if (isDiscardedKind(channelKind)) return;
 
         // Read the event through an untyped alias: the runtime event is a union and some members
         // (session.completed) carry no \`data\` at all.
@@ -223,8 +251,7 @@ export default defineHook({
           sessionId: sessionId,
           turnId: turnId,
           turnSequence: turn && typeof turn.sequence === "number" ? turn.sequence : null,
-          channelKind:
-            ctx && ctx.channel && typeof ctx.channel.kind === "string" ? ctx.channel.kind : null,
+          channelKind: channelKind,
           modelId: models.get(sessionId) || null,
           agentName: ctx && ctx.agent && typeof ctx.agent.name === "string" ? ctx.agent.name : null,
           final: isFinal,

@@ -213,6 +213,65 @@ describe("POST /api/agent/runs", () => {
     });
   });
 
+  it("refuses a declared http turn from the header, without reading the body", async () => {
+    // An http-homed turn is discarded by `ingestPushedTurn` anyway. Deciding from the header
+    // means the control plane never buffers and JSON-parses a multi-megabyte transcript to reach
+    // that conclusion — a body far past the size cap is answered 200 here, because it is never
+    // measured at all.
+    const token = mintDelegationToken("dep_real");
+
+    const result = await run(
+      post({
+        token,
+        raw: "{not json",
+        headers: {
+          "x-harnesst-channel-kind": "http",
+          "content-length": String(MAX_PUSHED_BODY_BYTES + 1),
+        },
+      }),
+    );
+
+    expect(result.status).toBe(200);
+    expect(result.json).toEqual({
+      ok: true,
+      recorded: false,
+      reason: "channel-not-recorded",
+    });
+    expect(ingestPushedTurn).not.toHaveBeenCalled();
+  });
+
+  it("checks the token BEFORE the header — an unauthenticated caller still gets 401", async () => {
+    const result = await run(post({ headers: { "x-harnesst-channel-kind": "http" } }));
+
+    expect(result.status).toBe(401);
+  });
+
+  it("lets a channel-homed or unlabelled turn through the header check", async () => {
+    const token = mintDelegationToken("dep_real");
+
+    const cases: Record<string, string>[] = [
+      { "x-harnesst-channel-kind": "channel:github" },
+      // An older agent image sends no header at all: it must behave exactly as it did.
+      {},
+    ];
+    for (const headers of cases) {
+      ingestPushedTurn.mockClear();
+      const result = await run(post({ token, headers }));
+      expect(result.status).toBe(200);
+      expect(ingestPushedTurn).toHaveBeenCalledTimes(1);
+    }
+  });
+
+  it("refuses an EMPTY declared kind — the classifier reads it as unrecorded", async () => {
+    // The hook sends `""` when eve gave it no channel, and `ingestPushedTurn` discards that too.
+    const token = mintDelegationToken("dep_real");
+
+    const result = await run(post({ token, headers: { "x-harnesst-channel-kind": "" } }));
+
+    expect(result.status).toBe(200);
+    expect(ingestPushedTurn).not.toHaveBeenCalled();
+  });
+
   it("returns a business refusal as 200 {ok:false}, not a 5xx", async () => {
     ingestPushedTurn.mockResolvedValueOnce({
       ok: false,

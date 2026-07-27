@@ -22,6 +22,7 @@ import {
   normalizePushedEvents,
   MAX_PUSHED_BODY_BYTES,
 } from "~/observability/push-ingest.server";
+import { channelForTrigger } from "~/observability/session-turns.server";
 import { verifyDelegationToken } from "~/team/token.server";
 
 export async function action({ request }: ActionFunctionArgs) {
@@ -29,6 +30,16 @@ export async function action({ request }: ActionFunctionArgs) {
   const token = auth.startsWith("Bearer ") ? auth.slice(7) : "";
   const deploymentId = token ? verifyDelegationToken(token) : null;
   if (!deploymentId) throw data({ ok: false, error: "unauthorized" }, { status: 401 });
+
+  // Decide from the HEADER, before the body is read or parsed. A turn whose channel classifies
+  // to null is discarded by `ingestPushedTurn` anyway; doing it here means the control plane
+  // never buffers and JSON-parses a multi-megabyte transcript to reach that conclusion. An
+  // ABSENT header claims nothing and falls through — only a header the classifier actually
+  // rejects short-circuits, so an older agent image behaves exactly as it did.
+  const declaredKind = request.headers.get("x-harnesst-channel-kind");
+  if (declaredKind !== null && channelForTrigger(declaredKind) === null) {
+    return data({ ok: true, recorded: false, reason: "channel-not-recorded" });
+  }
 
   // Cheap pre-check on the declared length, then the real one on the decoded text: a lying (or
   // absent) content-length must not get a body past the cap.

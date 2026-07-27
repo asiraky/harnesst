@@ -518,11 +518,15 @@ export async function deployRelease(
     // the park endpoint re-derives project/agent/environment from the token's deployment id, so
     // it grants no team powers. Harnesst-owned, so anti-shadowing (delete, then set) as above.
     // Gated on the committed lock actually naming the channel install — the env is inert
-    // otherwise, and a repo with no lock has no marketplace-installed channel to serve.
+    // otherwise, and a repo with no lock has no marketplace-installed channel to serve. The
+    // `type === "channel"` check is not cosmetic: `findInstall` matches on id + member only, so
+    // without it a TOOL or HOOK a user happens to name `github` would get a park URL and a
+    // delegation token baked into its container, handing park rights to code that has no
+    // channel-homed session of its own.
     delete envVars.HARNESST_FOH_PARK_URL;
     const parkChannels = lock
       ? Object.keys(CHANNEL_ANSWER_ROUTES).filter(
-          (id) => !!findInstall(lock, id, member),
+          (id) => findInstall(lock, id, member)?.type === "channel",
         )
       : [];
     if (parkChannels.length > 0) {
