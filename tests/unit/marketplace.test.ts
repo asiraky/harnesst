@@ -295,6 +295,46 @@ describe("fixture catalog (the real in-repo seed)", () => {
       }
     }
   });
+
+  // Authored skills must match the public eve shape: eve's discovery hard-errors on an unknown
+  // frontmatter key, so a template shipping one (legal-advisor shipped Claude Code's
+  // `disable-model-invocation`) installs fine and then fails the customer's next build at publish.
+  // Same rule as catalog/scripts/validate.mjs — re-implemented here, not imported.
+  it("every authored skill's frontmatter stays within the eve shape", async () => {
+    const index = await fixtureCatalog.index();
+    let checked = 0;
+
+    for (const entry of index.templates) {
+      const template = await fixtureCatalog.template(entry.type, entry.id);
+
+      for (const [path, content] of Object.entries(template.files)) {
+        // Mirrors eve's scan of agent/skills/: skills/<id>.md (flat, frontmatter optional) and
+        // skills/<id>/SKILL.md (packaged, description required). Deeper paths are sibling files.
+        const parts = path.split("/");
+        const packaged = parts.length === 3 && parts[2] === "SKILL.md";
+        const flat = parts.length === 2 && path.endsWith(".md");
+        if (parts[0] !== "skills" || !(packaged || flat)) continue;
+        checked++;
+
+        const lines = content.split("\n");
+        const end = lines[0]?.trim() === "---" ? lines.indexOf("---", 1) : -1;
+        if (end === -1) {
+          expect(flat, `${entry.id}: ${path} needs frontmatter`).toBe(true);
+          continue;
+        }
+        const keys = lines
+          .slice(1, end)
+          .map((line) => /^([A-Za-z_][\w-]*)\s*:/.exec(line)?.[1])
+          .filter((key): key is string => Boolean(key));
+
+        expect(keys, `${entry.id}: ${path} frontmatter`).toContain("description");
+        const unknown = keys.filter((key) => key !== "name" && key !== "description");
+        expect(unknown, `${entry.id}: ${path} frontmatter keys eve rejects`).toEqual([]);
+      }
+    }
+
+    expect(checked).toBeGreaterThan(0);
+  });
 });
 
 describe("composition against the real seed", () => {

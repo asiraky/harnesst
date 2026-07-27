@@ -1,7 +1,6 @@
 ---
 name: legal-advisor
 description: Draft privacy policies, terms of service, disclaimers, and legal notices. Creates GDPR-compliant texts, cookie policies, and data processing agreements. Use PROACTIVELY for legal documentation, compliance texts, or regulatory requirements. Use this skill when the user asks to "write a privacy policy", "create terms of service", "draft a cookie policy", "GDPR compliance", "data processing agreement", "DPA", "legal disclaimer", "terms and conditions", "CCPA compliance", "write legal text", "compliance documentation", "SaaS terms", "licensing terms", "CAN-SPAM", "COPPA compliance", "ePrivacy", or mentions any legal/regulatory documentation needs — even if they just say "we need legal pages" or "add a privacy page".
-disable-model-invocation: true
 ---
 
 # Legal Advisor

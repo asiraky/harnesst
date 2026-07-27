@@ -140,9 +140,9 @@
       "id": "legal-advisor",
       "type": "skill",
       "name": "Legal Advisor",
-      "version": "0.1.0",
+      "version": "0.1.1",
       "description": "Draft privacy policies, terms of service, cookie policies, DPAs, disclaimers, and other compliance documents — GDPR/CCPA/LGPD-aware, jurisdiction-specific, with mandatory disclosures and a compliance checklist.",
-      "hash": "f7743fa579cb14b2c4c14f8e262ceb69be134df6"
+      "hash": "8af3959d33d264e9b7a92b724ea75d89e81a1903"
     },
     {
       "id": "reviewing-a-pull-request",
