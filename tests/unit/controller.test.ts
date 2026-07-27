@@ -2069,6 +2069,37 @@ describe("channel park env injection (WS1)", () => {
     });
   }
 
+  /**
+   * A bundle install carrying `id` as one of its parts. This is the shape the marketplace
+   * actually produces for the GitHub bundle: ONE entry, `type: "bundle"`, with the channel
+   * recorded only under `includes` — `planInstall` drops the part's own entry ("the composite's
+   * `includes` provenance replaces it").
+   */
+  function bundleLockWith(
+    id: string,
+    member: string | null = null,
+    includeType: "channel" | "skill" = "channel",
+  ) {
+    return JSON.stringify({
+      version: 1,
+      installs: [
+        {
+          id: `${id}-bundle`,
+          type: "bundle",
+          name: id,
+          version: "0.2.0",
+          hash: "h",
+          registry: "fixture",
+          member,
+          files: [`channels/${id}.ts`],
+          includes: [
+            { id, type: includeType, name: id, version: "0.4.1", hash: "h2" },
+          ],
+        },
+      ],
+    });
+  }
+
   beforeEach(() => {
     process.env.HARNESST_SECRETS_KEY = "a".repeat(64);
     process.env.HARNESST_TEAM_RELAY_URL = "https://harnesst.example";
@@ -2134,11 +2165,38 @@ describe("channel park env injection (WS1)", () => {
   });
 
   it("ignores a non-channel install that merely shares the channel's id", async () => {
-    // `findInstall` matches on id + member only. A tool (or hook, or skill) a user happens to
-    // call `github` has no channel-homed session and no answer route, so baking a park URL and a
-    // delegation token into its container would hand park rights to code that cannot use them
-    // for anything except naming somebody else's session.
+    // A tool (or hook, or skill) a user happens to call `github` has no channel-homed session
+    // and no answer route, so baking a park URL and a delegation token into its container would
+    // hand park rights to code that cannot use them for anything except naming somebody else's
+    // session.
     const env = await deployWith({ lock: lockWith("github", null, "tool") });
+
+    expect(env).not.toHaveProperty("HARNESST_FOH_PARK_URL");
+  });
+
+  it("wires the park env for a channel carried by a bundle", async () => {
+    // The regression that broke the first production run (2026-07-27). A composite install DROPS
+    // its parts' standalone lock entries — the GitHub *bundle*, which is what the marketplace
+    // steers people into, leaves no `{id: "github"}` row at all — so the old `findInstall` gate
+    // silently withheld the park URL and every question went to the issue thread and nowhere else.
+    const env = await deployWith({ lock: bundleLockWith("github") });
+
+    expect(env.HARNESST_FOH_PARK_URL).toBe("https://harnesst.example/api/foh/park");
+    expect(verifyDelegationToken(env.HARNESST_TEAM_TOKEN)).toBe(
+      (await listDeployments(ENV, store))[0].id,
+    );
+  });
+
+  it("ignores a bundle whose include shares the id but is not a channel", async () => {
+    const env = await deployWith({ lock: bundleLockWith("github", null, "skill") });
+
+    expect(env).not.toHaveProperty("HARNESST_FOH_PARK_URL");
+  });
+
+  it("ignores a bundle installed under a different roster member", async () => {
+    // Park rights follow the member whose container this is; a sibling agent's GitHub bundle
+    // must not put a delegation token in it.
+    const env = await deployWith({ lock: bundleLockWith("github", "someone-else") });
 
     expect(env).not.toHaveProperty("HARNESST_FOH_PARK_URL");
   });

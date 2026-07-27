@@ -201,6 +201,29 @@ export function findInstall(
   return lock.installs.find((e) => e.id === id && e.member === member);
 }
 
+/**
+ * Is the channel template `id` present for this member — installed directly, OR carried by a
+ * bundle? A composite install records its parts under `includes` and DROPS their standalone lock
+ * entries (`planInstall`: "the composite's `includes` provenance replaces it"), so a plain
+ * `findInstall(lock, "github", …)` misses the case the marketplace steers people into — the
+ * GitHub *bundle*, whose only lock entry is `{type: "bundle", id: "github-bundle"}`.
+ *
+ * Both branches insist on `type === "channel"`, so a tool or hook that merely shares the name
+ * still gets nothing: this decides who receives a park URL and a delegation token.
+ */
+export function hasChannelInstalled(
+  lock: HarnesstLock,
+  id: string,
+  member: string | null,
+): boolean {
+  return lock.installs.some(
+    (e) =>
+      e.member === member &&
+      ((e.id === id && e.type === "channel") ||
+        (e.includes ?? []).some((i) => i.id === id && i.type === "channel")),
+  );
+}
+
 /** Stable "type/id" identity for matching a lock install against a catalog row. */
 export function installKey(type: TemplateType, id: string): string {
   return `${type}/${id}`;

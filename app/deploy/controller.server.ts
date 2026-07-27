@@ -19,7 +19,7 @@ import { randomBytes } from "node:crypto";
 
 import type { DataStore, Deployment, Release } from "~/data/ports";
 import {
-  findInstall,
+  hasChannelInstalled,
   overlayLock,
   requiredScopesByProvider,
   type HarnesstLock,
@@ -517,16 +517,18 @@ export async function deployRelease(
     // same per-deployment delegation token as the team relay / Discord proxy: no new secret, and
     // the park endpoint re-derives project/agent/environment from the token's deployment id, so
     // it grants no team powers. Harnesst-owned, so anti-shadowing (delete, then set) as above.
-    // Gated on the committed lock actually naming the channel install — the env is inert
-    // otherwise, and a repo with no lock has no marketplace-installed channel to serve. The
-    // `type === "channel"` check is not cosmetic: `findInstall` matches on id + member only, so
-    // without it a TOOL or HOOK a user happens to name `github` would get a park URL and a
-    // delegation token baked into its container, handing park rights to code that has no
-    // channel-homed session of its own.
+    // Gated on the committed lock actually carrying the channel install — the env is inert
+    // otherwise, and a repo with no lock has no marketplace-installed channel to serve.
+    // `hasChannelInstalled` looks through bundles as well as standalone entries: a composite
+    // install DROPS its parts' own lock rows, so the GitHub bundle (which is what the
+    // marketplace steers people into) leaves no `{id: "github"}` entry to find. It still
+    // insists on `type === "channel"` on both branches, so a TOOL or HOOK a user happens to
+    // name `github` gets nothing — a park URL and a delegation token in that container would
+    // hand park rights to code with no channel-homed session of its own.
     delete envVars.HARNESST_FOH_PARK_URL;
     const parkChannels = lock
-      ? Object.keys(CHANNEL_ANSWER_ROUTES).filter(
-          (id) => findInstall(lock, id, member)?.type === "channel",
+      ? Object.keys(CHANNEL_ANSWER_ROUTES).filter((id) =>
+          hasChannelInstalled(lock, id, member),
         )
       : [];
     if (parkChannels.length > 0) {

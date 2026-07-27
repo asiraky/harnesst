@@ -222,6 +222,34 @@ async function runOrThrow(
   return { stdout };
 }
 
+/**
+ * Teach git that the checkout directory is ours to touch.
+ *
+ * The sandbox mounts the workspace with an owner uid that is not the uid git runs as, so every
+ * git command inside it dies with `fatal: detected dubious ownership in repository at
+ * '/workspace'` (exit 128) — including the very first `git remote add`, which is where the
+ * checkout used to fail outright. Adding the path to the REAL global config (not the scoped
+ * credential file below, which is torn down after the fetch) matters because the agent runs its
+ * own `git status` / `git diff` in this directory for the rest of the session.
+ *
+ * `--add` is not idempotent and the sandbox outlives a single checkout, so the entry is only
+ * appended when it is not already there — otherwise a long session accumulates duplicates.
+ */
+async function allowGitInDirectory(sandbox: SandboxSession, dir: string): Promise<void> {
+  const quoted = shellQuote(dir);
+  const result = await sandbox.run({
+    command: `git config --global --get-all safe.directory 2>/dev/null | grep -qxF ${quoted} || git config --global --add safe.directory ${quoted}`,
+  });
+  if (result.exitCode !== 0) {
+    // Not fatal on its own: the scoped config the fetch runs under carries the same entry, and
+    // a workspace that git is already happy with needs none of this. Worth a line in the log
+    // when the agent's own later git commands start failing.
+    console.error(
+      `[harnesst] github checkout: marking ${dir} as a safe git directory failed (exit ${result.exitCode})`,
+    );
+  }
+}
+
 async function checkoutRepository(
   sandbox: SandboxSession,
   channel: GitHubEventContext,
@@ -233,6 +261,10 @@ async function checkoutRepository(
 
   const dir = sandbox.resolvePath(CHECKOUT_PATH);
   const ref = await resolveCheckoutRef(channel);
+
+  // Before ANY git command, including the reuse probe below — an ownership rejection there
+  // would otherwise read as "not on the target commit" and re-clone on every single event.
+  await allowGitInDirectory(sandbox, dir);
 
   // The sandbox persists for the whole session, so when the workspace already sits on the target
   // commit this is a no-op probe — no token is minted and nothing is fetched.
@@ -258,9 +290,13 @@ async function checkoutRepository(
   const remote = `https://github.com/${state.owner}/${state.repo}.git`;
   const target = FULL_SHA.test(ref) ? ref : "FETCH_HEAD";
 
+  // `GIT_CONFIG_GLOBAL` REPLACES ~/.gitconfig rather than layering over it, so the fetch runs
+  // blind to the safe.directory entry written above — it has to be repeated here.
   await sandbox.writeTextFile({
     path: configPath,
-    content: `[http "https://github.com/"]\n\textraHeader = Authorization: ${authorization}\n`,
+    content:
+      `[http "https://github.com/"]\n\textraHeader = Authorization: ${authorization}\n` +
+      `[safe]\n\tdirectory = ${dir}\n`,
   });
   try {
     await runOrThrow(sandbox, `mkdir -p ${shellQuote(dir)}`, "creating the checkout directory");
