@@ -468,10 +468,21 @@ const answerRoute = POST<GitHubChannelState>(
         { status: 400 },
       );
     }
+    // `send()` only THROWS on a failed delivery when `inputResponses` is non-empty. With an
+    // empty array it silently falls back to `run()` and starts a brand-new session from the
+    // `state` in this request — which on this channel means posting a fresh comment on whatever
+    // owner/repo/issue the caller named. This route exists to answer a pending question; it must
+    // never be the way a new thread gets opened.
+    if (!body.inputResponses || body.inputResponses.length === 0) {
+      return Response.json(
+        { ok: false, error: "inputResponses must name at least one pending request" },
+        { status: 400 },
+      );
+    }
     try {
       const session = await send(
         {
-          inputResponses: body.inputResponses ?? [],
+          inputResponses: body.inputResponses,
           ...(body.message ? { message: body.message } : {}),
         },
         {
@@ -482,12 +493,23 @@ const answerRoute = POST<GitHubChannelState>(
       );
       return Response.json({ ok: true, sessionId: session.id });
     } catch (error) {
-      // eve throws when the token names no live session — the usual cause is a redeploy, which
-      // takes the container's in-process session state with it. 409, not 500: nothing is broken,
-      // the session this answer belonged to is simply gone.
+      const message = redactSecrets(
+        error instanceof Error ? error.message : String(error),
+      ).slice(0, 500);
+      // TWO different failures, and conflating them told the human a confident lie. eve throws
+      // "not found via continuation token" when the token names no live session — the usual
+      // cause is a redeploy, which takes the container's in-process session state with it.
+      // Nothing is broken there; the session this answer belonged to is simply gone, and
+      // harnesst says exactly that and recovers. A GitHub outage, an expired installation
+      // token, a malformed state or a model error is NOT that, and reporting it as a redeploy
+      // sent people looking in the wrong place. Those are 500s carrying their own message.
+      const gone =
+        /not found|no such session|unknown session|continuation token|session (?:has )?expired/iu.test(
+          message,
+        );
       return Response.json(
-        { ok: false, error: (error as Error).message },
-        { status: 409 },
+        { ok: false, code: gone ? "session_gone" : "send_failed", error: message },
+        { status: gone ? 409 : 500 },
       );
     }
   },

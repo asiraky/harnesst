@@ -113,6 +113,7 @@ describe("streamTurn delivery", () => {
         message: "main",
         sessionId: "sess_1",
         continuationToken: "github:repo:1310524517:issue:7",
+        inputResponses: [{ requestId: "req_1", text: "main" }],
         deliverVia: VIA,
         streamIndex: 12,
       }),
@@ -208,9 +209,39 @@ describe("streamTurn delivery", () => {
     });
   });
 
+  it("refuses a channel-homed message that answers nothing, without touching the network", async () => {
+    // eve's channel `send()` throws on a failed `deliver()` ONLY when `inputResponses` is
+    // non-empty. With an empty array it silently falls back to `run()` and starts a brand-new
+    // session from the supplied `state` — for the GitHub channel, a fresh comment on whatever
+    // issue that state names. Refusing here is the only safe answer, and it must not degrade to
+    // eve's HTTP session route either (that route 500s on a channel-homed token).
+    const fetchMock = vi.fn<typeof fetch>();
+    vi.stubGlobal("fetch", fetchMock);
+
+    const events = await drain(
+      streamTurn({
+        baseUrl: "https://agent.example.test",
+        message: "actually, use develop",
+        sessionId: "sess_1",
+        continuationToken: "github:repo:1:issue:7",
+        deliverVia: VIA,
+      }),
+    );
+
+    const done = events.at(-1);
+    if (done?.kind !== "done") throw new Error("no done event");
+    expect(done.result.ok).toBe(false);
+    expect(done.result.error).toContain("Reply on the thread itself");
+    expect(fetchMock).not.toHaveBeenCalled();
+    // The row is left exactly as it was — the session is still live on its thread.
+    expect(done.result.sessionId).toBe("sess_1");
+    expect(done.result.continuationToken).toBe("github:repo:1:issue:7");
+    expect(done.result.resumeExpired).toBeUndefined();
+  });
+
   it("explains a 409 in human terms — the container was redeployed, nothing is broken", async () => {
     const fetchMock = vi.fn<typeof fetch>().mockResolvedValueOnce(
-      new Response(JSON.stringify({ ok: false, error: "no session" }), {
+      new Response(JSON.stringify({ ok: false, code: "session_gone", error: "no session" }), {
         status: 409,
       }),
     );
@@ -222,6 +253,7 @@ describe("streamTurn delivery", () => {
         message: "main",
         sessionId: "sess_1",
         continuationToken: "github:repo:1:issue:7",
+        inputResponses: [{ requestId: "req_1", text: "main" }],
         deliverVia: VIA,
       }),
     );
@@ -231,6 +263,9 @@ describe("streamTurn delivery", () => {
     if (done?.kind !== "done") throw new Error("no done event");
     expect(done.result.ok).toBe(false);
     expect(done.result.error).toContain("redeployed");
+    // The caller is told the resume handle is spent, so it can unbind the row and let the NEXT
+    // message take the ordinary reseed path instead of failing forever.
+    expect(done.result.resumeExpired).toBe(true);
     // No stream was opened — the turn stopped at delivery.
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
@@ -247,6 +282,7 @@ describe("streamTurn delivery", () => {
         message: "main",
         sessionId: "sess_1",
         continuationToken: "github:repo:1:issue:7",
+        inputResponses: [{ requestId: "req_1", text: "main" }],
         deliverVia: VIA,
       }),
     );
@@ -254,5 +290,38 @@ describe("streamTurn delivery", () => {
     const done = events.at(-1);
     if (done?.kind !== "done") throw new Error("no done event");
     expect(done.result.error).toContain(ANSWER_ROUTE);
+    expect(done.result.error).toContain("boom");
+    // NOT a spent resume — a GitHub outage or a model error must leave the row bound so a retry
+    // can still reach the same thread.
+    expect(done.result.resumeExpired).toBeUndefined();
+  });
+
+  it("keeps the row bound when the route reports its own send failure as a 409", async () => {
+    // The template answers 409 for "this token resolves to nothing" and 500 for "send blew up",
+    // but a `send_failed` code on a 409 is still a transient failure — it must not be read as a
+    // dead session, or one flaky delivery would permanently detach a live thread.
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({ ok: false, code: "send_failed", error: "github 502" }),
+        { status: 409 },
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const events = await drain(
+      streamTurn({
+        baseUrl: "https://agent.example.test",
+        message: "main",
+        sessionId: "sess_1",
+        continuationToken: "github:repo:1:issue:7",
+        inputResponses: [{ requestId: "req_1", text: "main" }],
+        deliverVia: VIA,
+      }),
+    );
+
+    const done = events.at(-1);
+    if (done?.kind !== "done") throw new Error("no done event");
+    expect(done.result.error).toContain("github 502");
+    expect(done.result.resumeExpired).toBeUndefined();
   });
 });
