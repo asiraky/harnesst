@@ -268,6 +268,41 @@ before any git command, in **both** the real global config (the agent runs its o
 status` there for the rest of the session) and the scoped credential config the fetch
 runs under (`GIT_CONFIG_GLOBAL` replaces `~/.gitconfig`; it does not layer over it).
 
+**I. Asking in two places is asking twice (2026-07-27).** With G and H fixed the loop ran
+end to end for the first time — and the question arrived both in the inbox and as an issue
+comment, by design (§5.3 step 4). That design was wrong. Only one of the two copies can
+actually be answered: a comment reply on the thread starts a NEW turn, while the session
+sitting on `input.requested` is resumable only through the channel's answer route. The
+thread copy is therefore a question that looks answerable and is not. It is now the
+FALLBACK — posted only when no park is configured (a self-hosted eve) or when the park
+refuses or never answers, because a question nobody can see is the failure this handler
+exists to close. Note the agent keeps every ordinary way of talking on the thread: only
+`turn.started` and `input.requested` are overridden, so `message.completed` still posts
+replies as comments, and the `github-app-auth` skill still gives it `gh`.
+
+**J. The answered turn was recoverable, and both things we told the human were wrong
+(2026-07-27).** The first answer submitted from the inbox resolved question `nvkjxeqphvhq`
+at 04:57:48 and resumed the session; run `aupmdbjepfak` started 04:57:49.696 and failed
+31s later with `Our servers are currently overloaded. Please try again later. /
+MODEL_CALL_FAILED`. That is a genuine upstream provider error — every earlier github run
+completed, and other sessions answered normally at the same moment — so the park/resume
+loop itself is proven end to end. What was defective was the recovery we offered:
+
+- **The retry could never work.** `normalizeTurnError` classified "overloaded" as transient
+  and set `retryable`, so the UI offered *"Retry your message."* But the retry button
+  re-sends the last user message as an ORDINARY message, and `talk.server.ts` refuses any
+  ordinary message on a channel-homed row (`via && !inputResponses.length`) — the user
+  pressed it and got "This conversation lives on the agent's own channel thread…". Nor
+  would re-delivering the same `inputResponses` have helped: that request was consumed by
+  the turn that then failed. `normalizeTurnError` now takes the homing channel's label and,
+  when there is one, drops `retryable` and names the recovery that does work — post on the
+  thread, which starts a fresh turn on the same session.
+- **The parked question was labelled as a broken turn.** The replay projection borrowed the
+  SESSION-level `status === "failed"` for every reply-less turn, so once turn 1 failed, turn
+  0 — which ended by asking, and has no reply by design — rendered "The turn stopped before
+  harnesst recorded a final reply", directly above the question the human had been sent
+  there to answer. Only the tail turn, with no reply and no pending request, may borrow it.
+
 **Authoring note from G/H.** A template change only reaches an installed agent when the
 install is updated — templates are materialized into the agent's repo at install time
 (`app/marketplace/manifest.ts`), so no deploy mode picks up a catalog edit. A bundle whose
@@ -460,9 +495,12 @@ central advantage evaporated:
 3. Answering in FOH calls the callback; the channel-registered route opens the envelope
    and calls `args.send({inputResponses: [{requestId, optionId?, text?}]}, {auth: null,
    continuationToken: raw})` — resolving, because the send is the GitHub channel's own.
-4. Optionally the handler also posts the question to the issue thread, so the GitHub-side
-   user sees it too. Both surfaces, one park; whichever answers first wins, the other
-   shows resolved.
+4. The handler asks in exactly ONE place. **Superseded by finding I:** the first build
+   posted the question to the issue thread *as well*, on the theory that both surfaces are
+   better than one. They are not — the thread copy cannot be answered (a comment reply
+   starts a NEW turn; only the answer route resumes the waiting session), so it reads as a
+   second question that silently does nothing. The thread is now the FALLBACK, used only
+   when there is no park configured or the park fails.
 
 ### 5.4 Option C — home on the harnesst channel (mayi pattern)
 

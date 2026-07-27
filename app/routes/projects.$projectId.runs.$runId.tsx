@@ -24,6 +24,7 @@ import { AgentNav, AppShell, PageHeader, repoCrumbs } from "~/components/shell";
 import { Alert, AlertDescription, AlertTitle } from "~/components/ui/alert";
 import { Badge } from "~/components/ui/badge";
 import { Button } from "~/components/ui/button";
+import { stripChannelContext } from "~/chat/channel-context";
 import { contextPath } from "~/lib/paths";
 import { formatMs } from "~/lib/time";
 import { getRunWithSteps } from "~/observability/store.server";
@@ -122,7 +123,9 @@ export default function RunTranscriptRoute({
       s.type === "message" && (s.data as { role?: string })?.role === "user",
   );
   const metaInput =
-    typeof run.metadata?.input === "string" ? run.metadata.input : null;
+    typeof run.metadata?.input === "string"
+      ? stripChannelContext(run.metadata.input) || null
+      : null;
 
   // Linked traces (D6): a delegated run carries its caller on run metadata.
   const triggeredBy =

@@ -22,6 +22,7 @@ import {
   playgroundSessions,
   type SessionResumeVia,
 } from "~/db/schema";
+import { channelLabelFor } from "~/foh/channel-resume";
 import { openInboxQuestion, resolveInboxForSession } from "~/foh/inbox.server";
 import { reconcileNeedsYouFromTail } from "~/foh/needs-you";
 import { fohSessionStatus, sortSessionsForList } from "~/foh/status";
@@ -32,6 +33,7 @@ import {
   stripModelDirective,
 } from "~/models/model-directive";
 import { stripSeedContext } from "~/playground/seed";
+import { stripChannelContext } from "~/chat/channel-context";
 import type { Target } from "~/chat/playground.server";
 import type { ReasoningEffort } from "~/models/reasoning";
 
@@ -932,17 +934,51 @@ export async function loadPlaygroundEntriesFromEve(input: {
   return projectEventsToEntries(events, input.session);
 }
 
+/**
+ * What a tail read is allowed to spend waiting for eve — and why a settled session gets far less.
+ *
+ * Eve answers "nothing new" by saying NOTHING AT ALL. A stream request positioned past the
+ * session's last event never sends so much as a response header; it just holds the socket open.
+ * Measured against a live production instance on 2026-07-27: at the saved cursor, `code=000` after
+ * 6s — no status line, no body — while the same endpoint asked for an index it HAS answers in 2ms
+ * and streams in 3ms. So these numbers are not latency allowances. They are the flat price of a
+ * no-op reconcile, and the loader pays it on the critical path of every page load.
+ *
+ * That is precisely what made the one `failed` session in a FOH list take ~3s to open, every time,
+ * while its neighbours took 30ms: the reconcile fires for `running` OR `failed` rows, and a settled
+ * row's cursor always sits past the end, so it always ran out the full pre-headers budget.
+ *
+ * A `running` row may have a live turn mid-flight worth waiting for, and keeps the generous budget.
+ * A settled row is only being checked for stray history — a park the drain died before recording,
+ * or a turn a CHANNEL ran without harnesst — and 300ms is two orders of magnitude above the
+ * measured healthy response. A read that comes up empty writes nothing and advances no cursor, so
+ * the worst case of being too impatient is that the next load tries again.
+ */
+const EVE_TAIL_IDLE_MS = 1_500;
+const EVE_SETTLED_TAIL_MS = 300;
+
+export function tailBudgetsMs(status: string): {
+  connectMs: number;
+  idleMs: number;
+} {
+  return status === "running"
+    ? { connectMs: EVE_STREAM_CONNECT_TIMEOUT_MS, idleMs: EVE_TAIL_IDLE_MS }
+    : { connectMs: EVE_SETTLED_TAIL_MS, idleMs: EVE_SETTLED_TAIL_MS };
+}
+
 export async function reconcilePlaygroundSessionFromEve(input: {
   session: PlaygroundSession;
   target: Target;
   timeoutMs?: number;
 }): Promise<PlaygroundSession> {
   if (!input.session.externalSessionId) return input.session;
+  const budgets = tailBudgetsMs(input.session.status);
   const tail = await readEveSessionTail({
     baseUrl: input.target.url,
     sessionId: input.session.externalSessionId,
     startIndex: input.session.streamIndex,
-    timeoutMs: input.timeoutMs ?? 1_500,
+    timeoutMs: input.timeoutMs ?? budgets.idleMs,
+    connectTimeoutMs: input.timeoutMs ?? budgets.connectMs,
   });
   if (tail.events.length === 0) return input.session;
 
@@ -1107,6 +1143,8 @@ async function readEveSessionTail(input: {
   sessionId: string;
   startIndex: number;
   timeoutMs: number;
+  /** Pre-headers budget; see `tailBudgetsMs` for why a settled session gets a much shorter one. */
+  connectTimeoutMs?: number;
 }): Promise<{ events: EveStreamEvent[] }> {
   const base = input.baseUrl.replace(/\/+$/, "");
   const fetchController = new AbortController();
@@ -1114,7 +1152,7 @@ async function readEveSessionTail(input: {
   // race below bounds the body reads. See EVE_STREAM_CONNECT_TIMEOUT_MS for why this is short.
   const fetchTimer = setTimeout(
     () => fetchController.abort(),
-    EVE_STREAM_CONNECT_TIMEOUT_MS,
+    input.connectTimeoutMs ?? EVE_STREAM_CONNECT_TIMEOUT_MS,
   );
   let res: Response;
   try {
@@ -1343,9 +1381,14 @@ function projectEventsToEntries(
             turn.effort = directive.effort ?? null;
           }
         }
-        // Strip both wrappers: the model directive and, for a cross-redeploy reseed turn (#71),
-        // the leading harnesst:context block seeded from the cached transcript.
-        turn.userText = stripSeedContext(stripModelDirective(raw));
+        // Strip all three wrappers: the model directive; for a cross-redeploy reseed turn (#71),
+        // the leading harnesst:context block seeded from the cached transcript; and, for a
+        // channel-homed turn, eve's `<github_context>` envelope — the human opening a parked
+        // GitHub question from the inbox should not have to read past delivery ids to find the
+        // sentence they were sent here for.
+        turn.userText = stripChannelContext(
+          stripSeedContext(stripModelDirective(raw)),
+        );
         break;
       }
       case "step.started":
@@ -1454,6 +1497,10 @@ function projectEventsToEntries(
   }
 
   const entries: ChatEntry[] = [];
+  const channelLabel = session.resumeVia
+    ? channelLabelFor(session.resumeVia.channel)
+    : null;
+  const lastTurn = ordered.at(-1);
   for (const turn of ordered) {
     if (turn.userText) {
       entries.push({
@@ -1475,12 +1522,21 @@ function projectEventsToEntries(
       turn.steps.length > 0
     ) {
       const normalized = normalizeReply(reply);
+      // `session.status` is a property of the SESSION, not of this turn, so it may only stand in
+      // for a missing error on the turn that was actually running when it failed. Applied to every
+      // reply-less turn (as it once was) it defames the completed ones: a turn that ended by ASKING
+      // has no reply by design, so a parked GitHub question read "The turn stopped before harnesst
+      // recorded a final reply" as soon as a later turn failed — above the question itself.
+      const isUnfinishedTail =
+        turn === lastTurn &&
+        !normalized.reply &&
+        turn.inputRequests.length === 0;
       const replayError =
         turn.error ??
-        (session.status === "failed" && !normalized.reply
+        (session.status === "failed" && isUnfinishedTail
           ? "The turn stopped before harnesst recorded a final reply. Reloading may recover it if Eve finished after the last saved cursor."
           : null);
-      const normalizedError = normalizeTurnError(replayError);
+      const normalizedError = normalizeTurnError(replayError, { channelLabel });
       entries.push({
         id: `${turn.turnId}:assistant`,
         role: "assistant",

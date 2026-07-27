@@ -3,11 +3,13 @@
  * first with unread badges, `+ new session`, and the right pane as <Outlet/> (the index child
  * shows the no-session empty state; /s/:sessionId shows the conversation).
  */
-import { Plus } from "lucide-react";
+import { Loader2, Plus } from "lucide-react";
+import { useEffect, useState } from "react";
 import {
   data,
   redirect,
   useFetcher,
+  useNavigation,
   useParams,
   Outlet,
   type ActionFunctionArgs,
@@ -144,7 +146,69 @@ export default function FohAgent({ loaderData }: Route.ComponentProps) {
           />
         )}
       </section>
-      <Outlet />
+      <SessionPane openSessionId={params.sessionId ?? null}>
+        <Outlet />
+      </SessionPane>
     </>
+  );
+}
+
+/** `/t/:projectId/:agentId/s/:sessionId` → the session id, or null for any other path. */
+function sessionIdFromPath(pathname: string): string | null {
+  return /\/s\/([^/?#]+)/.exec(pathname)?.[1] ?? null;
+}
+
+/**
+ * React Router keeps the CURRENT pane mounted while the next route's loader runs, which is the
+ * right default for a fast load and badly wrong for a slow one: clicking a session leaves the
+ * previous conversation sitting there, indistinguishable from a click that did nothing. Some
+ * loads genuinely are slow — a session whose eve instance has to be consulted pays a network
+ * round trip before it can render a single message.
+ *
+ * So: swap in a pending pane, but only once the wait is long enough to notice. Under the delay
+ * the old pane stays put and the navigation just feels instant, which is the whole point — a
+ * spinner that flashes for 40ms is worse than no spinner at all.
+ */
+const PENDING_PANE_DELAY_MS = 250;
+
+function SessionPane({
+  openSessionId,
+  children,
+}: {
+  openSessionId: string | null;
+  children: React.ReactNode;
+}) {
+  const navigation = useNavigation();
+  const pendingId = navigation.location
+    ? sessionIdFromPath(navigation.location.pathname)
+    : null;
+  // Only a move to a DIFFERENT session blanks the pane. A revalidation of the conversation on
+  // screen (the FOH page does this on a timer) must never wipe what the user is reading.
+  const switching =
+    navigation.state === "loading" &&
+    pendingId !== null &&
+    pendingId !== openSessionId;
+  const [show, setShow] = useState(false);
+
+  useEffect(() => {
+    if (!switching) {
+      setShow(false);
+      return;
+    }
+    const timer = setTimeout(() => setShow(true), PENDING_PANE_DELAY_MS);
+    return () => clearTimeout(timer);
+  }, [switching]);
+
+  if (!show) return <>{children}</>;
+  return (
+    <section
+      className="flex min-w-0 flex-1 items-center justify-center"
+      aria-busy="true"
+    >
+      <p className="flex items-center gap-2 text-sm text-muted-foreground">
+        <Loader2 className="size-4 animate-spin" aria-hidden />
+        Opening conversation…
+      </p>
+    </section>
   );
 }

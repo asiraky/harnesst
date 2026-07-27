@@ -21,7 +21,7 @@ import {
   recordTurnFinish,
   recordTurnStart,
 } from "~/observability/record.server";
-import { channelDeliveryFor } from "~/foh/channel-resume";
+import { channelDeliveryFor, channelLabelFor } from "~/foh/channel-resume";
 import { settleFohTurn } from "~/foh/needs-you";
 import { mintDelegationToken } from "~/team/token.server";
 import {
@@ -188,6 +188,11 @@ export function streamTurnResponse(input: {
   // Needs-you writes happen only for FOH conversations (D4) — the builder surfaces must be
   // byte-for-byte unaffected by this chokepoint.
   const isFoh = activeSession.surface === "foh";
+  // Named when this session is homed on a channel — a transient failure there is not retryable
+  // from harnesst, so the error we render must not offer a button that only leads to a refusal.
+  const channelLabel = activeSession.resumeVia
+    ? channelLabelFor(activeSession.resumeVia.channel)
+    : null;
   const startedAt = new Date();
   const encoder = new TextEncoder();
 
@@ -438,7 +443,9 @@ export function streamTurnResponse(input: {
                 break;
               case "done": {
                 result = event.result;
-                const normalizedError = normalizeTurnError(event.result.error);
+                const normalizedError = normalizeTurnError(event.result.error, {
+                  channelLabel,
+                });
                 if (normalizedError?.retryable) {
                   console.warn(
                     `${tag} transient provider stream error (shown to user as retryable):`,
@@ -477,7 +484,9 @@ export function streamTurnResponse(input: {
             messages: [],
             error: `The turn stream failed: ${(error as Error).message}`,
           };
-          const normalizedError = normalizeTurnError(result.error);
+          const normalizedError = normalizeTurnError(result.error, {
+            channelLabel,
+          });
           if (normalizedError?.retryable) {
             console.warn(
               `${tag} transient provider stream error (shown to user as retryable):`,
