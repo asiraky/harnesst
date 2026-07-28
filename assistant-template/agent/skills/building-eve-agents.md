@@ -1,5 +1,5 @@
 ---
-description: Load before creating, changing, or reviewing anything inside an eve agent project — a tool, skill, schedule, subagent, sandbox, channel, connection, eval, instructions.md, agent.ts, package.json, secret, model, or dependency, and before installing anything from the marketplace. Carries eve's filesystem conventions and official docs, plus harnesst's rules on top: how models and secrets are configured, how dependencies are added, how marketplace capabilities are installed, and the checks to run before you finish.
+description: "Load before creating, changing, or reviewing anything inside an eve agent project — a tool, skill, schedule, subagent, sandbox, channel, connection, eval, instructions.md, agent.ts, package.json, secret, model, or dependency, and before installing anything from the marketplace. Carries eve's filesystem conventions and official docs, plus harnesst's rules on top: how models and secrets are configured, how dependencies are added, how marketplace capabilities are installed, and the checks to run before you finish."
 ---
 
 # Building eve agents in a harnesst repo
