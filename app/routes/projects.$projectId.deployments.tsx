@@ -1136,10 +1136,11 @@ export default function Deployment({
       <PageHeader
         icon={Rocket}
         accent="emerald"
-        // The permanent home of Publish (§4.1). Repo level only: a publish ships every saved
-        // change across the whole repository, so offering it from one member's page would
-        // misstate its scope. "single" IS the repo level — that repo just has one agent.
-        actions={level !== "member" ? <PublishDeploymentButton /> : undefined}
+        // The permanent home of Publish (§4.1), on EVERY Deployment page. A publish ships every
+        // saved change across the whole repository regardless of which page launched it — the
+        // panel's own copy says so — and member pages used to hide the button while other
+        // surfaces told people to go find it, a banner pointing at nothing.
+        actions={<PublishDeploymentButton />}
         title={
           level === "member" ? `Deployment — ${activeAgent}` : "Deployment"
         }

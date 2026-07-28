@@ -608,8 +608,15 @@ export default function ProjectDetail({
             {draftPaths.length === 1 ? "" : "s"} not published yet
           </AlertTitle>
           <AlertDescription>
-            Publish {draftPaths.length === 1 ? "it" : "them"} with the Publish button in the
-            header when you're ready.
+            {/* Link straight to the panel — this page has no Publish button of its own, and copy
+                pointing at a control that isn't on screen sent people hunting. */}
+            Nothing is live until you publish.{" "}
+            <Link
+              to={publishHref}
+              className="font-medium underline underline-offset-4"
+            >
+              Review &amp; publish →
+            </Link>
           </AlertDescription>
         </Alert>
       )}
