@@ -38,16 +38,21 @@ export interface TreeState {
 }
 
 /**
- * Paths the assistant may edit in its sandbox but that must NEVER be committed to the branch:
- * its own model override (`assistant.json`) and the harnesst-owned `.ts` tool/agent layer under
- * `.harnesst/assistant/`. Review can't undo a merged change to these, so they're stripped pre-commit
- * (and the model is told, so it doesn't think its edit stuck). Everything else is allowed —
- * PR review is the backstop.
+ * The assistant's OWN configuration — everything under `.harnesst/assistant/` — is never
+ * committed from a conversation branch. The assistant edits repository files on behalf of a
+ * human; it must not be able to author the instructions, skills, schedules, or model that
+ * govern its next turn. Self-modification cannot be prevented by telling the model not to do
+ * it: repo content and conversation input can both steer the model, and the human reviewing
+ * the PR is a non-developer who cannot be expected to spot an instruction edit smuggled into a
+ * legitimate diff. So the whole prefix is stripped pre-commit (and reported back to the model,
+ * so it doesn't believe the edit stuck). Humans still edit this surface directly — the config
+ * page and the MCP/UI authoring path go through `normalizeAgentPath`, which allows it.
+ * Everything else in the repo is allowed; PR review is the backstop there.
  */
 export function isBlockedPath(path: string): boolean {
-  if (path === ".harnesst/assistant/assistant.json") return true;
-  if (path.startsWith(".harnesst/assistant/") && path.endsWith(".ts")) return true;
-  return false;
+  return (
+    path === ".harnesst/assistant" || path.startsWith(".harnesst/assistant/")
+  );
 }
 
 /** One planned tree entry: full new content (null = delete) + whether it's mode 100755. */
@@ -100,7 +105,11 @@ export function planCommit(tree: TreeState): CommitPlan {
       skippedBodies.push(f.path);
       continue;
     }
-    files.push({ path: f.path, content: f.content, ...(f.executable ? { executable: true } : {}) });
+    files.push({
+      path: f.path,
+      content: f.content,
+      ...(f.executable ? { executable: true } : {}),
+    });
   }
 
   // Deterministic order so the hash is stable regardless of the sidecar's listing order.
@@ -120,7 +129,13 @@ export function planCommit(tree: TreeState): CommitPlan {
   skippedBodies.sort();
   notFiles.sort();
 
-  return { files, blocked, skippedBodies, notFiles, hash: hasher.digest("hex") };
+  return {
+    files,
+    blocked,
+    skippedBodies,
+    notFiles,
+    hash: hasher.digest("hex"),
+  };
 }
 
 /** Human-readable warning block for the PR body / model note when paths were dropped. */
