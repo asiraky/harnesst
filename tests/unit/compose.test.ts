@@ -291,6 +291,60 @@ describe("resolveTemplate — a file-less bundle (pure composition, issue #42)",
   });
 });
 
+/**
+ * Ownership has to travel with the file (issue #254). Every real GitHub install arrives as the
+ * bundle, so if the flatten dropped the channel's `installOnce` the customer-owned wrapper would
+ * silently become an ordinary managed file — and the next bundle update would overwrite it, which
+ * is the exact failure this class exists to prevent.
+ */
+describe("resolveTemplate — installOnce survives the flatten (issue #254)", () => {
+  const platformChannelTpl: CatalogTemplate = {
+    manifest: {
+      ...channelTpl.manifest,
+      id: "github",
+      name: "GitHub",
+      files: ["channels/github.ts", "harnesst/github-channel.ts"],
+      installOnce: ["channels/github.ts"],
+    },
+    files: {
+      "channels/github.ts": "export default {};\n",
+      "harnesst/github-channel.ts": "export function factory() {}\n",
+    },
+  };
+  const bundleTpl: CatalogTemplate = {
+    manifest: {
+      id: "github-bundle",
+      type: "bundle",
+      name: "GitHub bundle",
+      description: "The GitHub channel plus the search tool.",
+      version: "0.4.0",
+      eve: ">=0.20.0",
+      files: [],
+      includes: [
+        { type: "channel", id: "github" },
+        { type: "tool", id: "search" },
+      ],
+    },
+    files: {},
+  };
+  const source = fakeCatalog([platformChannelTpl, toolTpl, bundleTpl]);
+
+  it("carries an include's install-once declaration onto the bundle", async () => {
+    const resolved = await resolveTemplate(source, "bundle", "github-bundle");
+    expect(resolved.manifest.installOnce).toEqual(["channels/github.ts"]);
+    // Still a subset of the unioned files — the rule the manifest schema enforces.
+    expect(resolved.manifest.files).toEqual(
+      expect.arrayContaining(resolved.manifest.installOnce!),
+    );
+  });
+
+  it("omits the field entirely when nothing in the tree declares one", async () => {
+    const plain = fakeCatalog([channelTpl, toolTpl, agentTpl]);
+    const resolved = await resolveTemplate(plain, "agent", "engineer");
+    expect(resolved.manifest.installOnce).toBeUndefined();
+  });
+});
+
 describe("resolveTemplate — auth descriptors (issue #30)", () => {
   const connTpl: CatalogTemplate = {
     manifest: {

@@ -51,7 +51,14 @@ import {
 import { detectAgentRoots, hasTeamLayout } from "~/eve/parse";
 import { syncProjectAgents } from "~/db/queries.server";
 import { getAgentSource, invalidateRepoSource, warmAgentSource } from "~/github/cached.server";
-import { fetchAgentSource } from "~/github/repo.server";
+import { fetchAgentSource, readAgentFile } from "~/github/repo.server";
+import { LOCK_PATH, overlayLock } from "~/marketplace/lock";
+import {
+  platformFileProblems,
+  platformFilesMessage,
+  platformPathsUnderCheck,
+  recordedPlatformHashes,
+} from "~/marketplace/platform";
 import {
   commitToDefaultBranch,
   getBranchHead,
@@ -87,6 +94,8 @@ export interface PublishPipelineDeps {
   getBranchHead: typeof getBranchHead;
   commitToDefaultBranch: typeof commitToDefaultBranch;
   fetchAgentSource: typeof fetchAgentSource;
+  /** One file's bytes off the branch — the platform-file gate's only read (issue #254). */
+  readRepoFile: typeof readAgentFile;
   detectAgentRoots: typeof detectAgentRoots;
   syncProjectAgents: typeof syncProjectAgents;
   invalidateRepoSource: typeof invalidateRepoSource;
@@ -120,6 +129,7 @@ function defaultDeps(): PublishPipelineDeps {
     getBranchHead,
     commitToDefaultBranch,
     fetchAgentSource,
+    readRepoFile: readAgentFile,
     detectAgentRoots,
     syncProjectAgents,
     invalidateRepoSource,
@@ -534,6 +544,51 @@ export async function runPublish(
       if (orphaned.length > 0) {
         await failAt("check", orphanedDraftsMessage(orphaned));
         return outcome;
+      }
+      // Platform-file gate (issue #254): `harnesst/` code is the marketplace installer's to write,
+      // and publish is the last place that can prove it still is. Every platform file the published
+      // tree will carry has to hash to the sha256 its install recorded, and a platform file no
+      // install owns fails just as hard — a hand-"fixed" one works right up until the next update
+      // overwrites it, which is the failure this whole issue exists to make impossible.
+      //
+      // Runs BEFORE the coherence pass on purpose: the pass is harnesst's own code repairing the
+      // change-set (it relocates the generated model module, a platform path nothing owns), and the
+      // gate is about what humans and installs did, not what we do to their change-set.
+      //
+      // Costs nothing on a repo with no platform files — no lock read, no file reads — which is
+      // every repo until it takes a `harnesst/`-shipping template.
+      //
+      // The gate only sees what `fetchAgentSource` reads, so that filter admits both platform
+      // roots — repo-root `harnesst/**` and `agents/<m>/harnesst/**`. Narrow it and a
+      // single-agent repo's platform files go back to being checked only while they are drafts.
+      const platformPaths = platformPathsUnderCheck(repoPaths, drafts);
+      if (platformPaths.length > 0) {
+        // The lock the published tree will have: the staged one when this change-set rewrites it
+        // (an install stages its platform files and its lock entry together, so the recorded
+        // hashes must come from the same change-set), else the branch's.
+        const stagedLock = drafts.some((d) => d.path === LOCK_PATH);
+        const recorded = recordedPlatformHashes(
+          overlayLock(
+            stagedLock ? null : await deps.readRepoFile(installationId, repo, LOCK_PATH),
+            drafts,
+          ),
+        );
+        // Drafts win over the branch — the change-set is what is about to land. Deletions never
+        // reach here (platformPathsUnderCheck drops them).
+        const resolved = await Promise.all(
+          platformPaths.map(async (path) => {
+            const draft = drafts.find((d) => d.path === path);
+            return [
+              path,
+              draft ? draft.content : await deps.readRepoFile(installationId, repo, path),
+            ] as const;
+          }),
+        );
+        const problems = platformFileProblems(platformPaths, recorded, new Map(resolved));
+        if (problems.length > 0) {
+          await failAt("check", platformFilesMessage(problems));
+          return outcome;
+        }
       }
       // Coherence pass (§2.4): harnesst never publishes an incoherent change-set.
       files = await deps.normalizeDrafts({

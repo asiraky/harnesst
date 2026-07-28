@@ -9,6 +9,9 @@
  *   - a build failure is the task's outcome: no commit, no release, no deploy, drafts kept, the
  *     failed step carries the compiler output, later steps stay pending;
  *   - the orphan gate fails at `check` before anything builds;
+ *   - the platform-file gate (issue #254) fails at `check` for a `harnesst/` file no install owns
+ *     or whose bytes moved, passes a repo whose platform files match the lock, exempts the
+ *     generated model module, and reads nothing at all when the repo has no platform files;
  *   - assistant-config-only publishes skip build/version/deploy (visible, with a reason) and
  *     enqueue an assistant restart instead;
  *   - a CAS miss on the commit rebuilds and retries exactly once, then fails with the
@@ -18,6 +21,8 @@
  *   - §2.9 dedupe: one publish per project at a time;
  *   - only project/task load failures rethrow (genuine queue errors).
  */
+import { createHash } from "node:crypto";
+
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { PipelineStepStatus } from "~/data/ports";
@@ -106,6 +111,7 @@ function makeDeps(over: Partial<PublishPipelineDeps> = {}): PublishPipelineDeps 
     getBranchHead: vi.fn().mockResolvedValue("base0000head0000sha0000000000000000000000"),
     commitToDefaultBranch: vi.fn().mockResolvedValue({ sha: SHA }),
     fetchAgentSource: vi.fn().mockResolvedValue({ paths: [] }),
+    readRepoFile: vi.fn().mockResolvedValue(null),
     detectAgentRoots: vi.fn().mockReturnValue([]),
     syncProjectAgents: vi.fn().mockResolvedValue([]),
     invalidateRepoSource: vi.fn(),
@@ -317,6 +323,135 @@ describe("runPublish — failures leave nothing landed", () => {
     expect(await stepStatuses(task.id)).toMatchObject({ check: "failed", build: "pending" });
     expect(deps.checkBuild).not.toHaveBeenCalled();
     expect((await store.drafts.listByProject(PROJECT)).length).toBe(1);
+  });
+});
+
+describe("runPublish — platform-file gate (issue #254)", () => {
+  const CHANNEL_PATH = "agents/ivy/harnesst/github-channel.ts";
+  const CHANNEL_BODY = "export function harnesstGitHubChannel() {}\n";
+
+  /** Independently re-implemented (never imported): the guardrail on `platformFileHash`. */
+  function sha256(content: string): string {
+    return createHash("sha256").update(content).digest("hex");
+  }
+
+  /** A lock owning `platformFiles` for ivy, as the installer would have written it. */
+  function lockWith(platformFiles: Record<string, string>): string {
+    return JSON.stringify({
+      version: 1,
+      installs: [
+        {
+          id: "github-bundle",
+          type: "bundle",
+          name: "GitHub",
+          version: "0.4.0",
+          hash: "sha1-of-the-template",
+          registry: "fixture",
+          member: "ivy",
+          files: ["agents/ivy/agent/channels/github.ts", ...Object.keys(platformFiles)],
+          platformFiles,
+        },
+      ],
+    });
+  }
+
+  /** Serves the branch: `harnesst-lock.json` plus whatever platform bytes are on disk. */
+  function branch(files: Record<string, string>) {
+    return vi.fn(async (_installationId: unknown, _repo: unknown, path: string) =>
+      files[path] ?? null,
+    );
+  }
+
+  it("passes when every platform file matches the hash its install recorded", async () => {
+    seedTeam();
+    // The shape an install stages: the platform file and the lock entry recording it, together.
+    await stageDrafts({
+      [CHANNEL_PATH]: CHANNEL_BODY,
+      "harnesst-lock.json": lockWith({ [CHANNEL_PATH]: sha256(CHANNEL_BODY) }),
+    });
+    const task = await seedTask();
+    const readRepoFile = branch({});
+    const deps = makeDeps({ readRepoFile });
+
+    await runPublish(payload(task.id), deps, store);
+
+    expect((await store.workspaceTasks.findById(task.id))?.status).toBe("succeeded");
+    // The staged lock is the one that counts — the branch's was never read.
+    expect(readRepoFile).not.toHaveBeenCalled();
+  });
+
+  it("fails at check when a platform file's bytes moved after the install wrote them", async () => {
+    seedTeam();
+    await stageDrafts({ "agents/ivy/agent/instructions.md": "Be useful." });
+    const task = await seedTask();
+    const readRepoFile = branch({
+      "harnesst-lock.json": lockWith({ [CHANNEL_PATH]: sha256(CHANNEL_BODY) }),
+      [CHANNEL_PATH]: `${CHANNEL_BODY}// hand-fixed in a hurry\n`,
+    });
+    const deps = makeDeps({
+      listRepoPaths: vi.fn().mockResolvedValue([
+        "agents/ivy/agent/agent.ts",
+        "agents/otto/agent/agent.ts",
+        CHANNEL_PATH,
+      ]),
+      readRepoFile,
+    });
+
+    await runPublish(payload(task.id), deps, store);
+
+    const row = await store.workspaceTasks.findById(task.id);
+    expect(row?.status).toBe("failed");
+    expect(row?.error).toContain(CHANNEL_PATH);
+    expect(row?.error).toContain("the bytes changed after the marketplace wrote it");
+    // The repair is an Update, never an edit — the message has to say both.
+    expect(row?.error).toContain("Update");
+    expect(row?.error).toContain("Editing them by hand cannot fix this");
+    expect(await stepStatuses(task.id)).toMatchObject({ check: "failed", build: "pending" });
+    expect(deps.checkBuild).not.toHaveBeenCalled();
+    expect((await store.drafts.listByProject(PROJECT)).length).toBe(1);
+  });
+
+  it("fails at check on a platform file no install owns", async () => {
+    seedTeam();
+    await stageDrafts({ "agents/ivy/agent/instructions.md": "Be useful." });
+    const task = await seedTask();
+    const deps = makeDeps({
+      listRepoPaths: vi
+        .fn()
+        .mockResolvedValue(["agents/ivy/agent/agent.ts", "agents/ivy/harnesst/rogue.ts"]),
+      readRepoFile: branch({ "harnesst-lock.json": lockWith({}) }),
+    });
+
+    await runPublish(payload(task.id), deps, store);
+
+    const row = await store.workspaceTasks.findById(task.id);
+    expect(row?.status).toBe("failed");
+    expect(row?.error).toContain("agents/ivy/harnesst/rogue.ts");
+    expect(row?.error).toContain("no installed template owns this file");
+    expect(deps.checkBuild).not.toHaveBeenCalled();
+  });
+
+  it("exempts the generated model module, which no install owns, and skips the lock read entirely for a repo with no platform files", async () => {
+    seedTeam();
+    await stageDrafts({ "agents/ivy/agent/agent.ts": "export default {};" });
+    const task = await seedTask();
+    const readRepoFile = branch({});
+    const deps = makeDeps({
+      // harnesst's own scaffold emits these; a strict gate without the carve-out fails every repo.
+      listRepoPaths: vi
+        .fn()
+        .mockResolvedValue([
+          "agents/ivy/agent/agent.ts",
+          "agents/ivy/harnesst/model.ts",
+          "agents/otto/harnesst/model.ts",
+        ]),
+      readRepoFile,
+    });
+
+    await runPublish(payload(task.id), deps, store);
+
+    expect((await store.workspaceTasks.findById(task.id))?.status).toBe("succeeded");
+    expect(readRepoFile).not.toHaveBeenCalled();
   });
 });
 

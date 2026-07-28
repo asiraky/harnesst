@@ -42,3 +42,18 @@ export function templateContentHash(template: CatalogTemplate): string {
   }
   return createHash("sha1").update(parts.join("\n")).digest("hex");
 }
+
+/**
+ * Content hash of ONE materialized platform file (issue #254) — sha256(hex) over the exact bytes
+ * the installer wrote to a `harnesst/…` path, recorded per path in the lock entry's
+ * `platformFiles` and re-checked against disk by the publish gate.
+ *
+ * Deliberately a different question from `templateContentHash`, and deliberately a different
+ * function so nobody conflates them: that one hashes a whole TEMPLATE and answers "which catalog
+ * version did we install?", which cannot tell an untouched file from a customised one — the exact
+ * blindness that let an update overwrite two live agents' channel code. This one answers "are the
+ * bytes still the bytes we wrote?".
+ */
+export function platformFileHash(content: string): string {
+  return createHash("sha256").update(content).digest("hex");
+}

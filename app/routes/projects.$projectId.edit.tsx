@@ -11,6 +11,7 @@ import { getSessionAuth, sessionLoader } from "~/auth/session.server";
 import { Pencil } from "lucide-react";
 import { useState } from "react";
 import {
+  data,
   Link,
   redirect,
   useNavigation,
@@ -42,6 +43,7 @@ import {
 } from "~/project/agent-context.server";
 import {
   normalizeAgentPath,
+  platformPathRefusal,
   requireProject,
   requireRepo,
   type ConnectedProject,
@@ -99,7 +101,12 @@ export const loader = (args: LoaderFunctionArgs) =>
       }
 
       const url = new URL(args.request.url);
-      const path = normalizeAgentPath(url.searchParams.get("path") ?? "");
+      const requested = url.searchParams.get("path") ?? "";
+      // A link into `harnesst/` is a well-formed path we refuse on purpose (issue #254) — say
+      // so, instead of bouncing to the overview as if the link were malformed.
+      const refusal = platformPathRefusal(requested);
+      if (refusal) throw data(refusal, { status: 403 });
+      const path = normalizeAgentPath(requested);
       // No (valid) target — nothing to edit; back to the overview, where creation lives.
       if (!path) throw redirect(contextPath(project.id, paramAgent));
 
@@ -145,7 +152,10 @@ export async function action(args: ActionFunctionArgs) {
   );
 
   const form = await args.request.formData();
-  const path = normalizeAgentPath(String(form.get("path") ?? ""));
+  const raw = String(form.get("path") ?? "");
+  const refusal = platformPathRefusal(raw);
+  if (refusal) return { error: refusal };
+  const path = normalizeAgentPath(raw);
   if (!path) return { error: "Invalid path — files must live under agent/." };
   const content = String(form.get("content") ?? "");
 

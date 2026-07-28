@@ -40,6 +40,16 @@
  *  - and it separates "this token names no live session" (409) from "the send blew up" (500), the
  *    distinction `app/agent/talk.server.ts` turns into two very different sentences.
  *
+ * #254 — the wake rules. `onIssue`/`onPullRequest` are the only way an agent hears anything but an
+ * @mention, and the predicate behind them is exported pure precisely so it can be driven here:
+ * self-suppression, the label allowlist, repo scoping, and — the one that decides whether taking
+ * this update is safe — an unconfigured install staying inert.
+ *
+ * The file under test moved in #254 from `files/channels/github.ts` to
+ * `files/harnesst/github-channel.ts`: the body is platform-owned and rewritten by every update,
+ * while the customer's `agent/channels/github.ts` is a three-line wrapper written once and never
+ * again. This suite compiles the platform file and calls the factory the wrapper calls.
+ *
  * The eve stubs below are hand-written — `eve` is not a dependency of this repo and the template
  * is excluded from tsconfig, so NOTHING typechecks it (see docs/SPIKE-GITHUB-TO-FOH.md §6 "Known
  * gaps"). They are typed here against eve 0.22.6's documented shapes so a signature drift at
@@ -53,6 +63,11 @@ import { transformSync } from "esbuild";
 import { beforeAll, describe, expect, it } from "vitest";
 
 const TEMPLATE_PATH = join(
+  process.cwd(),
+  "catalog/templates/channels/github/files/harnesst/github-channel.ts",
+);
+/** The customer-owned wrapper. Its only job is to call the factory the platform file exports. */
+const WRAPPER_PATH = join(
   process.cwd(),
   "catalog/templates/channels/github/files/channels/github.ts",
 );
@@ -108,6 +123,21 @@ interface EveInputRequest {
   options?: readonly { id: string; label: string; description?: string }[];
 }
 
+/** eve's `GitHubInboundResult`: `null` ignores, `{auth}` dispatches. */
+type EveInboundResult = { auth: unknown; context?: readonly string[] } | null;
+/** The webhook shapes the wake hooks receive, as eve 0.24.2 normalises them. */
+interface EveIssueEvent {
+  action: string;
+  issueNumber: number;
+  raw: Record<string, unknown>;
+}
+interface EvePullRequestEvent {
+  action: string;
+  headSha: string | null;
+  pullRequestNumber: number;
+  raw: Record<string, unknown>;
+}
+
 interface Harness {
   /** The config object the template handed to `githubChannel()`. */
   config: {
@@ -115,6 +145,8 @@ interface Harness {
       string,
       (event: never, channel: never, ctx: never) => Promise<void>
     >;
+    onIssue?: (ctx: never, issue: EveIssueEvent) => EveInboundResult;
+    onPullRequest?: (ctx: never, pullRequest: EvePullRequestEvent) => EveInboundResult;
   };
   /** The template's default export (channel + its extra routes). */
   channelModule: { routes: EveRouteDefinition[] };
@@ -134,6 +166,41 @@ interface Harness {
   inputRequested: (requests: EveInputRequest[]) => Promise<void>;
   /** Drive the channel-registered answer route. */
   answer: (init: { bearer?: string | null; body?: unknown }) => Promise<Response>;
+  /** Drive `onIssue` / `onPullRequest` through the settings the module read from env. */
+  issueEvent: (input: {
+    action: string;
+    label?: string;
+    number?: number;
+    repo?: string;
+    sender?: string;
+  }) => EveInboundResult;
+  pullRequestEvent: (input: {
+    action: string;
+    headSha?: string | null;
+    label?: string;
+    number?: number;
+    repo?: string;
+    sender?: string;
+  }) => EveInboundResult;
+  /** The exported pure predicate, for driving the rules without any env at all. */
+  wakeContext: (event: WakeEvent, settings: WakeSettings) => string | null;
+}
+
+/** Mirrors the two exported interfaces of the platform file (which tsconfig excludes). */
+interface WakeSettings {
+  repos: readonly string[];
+  wakeLabels: readonly string[];
+  wakeOnNewIssues: boolean;
+  appSlug: string;
+}
+interface WakeEvent {
+  kind: "issue" | "pull_request";
+  action: string;
+  number: number;
+  label: string | null;
+  headSha: string | null;
+  repoFullName: string;
+  senderLogin: string;
 }
 
 interface Options {
@@ -337,11 +404,19 @@ function loadTemplate(options: Options = {}): Harness {
     compiled,
   )(requireStub, moduleObject, moduleObject.exports, fakeProcess, fakeFetch, fakeConsole);
 
-  if (!config) throw new Error("the template never called githubChannel()");
+  // The customer's `agent/channels/github.ts` is a wrapper around this factory, so the suite
+  // exercises exactly what a deployed agent's default export evaluates to.
+  const factory = moduleObject.exports.harnesstGitHubChannel as
+    | (() => { routes: EveRouteDefinition[] })
+    | undefined;
+  if (typeof factory !== "function") {
+    throw new Error("the platform file exports no harnesstGitHubChannel() factory");
+  }
+  const channelModule = factory();
+  if (!config) throw new Error("the factory never called githubChannel()");
 
-  const channelModule = moduleObject.exports.default as {
-    routes: EveRouteDefinition[];
-  };
+  const inboundCtx = (repo: string, sender: string) =>
+    ({ repository: { fullName: repo }, sender: { login: sender } }) as never;
 
   const send: EveSend = async (input, sendOptions) => {
     sendCalls.push({ input, options: sendOptions });
@@ -389,6 +464,33 @@ function loadTemplate(options: Options = {}): Harness {
         { send },
       );
     },
+    issueEvent: ({ action, label, number = 12, repo = "acme/widgets", sender = "octocat" }) => {
+      if (!config!.onIssue) throw new Error("the template registered no onIssue hook");
+      return config!.onIssue(inboundCtx(repo, sender), {
+        action,
+        issueNumber: number,
+        raw: label === undefined ? {} : { label: { name: label } },
+      });
+    },
+    pullRequestEvent: ({
+      action,
+      headSha = null,
+      label,
+      number = 19,
+      repo = "acme/widgets",
+      sender = "octocat",
+    }) => {
+      if (!config!.onPullRequest) {
+        throw new Error("the template registered no onPullRequest hook");
+      }
+      return config!.onPullRequest(inboundCtx(repo, sender), {
+        action,
+        headSha,
+        pullRequestNumber: number,
+        raw: label === undefined ? {} : { label: { name: label } },
+      });
+    },
+    wakeContext: moduleObject.exports.githubWakeContext as Harness["wakeContext"],
   };
 }
 
@@ -405,6 +507,19 @@ describe("the GitHub channel template's turn.started override", () => {
     // and it must not have displaced the WS1 work in the same file
     expect(typeof harness.config.events["input.requested"]).toBe("function");
     expect(harness.channelModule.routes).toHaveLength(1);
+  });
+
+  it("keeps the customer's file a wrapper — the split is the whole fix", () => {
+    // #254: the update that destroyed two agents' channels overwrote a lock-owned file under
+    // `agent/`. `agent/channels/github.ts` is now install-once and holds nothing worth losing;
+    // every line that an update rewrites lives in the platform file this suite compiles.
+    const wrapper = readFileSync(WRAPPER_PATH, "utf8");
+    expect(wrapper).toContain(
+      'import { harnesstGitHubChannel } from "../../harnesst/github-channel";',
+    );
+    expect(wrapper).toContain("export default harnesstGitHubChannel();");
+    const lines = wrapper.split("\n").filter((line) => line.trim().length > 0);
+    expect(lines.length).toBeLessThanOrEqual(8);
   });
 
   it("re-asserts the eyes reaction the override replaces", async () => {
@@ -865,5 +980,227 @@ describe("the template's answer route (the resume)", () => {
     const payload = (await res.json()) as { error: string };
     expect(payload.error).not.toContain(TOKEN);
     expect(payload.error).toContain("[redacted]");
+  });
+});
+
+/**
+ * #254 — the wake rules. Driven twice over: through the exported pure predicate, where every rule
+ * can be stated without env or eve, and through the real `onIssue`/`onPullRequest` hooks, which is
+ * the only way to prove the `HARNESST_CHANNEL_GITHUB_*` env contract the deploy path emits is the
+ * one this file reads. Those two encodings drifting apart breaks the channel silently.
+ */
+const WAKE: WakeSettings = {
+  repos: ["worksauceapp/marketing-site"],
+  wakeLabels: ["ready", "changes-requested"],
+  wakeOnNewIssues: false,
+  appSlug: "ivy-worksauce",
+};
+
+function labelEvent(over: Partial<WakeEvent> = {}): WakeEvent {
+  return {
+    kind: "pull_request",
+    action: "labeled",
+    number: 19,
+    label: "changes-requested",
+    headSha: "ee9a696aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    repoFullName: "worksauceapp/marketing-site",
+    senderLogin: "sam-harnesst",
+    ...over,
+  };
+}
+
+describe("the wake predicate", () => {
+  it("names the event and refuses to say what to do about it", () => {
+    // The policy lives in the customer's instructions.md. An agent told "you were woken because
+    // X, therefore do Y" stops reading its own instructions.
+    const { wakeContext } = loadTemplate();
+    const context = wakeContext(labelEvent(), WAKE);
+
+    expect(context).toContain(
+      'pull request #19 labeled "changes-requested" by @sam-harnesst in worksauceapp/marketing-site',
+    );
+    expect(context).toContain("Decide from your instructions");
+    expect(context).toContain("do nothing and post nothing");
+  });
+
+  it("suppresses the agent's OWN app whatever case GitHub minted the login in", () => {
+    // GitHub logins are case-preserving, so an exact-case comparison falls open and the agent
+    // wakes itself on its own label — an unbounded loop that costs money.
+    const { wakeContext } = loadTemplate();
+    expect(wakeContext(labelEvent({ senderLogin: "ivy-worksauce[bot]" }), WAKE)).toBeNull();
+    expect(wakeContext(labelEvent({ senderLogin: "Ivy-WorkSauce[BOT]" }), WAKE)).toBeNull();
+  });
+
+  it("still wakes on ANOTHER agent's bot — it is a sender check, not a bot check", () => {
+    // This is what lets two agents hand work back and forth.
+    const { wakeContext } = loadTemplate();
+    expect(wakeContext(labelEvent({ senderLogin: "sam-worksauce[bot]" }), WAKE)).toContain(
+      "@sam-worksauce[bot]",
+    );
+  });
+
+  it("checks the sender BEFORE anything else can match", () => {
+    // Ordering matters: a self-applied label in a watched repo is the exact shape of the loop.
+    const { wakeContext } = loadTemplate();
+    expect(
+      wakeContext(
+        labelEvent({ action: "synchronize", label: null, senderLogin: "ivy-worksauce[bot]" }),
+        WAKE,
+      ),
+    ).toBeNull();
+  });
+
+  it("dispatches on an allowlisted label and ignores every other one", () => {
+    const { wakeContext } = loadTemplate();
+    expect(wakeContext(labelEvent({ label: "ready" }), WAKE)).toContain('labeled "ready"');
+    expect(wakeContext(labelEvent({ label: "wontfix" }), WAKE)).toBeNull();
+    expect(wakeContext(labelEvent({ label: null }), WAKE)).toBeNull();
+  });
+
+  it("ignores `unlabeled`, which carries a `label` payload of its own", () => {
+    // GitHub sends the removed label on `unlabeled` too, so matching on the label alone would
+    // wake the agent when a human took the label OFF.
+    const { wakeContext } = loadTemplate();
+    expect(wakeContext(labelEvent({ action: "unlabeled" }), WAKE)).toBeNull();
+    for (const action of ["closed", "edited", "assigned", "reopened", "opened"]) {
+      expect(wakeContext(labelEvent({ action }), WAKE)).toBeNull();
+    }
+  });
+
+  it("scopes to the configured repositories", () => {
+    const { wakeContext } = loadTemplate();
+    expect(wakeContext(labelEvent({ repoFullName: "worksauceapp/other" }), WAKE)).toBeNull();
+    expect(wakeContext(labelEvent({ repoFullName: "someoneelse/marketing-site" }), WAKE)).toBeNull();
+    // GitHub is case-insensitive about owner/repo; an operator typing it differently is not a
+    // different repository.
+    expect(
+      wakeContext(labelEvent({ repoFullName: "WorkSauceApp/Marketing-Site" }), WAKE),
+    ).not.toBeNull();
+  });
+
+  it("carries the head sha on a synchronize, so the agent knows which commit woke it", () => {
+    const { wakeContext } = loadTemplate();
+    const context = wakeContext(
+      labelEvent({ action: "synchronize", label: null }),
+      WAKE,
+    );
+    expect(context).toContain("updated with new commits");
+    expect(context).toContain("head ee9a696");
+  });
+
+  it("wakes on a draft becoming reviewable", () => {
+    const { wakeContext } = loadTemplate();
+    expect(
+      wakeContext(labelEvent({ action: "ready_for_review", label: null }), WAKE),
+    ).toContain("marked ready for review");
+  });
+
+  it("gates opened/reopened issues on wakeOnNewIssues alone", () => {
+    const { wakeContext } = loadTemplate();
+    const opened = labelEvent({ kind: "issue", action: "opened", label: null, headSha: null });
+    expect(wakeContext(opened, WAKE)).toBeNull();
+    expect(wakeContext(opened, { ...WAKE, wakeOnNewIssues: true })).toContain(
+      "issue #19 opened",
+    );
+    expect(
+      wakeContext({ ...opened, action: "reopened" }, { ...WAKE, wakeOnNewIssues: true }),
+    ).toContain("issue #19 reopened");
+  });
+
+  it("stays inert with nothing configured, whatever arrives", () => {
+    // The update must change no existing agent's behaviour: no surprise turns, no surprise spend.
+    const { wakeContext } = loadTemplate();
+    const inert: WakeSettings = {
+      repos: [],
+      wakeLabels: [],
+      wakeOnNewIssues: false,
+      appSlug: "",
+    };
+    expect(wakeContext(labelEvent(), inert)).toBeNull();
+    expect(wakeContext(labelEvent({ action: "synchronize", label: null }), inert)).toBeNull();
+    expect(
+      wakeContext(labelEvent({ kind: "issue", action: "opened", label: null }), inert),
+    ).toBeNull();
+    // Not even with the labels set but no repository named — an empty repo list means INERT,
+    // never "every repository this App can see".
+    expect(
+      wakeContext(labelEvent(), { ...inert, wakeLabels: ["changes-requested"] }),
+    ).toBeNull();
+  });
+});
+
+describe("the wake hooks and the HARNESST_CHANNEL_GITHUB_* env contract", () => {
+  const CONFIGURED = {
+    HARNESST_CHANNEL_GITHUB_REPOS: "worksauceapp/marketing-site,acme/widgets",
+    HARNESST_CHANNEL_GITHUB_WAKE_LABELS: "ready, changes-requested",
+    GITHUB_APP_SLUG: "ivy-worksauce",
+  };
+
+  it("registers both hooks — eve dispatches nothing for these webhooks without them", () => {
+    const harness = loadTemplate();
+    expect(typeof harness.config.onIssue).toBe("function");
+    expect(typeof harness.config.onPullRequest).toBe("function");
+  });
+
+  it("ignores everything when no channel settings reached the container", () => {
+    // An agent taking the 0.6.0 update before anyone opens the settings panel must behave exactly
+    // as it did on 0.5.0: mentions only.
+    const harness = loadTemplate();
+    expect(harness.issueEvent({ action: "labeled", label: "ready" })).toBeNull();
+    expect(harness.issueEvent({ action: "opened" })).toBeNull();
+    expect(harness.pullRequestEvent({ action: "synchronize", headSha: "a".repeat(40) })).toBeNull();
+    expect(harness.pullRequestEvent({ action: "ready_for_review" })).toBeNull();
+  });
+
+  it("reads the repo and label lists off the env names deployRelease emits", () => {
+    const harness = loadTemplate({ env: CONFIGURED });
+    const dispatched = harness.pullRequestEvent({
+      action: "labeled",
+      label: "changes-requested",
+      headSha: "ee9a696aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    });
+
+    expect(dispatched).toMatchObject({ auth: null });
+    expect(dispatched?.context?.[0]).toContain('pull request #19 labeled "changes-requested"');
+    // an unwatched repository, same event
+    expect(
+      harness.pullRequestEvent({ action: "labeled", label: "ready", repo: "acme/other" }),
+    ).toBeNull();
+  });
+
+  it("treats an absent wake-on-new-issues var as off and \"1\" as on", () => {
+    const off = loadTemplate({ env: CONFIGURED });
+    expect(off.issueEvent({ action: "opened" })).toBeNull();
+
+    const on = loadTemplate({
+      env: { ...CONFIGURED, HARNESST_CHANNEL_GITHUB_WAKE_ON_NEW_ISSUES: "1" },
+    });
+    expect(on.issueEvent({ action: "opened" })).toMatchObject({ auth: null });
+
+    // The projection renders `false` as an EMPTY string rather than deleting the key.
+    const empty = loadTemplate({
+      env: { ...CONFIGURED, HARNESST_CHANNEL_GITHUB_WAKE_ON_NEW_ISSUES: "" },
+    });
+    expect(empty.issueEvent({ action: "opened" })).toBeNull();
+  });
+
+  it("reads the transition label off raw.label, not the issue's current labels", () => {
+    const harness = loadTemplate({ env: CONFIGURED });
+    // `labeled` with no label payload at all cannot be attributed to a rule, so it must not wake.
+    expect(harness.issueEvent({ action: "labeled" })).toBeNull();
+    expect(harness.issueEvent({ action: "labeled", label: "ready" })).toMatchObject({
+      auth: null,
+    });
+    expect(harness.issueEvent({ action: "unlabeled", label: "ready" })).toBeNull();
+  });
+
+  it("does not wake on its own GITHUB_APP_SLUG", () => {
+    const harness = loadTemplate({ env: CONFIGURED });
+    expect(
+      harness.issueEvent({ action: "labeled", label: "ready", sender: "Ivy-Worksauce[bot]" }),
+    ).toBeNull();
+    expect(
+      harness.issueEvent({ action: "labeled", label: "ready", sender: "sam-worksauce[bot]" }),
+    ).toMatchObject({ auth: null });
   });
 });

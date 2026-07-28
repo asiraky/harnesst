@@ -61,7 +61,7 @@ export interface CreatedRepo {
 const GITIGNORE =
   ".eve/\n.output/\n.workflow-data/\nnode_modules/\n.env\n.env.*\n";
 
-/** Dependencies required by the provider router in the generated `harnesst-model.ts`. */
+/** Dependencies required by the provider router in the generated `harnesst/model.ts`. */
 function modelProviderDependencies(): Record<string, string> {
   return {
     [ANTHROPIC_PROVIDER_PACKAGE]: ANTHROPIC_PROVIDER_VERSION,
@@ -74,10 +74,14 @@ function modelProviderDependencies(): Record<string, string> {
 }
 
 /**
- * The files every eve agent directory starts with, under `root` (e.g. "agent"). No model is
- * baked anywhere: `agent.ts` resolves through the generated `harnesst-model.ts`, so the agent runs
+ * The files an eve agent starts with for the agent root `root` (e.g. "agent"). No model is
+ * baked anywhere: `agent.ts` resolves through the generated model module, so the agent runs
  * the workspace's configured model from day one (an explicit per-agent override wins when set,
  * and a workspace with nothing configured gets a readable "set a model in Org settings" error).
+ *
+ * One of these files lands OUTSIDE `root`: the model module is platform-owned and so lives in
+ * the agent root's `harnesst/` sibling (issue #254). `orgModelModulePath` owns that derivation —
+ * never rebuild it here, or a scaffold and a relocation can disagree about where the file is.
  */
 function agentDirFiles(root: string, displayName: string): FileChange[] {
   return [
@@ -89,6 +93,8 @@ function agentDirFiles(root: string, displayName: string): FileChange[] {
       path: `${root}/agent.ts`,
       content: scaffoldOrgModelAgentModule(displayName),
     },
+    // `<root>`'s platform sibling: "agent" -> "harnesst/model.ts",
+    // "agents/ivy/agent" -> "agents/ivy/harnesst/model.ts".
     { path: orgModelModulePath(root), content: orgModelModuleSource() },
     // The harnesst default sandbox: identical to eve's framework default until a secret is
     // exposed (the HARNESST_SANDBOX_ENV convention — see ~/eve/templates), but present from day

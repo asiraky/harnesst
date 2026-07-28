@@ -471,6 +471,29 @@ describe("MCP authoring tools", () => {
     await expect(store.drafts.listByProject("project_1")).resolves.toEqual([]);
   });
 
+  it("refuses platform-owned paths by name, not as a malformed path", async () => {
+    // `harnesst/**` is outside the allowlist anyway, but a bare "invalid path" sends the
+    // assistant hunting for a typo in a path it spelled correctly (issue #254). The refusal has
+    // to say who owns the file and where the knob actually is.
+    const stageDraft = vi.fn();
+    const tools = createMcpToolService(authorIdentity, { ...deps, stageDraft });
+
+    await expect(
+      tools.stageChanges({
+        projectId: "project_1",
+        edits: [
+          { path: "agent/instructions.md", content: "fine" },
+          { path: "agents/alpha/harnesst/github-channel.ts", content: "patched" },
+        ],
+      }),
+    ).rejects.toMatchObject({
+      code: "invalid_input",
+      message: expect.stringContaining("platform-owned"),
+    });
+    expect(stageDraft).not.toHaveBeenCalled();
+    await expect(store.drafts.listByProject("project_1")).resolves.toEqual([]);
+  });
+
   it("does not stage drafts into a project owned by another organization", async () => {
     store.seedProject({ id: "project_other", orgId: "org_2" });
     const stageDraft = vi.fn();

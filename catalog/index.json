@@ -1,20 +1,12 @@
 {
   "templates": [
     {
-      "id": "engineer",
-      "type": "agent",
-      "name": "Engineer",
-      "version": "0.6.1",
-      "description": "A general-purpose software engineer agent that works GitHub issues across authorized repositories, creates feature branches, and opens pull requests into main.",
-      "hash": "4d82a7c2882ae4bcdaa7ba168799061e305ae46b"
-    },
-    {
       "id": "github-bundle",
       "type": "bundle",
       "name": "GitHub",
-      "version": "0.3.0",
+      "version": "0.4.0",
       "description": "Everything an agent needs to work GitHub as itself: the GitHub App channel (its @mention identity and credentials), the gh CLI in its sandbox, and the skill that turns the App's private key into a working token.",
-      "hash": "f7d5fd69b178858e29032f4cdfdc3afca027a88e"
+      "hash": "cb40de483586d6013cbb4dea3728d28e98c6487c"
     },
     {
       "id": "google-sheets-bundle",
@@ -36,9 +28,9 @@
       "id": "github",
       "type": "channel",
       "name": "GitHub",
-      "version": "0.5.0",
+      "version": "0.6.0",
       "description": "Talk to this agent by @mentioning it in GitHub issue and pull-request comments — a GitHub App with webhook signature verification via eve's githubChannel.",
-      "hash": "9124d0e467bc6f9e9e43f80b5bc0992cca12f68c"
+      "hash": "b7c49468dad8db02558a8423e78ab519e32b5788"
     },
     {
       "id": "agentmail",
@@ -84,9 +76,9 @@
       "id": "agent-browser",
       "type": "skill",
       "name": "Agent Browser",
-      "version": "0.1.0",
+      "version": "0.1.1",
       "description": "Browser automation with the agent-browser CLI: navigate pages, inspect accessibility snapshots, click/fill by refs, capture screenshots, and run web QA from the sandbox shell.",
-      "hash": "4406c462d2f57c469bddd6a2347b778948dc9e2f"
+      "hash": "5192b2f4f448389ea17329b5c3e241c998cf725d"
     },
     {
       "id": "building-cloudflare-apps",
@@ -140,9 +132,9 @@
       "id": "legal-advisor",
       "type": "skill",
       "name": "Legal Advisor",
-      "version": "0.1.1",
+      "version": "0.1.2",
       "description": "Draft privacy policies, terms of service, cookie policies, DPAs, disclaimers, and other compliance documents — GDPR/CCPA/LGPD-aware, jurisdiction-specific, with mandatory disclosures and a compliance checklist.",
-      "hash": "8af3959d33d264e9b7a92b724ea75d89e81a1903"
+      "hash": "5a2857befa07af846d1ae478da4359cdeb1b95c4"
     },
     {
       "id": "reviewing-a-pull-request",

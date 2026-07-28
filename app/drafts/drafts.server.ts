@@ -14,8 +14,13 @@ import {
   LEGACY_OPENROUTER_PROVIDER_PACKAGE,
   OPENROUTER_PROVIDER_PACKAGE,
 } from "~/eve/agentModule";
+import {
+  legacyOrgModelModulePath,
+  orgModelModulePath,
+  rewriteOrgModelImports,
+} from "~/eve/org-model-module";
 import { EMPTY_TEAM_MARKER } from "~/eve/parse";
-import { readAgentFile } from "~/github/repo.server";
+import { fetchAgentSource, readAgentFile } from "~/github/repo.server";
 import { isAssistantConfigPath } from "~/project/guard.server";
 import { getRuntime } from "~/seams/index.server";
 import type { BuildCheckRequest, BuildCheckResult } from "~/seams/types";
@@ -87,9 +92,19 @@ export function discardDrafts(
   return store.drafts.deleteByPaths(projectId, paths);
 }
 
+/**
+ * The member's AGENT root implied by a staged path — the key both the orphan check and the build
+ * planner group by. Everything a member owns maps here, not just its `agent/` tree: its
+ * package.json, and its platform-owned `agents/<member>/harnesst/**` sibling (issue #254). Miss
+ * the platform files and `findOrphanedDrafts` calls every one of them an orphan, because no
+ * roster row ever has `agents/<member>/harnesst` as its root — which would reject every publish
+ * carrying a marketplace migration.
+ */
 function stagedTeamMemberRoot(path: string): string | null {
   const agentMatch = path.match(/^agents\/([^/]+)\/agent(?:\/|$)/);
   if (agentMatch) return `agents/${agentMatch[1]}/agent`;
+  const platformMatch = path.match(/^agents\/([^/]+)\/harnesst\//);
+  if (platformMatch) return `agents/${platformMatch[1]}/agent`;
   const packageMatch = path.match(/^agents\/([^/]+)\/package\.json$/);
   return packageMatch ? `agents/${packageMatch[1]}/agent` : null;
 }
@@ -114,7 +129,10 @@ export function findOrphanedDrafts(
     if (m) backedRoots.add(m[1]);
   }
   // …as does a non-null draft inside it (a new-member install creates the code before the roster
-  // and repo ever see it).
+  // and repo ever see it). Deliberately still `agent/` only: platform files under
+  // `agents/<name>/harnesst/` never constitute a member — publishing them for a member with no
+  // agent code would build a root eve can't resolve, which is the failure this gate exists to
+  // pre-empt. A real new-member install stages its scaffold in the same change-set.
   for (const d of drafts) {
     if (d.content === null) continue;
     const m = d.path.match(/^(agents\/[^/]+\/agent)\//);
@@ -267,15 +285,116 @@ function usesOpenRouter(source: string | null | undefined): boolean {
   );
 }
 
-export async function normalizeOpenRouterPackageDrafts(input: {
+interface NormalizeInput {
   project: {
     repoInstallationId: string;
     repoOwner: string;
     repoName: string;
   };
   files: PublishFile[];
-}): Promise<PublishFile[]> {
+}
+
+/**
+ * The AGENT root a staged path belongs to, for the relocation pass below. Deliberately broader
+ * than `stagedTeamMemberRoot` (which answers "whose draft is this?" and ignores single-agent
+ * repos) and than `agentRootForAgentModule` (which only recognizes agent modules): here ANY file
+ * a member owns — including its platform-owned `harnesst/` sibling — is enough, because a
+ * change-set that touches a member at all is the moment to finish that member's relocation.
+ */
+function agentRootForStagedPath(path: string): string | null {
+  const member = path.match(/^agents\/([^/]+)\//);
+  if (member) return `agents/${member[1]}/agent`;
+  return /^(?:agent|harnesst)\//.test(path) ? "agent" : null;
+}
+
+/**
+ * Relocate a pre-#254 `<agentRoot>/harnesst-model.ts` into the platform root
+ * (`<platformRoot>/model.ts`), rewriting the import specifier in every file that imports it.
+ *
+ * This is a publish-time normalization and not a marketplace update because the module is
+ * scaffold-emitted: no install owns it, so no update can move it, and it can't be left where it
+ * is either — the model module is platform code, and the whole point of #254 is that platform
+ * code lives outside the tree eve discovers and outside the tree hands may edit.
+ *
+ * Cost discipline: the pass probes with ONE content read per touched member and returns
+ * immediately when nothing legacy is there — the steady state for every already-relocated repo.
+ * The tree read only happens for a member that still has the old file, i.e. once, ever.
+ */
+export async function relocateLegacyModelModuleDrafts(
+  input: NormalizeInput,
+): Promise<PublishFile[]> {
   const byPath = new Map(input.files.map((file) => [file.path, file]));
+  const repo = { owner: input.project.repoOwner, repo: input.project.repoName };
+  const read = (path: string) =>
+    readAgentFile(input.project.repoInstallationId, repo, path);
+
+  const roots = new Set<string>();
+  for (const path of byPath.keys()) {
+    const root = agentRootForStagedPath(path);
+    if (root) roots.add(root);
+  }
+  if (roots.size === 0) return [...byPath.values()];
+
+  const legacy = new Map<string, string>();
+  await Promise.all(
+    [...roots].map(async (root) => {
+      const staged = byPath.get(legacyOrgModelModulePath(root));
+      // A staged deletion means someone is already moving it — leave the change-set alone.
+      const content = staged ? staged.content : await read(legacyOrgModelModulePath(root));
+      if (content !== null) legacy.set(root, content);
+    }),
+  );
+  if (legacy.size === 0) return [...byPath.values()];
+
+  // Raw, not the cached wrapper: this read is composed into a commit, and a stale tree would
+  // silently leave a subagent's import pointing at a file this same change-set deletes.
+  const source = await fetchAgentSource(input.project.repoInstallationId, repo);
+
+  for (const [root, content] of legacy) {
+    const from = legacyOrgModelModulePath(root);
+    const to = orgModelModulePath(root);
+    // A move, not a regeneration: the operator asked to publish their change-set, not to take a
+    // new generation of the module. (A repo that already has the file keeps the one it has.)
+    if (!byPath.has(to) && (await read(to)) === null) {
+      byPath.set(to, { path: to, content });
+    }
+    byPath.set(from, { path: from, content: null });
+
+    // Every file under the member's agent root that still names the old specifier. The scaffold
+    // only ever writes the import into `agent.ts` and `subagents/<name>/agent.ts`, but a
+    // hand-written tool may import it too and a stale specifier fails the build gate — so scan
+    // the root rather than the two shapes we happen to generate.
+    const candidates = new Set(
+      [...source.paths, ...byPath.keys()].filter(
+        (path) => path !== from && path.startsWith(`${root}/`) && /\.tsx?$/.test(path),
+      ),
+    );
+    await Promise.all(
+      [...candidates].map(async (path) => {
+        const staged = byPath.get(path)?.content;
+        if (staged === null) return; // staged for deletion — nothing to rewrite
+        // `source.files` already carries every agent/subagent module eagerly; only a
+        // hand-written importer costs an extra read.
+        const before = staged ?? source.files[path] ?? (await read(path));
+        if (before === null) return;
+        const depth = path.slice(root.length + 1).split("/").length - 1;
+        const after = rewriteOrgModelImports(before, depth);
+        if (after !== before) byPath.set(path, { path, content: after });
+      }),
+    );
+  }
+
+  return [...byPath.values()];
+}
+
+export async function normalizeOpenRouterPackageDrafts(
+  input: NormalizeInput,
+): Promise<PublishFile[]> {
+  // Relocation runs first so anything it pulls into the change-set gets the same dependency
+  // coherence as any other selected file.
+  const byPath = new Map(
+    (await relocateLegacyModelModuleDrafts(input)).map((file) => [file.path, file]),
+  );
 
   // If a stale package draft is selected, fix it in-place before the build gate sees it.
   for (const file of byPath.values()) {

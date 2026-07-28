@@ -281,6 +281,8 @@ describe.runIf(LIVE)("Save & Publish core loop (real routes + pipeline)", () => 
           commitToDefaultBranch: async () => ({ sha: COMMIT_SHA }),
           fetchAgentSource: async () =>
             ({ paths: [`${agent.root}/agent.ts`], files: {}, ref: "main" }) as never,
+          // No `harnesst/` paths in this tree, so the platform-file gate never reads anything.
+          readRepoFile: async () => null,
           detectAgentRoots,
           syncProjectAgents,
           invalidateRepoSource: () => {},

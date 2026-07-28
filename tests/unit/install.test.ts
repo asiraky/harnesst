@@ -6,20 +6,26 @@
  * the lock round-trip are each pinned here. If the planner's rules drift, these fail — which is
  * the point: install materializes files into customer repos, so its decisions need teeth.
  */
+import { createHash } from "node:crypto";
+
 import { describe, expect, it } from "vitest";
 
 import {
+  installedFilePath,
   planInstall,
   planUninstall,
   type PlanContext,
 } from "~/marketplace/install.server";
 import {
+  channelIdsForEntry,
+  channelSettings,
   emptyLock,
   findInstall,
   parseLock,
   removeInstall,
   requiredScopesByProvider,
   serializeLock,
+  setChannelSettings,
   upsertInstall,
   type HarnesstLock,
   type InstallEntry,
@@ -1268,6 +1274,427 @@ describe("planInstall — composite absorbs a standalone include install (issue 
       }),
     );
     expect(plan.conflicts).toEqual(["agents/x/agent/channels/discord.ts"]);
+  });
+});
+
+/**
+ * The three ownership classes (issue #254). A marketplace update once overwrote two live agents'
+ * customised channel code, because every lock-owned path was fair game on update and the lock
+ * recorded only the TEMPLATE's hash — which cannot tell an untouched file from a customised one.
+ * The fix splits ownership: platform files live outside eve's tree and are always rewritten;
+ * install-once files are the customer's the moment they land. These tests are the contract.
+ */
+const githubChannelTpl: CatalogTemplate = {
+  manifest: {
+    id: "github",
+    type: "channel",
+    name: "GitHub",
+    description: "Wake on GitHub events.",
+    version: "0.6.0",
+    eve: ">=0.1.0",
+    files: ["channels/github.ts", "harnesst/github-channel.ts"],
+    installOnce: ["channels/github.ts"],
+  },
+  files: {
+    "channels/github.ts":
+      'import { harnesstGitHubChannel } from "../../harnesst/github-channel";\nexport default harnesstGitHubChannel();\n',
+    "harnesst/github-channel.ts":
+      "export function harnesstGitHubChannel() {\n  return {};\n}\n",
+  },
+};
+
+const WRAPPER_PATH = "agents/pm/agent/channels/github.ts";
+const PLATFORM_PATH = "agents/pm/harnesst/github-channel.ts";
+
+/** Independent recomputation of the platform file hash — the rule, not the implementation. */
+function sha256(content: string): string {
+  return createHash("sha256").update(content).digest("hex");
+}
+
+/** The lock as it looks after a first install of the channel into `pm`. */
+function installedChannelLock(): HarnesstLock {
+  const first = planInstall(
+    memberCtx({ template: githubChannelTpl, packageJson: null }),
+  );
+  return parseLock(
+    JSON.parse(first.writes.find((w) => w.path === "harnesst-lock.json")!.content),
+  );
+}
+
+describe("planInstall — platform files (issue #254)", () => {
+  it("materializes a `harnesst/` file BESIDE the agent root, never inside it", () => {
+    const plan = planInstall(
+      memberCtx({ template: githubChannelTpl, packageJson: null }),
+    );
+    const paths = plan.writes.map((w) => w.path);
+    expect(paths).toContain(WRAPPER_PATH);
+    expect(paths).toContain(PLATFORM_PATH);
+    // eve hard-errors on an unknown directory under `agent/` — nothing may land there.
+    expect(paths).not.toContain("agents/pm/agent/harnesst/github-channel.ts");
+  });
+
+  it("maps the platform root for a single-agent repo and for a new team member", () => {
+    const single = planInstall(
+      memberCtx({
+        template: githubChannelTpl,
+        packageJson: null,
+        target: { kind: "member", memberName: null, root: "agent" },
+      }),
+    );
+    expect(single.writes.map((w) => w.path)).toContain(
+      "harnesst/github-channel.ts",
+    );
+
+    const newMember = planInstall({
+      template: {
+        ...githubChannelTpl,
+        manifest: { ...githubChannelTpl.manifest, type: "agent" },
+      },
+      registry: REGISTRY,
+      repoPaths: [],
+      drafts: [],
+      packageJson: null,
+      lock: emptyLock(),
+      target: { kind: "new-member", name: "deployer" },
+    });
+    expect(newMember.writes.map((w) => w.path)).toContain(
+      "agents/deployer/harnesst/github-channel.ts",
+    );
+  });
+
+  it("records a content hash per platform file in the lock entry", () => {
+    const entry = findInstall(installedChannelLock(), "github", "pm")!;
+    expect(entry.platformFiles).toEqual({
+      [PLATFORM_PATH]: sha256(
+        githubChannelTpl.files["harnesst/github-channel.ts"],
+      ),
+    });
+    // The template hash is a different question and stays what it always was.
+    expect(entry.platformFiles![PLATFORM_PATH]).not.toBe(entry.hash);
+  });
+
+  it("omits platformFiles for a template that ships no platform code", () => {
+    const plan = planInstall(memberCtx());
+    const entry = findInstall(
+      parseLock(
+        JSON.parse(
+          plan.writes.find((w) => w.path === "harnesst-lock.json")!.content,
+        ),
+      ),
+      "cloudflare-deploy",
+      "pm",
+    )!;
+    expect(entry.platformFiles).toBeUndefined();
+  });
+
+  it("installedFilePath is the one mapping — platform paths go to the sibling root", () => {
+    expect(installedFilePath("agents/pm/agent", "channels/github.ts")).toBe(
+      "agents/pm/agent/channels/github.ts",
+    );
+    expect(installedFilePath("agents/pm/agent", "harnesst/x.ts")).toBe(
+      "agents/pm/harnesst/x.ts",
+    );
+    expect(installedFilePath("agent", "harnesst/x.ts")).toBe("harnesst/x.ts");
+  });
+});
+
+describe("planInstall — install-once (issue #254)", () => {
+  it("writes an install-once file normally on a FIRST install and owns it", () => {
+    const plan = planInstall(
+      memberCtx({ template: githubChannelTpl, packageJson: null }),
+    );
+    expect(plan.writes.some((w) => w.path === WRAPPER_PATH)).toBe(true);
+    expect(plan.preservedFiles).toEqual([]);
+    const entry = findInstall(
+      parseLock(
+        JSON.parse(
+          plan.writes.find((w) => w.path === "harnesst-lock.json")!.content,
+        ),
+      ),
+      "github",
+      "pm",
+    )!;
+    expect(entry.files).toEqual([WRAPPER_PATH, PLATFORM_PATH]);
+  });
+
+  it("an UPDATE leaves the occupied install-once file alone and still rewrites platform code", () => {
+    const lock = installedChannelLock();
+    const plan = planInstall(
+      memberCtx({
+        template: {
+          ...githubChannelTpl,
+          manifest: { ...githubChannelTpl.manifest, version: "0.7.0" },
+        },
+        packageJson: null,
+        lock,
+        repoPaths: [WRAPPER_PATH, PLATFORM_PATH],
+      }),
+    );
+    expect(plan.isUpdate).toBe(true);
+    expect(plan.conflicts).toEqual([]);
+    // The whole point: the customer's wrapper is not in the change-set at all.
+    expect(plan.writes.some((w) => w.path === WRAPPER_PATH)).toBe(false);
+    expect(plan.preservedFiles).toEqual([WRAPPER_PATH]);
+    // ...while the platform half updates as usual.
+    expect(plan.writes.some((w) => w.path === PLATFORM_PATH)).toBe(true);
+    expect(plan.warnings.some((w) => w.includes(WRAPPER_PATH))).toBe(true);
+
+    const entry = findInstall(
+      parseLock(
+        JSON.parse(
+          plan.writes.find((w) => w.path === "harnesst-lock.json")!.content,
+        ),
+      ),
+      "github",
+      "pm",
+    )!;
+    // Preserved, so it is no longer lock-owned — an uninstall can't delete the customer's file.
+    expect(entry.files).toEqual([PLATFORM_PATH]);
+    expect(entry.preservedFiles).toEqual([WRAPPER_PATH]);
+    expect(
+      planUninstall({
+        lock: parseLock(
+          JSON.parse(
+            plan.writes.find((w) => w.path === "harnesst-lock.json")!.content,
+          ),
+        ),
+        id: "github",
+        memberName: "pm",
+        repoPaths: [WRAPPER_PATH, PLATFORM_PATH],
+      }).deletions,
+    ).toEqual([PLATFORM_PATH]);
+  });
+
+  it("preserves an install-once path occupied only by a staged draft", () => {
+    const plan = planInstall(
+      memberCtx({
+        template: githubChannelTpl,
+        packageJson: null,
+        lock: installedChannelLock(),
+        repoPaths: [PLATFORM_PATH],
+        drafts: [{ path: WRAPPER_PATH, content: "// edited, unpublished\n" }],
+      }),
+    );
+    expect(plan.preservedFiles).toEqual([WRAPPER_PATH]);
+    expect(plan.writes.some((w) => w.path === WRAPPER_PATH)).toBe(false);
+  });
+
+  it("install-once means once, not never — a deleted wrapper is written again", () => {
+    const plan = planInstall(
+      memberCtx({
+        template: githubChannelTpl,
+        packageJson: null,
+        lock: installedChannelLock(),
+        // The customer deleted the wrapper; nothing occupies the path.
+        repoPaths: [PLATFORM_PATH],
+      }),
+    );
+    expect(plan.preservedFiles).toEqual([]);
+    expect(plan.writes.some((w) => w.path === WRAPPER_PATH)).toBe(true);
+  });
+});
+
+/**
+ * A live agent once lost its browser QA to this: someone hand-wrote a sandbox add-on, so nothing
+ * in the lock claimed it, and the next install regenerated `sandbox/sandbox.ts` from the lock —
+ * dropping the import with no error, no conflict, and no diff the reviewer would read as a loss.
+ * The planner cannot adopt a file with no provenance, so the least it owes the customer is to say
+ * out loud which file just stopped running. These tests hold that line, and hold it narrowly: a
+ * warning on every add-on would be noise nobody reads by the second install.
+ */
+describe("planInstall — orphaned sandbox add-ons (issue #254)", () => {
+  const HAND_ROLLED = "agents/pm/agent/sandbox/addons/hand-rolled.ts";
+
+  it("names an add-on no install owns, whose import regeneration silently drops", () => {
+    const plan = planInstall(
+      memberCtx({
+        template: browserSkillTpl,
+        packageJson: null,
+        repoPaths: [HAND_ROLLED, "agents/pm/agent/sandbox/sandbox.ts"],
+      }),
+    );
+    const module = plan.writes.find(
+      (w) => w.path === "agents/pm/agent/sandbox/sandbox.ts",
+    )!.content;
+    expect(module).not.toContain("hand-rolled");
+    expect(plan.warnings.some((w) => w.includes(HAND_ROLLED))).toBe(true);
+    // The add-on this install owns is not an orphan.
+    expect(
+      plan.warnings.some((w) => w.includes("addons/agent-browser.ts")),
+    ).toBe(false);
+  });
+
+  it("says nothing when every add-on on disk is lock-owned", () => {
+    const plan = planInstall(
+      memberCtx({
+        template: browserSkillTpl,
+        packageJson: null,
+        repoPaths: ["agents/pm/agent/sandbox/addons/agent-browser.ts"],
+      }),
+    );
+    expect(plan.warnings.filter((w) => w.includes("isn't owned"))).toEqual([]);
+  });
+
+  it("ignores an add-on this very plan deletes (an absorbed install's)", () => {
+    const standalone = planInstall(
+      memberCtx({ template: browserSkillTpl, packageJson: null }),
+    );
+    const lock = parseLock(
+      JSON.parse(
+        standalone.writes.find((w) => w.path === "harnesst-lock.json")!.content,
+      ),
+    );
+    const bundle = planInstall(
+      memberCtx({
+        packageJson: null,
+        lock,
+        repoPaths: [
+          "agents/pm/agent/sandbox/addons/agent-browser.ts",
+          "agents/pm/agent/skills/agent-browser.md",
+        ],
+        template: {
+          manifest: {
+            ...browserSkillTpl.manifest,
+            id: "browser-bundle",
+            type: "bundle",
+            name: "Browser Bundle",
+          },
+          files: browserSkillTpl.files,
+          includes: [
+            {
+              id: "agent-browser",
+              type: "skill",
+              name: "Agent Browser",
+              version: "0.1.0",
+              hash: "abc",
+            },
+          ],
+        },
+      }),
+    );
+    expect(bundle.deletions).toEqual([
+      "agents/pm/agent/sandbox/addons/agent-browser.ts",
+    ]);
+    expect(bundle.warnings.filter((w) => w.includes("isn't owned"))).toEqual([]);
+  });
+});
+
+describe("channel settings in the lock (issue #254)", () => {
+  const bundleEntry: InstallEntry = {
+    id: "github-bundle",
+    type: "bundle",
+    name: "GitHub Bundle",
+    version: "0.4.0",
+    hash: "abc",
+    registry: REGISTRY,
+    member: "ivy",
+    files: [],
+    includes: [
+      {
+        id: "github",
+        type: "channel",
+        name: "GitHub",
+        version: "0.6.0",
+        hash: "def",
+      },
+    ],
+  };
+
+  it("resolves a bundle-carried channel — the only lock entry a real install has", () => {
+    expect(channelIdsForEntry(bundleEntry)).toEqual(["github"]);
+    expect(
+      channelIdsForEntry({ ...bundleEntry, id: "github", type: "channel", includes: undefined }),
+    ).toEqual(["github"]);
+    expect(channelIdsForEntry({ ...bundleEntry, includes: undefined })).toEqual(
+      [],
+    );
+  });
+
+  it("writes settings onto the entry that provides the channel", () => {
+    const lock = upsertInstall(emptyLock(), bundleEntry);
+    const { lock: next, changed } = setChannelSettings(lock, "github", "ivy", {
+      repos: ["worksauceapp/marketing-site"],
+      wakeLabels: ["ready", "changes-requested"],
+      wakeOnNewIssues: true,
+    });
+    expect(changed).toBe(true);
+    expect(channelSettings(next, "github", "ivy")).toEqual({
+      repos: ["worksauceapp/marketing-site"],
+      wakeLabels: ["ready", "changes-requested"],
+      wakeOnNewIssues: true,
+    });
+    // Round-trips through the serialized lock — this is a reviewable file, not a cache.
+    expect(
+      channelSettings(parseLock(JSON.parse(serializeLock(next))), "github", "ivy"),
+    ).toEqual(channelSettings(next, "github", "ivy"));
+  });
+
+  it("drops values that mean 'not configured' and reads back as inert", () => {
+    const lock = upsertInstall(emptyLock(), bundleEntry);
+    const { lock: next } = setChannelSettings(lock, "github", "ivy", {
+      repos: [],
+      wakeLabels: [],
+      wakeOnNewIssues: false,
+      note: "",
+    });
+    expect(findInstall(next, "github-bundle", "ivy")!.settings).toBeUndefined();
+    expect(channelSettings(next, "github", "ivy")).toEqual({});
+  });
+
+  it("reports no change for a no-op write, and leaves other members alone", () => {
+    const lock = upsertInstall(
+      upsertInstall(emptyLock(), bundleEntry),
+      { ...bundleEntry, member: "sam" },
+    );
+    const first = setChannelSettings(lock, "github", "ivy", { repos: ["a/b"] });
+    expect(first.changed).toBe(true);
+    const again = setChannelSettings(first.lock, "github", "ivy", {
+      repos: ["a/b"],
+    });
+    expect(again.changed).toBe(false);
+    expect(again.lock).toBe(first.lock);
+    expect(channelSettings(first.lock, "github", "sam")).toEqual({});
+  });
+
+  it("is empty for a channel that isn't installed at all", () => {
+    expect(channelSettings(emptyLock(), "github", "ivy")).toEqual({});
+  });
+
+  it("survives a marketplace update — a version bump must not silently un-configure a channel", () => {
+    const configured = setChannelSettings(
+      upsertInstall(emptyLock(), {
+        ...bundleEntry,
+        id: "github",
+        type: "channel",
+        member: "pm",
+        includes: undefined,
+        version: "0.6.0",
+        files: [PLATFORM_PATH, WRAPPER_PATH],
+      }),
+      "github",
+      "pm",
+      { repos: ["a/b"], wakeOnNewIssues: true },
+    ).lock;
+    const plan = planInstall(
+      memberCtx({
+        template: {
+          ...githubChannelTpl,
+          manifest: { ...githubChannelTpl.manifest, version: "0.7.0" },
+        },
+        packageJson: null,
+        lock: configured,
+        repoPaths: [WRAPPER_PATH, PLATFORM_PATH],
+      }),
+    );
+    const next = parseLock(
+      JSON.parse(
+        plan.writes.find((w) => w.path === "harnesst-lock.json")!.content,
+      ),
+    );
+    expect(channelSettings(next, "github", "pm")).toEqual({
+      repos: ["a/b"],
+      wakeOnNewIssues: true,
+    });
   });
 });
 

@@ -2223,6 +2223,178 @@ describe("channel park env injection (WS1)", () => {
 });
 
 /**
+ * Channel settings env (issue #254). The wake rule is platform code now; this env is the ONLY way
+ * the operator's configuration reaches it, so "inert until configured" and "harnesst owns the
+ * namespace" are both properties of this projection rather than of the channel.
+ */
+describe("channel settings env injection (#254)", () => {
+  const OLD_KEY = process.env.HARNESST_SECRETS_KEY;
+  const OLD_RELAY = process.env.HARNESST_TEAM_RELAY_URL;
+
+  /**
+   * The shape the marketplace actually produces for GitHub: ONE bundle entry, the channel only
+   * under `includes`, and the operator's settings stored on the bundle (the providing entry).
+   */
+  function bundleLock(input: {
+    settings?: Record<string, string | string[] | boolean>;
+    member?: string | null;
+    includeType?: "channel" | "skill";
+  }) {
+    return JSON.stringify({
+      version: 1,
+      installs: [
+        {
+          id: "github-bundle",
+          type: "bundle",
+          name: "github",
+          version: "0.4.0",
+          hash: "h",
+          registry: "fixture",
+          member: input.member ?? null,
+          files: ["agent/channels/github.ts", "harnesst/github-channel.ts"],
+          includes: [
+            {
+              id: "github",
+              type: input.includeType ?? "channel",
+              name: "github",
+              version: "0.6.0",
+              hash: "h2",
+            },
+          ],
+          ...(input.settings ? { settings: input.settings } : {}),
+        },
+      ],
+    });
+  }
+
+  beforeEach(() => {
+    process.env.HARNESST_SECRETS_KEY = "a".repeat(64);
+    process.env.HARNESST_TEAM_RELAY_URL = "https://harnesst.example";
+    store.seedProject({
+      id: PROJECT,
+      orgId: ORG,
+      repoOwner: "acme",
+      repoName: "agent",
+      repoInstallationId: "inst_1",
+    });
+  });
+  afterEach(() => {
+    if (OLD_KEY === undefined) delete process.env.HARNESST_SECRETS_KEY;
+    else process.env.HARNESST_SECRETS_KEY = OLD_KEY;
+    if (OLD_RELAY === undefined) delete process.env.HARNESST_TEAM_RELAY_URL;
+    else process.env.HARNESST_TEAM_RELAY_URL = OLD_RELAY;
+  });
+
+  async function deployWith(input: {
+    lock?: string;
+    secrets?: Record<string, string>;
+  }): Promise<Record<string, string>> {
+    const deployedEnvs: Record<string, string>[] = [];
+    const release = await createRelease(
+      { projectId: PROJECT, agentId: AGENT, gitSha: "e1".repeat(20) },
+      store,
+    );
+    const dep = await deployRelease(
+      { environmentId: ENV, releaseId: release.id },
+      {
+        store,
+        deployTarget: fakeDeployTarget({ health: { status: "live" }, deployedEnvs }),
+        secrets: fakeSecrets({ OPENROUTER_API_KEY: "k", ...(input.secrets ?? {}) }),
+        ...(input.lock ? { agentLock: async () => input.lock! } : {}),
+      },
+    );
+    expect(dep.status).toBe("live");
+    return deployedEnvs[0];
+  }
+
+  it("projects a bundle-carried channel's settings under the CHANNEL's id", async () => {
+    // Under the bundle's id (`HARNESST_CHANNEL_GITHUB_BUNDLE_*`) the channel code — which knows
+    // only its own name — would read nothing and stay inert with settings sitting in the lock.
+    const env = await deployWith({
+      lock: bundleLock({
+        settings: {
+          repos: ["worksauceapp/marketing-site", "worksauceapp/api"],
+          wakeLabels: ["ready", "changes-requested"],
+          wakeOnNewIssues: true,
+        },
+      }),
+    });
+
+    expect(env.HARNESST_CHANNEL_GITHUB_REPOS).toBe(
+      "worksauceapp/marketing-site,worksauceapp/api",
+    );
+    expect(env.HARNESST_CHANNEL_GITHUB_WAKE_LABELS).toBe(
+      "ready,changes-requested",
+    );
+    expect(env.HARNESST_CHANNEL_GITHUB_WAKE_ON_NEW_ISSUES).toBe("1");
+  });
+
+  it("ships no channel env for an install nobody has configured (inert)", async () => {
+    // The whole point of taking the update: an existing agent's behaviour must not change until
+    // somebody opens the settings panel.
+    const env = await deployWith({ lock: bundleLock({}) });
+
+    expect(
+      Object.keys(env).filter((k) => k.startsWith("HARNESST_CHANNEL_")),
+    ).toEqual([]);
+  });
+
+  it("ignores a bundle whose include shares the id but is not a channel", async () => {
+    const env = await deployWith({
+      lock: bundleLock({
+        includeType: "skill",
+        settings: { repos: ["acme/site"] },
+      }),
+    });
+
+    expect(env).not.toHaveProperty("HARNESST_CHANNEL_GITHUB_REPOS");
+  });
+
+  it("ignores settings stored under a different roster member", async () => {
+    const env = await deployWith({
+      lock: bundleLock({ member: "someone-else", settings: { repos: ["acme/site"] } }),
+    });
+
+    expect(env).not.toHaveProperty("HARNESST_CHANNEL_GITHUB_REPOS");
+  });
+
+  it("strips a user secret in the namespace before projecting (anti-shadowing)", async () => {
+    // Left standing, a user secret would widen the repositories the agent acts on — the channel
+    // reads env and cannot tell an operator's setting from a secret somebody named the same way.
+    const env = await deployWith({
+      lock: bundleLock({ settings: { repos: ["acme/site"] } }),
+      secrets: { HARNESST_CHANNEL_GITHUB_REPOS: "attacker/repo" },
+    });
+
+    expect(env.HARNESST_CHANNEL_GITHUB_REPOS).toBe("acme/site");
+  });
+
+  it("sweeps the namespace even when the lock configures nothing", async () => {
+    // The other half of ownership: clearing a setting has to actually clear it, and it must not
+    // be possible to reinstate one by naming a secret after it.
+    const env = await deployWith({
+      lock: bundleLock({}),
+      secrets: { HARNESST_CHANNEL_GITHUB_WAKE_LABELS: "ready" },
+    });
+
+    expect(env).not.toHaveProperty("HARNESST_CHANNEL_GITHUB_WAKE_LABELS");
+  });
+
+  it("drops a setting cleared on a later deploy", async () => {
+    const first = await deployWith({
+      lock: bundleLock({ settings: { wakeOnNewIssues: true } }),
+    });
+    expect(first.HARNESST_CHANNEL_GITHUB_WAKE_ON_NEW_ISSUES).toBe("1");
+
+    const second = await deployWith({ lock: bundleLock({}) });
+
+    expect(second).not.toHaveProperty(
+      "HARNESST_CHANNEL_GITHUB_WAKE_ON_NEW_ISSUES",
+    );
+  });
+});
+
+/**
  * WS2 — run-reporting env. The hook baked into every image is inert without these two vars, so
  * this is the wiring that decides whether channel work is visible at all. Unlike the park env it
  * is UNGATED: no lock, no channel, no team membership.

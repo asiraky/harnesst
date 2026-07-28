@@ -20,10 +20,12 @@ describe("repo scaffold", () => {
   it("starts new members on the workspace model resolver, with no baked model", () => {
     const files = memberScaffold("assistant");
 
+    // The model module lands in the member's platform root — the sibling of agent/, outside
+    // every directory eve discovers and outside every path the editors will write (issue #254).
     expect(files.map((file) => file.path)).toEqual([
       "agents/assistant/agent/instructions.md",
       "agents/assistant/agent/agent.ts",
-      "agents/assistant/agent/harnesst-model.ts",
+      "agents/assistant/harnesst/model.ts",
       "agents/assistant/agent/sandbox.ts",
       "agents/assistant/package.json",
     ]);
@@ -34,9 +36,9 @@ describe("repo scaffold", () => {
     // The member resolves its model from harnesst's workspace configuration by NAME — no model
     // string anywhere in the repo.
     expect(agentTs).toContain("harnesstAgentModel('assistant')");
-    expect(agentTs).toContain("from './harnesst-model'");
+    expect(agentTs).toContain("from '../harnesst/model'");
     const moduleTs = files.find((file) =>
-      file.path.endsWith("harnesst-model.ts"),
+      file.path.endsWith("harnesst/model.ts"),
     )?.content;
     expect(moduleTs).toContain("export function harnesstAgentModel");
     expect(moduleTs).toContain("/model-config?agent=");

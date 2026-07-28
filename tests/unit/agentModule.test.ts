@@ -18,6 +18,17 @@ import {
   setModel,
 } from "~/eve/agentModule";
 
+/**
+ * An agent.ts in the shape customer repos hold it — harnesst's router and directive selector,
+ * checked in and aged. Kept out of the catalog on purpose: a template every customer installs is
+ * no place for one team's conventions (issue #254 deleted the Engineer agent over exactly that).
+ * It is a `.txt` because it imports `eve`, which harnesst does not depend on.
+ */
+const ROUTER_FIXTURE = path.join(
+  __dirname,
+  "../fixtures/agent-module-with-router.ts.txt",
+);
+
 const WRAPPED = `import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 import { defineAgent } from "eve";
 
@@ -339,14 +350,8 @@ export default defineAgent({
     expectDynamicShape(next, "openai/abcdefghijkl/gpt-5.4");
   });
 
-  it("rewrites the checked-in engineer template without duplicating its model router", () => {
-    const current = readFileSync(
-      path.join(
-        process.cwd(),
-        "catalog/templates/agents/engineer/files/agent.ts",
-      ),
-      "utf8",
-    );
+  it("rewrites a checked-in module that already carries a router, without duplicating it", () => {
+    const current = readFileSync(ROUTER_FIXTURE, "utf8");
     const model = "anthropic/abcdefghijkl/claude-sonnet-4-5";
     const next = setModel(current, model);
     expect(next.match(/function harnesstSelectedModel/g)).toHaveLength(1);
@@ -567,13 +572,13 @@ describe("harnesstModel missing-credential deferral", () => {
     expect(source).toContain("harnesst-missing-credential");
   });
 
-  it("mirrors the deferral in the engineer template's copy of the router", () => {
-    const source = readFileSync(
-      path.join(
-        __dirname,
-        "../../catalog/templates/agents/engineer/files/agent.ts",
-      ),
-      "utf8",
+  // Upgrading is the path that can reintroduce the module-scope throw: a checked-in module
+  // carrying an older router gets rewritten, and the rewrite must land the error inside the
+  // middleware just as a fresh scaffold does.
+  it("keeps it deferred when upgrading a checked-in module's own router", () => {
+    const source = setModel(
+      readFileSync(ROUTER_FIXTURE, "utf8"),
+      "openrouter/abcdefghijkl/z-ai/glm-5.2",
     );
     const errorAt = source.indexOf("No credential was deployed");
     expect(errorAt).toBeGreaterThan(-1);

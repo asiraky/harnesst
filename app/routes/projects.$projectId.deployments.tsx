@@ -114,6 +114,7 @@ import {
   findStoredAppCredentialConflict,
   listAppCredentialRows,
   listAppInstallations,
+  listAppRepositories,
   type AppInstallation,
 } from "~/github/app-manifest.server";
 import { getDiscordAppConfig } from "~/discord/config.server";
@@ -135,12 +136,17 @@ import { ensureWorkerStarted } from "~/jobs/worker.server";
 import { contextPath } from "~/lib/paths";
 import { useLiveRevalidate } from "~/lib/use-live-revalidate";
 import { cn } from "~/lib/utils";
+import { channelSettingsDefinition } from "~/channels/settings/registry";
 import {
+  channelSettings,
+  findChannelInstall,
   overlayLock,
   requiredScopesByProvider,
   scopeGroupsByProvider,
   serializeLock,
+  setChannelSettings,
   setSelectedGroups,
+  type ChannelSettings,
   type ScopeGroupChoice,
 } from "~/marketplace/lock";
 import { agentRequiredSecretState } from "~/project/secrets.server";
@@ -290,6 +296,22 @@ interface DeploymentData {
     appSlug: string | null;
     /** Where the App is installed (accounts + repo grants); null when it couldn't be fetched. */
     installations: AppInstallation[] | null;
+    /**
+     * The `owner/repo` names the App can actually see (issue #254) — the settings panel's
+     * repository picker. Null when that couldn't be established at all (no credentials, no
+     * installation, GitHub unreachable), which the panel reads as "type them instead".
+     */
+    repositories: string[] | null;
+    /**
+     * Whether the channel's settings panel is editable (issue #254): true only when the LOCK
+     * actually carries the install providing the channel, because `setChannelSettings` writes onto
+     * that entry and has nowhere to put a blob otherwise. A hand-authored `channels/github.ts`
+     * lights the row up (the card keys off the file), so without this gate the panel would accept
+     * a save and silently drop it.
+     */
+    configurable: boolean;
+    /** The channel's current settings from the effective lock; `{}` means unconfigured/inert. */
+    settings: ChannelSettings;
   };
 }
 
@@ -470,6 +492,9 @@ export const loader = (args: LoaderFunctionArgs) =>
             enabled: false,
             appSlug: null,
             installations: null,
+            repositories: null,
+            configurable: false,
+            settings: {},
           },
         };
       }
@@ -655,6 +680,7 @@ export const loader = (args: LoaderFunctionArgs) =>
       }
       let githubAppSlug: string | null = null;
       let githubInstallations: AppInstallation[] | null = null;
+      let githubRepositories: string[] | null = null;
       if (hasGithubSetup) {
         const secretRef = (key: string) => ({
           projectId: project.id,
@@ -676,10 +702,19 @@ export const loader = (args: LoaderFunctionArgs) =>
                 appId,
                 privateKey,
               });
+              // The wake-settings picker's options. `listAppRepositories` never throws — an
+              // unreadable installation costs its repositories, not the tab — and an empty
+              // result means "nothing to pick from", which the panel renders as a typed field.
+              const repos = await listAppRepositories(
+                { appId, privateKey },
+                githubInstallations,
+              );
+              githubRepositories = repos.length > 0 ? repos : null;
             }
           }
         } catch {
           githubInstallations = null; // GitHub/secrets hiccup — the card falls back to a link
+          githubRepositories = null;
         }
       }
       return {
@@ -712,6 +747,13 @@ export const loader = (args: LoaderFunctionArgs) =>
           enabled: hasGithubSetup,
           appSlug: githubAppSlug,
           installations: githubInstallations,
+          repositories: githubRepositories,
+          // Bundle-aware (`findChannelInstall`): the marketplace steers people into the GitHub
+          // BUNDLE, whose only lock row is the bundle itself, so a plain `findInstall("github")`
+          // would find nothing and hide the panel from exactly the installs it exists for.
+          configurable:
+            findChannelInstall(lock, "github", activeMember) !== undefined,
+          settings: channelSettings(lock, "github", activeMember),
         },
       };
     },
@@ -820,6 +862,53 @@ export async function action(args: ActionFunctionArgs) {
         createdBy: auth.user.id,
       });
       throw redirect(`${back}?${new URLSearchParams({ operations: provider })}`);
+    }
+
+    // ── Channel settings (issue #254): rewrite the lock's per-channel configuration ──
+    // Same staging as connection-permissions — this is CONFIG living in harnesst-lock.json, so an
+    // edit saves a draft of the lock and ships through the header Publish control. The payoff is
+    // different again: the settings reach the agent as `HARNESST_CHANNEL_*` env, projected by
+    // deployRelease from the lock at the deployed commit, so a change lands on the next DEPLOY.
+    if (intent === "channel-settings") {
+      const channel = String(form.get("channel") ?? "");
+      // The parse comes from the registry, beside the panel that rendered the fields: an id with
+      // no panel has no fields either, so writing a settings blob for it would store something
+      // nothing reads.
+      const definition = channelSettingsDefinition(channel);
+      if (!definition) return { error: "Unknown channel." };
+      // Action reads raw (never the cache) — a stale lock composed into a write could clobber
+      // a newer selection or install.
+      const [source, drafts] = await Promise.all([
+        fetchAgentSource(project.repoInstallationId, repo),
+        listDrafts(project.id),
+      ]);
+      const { active, isTeam } = await resolveSyncedAgentContext(
+        project.id,
+        agentFromParams(args.params),
+        source.paths,
+      );
+      requireActiveAgent(active, project.id);
+      const member = isTeam ? active.name : null;
+      const lock = overlayLock(
+        source.files["harnesst-lock.json"] ?? null,
+        drafts.map((d) => ({ path: d.path, content: d.content })),
+      );
+      const { lock: nextLock, changed } = setChannelSettings(
+        lock,
+        channel,
+        member,
+        definition.parseForm(form),
+      );
+      if (!changed) return { ok: true as const };
+      await stageDraft({
+        projectId: project.id,
+        path: "harnesst-lock.json",
+        content: serializeLock(nextLock),
+        createdBy: auth.user.id,
+      });
+      throw redirect(
+        `${back}?${new URLSearchParams({ channelSettings: channel })}`,
+      );
     }
 
     // ── Environment CRUD (team-level: create/rename/delete a NAME across the whole roster) ──
@@ -1005,6 +1094,14 @@ export default function Deployment({
     ? (loaderData.connections.find((c) => c.provider === operationsEdited)
         ?.label ?? operationsEdited)
     : null;
+  // Channel-settings edit outcome (issue #254): unlike the capability edit, this one needs a
+  // DEPLOY as well as a publish — the settings reach the agent as env, so nothing changes in the
+  // running container until the next deploy. Say so.
+  const channelSettingsEdited = params.get("channelSettings");
+  const channelSettingsLabel = channelSettingsEdited
+    ? (channelSettingsDefinition(channelSettingsEdited)?.label ??
+      channelSettingsEdited)
+    : null;
 
   // Progress: re-fetch faster while any deployment is pending/building. A slower
   // baseline poll runs regardless, so a deploy STARTED after this page loaded is
@@ -1132,6 +1229,18 @@ export default function Deployment({
             every call, so it already applies — the agent&rsquo;s next call
             sees the new list. Publish the saved change with your other edits
             to make it permanent.
+          </AlertDescription>
+        </Alert>
+      )}
+
+      {channelSettingsEdited && (
+        <Alert className="mb-6">
+          <AlertTitle>{channelSettingsLabel} channel settings saved</AlertTitle>
+          <AlertDescription>
+            The settings are saved to harnesst-lock.json — publish them with your
+            other changes, then deploy. The agent reads them from its
+            environment, so the running version keeps the settings it was
+            deployed with until you deploy again.
           </AlertDescription>
         </Alert>
       )}
@@ -2311,6 +2420,13 @@ function GitHubChannelRow({
     : null;
   const connected = setup.appSlug !== null;
   const installs = setup.installations;
+  // The settings panel only exists for a channel harnesst can configure AND an install the lock
+  // actually carries — `setChannelSettings` writes onto that entry, so without one a save would
+  // be accepted and dropped.
+  const settingsPanel = setup.configurable
+    ? channelSettingsDefinition("github")
+    : null;
+  const SettingsPanel = settingsPanel?.Panel;
   // Same identity — note shape as the Connections rows: WHO the channel is (@slug), then the
   // state's follow-up.
   const detail = !connected
@@ -2408,6 +2524,37 @@ function GitHubChannelRow({
             Add another account or organization
           </a>
         </div>
+      )}
+      {/* Channel settings (issue #254): WHEN this agent wakes, as distinct from WHERE it listens.
+          The rule itself is platform code now — it used to live in the customer's copy of
+          agent/channels/github.ts, which is how a marketplace update destroyed it — so the only
+          thing left to decide is its configuration, and this is where that is decided. Same shape
+          as the Connections card's Permissions editor: a collapsed summary, a form, one button. */}
+      {settingsPanel && SettingsPanel && (
+        <details className="mt-2 border-t pt-2">
+          <summary className="cursor-pointer text-xs text-muted-foreground">
+            Wake settings: {settingsPanel.summary(setup.settings)}
+          </summary>
+          <Form method="post" className="mt-3 grid gap-3">
+            <input type="hidden" name="intent" value="channel-settings" />
+            <input type="hidden" name="channel" value="github" />
+            <SettingsPanel
+              settings={setup.settings}
+              githubInstallations={setup.installations}
+              githubRepositories={setup.repositories}
+            />
+            <div className="flex items-center gap-3">
+              <Button type="submit" size="sm" variant="secondary">
+                Update wake settings
+              </Button>
+              <span className="text-xs text-muted-foreground">
+                Saved to harnesst-lock.json — publish it, then deploy. The agent
+                reads these from its environment, so they take effect on the
+                next deploy.
+              </span>
+            </div>
+          </Form>
+        </details>
       )}
     </div>
   );

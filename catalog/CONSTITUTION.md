@@ -8,8 +8,11 @@ Use it two ways: as the brief when authoring a new agent, and as the checklist w
 reviewing one (a human or another agent). It is meant to change as our taste changes —
 edit it, don't work around it.
 
-The reference implementation is the **Engineer** agent
-(`templates/agents/engineer/files/instructions.md`). When in doubt, read that.
+There is deliberately no exemplar template to copy from. An exemplar becomes the rule in
+practice — including the parts of it that were only ever true for whoever wrote it, which is
+how a specific reviewer's username ended up hardcoded in a template every customer installed.
+The rules below are stated here in full; where a shipped template disagrees with them, the
+template is wrong.
 
 ## The one idea
 
@@ -81,5 +84,5 @@ Before shipping an agent, read its prompt and look for:
 
 Deep, reusable know-how — how to write a good issue, how to critique a design, how to run a
 review — belongs in a **skill**, not bolted onto an agent's prompt. Skills load when relevant
-and stay out of the way otherwise (see `templates/skills/writing-a-prd`). Keep the agent
+and stay out of the way otherwise (see `templates/skills/reviewing-a-pull-request`). Keep the agent
 prompt about the job; let skills carry the craft.

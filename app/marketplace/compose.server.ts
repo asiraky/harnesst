@@ -17,6 +17,8 @@
  * in validate.mjs so the same violations fail before publish):
  *  - files      union of every include + the parent; a path shipped by two artifacts is an ERROR
  *               (materialization can't write one path twice).
+ *  - installOnce union of every include's + the parent's (issue #254) — ownership travels with the
+ *               file, so a bundled channel's customer-owned wrapper stays install-once.
  *  - deps       merged includes-first then the parent on top; a name collision — the LATER (more
  *               parental) range wins silently.
  *  - secrets    union by name (includes-first then parent); first occurrence keeps its
@@ -189,6 +191,19 @@ async function resolve(
   for (const child of resolvedIncludes) addFiles(child);
   addFiles(template);
 
+  // ── installOnce: union of every include's + the parent's, in file order (issue #254) ──
+  // A bundle carries its includes' install-once declarations the same way it carries their files.
+  // Dropping them here would demote a channel's customer-owned wrapper to an ordinary managed file
+  // the moment it's installed via a bundle — which is how every real install arrives — and the next
+  // bundle update would overwrite the customer's edits. The subset-of-files rule survives the union
+  // because `files` unions the same way.
+  const installOnce: string[] = [];
+  for (const src of [...resolvedIncludes.map((c) => c.manifest), manifest]) {
+    for (const path of src.installOnce ?? []) {
+      if (!installOnce.includes(path)) installOnce.push(path);
+    }
+  }
+
   // ── dependencies: includes-first then parent on top (later, more-parental range wins) ──
   const deps: Record<string, string> = {};
   for (const child of resolvedIncludes) {
@@ -311,6 +326,12 @@ async function resolve(
   const resolvedManifest: TemplateManifest = { ...manifest };
   delete resolvedManifest.includes;
   resolvedManifest.files = fileList;
+  setOrDelete(
+    resolvedManifest,
+    "installOnce",
+    installOnce,
+    installOnce.length > 0,
+  );
   setOrDelete(resolvedManifest, "dependencies", deps, Object.keys(deps).length > 0);
   setOrDelete(resolvedManifest, "secrets", secrets, secrets.length > 0);
   setOrDelete(resolvedManifest, "sandbox", sandbox, sandbox !== undefined);

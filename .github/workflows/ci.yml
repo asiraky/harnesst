@@ -33,6 +33,10 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
+      # `catalog/index.json` is generated and carries a content hash per template, so a manifest
+      # edit committed without `npm run catalog:index` surfaces in the suite as an opaque hash
+      # mismatch. Validate first: it names the template and the rule that was broken.
+      - run: npm run catalog:validate
       - run: npm test
 
   # The production Docker build runs `npm run build`; typecheck + tests do not exercise the

@@ -26,6 +26,45 @@ export const TEAM_ROOT = "agents";
 /** Committed sentinel that distinguishes a valid empty team from a truncated tree read. */
 export const EMPTY_TEAM_MARKER = `${TEAM_ROOT}/README.md`;
 
+/**
+ * Platform-owned code, sibling to the agent root (issue #254). eve claims every directory it
+ * knows under `agent/` and errors on any it doesn't (`DISCOVER_UNSUPPORTED_DIRECTORY`), and its
+ * channel discovery validates every path segment as a channel slug — so a shared helper cannot
+ * live under `agent/` at all. It CAN live beside it: the directory is inside the npm package, so
+ * imports, tsconfig and `eve build` treat it as ordinary code, while eve's discovery (rooted at
+ * the agent root, never scanning above it) never looks at it.
+ *
+ * Files here are written by the marketplace installer and by nothing else: the assistant and the
+ * editors refuse them, and publish verifies their hashes against the lock.
+ */
+export const PLATFORM_ROOT = "harnesst";
+
+/** `agent` -> `harnesst`; `agents/ivy/agent` -> `agents/ivy/harnesst`. */
+export function platformRootForAgentRoot(agentRoot: string): string {
+  const slash = agentRoot.lastIndexOf("/");
+  const parent = slash === -1 ? "" : agentRoot.slice(0, slash + 1);
+  return `${parent}${PLATFORM_ROOT}`;
+}
+
+/**
+ * A repo-relative path inside a platform root: `harnesst/x.ts` or `agents/<member>/harnesst/x.ts`.
+ *
+ * Deliberately anchored and member-segment-validated: `.harnesst/assistant/**` (the assistant's
+ * user-config surface — a different surface with a different owner) must NOT match, and neither
+ * may a traversal like `agents/../harnesst/x`. A bare directory path matches nothing; only files
+ * under the root are platform files.
+ */
+const PLATFORM_PATH = new RegExp(
+  `^(?:${TEAM_ROOT}/[A-Za-z0-9][\\w.-]*/)?${PLATFORM_ROOT}/[^/].*$`,
+);
+
+export function isPlatformPath(path: string): boolean {
+  if (path.endsWith("/")) return false;
+  const segments = path.split("/");
+  if (segments.includes("..") || segments.includes(".")) return false;
+  return PLATFORM_PATH.test(path);
+}
+
 /** Detect the team repository shape even when it currently has no members. */
 export function hasTeamLayout(paths: string[]): boolean {
   if (paths.some((p) => p === AGENT_ROOT || p.startsWith(`${AGENT_ROOT}/`))) return false;
