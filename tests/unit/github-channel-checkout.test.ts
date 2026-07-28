@@ -164,7 +164,7 @@ interface Harness {
   /** Drive `onIssue` / `onPullRequest` through the settings the module read from env. */
   issueEvent: (input: {
     action: string;
-    label?: string;
+    labels?: readonly string[];
     number?: number;
     repo?: string;
     sender?: string;
@@ -172,7 +172,7 @@ interface Harness {
   pullRequestEvent: (input: {
     action: string;
     headSha?: string | null;
-    label?: string;
+    labels?: readonly string[];
     number?: number;
     repo?: string;
     sender?: string;
@@ -192,7 +192,7 @@ interface WakeEvent {
   kind: "issue" | "pull_request";
   action: string;
   number: number;
-  label: string | null;
+  labels: readonly string[];
   headSha: string | null;
   repoFullName: string;
   senderLogin: string;
@@ -458,18 +458,23 @@ function loadTemplate(options: Options = {}): Harness {
         { send },
       );
     },
-    issueEvent: ({ action, label, number = 12, repo = "acme/widgets", sender = "octocat" }) => {
+    // `raw` is the issue/PR OBJECT — labels come as the `labels` snapshot array, and the
+    // top-level `payload.label` naming the just-added label does NOT exist here. eve drops it
+    // before calling any hook; a fixture that includes it tests a payload production never sends
+    // (which is exactly how the 0.7.0 wake bug shipped green).
+    issueEvent: ({ action, labels, number = 12, repo = "acme/widgets", sender = "octocat" }) => {
       if (!config!.onIssue) throw new Error("the template registered no onIssue hook");
       return config!.onIssue(inboundCtx(repo, sender), {
         action,
         issueNumber: number,
-        raw: label === undefined ? {} : { label: { name: label } },
+        raw:
+          labels === undefined ? {} : { labels: labels.map((name) => ({ name })) },
       });
     },
     pullRequestEvent: ({
       action,
       headSha = null,
-      label,
+      labels,
       number = 19,
       repo = "acme/widgets",
       sender = "octocat",
@@ -481,7 +486,8 @@ function loadTemplate(options: Options = {}): Harness {
         action,
         headSha,
         pullRequestNumber: number,
-        raw: label === undefined ? {} : { label: { name: label } },
+        raw:
+          labels === undefined ? {} : { labels: labels.map((name) => ({ name })) },
       });
     },
     wakeContext: moduleObject.exports.githubWakeContext as Harness["wakeContext"],
@@ -991,7 +997,7 @@ function labelEvent(over: Partial<WakeEvent> = {}): WakeEvent {
     kind: "pull_request",
     action: "labeled",
     number: 19,
-    label: "changes-requested",
+    labels: ["changes-requested"],
     headSha: "ee9a696aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
     repoFullName: "worksauceapp/marketing-site",
     senderLogin: "sam-harnesst",
@@ -1007,7 +1013,7 @@ describe("the wake predicate", () => {
     const context = wakeContext(labelEvent(), WAKE);
 
     expect(context).toContain(
-      'pull request #19 labeled "changes-requested" by @sam-harnesst in worksauceapp/marketing-site',
+      'pull request #19 labeled ("changes-requested" set) by @sam-harnesst in worksauceapp/marketing-site',
     );
     expect(context).toContain("Decide from your instructions");
     expect(context).toContain("do nothing and post nothing");
@@ -1034,22 +1040,30 @@ describe("the wake predicate", () => {
     const { wakeContext } = loadTemplate();
     expect(
       wakeContext(
-        labelEvent({ action: "synchronize", label: null, senderLogin: "ivy-worksauce[bot]" }),
+        labelEvent({ action: "synchronize", labels: [], senderLogin: "ivy-worksauce[bot]" }),
         WAKE,
       ),
     ).toBeNull();
   });
 
-  it("dispatches on an allowlisted label and ignores every other one", () => {
+  it("dispatches on an allowlisted label in the snapshot and ignores every other one", () => {
     const { wakeContext } = loadTemplate();
-    expect(wakeContext(labelEvent({ label: "ready" }), WAKE)).toContain('labeled "ready"');
-    expect(wakeContext(labelEvent({ label: "wontfix" }), WAKE)).toBeNull();
-    expect(wakeContext(labelEvent({ label: null }), WAKE)).toBeNull();
+    expect(wakeContext(labelEvent({ labels: ["ready"] }), WAKE)).toContain('labeled ("ready" set)');
+    expect(wakeContext(labelEvent({ labels: ["wontfix"] }), WAKE)).toBeNull();
+    expect(wakeContext(labelEvent({ labels: [] }), WAKE)).toBeNull();
+    // The snapshot is all a hook ever sees — a non-wake label added while a wake label is
+    // already set still wakes, and the context names every wake label present.
+    expect(wakeContext(labelEvent({ labels: ["wontfix", "ready"] }), WAKE)).toContain(
+      'labeled ("ready" set)',
+    );
+    expect(
+      wakeContext(labelEvent({ labels: ["ready", "changes-requested"] }), WAKE),
+    ).toContain('labeled ("ready", "changes-requested" set)');
   });
 
-  it("ignores `unlabeled`, which carries a `label` payload of its own", () => {
-    // GitHub sends the removed label on `unlabeled` too, so matching on the label alone would
-    // wake the agent when a human took the label OFF.
+  it("ignores `unlabeled`, whose snapshot may still carry a wake label", () => {
+    // Removing one label leaves the others in the snapshot, so matching the snapshot without
+    // gating on the action would wake the agent when a human took a label OFF.
     const { wakeContext } = loadTemplate();
     expect(wakeContext(labelEvent({ action: "unlabeled" }), WAKE)).toBeNull();
     for (const action of ["closed", "edited", "assigned", "reopened", "opened"]) {
@@ -1071,7 +1085,7 @@ describe("the wake predicate", () => {
   it("carries the head sha on a synchronize, so the agent knows which commit woke it", () => {
     const { wakeContext } = loadTemplate();
     const context = wakeContext(
-      labelEvent({ action: "synchronize", label: null }),
+      labelEvent({ action: "synchronize", labels: [] }),
       WAKE,
     );
     expect(context).toContain("updated with new commits");
@@ -1081,13 +1095,13 @@ describe("the wake predicate", () => {
   it("wakes on a draft becoming reviewable", () => {
     const { wakeContext } = loadTemplate();
     expect(
-      wakeContext(labelEvent({ action: "ready_for_review", label: null }), WAKE),
+      wakeContext(labelEvent({ action: "ready_for_review", labels: [] }), WAKE),
     ).toContain("marked ready for review");
   });
 
   it("gates opened/reopened issues on wakeOnNewIssues alone", () => {
     const { wakeContext } = loadTemplate();
-    const opened = labelEvent({ kind: "issue", action: "opened", label: null, headSha: null });
+    const opened = labelEvent({ kind: "issue", action: "opened", labels: [], headSha: null });
     expect(wakeContext(opened, WAKE)).toBeNull();
     expect(wakeContext(opened, { ...WAKE, wakeOnNewIssues: true })).toContain(
       "issue #19 opened",
@@ -1107,9 +1121,9 @@ describe("the wake predicate", () => {
       appSlug: "",
     };
     expect(wakeContext(labelEvent(), inert)).toBeNull();
-    expect(wakeContext(labelEvent({ action: "synchronize", label: null }), inert)).toBeNull();
+    expect(wakeContext(labelEvent({ action: "synchronize", labels: [] }), inert)).toBeNull();
     expect(
-      wakeContext(labelEvent({ kind: "issue", action: "opened", label: null }), inert),
+      wakeContext(labelEvent({ kind: "issue", action: "opened", labels: [] }), inert),
     ).toBeNull();
     // Not even with the labels set but no repository named — an empty repo list means INERT,
     // never "every repository this App can see".
@@ -1136,7 +1150,7 @@ describe("the wake hooks and the HARNESST_CHANNEL_GITHUB_* env contract", () => 
     // An agent taking the 0.6.0 update before anyone opens the settings panel must behave exactly
     // as it did on 0.5.0: mentions only.
     const harness = loadTemplate();
-    expect(harness.issueEvent({ action: "labeled", label: "ready" })).toBeNull();
+    expect(harness.issueEvent({ action: "labeled", labels: ["ready"] })).toBeNull();
     expect(harness.issueEvent({ action: "opened" })).toBeNull();
     expect(harness.pullRequestEvent({ action: "synchronize", headSha: "a".repeat(40) })).toBeNull();
     expect(harness.pullRequestEvent({ action: "ready_for_review" })).toBeNull();
@@ -1146,15 +1160,17 @@ describe("the wake hooks and the HARNESST_CHANNEL_GITHUB_* env contract", () => 
     const harness = loadTemplate({ env: CONFIGURED });
     const dispatched = harness.pullRequestEvent({
       action: "labeled",
-      label: "changes-requested",
+      labels: ["changes-requested"],
       headSha: "ee9a696aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
     });
 
     expect(dispatched).toMatchObject({ auth: null });
-    expect(dispatched?.context?.[0]).toContain('pull request #19 labeled "changes-requested"');
+    expect(dispatched?.context?.[0]).toContain(
+      'pull request #19 labeled ("changes-requested" set)',
+    );
     // an unwatched repository, same event
     expect(
-      harness.pullRequestEvent({ action: "labeled", label: "ready", repo: "acme/other" }),
+      harness.pullRequestEvent({ action: "labeled", labels: ["ready"], repo: "acme/other" }),
     ).toBeNull();
   });
 
@@ -1174,23 +1190,33 @@ describe("the wake hooks and the HARNESST_CHANNEL_GITHUB_* env contract", () => 
     expect(empty.issueEvent({ action: "opened" })).toBeNull();
   });
 
-  it("reads the transition label off raw.label, not the issue's current labels", () => {
+  it("wakes off the `labels` snapshot in the issue object eve actually hands the hook", () => {
+    // Regression for the 2026-07-29 prod incident: 0.7.0 read `raw.label.name` — the transition
+    // label — but eve narrows the payload to `payload.issue` before any hook runs and the
+    // top-level `label` never survives (verified through eve 0.27.11). Every label wake was
+    // silently null in production while this suite's fixtures, built in the same wrong shape,
+    // stayed green.
     const harness = loadTemplate({ env: CONFIGURED });
-    // `labeled` with no label payload at all cannot be attributed to a rule, so it must not wake.
+    // `labeled` with an empty snapshot cannot be attributed to a rule, so it must not wake.
     expect(harness.issueEvent({ action: "labeled" })).toBeNull();
-    expect(harness.issueEvent({ action: "labeled", label: "ready" })).toMatchObject({
+    expect(harness.issueEvent({ action: "labeled", labels: [] })).toBeNull();
+    expect(harness.issueEvent({ action: "labeled", labels: ["ready"] })).toMatchObject({
       auth: null,
     });
-    expect(harness.issueEvent({ action: "unlabeled", label: "ready" })).toBeNull();
+    // The exact prod shape: `ready` re-added by another agent, snapshot carries it.
+    expect(
+      harness.issueEvent({ action: "labeled", labels: ["ready"], sender: "sam-harnesst[bot]" }),
+    ).toMatchObject({ auth: null });
+    expect(harness.issueEvent({ action: "unlabeled", labels: ["ready"] })).toBeNull();
   });
 
   it("does not wake on its own GITHUB_APP_SLUG", () => {
     const harness = loadTemplate({ env: CONFIGURED });
     expect(
-      harness.issueEvent({ action: "labeled", label: "ready", sender: "Ivy-Worksauce[bot]" }),
+      harness.issueEvent({ action: "labeled", labels: ["ready"], sender: "Ivy-Worksauce[bot]" }),
     ).toBeNull();
     expect(
-      harness.issueEvent({ action: "labeled", label: "ready", sender: "sam-worksauce[bot]" }),
+      harness.issueEvent({ action: "labeled", labels: ["ready"], sender: "sam-worksauce[bot]" }),
     ).toMatchObject({ auth: null });
   });
 });
