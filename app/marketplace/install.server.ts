@@ -632,6 +632,16 @@ export function planInstall(ctx: PlanContext): InstallPlan {
   }
 
   const draftAt = new Map(ctx.drafts.map((d) => [d.path, d.content]));
+  /**
+   * Is something sitting at `path` right now? Drafts are the newer truth, so a draft DECIDES —
+   * HEAD is only consulted when the path has no draft at all. That ordering is the whole point:
+   * a staged deletion (null content) frees the path, which is what makes delete-then-install work
+   * for replacing a hand-authored file with a marketplace-owned one. OR-ing HEAD in would make a
+   * staged deletion unable to free anything, and the conflict it raised would be resolved with
+   * "keep existing files" — registering a path the drafts were removing.
+   */
+  const occupiedAt = (path: string): boolean =>
+    draftAt.has(path) ? draftAt.get(path) !== null : ctx.repoPaths.includes(path);
   const nonFileConflictCount = conflicts.length;
   const occupiedTemplatePaths: string[] = [];
   const preservableTemplatePaths: string[] = [];
@@ -654,9 +664,7 @@ export function planInstall(ctx: PlanContext): InstallPlan {
     createPaths.push(`agents/${target.name}/package.json`);
   }
   for (const path of createPaths) {
-    const occupiedInRepo = ctx.repoPaths.includes(path);
-    const occupiedByDraft = draftAt.has(path) && draftAt.get(path) !== null;
-    const occupied = occupiedInRepo || occupiedByDraft;
+    const occupied = occupiedAt(path);
     // Install-once (issue #254), tested BEFORE the ownership short-circuit below — which is the
     // whole point. On an update an install-once path IS lock-owned (the first install wrote it),
     // so `owned.has(path)` would wave the overwrite through, and the lock records only the
@@ -801,12 +809,9 @@ export function planInstall(ctx: PlanContext): InstallPlan {
   // file occupies that path, it is the customer's — keep it byte-for-byte and skip the managed
   // write, at the cost of not wiring this install's sandbox bootstrap.
   const sbModulePath = sandboxModulePath(rootForMember(member));
-  const sandboxModuleOccupied =
-    ctx.repoPaths.includes(sbModulePath) ||
-    (draftAt.has(sbModulePath) && draftAt.get(sbModulePath) !== null);
   const preserveSandboxModule =
     ctx.keepExistingFiles &&
-    sandboxModuleOccupied &&
+    occupiedAt(sbModulePath) &&
     previousSandboxEntries.length === 0 &&
     !ownedByOtherInstall.has(sbModulePath);
   if (preserveSandboxModule) {

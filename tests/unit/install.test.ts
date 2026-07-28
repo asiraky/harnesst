@@ -694,6 +694,63 @@ describe("planInstall — conflicts", () => {
     expect(plan.conflicts).toEqual([]);
   });
 
+  it("a staged deletion frees a path that still exists at HEAD", () => {
+    // Delete-then-install: the operator removes a hand-authored, unowned add-on so the
+    // marketplace can own it. Drafts are newer than HEAD, so the deletion must win — otherwise
+    // the install conflicts, gets registered with "keep existing files", and the lock claims a
+    // file the drafts are removing (an UNRESOLVED_IMPORT in the regenerated sandbox module).
+    const addon = "agents/pm/agent/sandbox/addons/agent-browser.ts";
+    const plan = planInstall(
+      memberCtx({
+        template: browserSkillTpl,
+        packageJson: null,
+        repoPaths: [addon, "agents/pm/agent/sandbox/sandbox.ts"],
+        drafts: [{ path: addon, content: null }],
+      }),
+    );
+
+    expect(plan.conflicts).toEqual([]);
+    expect(plan.preservedFiles).toEqual([]);
+    // The install writes its OWN content there…
+    expect(plan.writes.some((w) => w.path === addon)).toBe(true);
+    // …and the lock owns it, so the regenerated module's import resolves.
+    const lock = parseLock(
+      JSON.parse(plan.writes.find((w) => w.path === "harnesst-lock.json")!.content),
+    );
+    expect(findInstall(lock, "agent-browser", "pm")!.files).toContain(addon);
+    expect(
+      plan.writes.find((w) => w.path === "agents/pm/agent/sandbox/sandbox.ts")!
+        .content,
+    ).toContain('from "./addons/agent-browser"');
+  });
+
+  it("a staged WRITE over a HEAD file still occupies the path", () => {
+    const path = "agents/pm/agent/tools/cloudflare-deploy.ts";
+    const plan = planInstall(
+      memberCtx({ repoPaths: [path], drafts: [{ path, content: "mine\n" }] }),
+    );
+    expect(plan.conflicts).toEqual([path]);
+  });
+
+  it("regenerates the managed sandbox module when the hand-authored one is staged for deletion", () => {
+    const sandboxPath = "agents/pm/agent/sandbox/sandbox.ts";
+    const plan = planInstall(
+      memberCtx({
+        template: browserSkillTpl,
+        packageJson: null,
+        repoPaths: [sandboxPath],
+        drafts: [{ path: sandboxPath, content: null }],
+        keepExistingFiles: true,
+      }),
+    );
+    // Nothing is left to preserve, so the sandbox bootstrap gets wired in as normal.
+    const module = plan.writes.find((w) => w.path === sandboxPath);
+    expect(module?.content).toContain('from "./addons/agent-browser"');
+    expect(
+      plan.warnings.some((w) => w.includes(sandboxPath) && w.includes("bootstrap")),
+    ).toBe(false);
+  });
+
   it("never treats package.json or harnesst-lock.json as a conflict (they merge)", () => {
     const plan = planInstall(
       memberCtx({
@@ -1522,6 +1579,18 @@ describe("planInstall — orphaned sandbox add-ons (issue #254)", () => {
     expect(
       plan.warnings.some((w) => w.includes("addons/agent-browser.ts")),
     ).toBe(false);
+  });
+
+  it("says nothing about an add-on the operator has staged for deletion", () => {
+    const plan = planInstall(
+      memberCtx({
+        template: browserSkillTpl,
+        packageJson: null,
+        repoPaths: [HAND_ROLLED, "agents/pm/agent/sandbox/sandbox.ts"],
+        drafts: [{ path: HAND_ROLLED, content: null }],
+      }),
+    );
+    expect(plan.warnings.some((w) => w.includes(HAND_ROLLED))).toBe(false);
   });
 
   it("says nothing when every add-on on disk is lock-owned", () => {
