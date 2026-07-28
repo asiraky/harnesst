@@ -112,9 +112,15 @@ export function GitHubChannelSettings({
   // added since this page loaded, a >100-repo installation's tail. They keep the typed field so
   // rendering a picker never silently drops a setting that is already live.
   const typed = repos.filter((r) => !options.includes(r));
+  // Every field here is uncontrolled, so `defaultValue` is read once per mount and a save that
+  // normalises what was typed (trimming, dropping a repeated repo) would leave the raw text sitting
+  // in the box while the summary above it already reports the stored value — the panel stating two
+  // different things about one setting, and the operator trusting the wrong one. Keying the fields
+  // on what was actually saved remounts them when, and only when, that changes.
+  const savedKey = JSON.stringify([repos, labels, settings.wakeOnNewIssues === true]);
 
   return (
-    <div className="grid gap-3">
+    <div key={savedKey} className="grid gap-3">
       <div className="grid gap-1">
         <Label htmlFor="github-channel-repos">Repositories</Label>
         {options.length > 0 && (
