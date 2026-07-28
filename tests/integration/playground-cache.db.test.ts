@@ -215,25 +215,25 @@ describe.runIf(LIVE)(
       });
 
       const at = new Date().toISOString();
-      // First eve session's transcript — 5 events (turn_a), cache indices 1..5.
+      // First eve session's transcript — 5 events (turn_0), cache indices 1..5.
       const firstEvents = [
         {
           type: "session.started",
           data: { runtime: { modelId: "m/x" } },
           meta: { at },
         },
-        { type: "turn.started", data: { turnId: "turn_a" }, meta: { at } },
+        { type: "turn.started", data: { turnId: "turn_0" }, meta: { at } },
         {
           type: "message.received",
-          data: { turnId: "turn_a", message: "Please deploy my thing." },
+          data: { turnId: "turn_0", message: "Please deploy my thing." },
           meta: { at },
         },
         {
           type: "message.completed",
-          data: { turnId: "turn_a", message: "I need the credential first." },
+          data: { turnId: "turn_0", message: "I need the credential first." },
           meta: { at },
         },
-        { type: "turn.completed", data: { turnId: "turn_a" }, meta: { at } },
+        { type: "turn.completed", data: { turnId: "turn_0" }, meta: { at } },
       ].map((e, i) => ({ streamIndex: i + 1, ...e }));
       await savePlaygroundEvents(session.id, firstEvents);
       expect(await cachedStreamIndex(session.id)).toBe(5);
@@ -247,17 +247,26 @@ describe.runIf(LIVE)(
         cacheIndexOffset: 5,
       });
 
-      // The fresh eve session re-indexes from 1; the drain persists it with the reseed offset.
+      // The fresh eve session re-indexes from 1 AND restarts its turn ids at `turn_0` — colliding
+      // with the preserved history's first turn. Turn identity is unique only within the eve session
+      // that emitted it, so the projection must scope it by the `session.started` opening each one;
+      // otherwise the second session's turn_0 overwrites the opening question and glues its reply
+      // onto the first exchange (#261). The drain persists it with the reseed offset.
       const secondEvents = [
-        { type: "turn.started", data: { turnId: "turn_b" }, meta: { at } },
+        {
+          type: "session.started",
+          data: { runtime: { modelId: "m/x" } },
+          meta: { at },
+        },
+        { type: "turn.started", data: { turnId: "turn_0" }, meta: { at } },
         {
           type: "message.received",
-          data: { turnId: "turn_b", message: "Can you try again?" },
+          data: { turnId: "turn_0", message: "Can you try again?" },
           meta: { at },
         },
         {
           type: "message.completed",
-          data: { turnId: "turn_b", message: "Retried successfully." },
+          data: { turnId: "turn_0", message: "Retried successfully." },
           meta: { at },
         },
       ].map((e, i) => ({ streamIndex: i + 1, ...e }));
@@ -266,8 +275,8 @@ describe.runIf(LIVE)(
         secondEvents,
         reseeded.cacheIndexOffset,
       );
-      // Appended after the preserved history: 6..8.
-      expect(await cachedStreamIndex(session.id)).toBe(8);
+      // Appended after the preserved history: 6..9.
+      expect(await cachedStreamIndex(session.id)).toBe(9);
 
       const entries = await loadPlaygroundEntriesFromCache(reseeded);
       expect(entries).toMatchObject([
@@ -283,7 +292,7 @@ describe.runIf(LIVE)(
         secondEvents,
         reseeded.cacheIndexOffset,
       );
-      expect(await cachedStreamIndex(session.id)).toBe(8);
+      expect(await cachedStreamIndex(session.id)).toBe(9);
       expect(await loadPlaygroundEntriesFromCache(reseeded)).toEqual(entries);
 
       await db.delete(organization).where(eq(organization.id, ORG));
