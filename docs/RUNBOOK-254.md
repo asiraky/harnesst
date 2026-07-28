@@ -15,11 +15,10 @@ into the image and the default `CatalogSource` reads `<cwd>/catalog`
 not `docker-stack.production.yml` — so that source is currently dead code.
 
 **A catalog change therefore reaches customers only after CI rebuilds
-`ghcr.io/asiraky/harnesst:<sha>` and the swarm stack is updated.** Phase 3 step 2 (updating
-`github-bundle` to 0.4.0) is not offered by production until then. There is no way to bring it
-forward, and no useful hand-migration to do in the meantime — the `harnesst/` layout does not exist
-until the installer knows about it, so anything hand-written now is guesswork the real update would
-overwrite.
+`ghcr.io/asiraky/harnesst:<sha>` and the swarm stack is updated.** Phase 3 step 3.1 (updating
+`github-bundle` to 0.5.0) is not offered by production until then. There is no way to bring it
+forward, and no useful hand-migration to do in the meantime — anything hand-written now is
+guesswork the real update would overwrite.
 
 > If we later want catalog changes to ship independently of the control plane, setting
 > `HARNESST_CATALOG_REPO` in production is the lever. That is a separate decision with its own
@@ -34,16 +33,18 @@ never the risk.** Ownership is:
 
 | You hand-edit… | What happens |
 | --- | --- |
-| a **lock-owned** file | the next marketplace update overwrites it — this is the original bug |
+| a **lock-owned** file (incl. `agent/channels/github.ts`) | the next marketplace update overwrites it — accepted by decision, see `PLAN-channel-overwrite.md` |
 | anything under **`harnesst/`** | the publish hash gate fails your publish outright |
 | a **customer-owned** file | fine, and expected |
 
-Customer-owned means `agent/instructions.md`, the thin `agent/channels/*.ts` wrappers, subagent
-code, schedules — everything the agent's operator actually authors.
+Customer-owned means `agent/instructions.md`, subagent code, schedules — everything the agent's
+operator actually authors. The channel file is NOT on that list: it is the template's, rewritten in
+full by every update, and everything an operator legitimately varies about it is panel
+configuration (wake rules) or secrets.
 
-**Rule: platform files only ever arrive via a marketplace update; hands only touch customer-owned
-files.** If a platform file is genuinely wrong, that is a broken install — fix the template and
-re-run the update; never patch it in place.
+**Rule: template files only ever arrive via a marketplace update; hands only touch customer-owned
+files.** If a template file is genuinely wrong, fix the template and re-run the update; never
+patch it in place.
 
 ---
 
@@ -57,21 +58,23 @@ Compare the running image tag to repo `HEAD` **before anything else**. A redeplo
 SHA; only the merge-triggered build advances it. If prod is on an older tag, nothing below will be
 offered and you will waste an hour looking for the update button.
 
-### 3.1 Update `github-bundle` to 0.4.0 on both members
+### 3.1 Update `github-bundle` to 0.5.0 on both members
 
 harnesst → project `worksauceapp/agents` → Settings → **Update** on `github-bundle`, for **Ivy and
 Sam separately**.
 
-This stages drafts that relocate the platform code into `agents/<member>/harnesst/` and leave each
-member's existing `agent/channels/github.ts` **untouched** — it is declared `installOnce`, so an
-update preserves it rather than overwriting it. That preservation is the fix for the original
-incident; verify it in the staged diff before publishing.
+The channel is one self-contained file again and **updates overwrite it** (the 0.4.0
+platform/wrapper split and its install-once preservation were reversed — decision and rationale in
+`PLAN-channel-overwrite.md`). The 0.4.0 update left each member's `agent/channels/github.ts` in the
+lock's `preservedFiles`; 0.5.0 reclaims it — the file is rewritten from the template even though an
+earlier update preserved it.
 
 Review the staged change-set for both members. Expect:
 
-- new `agents/<member>/harnesst/github-channel.ts`
-- `agents/<member>/agent/channels/github.ts` **absent from the change-set** (preserved)
-- `harnesst-lock.json` gaining `platformFiles` hashes for the new files
+- `agents/<member>/agent/channels/github.ts` **overwritten** with the full implementation
+- `agents/<member>/harnesst/github-channel.ts` **staged for deletion** (no longer shipped)
+- `harnesst-lock.json`: the entry owns the channel file again, with no `preservedFiles` and no
+  `platformFiles` for this template (the hash gate keeps guarding only `harnesst/model.ts`)
 
 ### 3.2 Configure the channel settings panel
 
@@ -83,6 +86,9 @@ Deployment tab → GitHub channel row → settings.
 | Sam | `worksauceapp/marketing-site` | — | **on** |
 
 Sam's toggle is what restores the direct GitHub intake behaviour lost in `d171e19`.
+
+Settings already saved under an earlier version **carry across the update** (`carriedSettings` in
+the planner) — a member configured before 3.1 needs nothing re-entered here.
 
 Settings are stored in `harnesst-lock.json` and shipped to the container as env at deploy time, so
 **a settings change needs a publish and a deploy to take effect.** That is the accepted cost of
@@ -185,7 +191,9 @@ the operator's reply or label re-wakes Ivy through the normal path.
 ## Phase 4 — verify on the live PR
 
 - [ ] Both containers on the new release; `sandbox/sandbox.ts` imports the agent-browser addon;
-      `agents/<member>/harnesst/` exists and `agent/channels/github.ts` is the thin wrapper.
+      `agent/channels/github.ts` is the full single-file implementation and
+      `agents/<member>/harnesst/github-channel.ts` is **gone** (only `harnesst/model.ts` remains
+      at the platform root).
 - [ ] Re-apply `changes-requested` on PR #19 **as a human** → an Ivy row in `runs` for project
       `ltwhnfmhbgdi`, a turn in the container log, and the four numbered UAT items resolved
       (restore GTM/GA, revise the privacy copy, no consent banner, nothing else touched).

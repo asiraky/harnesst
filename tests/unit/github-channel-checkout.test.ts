@@ -45,10 +45,10 @@
  * self-suppression, the label allowlist, repo scoping, and — the one that decides whether taking
  * this update is safe — an unconfigured install staying inert.
  *
- * The file under test moved in #254 from `files/channels/github.ts` to
- * `files/harnesst/github-channel.ts`: the body is platform-owned and rewritten by every update,
- * while the customer's `agent/channels/github.ts` is a three-line wrapper written once and never
- * again. This suite compiles the platform file and calls the factory the wrapper calls.
+ * The file under test is `files/channels/github.ts` — the WHOLE channel in one file, installed as
+ * `agent/channels/github.ts` and rewritten in full by every marketplace update (the #254
+ * platform/wrapper split was reversed: updates overwrite). This suite compiles that file and
+ * drives its default export, exactly what a deployed agent's channel evaluates to.
  *
  * The eve stubs below are hand-written — `eve` is not a dependency of this repo and the template
  * is excluded from tsconfig, so NOTHING typechecks it (see docs/SPIKE-GITHUB-TO-FOH.md §6 "Known
@@ -63,11 +63,6 @@ import { transformSync } from "esbuild";
 import { beforeAll, describe, expect, it } from "vitest";
 
 const TEMPLATE_PATH = join(
-  process.cwd(),
-  "catalog/templates/channels/github/files/harnesst/github-channel.ts",
-);
-/** The customer-owned wrapper. Its only job is to call the factory the platform file exports. */
-const WRAPPER_PATH = join(
   process.cwd(),
   "catalog/templates/channels/github/files/channels/github.ts",
 );
@@ -404,16 +399,15 @@ function loadTemplate(options: Options = {}): Harness {
     compiled,
   )(requireStub, moduleObject, moduleObject.exports, fakeProcess, fakeFetch, fakeConsole);
 
-  // The customer's `agent/channels/github.ts` is a wrapper around this factory, so the suite
-  // exercises exactly what a deployed agent's default export evaluates to.
-  const factory = moduleObject.exports.harnesstGitHubChannel as
-    | (() => { routes: EveRouteDefinition[] })
+  // The default export IS the channel a deployed agent runs — the file builds it at module load,
+  // reading the wake settings from env exactly once.
+  const channelModule = moduleObject.exports.default as
+    | { routes: EveRouteDefinition[] }
     | undefined;
-  if (typeof factory !== "function") {
-    throw new Error("the platform file exports no harnesstGitHubChannel() factory");
+  if (!channelModule || !Array.isArray(channelModule.routes)) {
+    throw new Error("the template default-exports no channel");
   }
-  const channelModule = factory();
-  if (!config) throw new Error("the factory never called githubChannel()");
+  if (!config) throw new Error("the template never called githubChannel()");
 
   const inboundCtx = (repo: string, sender: string) =>
     ({ repository: { fullName: repo }, sender: { login: sender } }) as never;
@@ -509,17 +503,13 @@ describe("the GitHub channel template's turn.started override", () => {
     expect(harness.channelModule.routes).toHaveLength(1);
   });
 
-  it("keeps the customer's file a wrapper — the split is the whole fix", () => {
-    // #254: the update that destroyed two agents' channels overwrote a lock-owned file under
-    // `agent/`. `agent/channels/github.ts` is now install-once and holds nothing worth losing;
-    // every line that an update rewrites lives in the platform file this suite compiles.
-    const wrapper = readFileSync(WRAPPER_PATH, "utf8");
-    expect(wrapper).toContain(
-      'import { harnesstGitHubChannel } from "../../harnesst/github-channel";',
-    );
-    expect(wrapper).toContain("export default harnesstGitHubChannel();");
-    const lines = wrapper.split("\n").filter((line) => line.trim().length > 0);
-    expect(lines.length).toBeLessThanOrEqual(8);
+  it("is the whole channel in one file — no local imports for an update to orphan", () => {
+    // The #254 split shipped the body in a sibling `harnesst/` file the wrapper imported; the
+    // reversal folds it back, and an update simply rewrites this one file. A relative import
+    // reappearing here would resurrect the two-file layout the installer no longer manages.
+    const source = readFileSync(TEMPLATE_PATH, "utf8");
+    expect(source).not.toMatch(/from\s+"\.\.?\//u);
+    expect(source).toContain("export default");
   });
 
   it("re-asserts the eyes reaction the override replaces", async () => {

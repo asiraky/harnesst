@@ -34,13 +34,6 @@ const INCLUDABLE = TYPES.filter((t) => t !== "agent");
 const KEBAB = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const SEMVER = /^\d+\.\d+\.\d+$/;
 const UPPER_SNAKE = /^[A-Z][A-Z0-9_]*$/;
-/**
- * Mirror of manifest.ts's platform-file convention (issue #254): a `files` entry under this prefix
- * materializes at the platform root beside the agent root, is rewritten on every update, and is
- * hash-verified at publish. Kept as a literal here — this directory validates itself with no
- * dependency on harnesst's app code.
- */
-const PLATFORM_FILE_PREFIX = "harnesst/";
 
 const errors = [];
 const fail = (where, msg) => errors.push(`${where}: ${msg}`);
@@ -84,37 +77,6 @@ function validateManifest(where, m) {
     (m.includes?.length ?? 0) === 0
   ) {
     fail(where, "a bundle with no files must include at least one template");
-  }
-
-  // installOnce (issue #254): the subset of `files` written on a FIRST install and never again —
-  // the customer owns those bytes afterwards. Must be a subset of `files` (a path the template
-  // doesn't ship can't be written once) and disjoint from the platform set, which is rewritten on
-  // every update by design.
-  if (m.installOnce !== undefined) {
-    if (!Array.isArray(m.installOnce)) {
-      fail(where, "installOnce must be an array of install-relative file paths");
-    } else {
-      const shipped = new Set(Array.isArray(m.files) ? m.files : []);
-      const seen = new Set();
-      for (const p of m.installOnce) {
-        const reason = badPath(p);
-        if (reason) {
-          fail(where, `installOnce path "${p}" ${reason}`);
-          continue;
-        }
-        if (!shipped.has(p)) {
-          fail(where, `installOnce path "${p}" is not in files`);
-        }
-        if (p.startsWith(PLATFORM_FILE_PREFIX)) {
-          fail(
-            where,
-            `installOnce path "${p}" is platform-owned ("${PLATFORM_FILE_PREFIX}") — platform files are always rewritten and can't be install-once`,
-          );
-        }
-        if (seen.has(p)) fail(where, `duplicate installOnce path "${p}"`);
-        seen.add(p);
-      }
-    }
   }
 
   if (m.dependencies !== undefined) {
