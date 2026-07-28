@@ -11,6 +11,7 @@ import { data, redirect, type ActionFunctionArgs } from "react-router";
 
 import type { Target } from "~/chat/playground.server";
 import { asString, streamTurnResponse } from "~/chat/turn-stream.server";
+import { buildSystemNotes } from "~/chat/system-note";
 import { ensureAssistantInstance } from "~/assistant/instance.server";
 import {
   ensureConversationCheckout,
@@ -142,7 +143,9 @@ export async function action(args: ActionFunctionArgs) {
   for (const warning of checkoutRow?.warnings ?? []) {
     prefixParts.push(`[harnesst] From your last sync: ${warning}`);
   }
-  const messagePrefix = prefixParts.length > 0 ? prefixParts.join("\n") : null;
+  // Wrapped, not bare: the sent message is what eve records and the transcript replays, so an
+  // unwrapped note renders as the first paragraph of the user's own message — every turn.
+  const messagePrefix = buildSystemNotes(prefixParts);
 
   return streamTurnResponse({
     projectId: project.id,

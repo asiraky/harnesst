@@ -34,6 +34,7 @@ import {
 } from "~/models/model-directive";
 import { stripSeedContext } from "~/playground/seed";
 import { stripChannelContext } from "~/chat/channel-context";
+import { stripSystemNotes } from "~/chat/system-note";
 import type { Target } from "~/chat/playground.server";
 import type { ReasoningEffort } from "~/models/reasoning";
 
@@ -1381,13 +1382,14 @@ function projectEventsToEntries(
             turn.effort = directive.effort ?? null;
           }
         }
-        // Strip all three wrappers: the model directive; for a cross-redeploy reseed turn (#71),
-        // the leading harnesst:context block seeded from the cached transcript; and, for a
+        // Strip all four wrappers: the model directive; for a cross-redeploy reseed turn (#71),
+        // the leading harnesst:context block seeded from the cached transcript; harnesst's own
+        // per-turn notes (the assistant's checkout path and last sync's warnings); and, for a
         // channel-homed turn, eve's `<github_context>` envelope — the human opening a parked
         // GitHub question from the inbox should not have to read past delivery ids to find the
         // sentence they were sent here for.
         turn.userText = stripChannelContext(
-          stripSeedContext(stripModelDirective(raw)),
+          stripSystemNotes(stripSeedContext(stripModelDirective(raw))),
         );
         break;
       }

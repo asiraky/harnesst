@@ -27,7 +27,29 @@ const project: AuthoringProject = {
   updatedAt: new Date(),
 };
 
-function harness(opts?: { repoFiles?: Record<string, string> }) {
+/** The install this incident came from: a catalog skill whose SKILL.md failed eve's discovery. */
+const LEGAL_ADVISOR = {
+  id: "legal-advisor",
+  type: "skill" as const,
+  name: "Legal Advisor",
+  version: "0.1.0",
+  hash: "abc123",
+  registry: "fixture",
+  member: "ivy",
+  files: [
+    "agents/ivy/agent/skills/legal-advisor/SKILL.md",
+    "agents/ivy/agent/skills/legal-advisor/references/templates.md",
+  ],
+};
+
+const lockWith = (...installs: object[]) =>
+  JSON.stringify({ version: 1, installs: installs.flat() });
+
+function harness(opts?: {
+  repoFiles?: Record<string, string>;
+  /** Catalog index rows, or a throw to stand in for a catalog outage. */
+  catalogIndex?: () => Promise<{ templates: unknown[] }>;
+}) {
   const store = makeFakeStore();
   store.seedProject({
     id: "p",
@@ -42,7 +64,9 @@ function harness(opts?: { repoFiles?: Record<string, string> }) {
     store,
     getSource: async () => ({
       paths: Object.keys(repoFiles),
-      files: {},
+      // Eagerly-read files on the real source include harnesst-lock.json — project-context reads
+      // the lock from here, exactly as the Settings loader does.
+      files: repoFiles,
       ref: "main",
       truncated: false,
     }),
@@ -51,7 +75,8 @@ function harness(opts?: { repoFiles?: Record<string, string> }) {
     secretKeys: async () => [],
     catalog: {
       name: "fake",
-      index: async () => ({ templates: [{ id: "x" }] }) as never,
+      index: (opts?.catalogIndex ??
+        (async () => ({ templates: [{ id: "x" }] }))) as never,
       template: async () =>
         ({ manifest: { id: "x" }, files: { "a.ts": "1" } }) as never,
     },
@@ -117,7 +142,73 @@ describe("assistant authoring: project-context", () => {
       expect(ctx.stagedDrafts).toEqual([
         { path: "agent/tools/foo.ts", deletion: false },
       ]);
+      expect(ctx.marketplaceInstalls).toEqual([]);
     }
+  });
+
+  // The assistant used to have no way to tell a template-owned file from a hand-authored one, so
+  // a broken catalog template read as a repo problem and got "fixed" by hand.
+  it("names the marketplace install that owns each file, and flags a newer catalog version", async () => {
+    const { deps } = harness({
+      repoFiles: { "harnesst-lock.json": lockWith(LEGAL_ADVISOR) },
+      catalogIndex: async () => ({
+        templates: [{ id: "legal-advisor", type: "skill", version: "0.1.1" }],
+      }),
+    });
+    const ctx = await projectContext(project, deps);
+    expect(ctx.ok).toBe(true);
+    if (!ctx.ok) return;
+    expect(ctx.marketplaceInstalls).toEqual([
+      {
+        id: "legal-advisor",
+        type: "skill",
+        name: "Legal Advisor",
+        version: "0.1.0",
+        member: "ivy",
+        files: [
+          "agents/ivy/agent/skills/legal-advisor/SKILL.md",
+          "agents/ivy/agent/skills/legal-advisor/references/templates.md",
+        ],
+        catalogVersion: "0.1.1",
+        updateAvailable: true,
+      },
+    ]);
+  });
+
+  it("keeps ownership when the catalog is unreachable — only the version signal is lost", async () => {
+    const { deps } = harness({
+      repoFiles: { "harnesst-lock.json": lockWith(LEGAL_ADVISOR) },
+      catalogIndex: async () => {
+        throw new Error("catalog down");
+      },
+    });
+    const ctx = await projectContext(project, deps);
+    expect(ctx.ok).toBe(true);
+    if (!ctx.ok) return;
+    expect(ctx.marketplaceInstalls).toMatchObject([
+      {
+        id: "legal-advisor",
+        files: LEGAL_ADVISOR.files,
+        catalogVersion: null,
+        updateAvailable: false,
+      },
+    ]);
+  });
+
+  it("reads a staged install's lock draft over the branch's file", async () => {
+    const { store, deps } = harness({
+      repoFiles: { "harnesst-lock.json": lockWith([]) },
+    });
+    await store.drafts.upsert({
+      projectId: "p",
+      agentId: "m1",
+      path: "harnesst-lock.json",
+      content: lockWith(LEGAL_ADVISOR),
+    });
+    const ctx = await projectContext(project, deps);
+    expect(ctx.ok).toBe(true);
+    if (!ctx.ok) return;
+    expect(ctx.marketplaceInstalls.map((i) => i.id)).toEqual(["legal-advisor"]);
   });
 });
 

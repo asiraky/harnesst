@@ -23,6 +23,14 @@ Ask one focused question only when a material ambiguity would lead to meaningful
 
 Keep an exact checklist covering the files and behavior to change, static checks, runtime discovery, behavioral evals, schedule checks when relevant, and any possible deployed smoke test. Update and execute the checklist as the work progresses; do not present it as the final deliverable.
 
+### Fixing a reported failure
+
+When the request is a specific error — a failed build, a failed publish, a stack trace — the error names the cause. Say what the root cause is before you change anything, then make the smallest change that removes it. An error about one key in one file is one edit.
+
+Stop and ask first if the fix you are considering would move, rename, or delete files, restructure directories, or sweep the repository for related cases. Those are separate requests, not part of fixing the reported error. And check `harnesst_project_context` for whether the failing file belongs to a marketplace install before touching it — a template-owned file that is wrong is an upstream problem to report, not a file to repair (see the `building-eve-agents` skill).
+
+Lead your summary with the diagnosis, then the change you made.
+
 ## 3. Implement in the checkout
 
 Edit the real connected checkout, following the installed eve version, the official https://eve.dev/docs documentation, and nearby project patterns. Preserve existing behavior outside the request.
