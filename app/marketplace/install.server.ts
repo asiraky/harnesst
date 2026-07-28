@@ -350,8 +350,8 @@ export interface InstallPlan {
   canKeepExistingFiles: boolean;
   /**
    * Files this plan deliberately leaves byte-for-byte: occupied paths a keep-existing plan
-   * registered around (issue #177), plus install-once paths an update must not rewrite (#254).
-   * Never lock-owned, so an uninstall can't delete them.
+   * registered around (issue #177). Never lock-owned, so an uninstall can't delete them — but
+   * a template-shipped path only stays preserved until the next update, which reclaims it.
    */
   preservedFiles: string[];
   /** Non-blocking: e.g. a dependency range disagreement the reviewer should eyeball. */
@@ -495,8 +495,8 @@ export function planInstall(ctx: PlanContext): InstallPlan {
 
   // The agent root this install writes into — an existing member's, or the fresh one a new member
   // gets. Ordinary files land inside it; `harnesst/` files land at its sibling platform root
-  // (installedFilePath). Derived ONCE so both branches, the install-once mapping and the sandbox
-  // paths below all agree on where this install lives.
+  // (installedFilePath). Derived ONCE so both branches and the sandbox paths below all agree on
+  // where this install lives.
   const agentRoot =
     target.kind === "new-member" ? `agents/${target.name}/agent` : target.root;
 
@@ -646,16 +646,14 @@ export function planInstall(ctx: PlanContext): InstallPlan {
   const occupiedTemplatePaths: string[] = [];
   const preservableTemplatePaths: string[] = [];
   const preservedFiles: string[] = [];
-  // Install-once (issue #254) in FINAL repo paths — declared install-relative in the manifest, so
-  // mapped exactly the way the writes above were.
-  const installOnceTargets = new Set(
-    (manifest.installOnce ?? []).map((f) => installedFilePath(agentRoot, f)),
-  );
-  const installOncePreserved: string[] = [];
   // Paths this install PREVIOUSLY preserved (issue #177): a later repair/update re-plans WITHOUT
-  // `keepExistingFiles`, so without this the very files the register step promised to leave alone
-  // would read as foreign and block forever. Auto-preserving only these known paths keeps the
-  // guard intact for genuine new local edits (an occupied, unowned, never-preserved path).
+  // `keepExistingFiles`, so without this record the very files the register step promised to
+  // leave alone would read as foreign and block forever. The record now keeps exactly ONE
+  // promise: paths this plan does NOT ship stay preserved — the entry merely registered around
+  // them. A path the incoming template SHIPS is the template's to overwrite on an update, even
+  // one a previous install preserved. Anything wider re-preserves a stale file forever: two
+  // production agents took an update that recorded their channel wrapper here, and every later
+  // update kept resurrecting the dead file instead of replacing it.
   const previouslyPreserved = new Set(existing?.preservedFiles ?? []);
   // A new member's generated package.json is a CREATE (not a merge like an existing member's),
   // so an orphan file already at that path — a half-deleted member — must block, not be clobbered.
@@ -665,25 +663,22 @@ export function planInstall(ctx: PlanContext): InstallPlan {
   }
   for (const path of createPaths) {
     const occupied = occupiedAt(path);
-    // Install-once (issue #254), tested BEFORE the ownership short-circuit below — which is the
-    // whole point. On an update an install-once path IS lock-owned (the first install wrote it),
-    // so `owned.has(path)` would wave the overwrite through, and the lock records only the
-    // TEMPLATE's hash, which cannot tell an untouched file from a customised one. That combination
-    // is the bug: a routine version bump destroying the customer's channel code. Preserve instead —
-    // whatever occupies the path stays byte-for-byte, and the entry records it as preserved so a
-    // later uninstall doesn't delete it either. A first install (or a path the customer deleted)
-    // still writes normally: install-once means once, not never.
-    if (isUpdate && occupied && installOnceTargets.has(path)) {
-      installOncePreserved.push(path);
-      continue;
-    }
     if (owned.has(path)) continue; // ours already — overwrite is fine (update)
     if (!occupied) continue;
+    // Updates overwrite. A template-shipped path this very entry preserved before is reclaimed —
+    // written this time, lock-owned from now on. An earlier design preserved it forever
+    // (install-once, issue #254), and reversing that is deliberate: the channel template is now
+    // generic, driven by panel settings rather than hand edits, so there is nothing in the file
+    // worth keeping over the template's newer version. First installs never take this branch, and
+    // a path owned by a DIFFERENT install is never ours to reclaim — both still conflict below.
+    if (isUpdate && previouslyPreserved.has(path) && !ownedByOtherInstall.has(path)) {
+      continue;
+    }
     occupiedTemplatePaths.push(path);
     const canPreservePath =
       target.kind === "member" && !ownedByOtherInstall.has(path);
     if (canPreservePath) preservableTemplatePaths.push(path);
-    if ((ctx.keepExistingFiles || previouslyPreserved.has(path)) && canPreservePath) {
+    if (ctx.keepExistingFiles && canPreservePath) {
       preservedFiles.push(path);
     } else {
       conflicts.push(path);
@@ -692,26 +687,23 @@ export function planInstall(ctx: PlanContext): InstallPlan {
 
   // Preserve means preserve: remove the catalog write and do not claim ownership in the lock.
   // The lock still snapshots auth/secrets/capabilities, which is the registration harnesst needs to
-  // surface the code-authored connection on Deployment and provision it at deploy time. Both kinds
-  // of preservation — registered-around (issue #177) and install-once (issue #254) — share this
-  // plumbing; they differ only in what the reviewer is told.
-  const allPreserved = [...preservedFiles, ...installOncePreserved];
-  const preservedFileSet = new Set(allPreserved);
-  if (allPreserved.length > 0) {
+  // surface the code-authored connection on Deployment and provision it at deploy time.
+  const preservedFileSet = new Set(preservedFiles);
+  if (preservedFiles.length > 0) {
     for (let i = writes.length - 1; i >= 0; i -= 1) {
       if (preservedFileSet.has(writes[i].path)) writes.splice(i, 1);
     }
-  }
-  if (preservedFiles.length > 0) {
     warnings.push(
       `${preservedFiles.length} existing file${preservedFiles.length === 1 ? " was" : "s were"} kept unchanged and left unmanaged by this install.`,
     );
   }
-  if (installOncePreserved.length > 0) {
-    warnings.push(
-      `Left ${installOncePreserved.map((p) => `\`${p}\``).join(", ")} untouched — the template writes ${installOncePreserved.length === 1 ? "that file" : "those files"} on first install only, so your edits are yours.`,
-    );
-  }
+  // Preserved paths the incoming template does NOT ship stay on the record. The entry is rebuilt
+  // from scratch every plan, so dropping them here would quietly break the register-around
+  // promise: the next repair or update would read those files as foreign and block on them.
+  const carriedPreserved = [...previouslyPreserved].filter(
+    (p) => !newPaths.has(p),
+  );
+  const allPreserved = [...new Set([...preservedFiles, ...carriedPreserved])];
 
   const deletions = [
     ...new Set(
@@ -751,9 +743,10 @@ export function planInstall(ctx: PlanContext): InstallPlan {
     files: [...newPaths]
       .filter((p) => !MERGED_FILES.has(p) && !preservedFileSet.has(p))
       .sort(),
-    // Record the deliberately-preserved paths (issue #177, and install-once — issue #254) so the
-    // Settings drift check treats them as present and a later repair/update keeps preserving them
-    // instead of blocking on the very files this install promised to leave alone.
+    // Record the deliberately-preserved paths (issue #177) so the Settings drift check treats
+    // them as present and a later repair/update keeps honouring the registration instead of
+    // blocking on the very files this install promised to leave alone. Template-shipped paths
+    // never linger here: an update reclaims them (see the createPaths loop above).
     ...(allPreserved.length > 0
       ? { preservedFiles: [...allPreserved].sort() }
       : {}),
@@ -851,7 +844,7 @@ export function planInstall(ctx: PlanContext): InstallPlan {
       occupiedTemplatePaths.length > 0 &&
       preservableTemplatePaths.length === occupiedTemplatePaths.length &&
       nonFileConflictCount === 0,
-    preservedFiles: allPreserved,
+    preservedFiles,
     warnings,
     isUpdate,
     secrets: (manifest.secrets ?? []).map((s) => ({

@@ -43,8 +43,10 @@ const installEntrySchema = z.object({
    * Paths this install deliberately PRESERVED at register time (issue #177): files that already
    * existed outside the lock and were kept byte-for-byte and left UNMANAGED. They are NOT in
    * `files`, so uninstall never deletes them; recording them here lets the Settings drift check
-   * treat them as present (not missing) and lets a later repair/update keep preserving them
-   * instead of blocking on the very files the register step promised to leave alone.
+   * treat them as present (not missing) and stops a later repair/update from blocking on the very
+   * files the register step promised to leave alone. The promise is scoped to what the incoming
+   * template does NOT ship: a template-shipped path recorded here is reclaimed — overwritten and
+   * moved into `files` — by the next update (the #254 reversal: updates overwrite).
    * LOCK_VERSION stays 1 — optional, old locks parse fine.
    */
   preservedFiles: z.array(z.string().min(1)).optional(),

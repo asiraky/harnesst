@@ -242,59 +242,30 @@ describe("manifest schema", () => {
 });
 
 /**
- * The two new ownership classes of issue #254. The manifest is where a template DECLARES them —
- * platform by path convention (`harnesst/…`), install-once by field — so the rules that keep the
- * classes from overlapping belong here, before any of it becomes a file write.
+ * Platform files are the ONE remaining ownership class a template declares (issue #254), and it is
+ * declared by path convention alone — `harnesst/…` materializes beside the agent root, is rewritten
+ * on every update, and is hash-verified at publish. The install-once field is gone: a marketplace
+ * update overwrites every file a template ships, so there is nothing left for a manifest to say
+ * about ownership.
  */
-describe("manifest schema — ownership classes (issue #254)", () => {
+describe("manifest schema — platform files (issue #254)", () => {
   const CHANNEL: TemplateManifest = {
     ...VALID,
     id: "github",
     type: "channel",
-    files: ["channels/github.ts", "harnesst/github-channel.ts"],
+    files: ["channels/github.ts", "harnesst/model-hooks.ts"],
   };
 
-  it("accepts a platform file alongside an install-once wrapper", () => {
+  it("accepts a platform file by path convention", () => {
+    expect(parseManifest(CHANNEL).files).toContain("harnesst/model-hooks.ts");
+  });
+
+  it("ignores a stray installOnce field — the mechanism is gone, updates overwrite", () => {
     const parsed = parseManifest({
       ...CHANNEL,
       installOnce: ["channels/github.ts"],
-    });
-    expect(parsed.installOnce).toEqual(["channels/github.ts"]);
-    expect(parsed.files).toContain("harnesst/github-channel.ts");
-  });
-
-  it("treats installOnce as optional (every existing template omits it)", () => {
-    expect(parseManifest(CHANNEL).installOnce).toBeUndefined();
-  });
-
-  it("rejects an installOnce path the template does not ship", () => {
-    expect(() =>
-      parseManifest({ ...CHANNEL, installOnce: ["channels/slack.ts"] }),
-    ).toThrow(/must be a subset of files/);
-  });
-
-  it("rejects a platform file declared install-once (platform files are always rewritten)", () => {
-    expect(() =>
-      parseManifest({
-        ...CHANNEL,
-        installOnce: ["harnesst/github-channel.ts"],
-      }),
-    ).toThrow(/platform-owned/);
-  });
-
-  it("rejects a duplicate installOnce path", () => {
-    expect(() =>
-      parseManifest({
-        ...CHANNEL,
-        installOnce: ["channels/github.ts", "channels/github.ts"],
-      }),
-    ).toThrow(/duplicate installOnce path/);
-  });
-
-  it("still rejects traversal in an installOnce path", () => {
-    expect(() =>
-      parseManifest({ ...CHANNEL, installOnce: ["../escape.ts"] }),
-    ).toThrow();
+    } as unknown as TemplateManifest);
+    expect("installOnce" in parsed).toBe(false);
   });
 });
 

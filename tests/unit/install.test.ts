@@ -16,6 +16,7 @@ import {
   planUninstall,
   type PlanContext,
 } from "~/marketplace/install.server";
+import { platformPathsUnderCheck } from "~/marketplace/platform";
 import {
   channelIdsForEntry,
   channelSettings,
@@ -900,7 +901,7 @@ describe("planInstall — conflicts", () => {
     expect(plan.preservedFiles).toEqual([]);
   });
 
-  it("auto-preserves recorded paths on a later repair/update without keepExistingFiles", () => {
+  it("a later update RECLAIMS a registered template-shipped path instead of blocking on it", () => {
     const path = "agents/pm/agent/connections/google-sheets.ts";
     // First: register around the existing file, producing a lock entry that records the path.
     const registered = planInstall(
@@ -919,26 +920,75 @@ describe("planInstall — conflicts", () => {
       path,
     ]);
 
-    // Then: a Settings repair/update re-plans WITHOUT keepExistingFiles — the recorded path must
-    // still be preserved (not resurface as a blocking conflict), so the update never hard-fails.
-    const repaired = planInstall(
+    // Then: an update (a Settings repair re-plans the same way, WITHOUT keepExistingFiles).
+    // Preservation guards the first install only — the template ships this path, so the update
+    // overwrites the kept file and owns it from here on. Never a blocking conflict either way:
+    // the update must not hard-fail on the very file the register step recorded.
+    const updated = planInstall(
       memberCtx({
         template: sheetsConnTpl,
         repoPaths: [path],
         lock,
       }),
     );
-    expect(repaired.conflicts).toEqual([]);
-    expect(repaired.preservedFiles).toEqual([path]);
-    expect(repaired.writes.some((w) => w.path === path)).toBe(false);
+    expect(updated.conflicts).toEqual([]);
+    expect(updated.preservedFiles).toEqual([]);
+    expect(updated.writes.some((w) => w.path === path)).toBe(true);
     const nextLock = parseLock(
       JSON.parse(
-        repaired.writes.find((w) => w.path === "harnesst-lock.json")!.content,
+        updated.writes.find((w) => w.path === "harnesst-lock.json")!.content,
       ),
     );
-    expect(findInstall(nextLock, "google-sheets", "pm")!.preservedFiles).toEqual([
-      path,
-    ]);
+    const entry = findInstall(nextLock, "google-sheets", "pm")!;
+    expect(entry.files).toEqual([path]);
+    expect(entry.preservedFiles).toBeUndefined();
+  });
+
+  it("keeps preserving a registered path the incoming template does NOT ship", () => {
+    const path = "agents/pm/agent/connections/google-sheets.ts";
+    const registered = planInstall(
+      memberCtx({
+        template: sheetsConnTpl,
+        repoPaths: [path],
+        keepExistingFiles: true,
+      }),
+    );
+    const lock = parseLock(
+      JSON.parse(
+        registered.writes.find((w) => w.path === "harnesst-lock.json")!.content,
+      ),
+    );
+
+    // The next version renames its module, so the registered path is no longer a template write.
+    // The registration outlives the rename: the file is neither overwritten nor deleted, and the
+    // rebuilt entry still records it — dropping the record would turn the update after THIS one
+    // into a conflict on a file the first install promised to leave alone.
+    const renamed = planInstall(
+      memberCtx({
+        template: {
+          ...sheetsConnTpl,
+          manifest: {
+            ...sheetsConnTpl.manifest,
+            version: "0.2.0",
+            files: ["connections/google-sheets-v2.ts"],
+          },
+          files: { "connections/google-sheets-v2.ts": "export default {};\n" },
+        },
+        repoPaths: [path],
+        lock,
+      }),
+    );
+    expect(renamed.conflicts).toEqual([]);
+    expect(renamed.writes.some((w) => w.path === path)).toBe(false);
+    expect(renamed.deletions).not.toContain(path);
+    const nextLock = parseLock(
+      JSON.parse(
+        renamed.writes.find((w) => w.path === "harnesst-lock.json")!.content,
+      ),
+    );
+    expect(
+      findInstall(nextLock, "google-sheets", "pm")!.preservedFiles,
+    ).toEqual([path]);
   });
 });
 
@@ -1335,13 +1385,14 @@ describe("planInstall — composite absorbs a standalone include install (issue 
 });
 
 /**
- * The three ownership classes (issue #254). A marketplace update once overwrote two live agents'
- * customised channel code, because every lock-owned path was fair game on update and the lock
- * recorded only the TEMPLATE's hash — which cannot tell an untouched file from a customised one.
- * The fix splits ownership: platform files live outside eve's tree and are always rewritten;
- * install-once files are the customer's the moment they land. These tests are the contract.
+ * Ownership after the #254 reversal: TWO classes remain. Platform files (`harnesst/…`) live
+ * beside the agent root, are rewritten on every update and hash-verified at publish; everything
+ * else a template ships is the template's to overwrite on every update — install-once is gone,
+ * and preservation guards first installs only. The two fixtures mirror the real GitHub channel's
+ * history: 0.6.0 split the implementation into a platform file plus a preserved wrapper, and
+ * 0.7.0 folds the whole channel back into one overwritable file.
  */
-const githubChannelTpl: CatalogTemplate = {
+const platformChannelTpl: CatalogTemplate = {
   manifest: {
     id: "github",
     type: "channel",
@@ -1350,7 +1401,6 @@ const githubChannelTpl: CatalogTemplate = {
     version: "0.6.0",
     eve: ">=0.1.0",
     files: ["channels/github.ts", "harnesst/github-channel.ts"],
-    installOnce: ["channels/github.ts"],
   },
   files: {
     "channels/github.ts":
@@ -1358,6 +1408,20 @@ const githubChannelTpl: CatalogTemplate = {
     "harnesst/github-channel.ts":
       "export function harnesstGitHubChannel() {\n  return {};\n}\n",
   },
+};
+
+/** The folded 0.7.0 shape: one self-contained channel file, no platform half. */
+const foldedChannelTpl: CatalogTemplate = {
+  manifest: {
+    id: "github",
+    type: "channel",
+    name: "GitHub",
+    description: "Wake on GitHub events.",
+    version: "0.7.0",
+    eve: ">=0.1.0",
+    files: ["channels/github.ts"],
+  },
+  files: { "channels/github.ts": "export default {};\n" },
 };
 
 const WRAPPER_PATH = "agents/pm/agent/channels/github.ts";
@@ -1371,7 +1435,7 @@ function sha256(content: string): string {
 /** The lock as it looks after a first install of the channel into `pm`. */
 function installedChannelLock(): HarnesstLock {
   const first = planInstall(
-    memberCtx({ template: githubChannelTpl, packageJson: null }),
+    memberCtx({ template: platformChannelTpl, packageJson: null }),
   );
   return parseLock(
     JSON.parse(first.writes.find((w) => w.path === "harnesst-lock.json")!.content),
@@ -1381,7 +1445,7 @@ function installedChannelLock(): HarnesstLock {
 describe("planInstall — platform files (issue #254)", () => {
   it("materializes a `harnesst/` file BESIDE the agent root, never inside it", () => {
     const plan = planInstall(
-      memberCtx({ template: githubChannelTpl, packageJson: null }),
+      memberCtx({ template: platformChannelTpl, packageJson: null }),
     );
     const paths = plan.writes.map((w) => w.path);
     expect(paths).toContain(WRAPPER_PATH);
@@ -1393,7 +1457,7 @@ describe("planInstall — platform files (issue #254)", () => {
   it("maps the platform root for a single-agent repo and for a new team member", () => {
     const single = planInstall(
       memberCtx({
-        template: githubChannelTpl,
+        template: platformChannelTpl,
         packageJson: null,
         target: { kind: "member", memberName: null, root: "agent" },
       }),
@@ -1404,8 +1468,8 @@ describe("planInstall — platform files (issue #254)", () => {
 
     const newMember = planInstall({
       template: {
-        ...githubChannelTpl,
-        manifest: { ...githubChannelTpl.manifest, type: "agent" },
+        ...platformChannelTpl,
+        manifest: { ...platformChannelTpl.manifest, type: "agent" },
       },
       registry: REGISTRY,
       repoPaths: [],
@@ -1423,7 +1487,7 @@ describe("planInstall — platform files (issue #254)", () => {
     const entry = findInstall(installedChannelLock(), "github", "pm")!;
     expect(entry.platformFiles).toEqual({
       [PLATFORM_PATH]: sha256(
-        githubChannelTpl.files["harnesst/github-channel.ts"],
+        platformChannelTpl.files["harnesst/github-channel.ts"],
       ),
     });
     // The template hash is a different question and stays what it always was.
@@ -1455,97 +1519,115 @@ describe("planInstall — platform files (issue #254)", () => {
   });
 });
 
-describe("planInstall — install-once (issue #254)", () => {
-  it("writes an install-once file normally on a FIRST install and owns it", () => {
+describe("planInstall — updates overwrite (the #254 reversal)", () => {
+  /** The next lock after a plan, parsed back out of its staged `harnesst-lock.json` write. */
+  function lockAfter(plan: ReturnType<typeof planInstall>): HarnesstLock {
+    return parseLock(
+      JSON.parse(
+        plan.writes.find((w) => w.path === "harnesst-lock.json")!.content,
+      ),
+    );
+  }
+
+  it("a FIRST install writes every shipped file and owns them all", () => {
     const plan = planInstall(
-      memberCtx({ template: githubChannelTpl, packageJson: null }),
+      memberCtx({ template: platformChannelTpl, packageJson: null }),
     );
     expect(plan.writes.some((w) => w.path === WRAPPER_PATH)).toBe(true);
     expect(plan.preservedFiles).toEqual([]);
-    const entry = findInstall(
-      parseLock(
-        JSON.parse(
-          plan.writes.find((w) => w.path === "harnesst-lock.json")!.content,
-        ),
-      ),
-      "github",
-      "pm",
-    )!;
+    const entry = findInstall(lockAfter(plan), "github", "pm")!;
     expect(entry.files).toEqual([WRAPPER_PATH, PLATFORM_PATH]);
   });
 
-  it("an UPDATE leaves the occupied install-once file alone and still rewrites platform code", () => {
-    const lock = installedChannelLock();
+  it("an update overwrites a template path recorded in preservedFiles — the stuck production state", () => {
+    // Exactly what the install-once update left behind on two live agents: the wrapper sits in
+    // `preservedFiles`, not `files`. Before the narrowing, every later update re-preserved the
+    // stale file forever; the folded update must reclaim and rewrite it instead.
+    const stuck: InstallEntry = {
+      id: "github",
+      type: "channel",
+      name: "GitHub",
+      version: "0.6.0",
+      hash: "abc",
+      registry: REGISTRY,
+      member: "pm",
+      files: [PLATFORM_PATH],
+      preservedFiles: [WRAPPER_PATH],
+    };
     const plan = planInstall(
       memberCtx({
-        template: {
-          ...githubChannelTpl,
-          manifest: { ...githubChannelTpl.manifest, version: "0.7.0" },
-        },
+        template: foldedChannelTpl,
         packageJson: null,
-        lock,
+        lock: upsertInstall(emptyLock(), stuck),
         repoPaths: [WRAPPER_PATH, PLATFORM_PATH],
       }),
     );
     expect(plan.isUpdate).toBe(true);
     expect(plan.conflicts).toEqual([]);
-    // The whole point: the customer's wrapper is not in the change-set at all.
-    expect(plan.writes.some((w) => w.path === WRAPPER_PATH)).toBe(false);
-    expect(plan.preservedFiles).toEqual([WRAPPER_PATH]);
-    // ...while the platform half updates as usual.
-    expect(plan.writes.some((w) => w.path === PLATFORM_PATH)).toBe(true);
-    expect(plan.warnings.some((w) => w.includes(WRAPPER_PATH))).toBe(true);
+    expect(plan.preservedFiles).toEqual([]);
+    // The whole point of the reversal: the template's bytes land over the stale file...
+    expect(plan.writes.find((w) => w.path === WRAPPER_PATH)?.content).toBe(
+      foldedChannelTpl.files["channels/github.ts"],
+    );
+    // ...and the platform half the folded version no longer ships falls out as a deletion.
+    expect(plan.deletions).toEqual([PLATFORM_PATH]);
 
-    const entry = findInstall(
-      parseLock(
-        JSON.parse(
-          plan.writes.find((w) => w.path === "harnesst-lock.json")!.content,
-        ),
-      ),
-      "github",
-      "pm",
-    )!;
-    // Preserved, so it is no longer lock-owned — an uninstall can't delete the customer's file.
-    expect(entry.files).toEqual([PLATFORM_PATH]);
-    expect(entry.preservedFiles).toEqual([WRAPPER_PATH]);
-    expect(
-      planUninstall({
-        lock: parseLock(
-          JSON.parse(
-            plan.writes.find((w) => w.path === "harnesst-lock.json")!.content,
-          ),
-        ),
-        id: "github",
-        memberName: "pm",
-        repoPaths: [WRAPPER_PATH, PLATFORM_PATH],
-      }).deletions,
-    ).toEqual([PLATFORM_PATH]);
+    const entry = findInstall(lockAfter(plan), "github", "pm")!;
+    // Reclaimed: lock-owned again, nothing preserved, no platform files left to hash-check.
+    expect(entry.files).toEqual([WRAPPER_PATH]);
+    expect(entry.preservedFiles).toBeUndefined();
+    expect(entry.platformFiles).toBeUndefined();
   });
 
-  it("preserves an install-once path occupied only by a staged draft", () => {
+  it("an update from the split layout overwrites the owned wrapper and deletes the platform half", () => {
+    const lock = installedChannelLock(); // 0.6.0: owns both files
     const plan = planInstall(
       memberCtx({
-        template: githubChannelTpl,
+        template: foldedChannelTpl,
+        packageJson: null,
+        lock,
+        repoPaths: [WRAPPER_PATH, PLATFORM_PATH],
+      }),
+    );
+    expect(plan.conflicts).toEqual([]);
+    expect(plan.writes.some((w) => w.path === WRAPPER_PATH)).toBe(true);
+    expect(plan.deletions).toEqual([PLATFORM_PATH]);
+    const entry = findInstall(lockAfter(plan), "github", "pm")!;
+    expect(entry.files).toEqual([WRAPPER_PATH]);
+    expect(entry.platformFiles).toBeUndefined();
+  });
+
+  it("the staged platform deletion leaves the publish hash gate nothing to check", () => {
+    // The 0.6.0 entry recorded a hash for PLATFORM_PATH; the folded update's change-set deletes
+    // that file AND the lock entry that vouched for it. platformPathsUnderCheck must see the
+    // staged deletion — a gate still demanding a hash for a file the tree is about to lose would
+    // fail every publish of this update.
+    const plan = planInstall(
+      memberCtx({
+        template: foldedChannelTpl,
+        packageJson: null,
+        lock: installedChannelLock(),
+        repoPaths: [WRAPPER_PATH, PLATFORM_PATH],
+      }),
+    );
+    const drafts = [
+      ...plan.writes.map((w) => ({ path: w.path, content: w.content as string | null })),
+      ...plan.deletions.map((path) => ({ path, content: null })),
+    ];
+    expect(platformPathsUnderCheck([WRAPPER_PATH, PLATFORM_PATH], drafts)).toEqual([]);
+  });
+
+  it("an update overwrites a draft-edited template path too — a draft is not preservation", () => {
+    const plan = planInstall(
+      memberCtx({
+        template: foldedChannelTpl,
         packageJson: null,
         lock: installedChannelLock(),
         repoPaths: [PLATFORM_PATH],
         drafts: [{ path: WRAPPER_PATH, content: "// edited, unpublished\n" }],
       }),
     );
-    expect(plan.preservedFiles).toEqual([WRAPPER_PATH]);
-    expect(plan.writes.some((w) => w.path === WRAPPER_PATH)).toBe(false);
-  });
-
-  it("install-once means once, not never — a deleted wrapper is written again", () => {
-    const plan = planInstall(
-      memberCtx({
-        template: githubChannelTpl,
-        packageJson: null,
-        lock: installedChannelLock(),
-        // The customer deleted the wrapper; nothing occupies the path.
-        repoPaths: [PLATFORM_PATH],
-      }),
-    );
+    expect(plan.conflicts).toEqual([]);
     expect(plan.preservedFiles).toEqual([]);
     expect(plan.writes.some((w) => w.path === WRAPPER_PATH)).toBe(true);
   });
@@ -1744,12 +1826,11 @@ describe("channel settings in the lock (issue #254)", () => {
       "pm",
       { repos: ["a/b"], wakeOnNewIssues: true },
     ).lock;
+    // The folded 0.7.0 update overwrites the channel file and drops the platform half — the
+    // operator's wake settings must ride across untouched.
     const plan = planInstall(
       memberCtx({
-        template: {
-          ...githubChannelTpl,
-          manifest: { ...githubChannelTpl.manifest, version: "0.7.0" },
-        },
+        template: foldedChannelTpl,
         packageJson: null,
         lock: configured,
         repoPaths: [WRAPPER_PATH, PLATFORM_PATH],
