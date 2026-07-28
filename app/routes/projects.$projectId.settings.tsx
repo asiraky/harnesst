@@ -88,7 +88,12 @@ import {
   planInstall,
   planUninstall,
 } from "~/marketplace/install.server";
-import { overlayLock, renameMember, serializeLock } from "~/marketplace/lock";
+import {
+  missingOwnedFiles,
+  overlayLock,
+  renameMember,
+  serializeLock,
+} from "~/marketplace/lock";
 import { slugifyResourceName } from "~/eve/templates";
 import {
   resolveTemplate,
@@ -261,6 +266,8 @@ function buildInstalls(
   index: { id: string; type: TemplateType; version: string }[],
   resolved: Map<string, ResolvedTemplate>,
   keep: (member: string | null) => boolean,
+  /** Paths that actually exist for the reviewer: the branch tree with staged drafts applied. */
+  present: Set<string>,
 ): InstallDisplay[] {
   return lock.installs.reduce<InstallDisplay[]>((rows, entry) => {
     if (!keep(entry.member)) return rows;
@@ -285,6 +292,9 @@ function buildInstalls(
     const missingFiles =
       expectedFiles.size > 0 &&
       [...expectedFiles].some((file) => !installedFiles.has(file));
+    // Drift the lock alone can't see: a file the install OWNS that is no longer in the tree,
+    // because someone (or the assistant) moved, renamed, or deleted it.
+    const goneFromDisk = missingOwnedFiles(entry, present).length > 0;
     const expectedIncludes = template?.includes ?? [];
     const installedIncludes = entry.includes ?? [];
     const missingIncludes =
@@ -307,7 +317,7 @@ function buildInstalls(
       files: entry.files,
       depsLeft: Object.keys(entry.dependencies ?? {}),
       update,
-      repair: !update && (missingFiles || missingIncludes),
+      repair: !update && (missingFiles || missingIncludes || goneFromDisk),
     });
     return rows;
   }, []);
@@ -349,6 +359,14 @@ export const loader = (args: LoaderFunctionArgs) =>
         source.files["harnesst-lock.json"] ?? null,
         draftPaths,
       );
+      // What exists for the reviewer: the branch tree with staged drafts applied. Drafts count in
+      // both directions — a freshly-staged install owns files that are still only drafts (its lock
+      // draft is already folded into `lock` above), and a staged deletion is a file on its way out.
+      const present = new Set(source.paths);
+      for (const draft of draftPaths) {
+        if (draft.content === null) present.delete(draft.path);
+        else present.add(draft.path);
+      }
       let index: { id: string; type: TemplateType; version: string }[] = [];
       const resolvedTemplates = new Map<string, ResolvedTemplate>();
       if (lock.installs.length > 0) {
@@ -412,6 +430,7 @@ export const loader = (args: LoaderFunctionArgs) =>
             ? () => true
             : (member) =>
                 member === active?.name || (member === null && !isTeam),
+          present,
         ),
         tokens: [],
         teamMembers: [],

@@ -39,6 +39,10 @@ One path only: browse with `harnesst_catalog`, inspect the template, then call `
 
 An install lands as a pending harnesst change-set the human reviews on the Deployment tab — its files will not appear in your checkout until they publish it, so their absence right after a successful `harnesst_install` is expected; never re-create them by hand.
 
+**Installed files are managed, not yours.** `harnesst_project_context` lists every install with the paths it owns; treat those paths as belonging to the template. Don't move, rename, delete, restructure, or hand-edit them, and don't "clean up" copies of them elsewhere — the next update or repair rewrites the canonical paths and your version is left orphaned, usually breaking the build a second time.
+
+When a managed file is itself WRONG — it fails discovery or the build because of what the template shipped, not because of anything in this repo — that is a broken marketplace template, and the fix belongs upstream. Say so plainly and stop: name the file, the template, the installed version, and the exact defect, and tell the human **the template needs to be fixed by an administrator in the marketplace catalog** before it can be reinstalled. Mention `harnesst_project_context`'s `updateAvailable` if a newer version already exists (they can update the install from Settings). Never work around a broken template by editing its files, and never restructure the agent to dodge the error.
+
 ### Dependencies
 
 Prefer `fetch()` and Node built-ins — most integrations are one HTTPS call. When a real dependency is justified, add it with `npm install <pkg>` inside the right project directory (the member's own directory in a team repo) so `package.json` and `package-lock.json` update together — never hand-edit the manifests.

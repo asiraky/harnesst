@@ -23,6 +23,7 @@ import {
   emptyLock,
   installKey,
   installedKeys,
+  missingOwnedFiles,
   upsertInstall,
   type HarnesstLock,
   type InstallEntry,
@@ -521,6 +522,41 @@ function installEntry(over: {
     files: [],
   };
 }
+
+describe("missingOwnedFiles", () => {
+  // The Settings drift check compares the lock against the catalog manifest, which proves the lock
+  // is complete and nothing about the tree. A managed file moved or deleted on disk — what a
+  // hand-"fixed" install leaves behind — is only visible by comparing against the repo.
+  const entry: InstallEntry = {
+    ...installEntry({ id: "legal-advisor", type: "skill", member: "ivy" }),
+    files: [
+      "agents/ivy/agent/skills/legal-advisor/SKILL.md",
+      "agents/ivy/agent/skills/legal-advisor/references/templates.md",
+    ],
+  };
+
+  it("is empty when every owned file is in the tree", () => {
+    expect(missingOwnedFiles(entry, new Set(entry.files))).toEqual([]);
+  });
+
+  it("names the owned file someone moved out from under the lock", () => {
+    const present = new Set([
+      "agents/ivy/agent/skills/legal-advisor/references/templates.md",
+      // relocated by hand — the lock still claims the path above
+      "agents/ivy/agent/skills/legal-advisor.md",
+    ]);
+    expect(missingOwnedFiles(entry, present)).toEqual([
+      "agents/ivy/agent/skills/legal-advisor/SKILL.md",
+    ]);
+  });
+
+  it("treats a staged install as intact — its files are drafts, and drafts are in `present`", () => {
+    // The loader folds staged drafts into `present`, so an install whose change-set is not yet
+    // published is not reported as drifted.
+    expect(missingOwnedFiles(entry, new Set(entry.files))).toEqual([]);
+    expect(missingOwnedFiles(entry, new Set())).toEqual(entry.files);
+  });
+});
 
 describe("installKey", () => {
   it("joins type and id with a slash", () => {

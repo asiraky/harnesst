@@ -16,11 +16,14 @@
  */
 import path from "node:path";
 
+import semver from "semver";
+
 import type { DataStore } from "~/data/ports";
 import { listDrafts as listDraftsDefault } from "~/drafts/drafts.server";
 import { ASSISTANT_CONFIG_ROOT } from "~/eve/parse";
 import { getAgentSource } from "~/github/cached.server";
 import { readAgentFile } from "~/github/repo.server";
+import { LOCK_PATH, overlayLock } from "~/marketplace/lock";
 import {
   TEMPLATE_TYPES,
   isTemplateSlug,
@@ -134,6 +137,7 @@ export async function projectContext(
       effort: ReasoningEffort | null;
     };
     stagedDrafts: { path: string; deletion: boolean }[];
+    marketplaceInstalls: MarketplaceInstall[];
   }>
 > {
   const agents = (await deps.store.agents.listByProject(project.id)).filter(
@@ -152,6 +156,7 @@ export async function projectContext(
   );
   const bundle = await assembleBundle(project, deps);
   const drafts = await deps.listDrafts(project.id);
+  const marketplaceInstalls = await describeInstalls(project, drafts, deps);
   return {
     ok: true,
     isTeam,
@@ -171,7 +176,82 @@ export async function projectContext(
       path: d.path,
       deletion: d.content === null,
     })),
+    marketplaceInstalls,
   };
+}
+
+/** One marketplace install as the assistant sees it — provenance for the files it owns. */
+export interface MarketplaceInstall {
+  id: string;
+  type: TemplateType;
+  name: string;
+  version: string;
+  /** Owning roster member; null = the single-agent repo's root agent. */
+  member: string | null;
+  /** The repo-relative paths this install owns — the file → template mapping. */
+  files: string[];
+  /** The catalog's current version, when the catalog is reachable. */
+  catalogVersion: string | null;
+  /** True when the catalog carries a newer version than the one installed. */
+  updateAvailable: boolean;
+}
+
+/**
+ * Marketplace provenance for the assistant (issue: the legal-advisor skill shipped a frontmatter
+ * key eve rejects, and the assistant — with no idea the file was template-owned — restructured the
+ * agent's skills by hand instead of reporting a broken template).
+ *
+ * `harnesst-lock.json` has recorded the owned paths all along; nothing surfaced them to the model.
+ * Pushing them into project-context (which `instructions.md` already makes mandatory before any
+ * plan or change) means provenance is present BEFORE an approach is formed — the failure was that
+ * the model never wondered where the file came from, and a tool it must think to call can't fix a
+ * question it never asked.
+ *
+ * Lock reads follow the same overlay rule as every other surface: a staged install's lock draft
+ * wins over the branch's file. A catalog outage degrades to no version info, never an error — the
+ * ownership mapping is the load-bearing part and it comes from the repo.
+ */
+async function describeInstalls(
+  project: AuthoringProject,
+  drafts: Awaited<ReturnType<typeof listDraftsDefault>>,
+  deps: AuthoringDeps,
+): Promise<MarketplaceInstall[]> {
+  const source = await deps.getSource(project.repoInstallationId, {
+    owner: project.repoOwner,
+    repo: project.repoName,
+  });
+  const lock = overlayLock(
+    source.files[LOCK_PATH] ?? null,
+    drafts.map((d) => ({ path: d.path, content: d.content })),
+  );
+  if (lock.installs.length === 0) return [];
+
+  let index: { id: string; type: TemplateType; version: string }[] = [];
+  try {
+    index = (await deps.catalog.index()).templates;
+  } catch {
+    // Catalog unavailable — rows still carry ownership, just no update signal.
+  }
+
+  return lock.installs.map((entry) => {
+    const row = index.find((r) => r.id === entry.id && r.type === entry.type);
+    let updateAvailable = false;
+    try {
+      updateAvailable = row ? semver.gt(row.version, entry.version) : false;
+    } catch {
+      updateAvailable = false; // unparseable version on either side — say nothing.
+    }
+    return {
+      id: entry.id,
+      type: entry.type,
+      name: entry.name,
+      version: entry.version,
+      member: entry.member,
+      files: entry.files,
+      catalogVersion: row?.version ?? null,
+      updateAvailable,
+    };
+  });
 }
 
 export async function catalogOp(

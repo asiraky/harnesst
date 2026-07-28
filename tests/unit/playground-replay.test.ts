@@ -7,6 +7,7 @@ import {
 import type { Target } from "~/chat/playground.server";
 import { buildSeedContext } from "~/playground/seed";
 import { buildModelDirective } from "~/models/model-directive";
+import { buildSystemNotes } from "~/chat/system-note";
 
 function streamResponse(events: unknown[]): Response {
   const encoder = new TextEncoder();
@@ -361,6 +362,66 @@ describe("loadPlaygroundEntriesFromEve", () => {
       role: "assistant",
       text: "Retried successfully.",
     });
+  });
+
+  it("hides harnesst's per-turn system notes from the user's message", async () => {
+    const at = new Date().toISOString();
+    // The assistant surface prepends its checkout note on EVERY turn, so a note that survives the
+    // projection sits above every message the user has ever sent in that conversation.
+    const notes = buildSystemNotes([
+      "[harnesst] Your working checkout for this conversation is at /workspace/home/checkouts/jthtifwqufzu on branch harnesst/conv-jthtifwqufzu. Do ALL repo edits inside that directory with bash.",
+      "[harnesst] From your last sync: skipped logo.png (binary).",
+    ])!;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn<typeof fetch>().mockResolvedValueOnce(
+        streamResponse([
+          { type: "turn.started", data: { turnId: "turn_0" }, meta: { at } },
+          {
+            type: "message.received",
+            data: {
+              turnId: "turn_0",
+              message: `${notes}\n\nmake the button blue`,
+            },
+            meta: { at },
+          },
+          // A conversation that predates the wrapper: the same notes, sent bare.
+          { type: "turn.started", data: { turnId: "turn_1" }, meta: { at } },
+          {
+            type: "message.received",
+            data: {
+              turnId: "turn_1",
+              message:
+                "[harnesst] Your working checkout for this conversation is at /workspace/home/checkouts/jthtifwqufzu on branch harnesst/conv-jthtifwqufzu.\n\nand now make it green",
+            },
+            meta: { at },
+          },
+          {
+            type: "message.completed",
+            data: { turnId: "turn_1", message: "Done." },
+            meta: { at },
+          },
+        ]),
+      ),
+    );
+
+    const entries = await loadPlaygroundEntriesFromEve({
+      session: session({ streamIndex: 4 }),
+      target,
+    });
+
+    expect(entries[0]).toMatchObject({
+      role: "user",
+      text: "make the button blue",
+    });
+    expect(entries[1]).toMatchObject({
+      role: "user",
+      text: "and now make it green",
+    });
+    for (const entry of entries) {
+      expect(entry.text).not.toContain("[harnesst]");
+      expect(entry.text).not.toContain("harnesst:note");
+    }
   });
 
   it("surfaces a stopped or timed-out turn instead of an empty assistant reply", async () => {

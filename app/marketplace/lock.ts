@@ -224,6 +224,25 @@ export function hasChannelInstalled(
   );
 }
 
+/**
+ * The lock-owned paths of `entry` that are NOT in `present` — files the install still claims but
+ * that no longer exist in the repo, because someone moved, renamed, or deleted them. `present` is
+ * the branch tree with staged drafts applied, so a freshly-staged install (whose files are drafts,
+ * not yet published) reads as intact rather than drifted.
+ *
+ * This is drift only a disk comparison can see: matching the lock against the catalog manifest
+ * proves the LOCK is complete and says nothing about the tree, so a relocated managed file used to
+ * be invisible to the Settings drift check — the exact state a hand-"fixed" install leaves behind.
+ * `preservedFiles` are deliberately excluded here: they were never lock-owned (issue #177).
+ * Client-safe: pure, no server imports.
+ */
+export function missingOwnedFiles(
+  entry: InstallEntry,
+  present: ReadonlySet<string>,
+): string[] {
+  return entry.files.filter((file) => !present.has(file));
+}
+
 /** Stable "type/id" identity for matching a lock install against a catalog row. */
 export function installKey(type: TemplateType, id: string): string {
   return `${type}/${id}`;
