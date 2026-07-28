@@ -48,6 +48,39 @@ const installEntrySchema = z.object({
    * LOCK_VERSION stays 1 — optional, old locks parse fine.
    */
   preservedFiles: z.array(z.string().min(1)).optional(),
+  /**
+   * sha256(hex) per repo-relative path of every PLATFORM file this install materialized (issue
+   * #254) — the `harnesst/…` code sibling to the agent root that only the installer may write.
+   *
+   * This is a FILE-CONTENT hash and is deliberately distinct from `hash` above (the template's own
+   * sha1 over manifest + files). `hash` answers "which catalog version is installed?" and is blind
+   * to what happened to the bytes afterwards — which is how an update overwrote two live agents'
+   * customised channel code without anyone being able to tell customised from untouched. Publish
+   * re-hashes each `harnesst/` file on disk against this map and refuses the publish on a mismatch
+   * or an unknown platform path, so platform code can only ever arrive via a marketplace install.
+   * LOCK_VERSION stays 1 — optional, old locks parse fine.
+   */
+  platformFiles: z.record(z.string().min(1), z.string().min(1)).optional(),
+  /**
+   * Operator-set configuration for the CHANNEL this install provides (issue #254): plain
+   * key → value, projected into the deployed instance's environment at deploy time as
+   * `HARNESST_CHANNEL_<ID>_<KEY>`. It lives in the lock rather than a DB table because it is
+   * install-scoped configuration that must travel with the repo and be reviewable in the PR that
+   * changes it; and it is env rather than code because channel behaviour is configuration, never
+   * something a customer should have to edit a file to change. Absent reads as INERT — a channel
+   * with no settings must change no existing agent's behaviour.
+   *
+   * One blob per ENTRY, resolved to a channel by `channelIdsForEntry` (a bundle's only lock entry
+   * is the bundle, so a bundle-carried channel's settings live on the bundle's entry). No shipped
+   * bundle carries two channels; the day one does, this becomes a per-channel map.
+   * LOCK_VERSION stays 1 — optional, old locks parse fine.
+   */
+  settings: z
+    .record(
+      z.string().min(1),
+      z.union([z.string(), z.array(z.string()), z.boolean()]),
+    )
+    .optional(),
   /** The npm dependencies the install ASKED for (name → range) — uninstall lists these. */
   dependencies: z.record(z.string(), z.string()).optional(),
   /**
@@ -216,12 +249,121 @@ export function hasChannelInstalled(
   id: string,
   member: string | null,
 ): boolean {
-  return lock.installs.some(
-    (e) =>
-      e.member === member &&
-      ((e.id === id && e.type === "channel") ||
-        (e.includes ?? []).some((i) => i.id === id && i.type === "channel")),
+  return findChannelInstall(lock, id, member) !== undefined;
+}
+
+/**
+ * The channel template ids an install PROVIDES: itself when it is a channel template, plus every
+ * channel it bundled by reference. Both branches insist on `type === "channel"`, so a tool or hook
+ * that merely shares the name provides nothing.
+ */
+export function channelIdsForEntry(entry: InstallEntry): string[] {
+  const ids = entry.type === "channel" ? [entry.id] : [];
+  for (const include of entry.includes ?? []) {
+    if (include.type === "channel" && !ids.includes(include.id)) {
+      ids.push(include.id);
+    }
+  }
+  return ids;
+}
+
+/** The install providing channel `id` for `member` — directly or bundle-carried — if any. */
+export function findChannelInstall(
+  lock: HarnesstLock,
+  id: string,
+  member: string | null,
+): InstallEntry | undefined {
+  return lock.installs.find(
+    (e) => e.member === member && channelIdsForEntry(e).includes(id),
   );
+}
+
+/** Operator-set configuration for one channel (issue #254) — see `installEntrySchema.settings`. */
+export type ChannelSettings = NonNullable<InstallEntry["settings"]>;
+
+/**
+ * The settings currently stored for channel `id` under `member` (issue #254). Empty when the
+ * channel isn't installed OR was never configured — the caller never has to tell those apart,
+ * because both mean the same thing: inert.
+ * Client-safe: pure, no server imports.
+ */
+export function channelSettings(
+  lock: HarnesstLock,
+  id: string,
+  member: string | null,
+): ChannelSettings {
+  return findChannelInstall(lock, id, member)?.settings ?? {};
+}
+
+/**
+ * Drop settings that carry no information: an empty string, an empty list, and `false` all mean
+ * "not configured", and the channel code reads a missing env var the same way. Storing them would
+ * be pure diff noise in a file whose whole job is to be reviewable.
+ */
+function pruneSettings(settings: ChannelSettings): ChannelSettings {
+  const out: ChannelSettings = {};
+  for (const [key, value] of Object.entries(settings)) {
+    if (value === false || value === "") continue;
+    if (Array.isArray(value)) {
+      if (value.length === 0) continue;
+      out[key] = [...value];
+      continue;
+    }
+    out[key] = value;
+  }
+  return out;
+}
+
+/** Order-insensitive equality for two settings blobs (arrays compare element-wise, in order). */
+function sameSettings(a: ChannelSettings, b: ChannelSettings): boolean {
+  const ak = Object.keys(a).sort();
+  const bk = Object.keys(b).sort();
+  if (ak.length !== bk.length || ak.some((k, i) => k !== bk[i])) return false;
+  return ak.every((k) => {
+    const av = a[k];
+    const bv = b[k];
+    if (Array.isArray(av) || Array.isArray(bv)) {
+      return (
+        Array.isArray(av) &&
+        Array.isArray(bv) &&
+        av.length === bv.length &&
+        av.every((v, i) => v === bv[i])
+      );
+    }
+    return av === bv;
+  });
+}
+
+/**
+ * Rewrite the stored settings for the install providing channel `id` under `member` (issue #254 —
+ * the Deployment tab's channel settings panel). Values that mean "not configured" are dropped
+ * rather than stored blank, and an entry left with nothing loses the field entirely, so an
+ * unconfigured channel is byte-identical to one that was never touched. Other members' installs
+ * and installs providing other channels pass through untouched. Pure; returns a new lock and
+ * whether anything changed — the shape `setSelectedGroups` uses, so the route can skip staging a
+ * no-op draft.
+ */
+export function setChannelSettings(
+  lock: HarnesstLock,
+  id: string,
+  member: string | null,
+  settings: ChannelSettings,
+): { lock: HarnesstLock; changed: boolean } {
+  let changed = false;
+  const next = pruneSettings(settings);
+  const hasNext = Object.keys(next).length > 0;
+  const installs = lock.installs.map((entry) => {
+    if (entry.member !== member || !channelIdsForEntry(entry).includes(id)) {
+      return entry;
+    }
+    if (entry.settings === undefined ? !hasNext : sameSettings(entry.settings, next)) {
+      return entry;
+    }
+    changed = true;
+    const { settings: _previous, ...rest } = entry;
+    return hasNext ? { ...rest, settings: next } : rest;
+  });
+  return changed ? { lock: { ...lock, installs }, changed } : { lock, changed };
 }
 
 /**

@@ -84,6 +84,7 @@ import { fetchAgentSource, readAgentFile } from "~/github/repo.server";
 import { contextPath } from "~/lib/paths";
 import {
   catalogLocator,
+  installedFilePath,
   packageJsonPathForRoot,
   planInstall,
   planUninstall,
@@ -280,8 +281,13 @@ function buildInstalls(
       update = null;
     }
     const root = entry.member ? `agents/${entry.member}/agent` : "agent";
+    // `installedFilePath`, not string concatenation: a `harnesst/` file materializes at the
+    // PLATFORM root beside the agent root (issue #254), so looking for it inside the agent root
+    // would report every install that ships platform code as permanently missing files.
     const expectedFiles = new Set(
-      (template?.manifest.files ?? []).map((file) => `${root}/${file}`),
+      (template?.manifest.files ?? []).map((file) =>
+        installedFilePath(root, file),
+      ),
     );
     // Deliberately-preserved paths (issue #177) aren't lock-owned but DO exist on disk — count
     // them as present so a registered install isn't flagged as permanently drifted / needing repair.

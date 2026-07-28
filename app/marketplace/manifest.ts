@@ -17,6 +17,25 @@
  */
 import { z } from "zod";
 
+import { PLATFORM_ROOT } from "~/eve/parse";
+
+/**
+ * The prefix that makes a `files` entry PLATFORM-owned (issue #254). Platform ownership is a path
+ * convention, not a manifest field: a template declares it by shipping the file under `harnesst/`,
+ * and the installer materializes it at the platform root — the directory sibling to the agent root
+ * (app/eve/parse.ts), outside every path eve's discovery inspects. Platform files are rewritten on
+ * every update and hash-verified at publish; nothing else may write them.
+ */
+export const PLATFORM_FILE_PREFIX = `${PLATFORM_ROOT}/`;
+
+/** Whether a manifest `files` entry materializes at the platform root instead of the agent root. */
+export function isPlatformFile(file: string): boolean {
+  return (
+    file.startsWith(PLATFORM_FILE_PREFIX) &&
+    file.length > PLATFORM_FILE_PREFIX.length
+  );
+}
+
 /**
  * The hierarchy levels a template can target (PRD §7.8 — "turtles all the way down"). `channel`
  * and `connection` join the original four as first-class marketplace artifacts (composition): a
@@ -108,6 +127,16 @@ export const templateManifestSchema = z
    * files) — see the superRefine below.
    */
   files: z.array(relativeFilePath),
+  /**
+   * The subset of `files` this template writes on a FIRST install and never again (issue #254) —
+   * the third ownership class. Platform files (`harnesst/…`) are always rewritten; ordinary files
+   * are managed by the installer; these are handed to the customer the moment they land, so an
+   * update leaves whatever is on disk byte-for-byte. Use it for the thin wrappers a customer is
+   * *meant* to edit — `channels/github.ts` importing a platform channel factory — where the
+   * alternative is an update silently destroying their edits, which is exactly what happened.
+   * Paths are install-relative, exactly as in `files` (superRefine checks the subset rule).
+   */
+  installOnce: z.array(relativeFilePath).optional(),
   /** npm name → version range, JSON-merged into the target's package.json at install (PRD §7.8). */
   dependencies: z.record(npmName, z.string().min(1)).optional(),
   /**
@@ -235,6 +264,38 @@ export const templateManifestSchema = z
         code: z.ZodIssueCode.custom,
         path: ["includes"],
         message: "a bundle with no files must include at least one template",
+      });
+    }
+    // install-once paths must be files this template actually ships (a path it never writes can't
+    // be "written once"), and must not be platform files: `harnesst/…` is rewritten on every
+    // update by design, so declaring one install-once would freeze platform code at whatever
+    // version first landed — the two classes are mutually exclusive, not a spectrum.
+    if (m.installOnce) {
+      const shipped = new Set(m.files);
+      const seen = new Set<string>();
+      m.installOnce.forEach((p, i) => {
+        if (!shipped.has(p)) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ["installOnce", i],
+            message: `"${p}" is not in files — installOnce must be a subset of files`,
+          });
+        }
+        if (isPlatformFile(p)) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ["installOnce", i],
+            message: `"${p}" is platform-owned (${PLATFORM_FILE_PREFIX}) — platform files are always rewritten and can't be install-once`,
+          });
+        }
+        if (seen.has(p)) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ["installOnce", i],
+            message: `duplicate installOnce path "${p}"`,
+          });
+        }
+        seen.add(p);
       });
     }
     // A secret is either operator/flow-set (provisioned) or harnesst-minted (generated) — never both.

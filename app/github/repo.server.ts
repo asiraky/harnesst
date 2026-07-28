@@ -15,6 +15,7 @@
 import {
   AGENT_ROOT,
   ASSISTANT_CONFIG_ROOT,
+  PLATFORM_ROOT,
   TEAM_ROOT,
   detectAgentRoots,
   subagentDirNames,
@@ -73,10 +74,10 @@ interface RepoRef {
 }
 
 /**
- * Fetch the repo listing (under `agent/` for single-agent repos, `agents/` for teams) plus
- * known file contents — instructions.md and agent.ts for every detected agent root. Returns
- * the ref actually read and whether the git tree was truncated (very large repos), so
- * callers can surface it.
+ * Fetch the repo listing (under `agent/` for single-agent repos, `agents/` for teams, plus the
+ * `harnesst/` platform root sibling to either) plus known file contents — instructions.md and
+ * agent.ts for every detected agent root. Returns the ref actually read and whether the git tree
+ * was truncated (very large repos), so callers can surface it.
  */
 export async function fetchAgentSource(
   installationId: string | number,
@@ -101,6 +102,15 @@ export async function fetchAgentSource(
   // (detectAgentRoots ignores it), but the config editors and the assistant's own tools need to
   // see and read these files, so include them in the source tree.
   const assistantPrefix = `${ASSISTANT_CONFIG_ROOT}/`;
+  // Repo-root platform code (issue #254). A team member's `agents/<m>/harnesst/**` already rides in
+  // under `teamPrefix`, but a SINGLE-agent repo's `harnesst/**` sits beside `agent/` and would
+  // otherwise never be read — and the publish hash gate can only verify what it can see, so an
+  // out-of-band edit to a platform file would go unnoticed the moment it stopped being a draft.
+  // The trailing slash is load-bearing twice over: `harnesst-lock.json` is admitted by name above
+  // (not by this prefix), and a root file merely NAMED like the directory is not platform code.
+  // Nothing else changes — a platform root is not an agent root (`detectAgentRoots` keys off
+  // `agent/`), carries no eagerly-read files, and every path consumer filters by its own prefix.
+  const platformPrefix = `${PLATFORM_ROOT}/`;
   const paths = tree.data.tree.flatMap((e) =>
     e.type === "blob" &&
     typeof e.path === "string" &&
@@ -108,6 +118,7 @@ export async function fetchAgentSource(
       e.path === HARNESST_LOCK ||
       e.path.startsWith(agentPrefix) ||
       e.path.startsWith(teamPrefix) ||
+      e.path.startsWith(platformPrefix) ||
       e.path.startsWith(assistantPrefix))
       ? [e.path]
       : [],

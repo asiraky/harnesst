@@ -1,5 +1,5 @@
 /**
- * The generated `harnesst-model.ts` workspace module + the resolver-style `agent.ts` scaffold.
+ * The generated `harnesst/model.ts` workspace module + the resolver-style `agent.ts` scaffold.
  * Pins the shape both harnesst and the migration prompt rely on: one exported
  * `harnesstAgentModel(agentName)` used verbatim by agents and subagents (subagents pass the
  * PARENT's name), runtime resolution against `<HARNESST_MODEL_GATEWAY_URL>/model-config`, the
@@ -15,9 +15,12 @@ import {
   usesOrgModelResolver,
 } from "~/eve/agentModule";
 import {
+  isOrgModelModulePath,
+  legacyOrgModelModulePath,
   orgModelImportSpecifier,
   orgModelModulePath,
   orgModelModuleSource,
+  rewriteOrgModelImports,
   scaffoldOrgModelAgentModule,
 } from "~/eve/org-model-module";
 
@@ -54,7 +57,8 @@ describe("scaffoldOrgModelAgentModule", () => {
   it("emits a model-free agent.ts that resolves by agent name", () => {
     const source = scaffoldOrgModelAgentModule("bookkeeping");
     expect(source).toContain("model: harnesstAgentModel('bookkeeping')");
-    expect(source).toContain("from './harnesst-model'");
+    // `agent.ts` sits in the agent root; the module is that root's sibling (issue #254).
+    expect(source).toContain("from '../harnesst/model'");
     // No model id anywhere — the workspace configuration is the only source of truth.
     expect(source).not.toMatch(/anthropic|openai|openrouter|codex/);
   });
@@ -76,15 +80,70 @@ describe("scaffoldOrgModelAgentModule", () => {
 });
 
 describe("module placement helpers", () => {
-  it("places harnesst-model.ts at the member root", () => {
-    expect(orgModelModulePath("agents/bob/agent")).toBe(
+  it("places model.ts in the agent root's platform sibling, both layouts", () => {
+    expect(orgModelModulePath("agents/bob/agent")).toBe("agents/bob/harnesst/model.ts");
+    expect(orgModelModulePath("agent")).toBe("harnesst/model.ts");
+  });
+
+  it("recognizes the module's own path (the one platform file no install owns)", () => {
+    expect(isOrgModelModulePath("harnesst/model.ts")).toBe(true);
+    expect(isOrgModelModulePath("agents/bob/harnesst/model.ts")).toBe(true);
+    expect(isOrgModelModulePath("harnesst/github-channel.ts")).toBe(false);
+    expect(isOrgModelModulePath("harnesst/nested/model.ts")).toBe(false);
+    expect(isOrgModelModulePath("agent/harnesst-model.ts")).toBe(false);
+  });
+
+  it("builds the import specifier for the agent root and for subagents", () => {
+    // Every specifier climbs OUT of the agent root first — the module is its sibling.
+    expect(orgModelImportSpecifier()).toBe("../harnesst/model");
+    // subagents/<name>/agent.ts sits two directories below the agent root.
+    expect(orgModelImportSpecifier(2)).toBe("../../../harnesst/model");
+  });
+
+  it("names the legacy location the publish relocation moves away from", () => {
+    expect(legacyOrgModelModulePath("agents/bob/agent")).toBe(
       "agents/bob/agent/harnesst-model.ts",
+    );
+    expect(legacyOrgModelModulePath("agent")).toBe("agent/harnesst-model.ts");
+  });
+});
+
+describe("rewriteOrgModelImports", () => {
+  it("rewrites the agent-root and subagent specifiers to the relocated module", () => {
+    expect(
+      rewriteOrgModelImports(`import { harnesstAgentModel } from './harnesst-model';`, 0),
+    ).toBe(`import { harnesstAgentModel } from '../harnesst/model';`);
+    expect(
+      rewriteOrgModelImports(
+        `import { harnesstAgentModel } from "../../harnesst-model";`,
+        2,
+      ),
+    ).toBe(`import { harnesstAgentModel } from "../../../harnesst/model";`);
+  });
+
+  it("rewrites specifiers carrying an explicit extension", () => {
+    expect(rewriteOrgModelImports(`from './harnesst-model.js'`, 0)).toBe(
+      `from '../harnesst/model'`,
+    );
+    expect(rewriteOrgModelImports(`from './harnesst-model.ts'`, 0)).toBe(
+      `from '../harnesst/model'`,
     );
   });
 
-  it("builds the import specifier for the member root and for subagents", () => {
-    expect(orgModelImportSpecifier()).toBe("./harnesst-model");
-    // subagents/<name>/agent.ts sits two directories below the member root.
-    expect(orgModelImportSpecifier(2)).toBe("../../harnesst-model");
+  it("returns the source unchanged when nothing imports the module", () => {
+    // Callers use identity to decide whether a file needs restaging at all — so prose that
+    // merely mentions the filename must not read as an import.
+    const prose = "// harnesst-model was relocated in issue #254.\n";
+    expect(rewriteOrgModelImports(prose, 0)).toBe(prose);
+    expect(rewriteOrgModelImports("import { defineAgent } from 'eve';", 0)).toBe(
+      "import { defineAgent } from 'eve';",
+    );
+  });
+
+  it("rewrites every occurrence, not just the first", () => {
+    const source = `import a from './harnesst-model';\nimport b from './harnesst-model';\n`;
+    expect(rewriteOrgModelImports(source, 0)).toBe(
+      `import a from '../harnesst/model';\nimport b from '../harnesst/model';\n`,
+    );
   });
 });

@@ -27,10 +27,16 @@ import {
   ZOD_PACKAGE,
   ZOD_VERSION,
 } from "~/eve/agentModule";
+import { isPlatformPath, platformRootForAgentRoot } from "~/eve/parse";
 import type { ReasoningEffort } from "~/models/reasoning";
 import type { CatalogTemplate } from "~/seams/types";
-import { isTemplateSlug, type TemplateManifest } from "./manifest";
-import { templateContentHash } from "./hash.server";
+import {
+  isPlatformFile,
+  isTemplateSlug,
+  PLATFORM_FILE_PREFIX,
+  type TemplateManifest,
+} from "./manifest";
+import { platformFileHash, templateContentHash } from "./hash.server";
 import type { ResolvedAuth, ResolvedInclude } from "./compose.server";
 import {
   findInstall,
@@ -48,6 +54,25 @@ type SandboxSetup = NonNullable<TemplateManifest["sandbox"]>;
 
 function rootForMember(member: string | null): string {
   return member ? `agents/${member}/agent` : "agent";
+}
+
+/**
+ * The final repo path for one install-relative manifest file. Everything lands under the agent
+ * root exactly as it always has, EXCEPT an entry shipped under `harnesst/`: that materializes at
+ * the PLATFORM root beside the agent root (issue #254), because eve claims every directory it
+ * knows under `agent/` and hard-errors on any it doesn't, so platform-owned code has nowhere to
+ * live inside the agent tree.
+ *
+ * Exported because the Settings drift check has to look for installed files where the installer
+ * actually put them: root derivation is already duplicated across this module and that route, and
+ * a second, divergent platform rule would make every install with platform files read as
+ * permanently drifted. One mapping, one place.
+ */
+export function installedFilePath(agentRoot: string, file: string): string {
+  if (!isPlatformFile(file)) return `${agentRoot}/${file}`;
+  return `${platformRootForAgentRoot(agentRoot)}/${file.slice(
+    PLATFORM_FILE_PREFIX.length,
+  )}`;
 }
 
 function sandboxModulePath(root: string): string {
@@ -171,6 +196,38 @@ function renderSandboxAddon(setup: SandboxSetup): string {
   return lines.join("\n");
 }
 
+/**
+ * Sandbox add-on files sitting under `<root>/sandbox/addons/` that NO install owns (issue #254).
+ *
+ * The managed sandbox module's imports are derived PURELY from the lock (`sandboxEntries`), so a
+ * hand-authored add-on is invisible to regeneration: rewriting `sandbox/sandbox.ts` drops its
+ * import without a word and the add-on silently stops running — which is precisely how a live
+ * agent lost its browser bootstrap. The planner can't adopt such a file (it has no provenance, no
+ * version, nothing to update from), so the honest move is to name it in `warnings` at the moment
+ * the module is regenerated. `deletions` are excluded: a file this very plan removes (an absorbed
+ * install's add-on) is not an orphan.
+ */
+function orphanedSandboxAddons(
+  root: string,
+  managedIds: string[],
+  ctx: Pick<PlanContext, "repoPaths" | "drafts">,
+  deletions: ReadonlySet<string>,
+): string[] {
+  const prefix = `${root}/sandbox/addons/`;
+  const isAddon = (path: string) =>
+    path.startsWith(prefix) && !path.slice(prefix.length).includes("/");
+  const present = new Set(ctx.repoPaths.filter(isAddon));
+  for (const draft of ctx.drafts) {
+    if (!isAddon(draft.path)) continue;
+    if (draft.content === null) present.delete(draft.path);
+    else present.add(draft.path);
+  }
+  const managed = new Set(managedIds.map((id) => sandboxAddonPath(root, id)));
+  return [...present]
+    .filter((path) => !managed.has(path) && !deletions.has(path))
+    .sort();
+}
+
 function sandboxEntries(lock: HarnesstLock, member: string | null) {
   return lock.installs
     .filter((entry) => entry.member === member && hasSandboxWork(entry.sandbox))
@@ -291,7 +348,11 @@ export interface InstallPlan {
   conflicts: string[];
   /** True when every blocker is an occupied template path that can be preserved during register. */
   canKeepExistingFiles: boolean;
-  /** Occupied custom files preserved by a keep-existing plan; these are never lock-owned. */
+  /**
+   * Files this plan deliberately leaves byte-for-byte: occupied paths a keep-existing plan
+   * registered around (issue #177), plus install-once paths an update must not rewrite (#254).
+   * Never lock-owned, so an uninstall can't delete them.
+   */
   preservedFiles: string[];
   /** Non-blocking: e.g. a dependency range disagreement the reviewer should eyeball. */
   warnings: string[];
@@ -432,6 +493,13 @@ export function planInstall(ctx: PlanContext): InstallPlan {
   let member: string | null;
   let fileWrites: Array<{ path: string; content: string }>;
 
+  // The agent root this install writes into — an existing member's, or the fresh one a new member
+  // gets. Ordinary files land inside it; `harnesst/` files land at its sibling platform root
+  // (installedFilePath). Derived ONCE so both branches, the install-once mapping and the sandbox
+  // paths below all agree on where this install lives.
+  const agentRoot =
+    target.kind === "new-member" ? `agents/${target.name}/agent` : target.root;
+
   if (target.kind === "new-member") {
     member = target.name;
     if (!isTemplateSlug(target.name)) {
@@ -443,9 +511,8 @@ export function planInstall(ctx: PlanContext): InstallPlan {
         `An agent named "${target.name}" already exists — pick another name, or install into it instead.`,
       );
     }
-    const dir = `agents/${target.name}/agent`;
     fileWrites = manifest.files.map((f) => ({
-      path: `${dir}/${f}`,
+      path: installedFilePath(agentRoot, f),
       content:
         manifest.type === "agent" && f === "agent.ts" && ctx.model
           ? setModel(template.files[f], ctx.model, { effort: ctx.effort })
@@ -453,7 +520,7 @@ export function planInstall(ctx: PlanContext): InstallPlan {
     }));
     if (hasSandboxWork(manifest.sandbox)) {
       fileWrites.push({
-        path: sandboxAddonPath(dir, manifest.id),
+        path: sandboxAddonPath(agentRoot, manifest.id),
         content: renderSandboxAddon(manifest.sandbox),
       });
     }
@@ -470,7 +537,7 @@ export function planInstall(ctx: PlanContext): InstallPlan {
   } else {
     member = target.memberName;
     fileWrites = manifest.files.map((f) => ({
-      path: `${target.root}/${f}`,
+      path: installedFilePath(agentRoot, f),
       content:
         manifest.type === "agent" && f === "agent.ts" && ctx.model
           ? setModel(template.files[f], ctx.model, { effort: ctx.effort })
@@ -478,7 +545,7 @@ export function planInstall(ctx: PlanContext): InstallPlan {
     }));
     if (hasSandboxWork(manifest.sandbox)) {
       fileWrites.push({
-        path: sandboxAddonPath(target.root, manifest.id),
+        path: sandboxAddonPath(agentRoot, manifest.id),
         content: renderSandboxAddon(manifest.sandbox),
       });
     }
@@ -569,6 +636,12 @@ export function planInstall(ctx: PlanContext): InstallPlan {
   const occupiedTemplatePaths: string[] = [];
   const preservableTemplatePaths: string[] = [];
   const preservedFiles: string[] = [];
+  // Install-once (issue #254) in FINAL repo paths — declared install-relative in the manifest, so
+  // mapped exactly the way the writes above were.
+  const installOnceTargets = new Set(
+    (manifest.installOnce ?? []).map((f) => installedFilePath(agentRoot, f)),
+  );
+  const installOncePreserved: string[] = [];
   // Paths this install PREVIOUSLY preserved (issue #177): a later repair/update re-plans WITHOUT
   // `keepExistingFiles`, so without this the very files the register step promised to leave alone
   // would read as foreign and block forever. Auto-preserving only these known paths keeps the
@@ -581,10 +654,23 @@ export function planInstall(ctx: PlanContext): InstallPlan {
     createPaths.push(`agents/${target.name}/package.json`);
   }
   for (const path of createPaths) {
-    if (owned.has(path)) continue; // ours already — overwrite is fine (update)
     const occupiedInRepo = ctx.repoPaths.includes(path);
     const occupiedByDraft = draftAt.has(path) && draftAt.get(path) !== null;
-    if (!occupiedInRepo && !occupiedByDraft) continue;
+    const occupied = occupiedInRepo || occupiedByDraft;
+    // Install-once (issue #254), tested BEFORE the ownership short-circuit below — which is the
+    // whole point. On an update an install-once path IS lock-owned (the first install wrote it),
+    // so `owned.has(path)` would wave the overwrite through, and the lock records only the
+    // TEMPLATE's hash, which cannot tell an untouched file from a customised one. That combination
+    // is the bug: a routine version bump destroying the customer's channel code. Preserve instead —
+    // whatever occupies the path stays byte-for-byte, and the entry records it as preserved so a
+    // later uninstall doesn't delete it either. A first install (or a path the customer deleted)
+    // still writes normally: install-once means once, not never.
+    if (isUpdate && occupied && installOnceTargets.has(path)) {
+      installOncePreserved.push(path);
+      continue;
+    }
+    if (owned.has(path)) continue; // ours already — overwrite is fine (update)
+    if (!occupied) continue;
     occupiedTemplatePaths.push(path);
     const canPreservePath =
       target.kind === "member" && !ownedByOtherInstall.has(path);
@@ -598,14 +684,24 @@ export function planInstall(ctx: PlanContext): InstallPlan {
 
   // Preserve means preserve: remove the catalog write and do not claim ownership in the lock.
   // The lock still snapshots auth/secrets/capabilities, which is the registration harnesst needs to
-  // surface the code-authored connection on Deployment and provision it at deploy time.
-  const preservedFileSet = new Set(preservedFiles);
-  if (preservedFiles.length > 0) {
+  // surface the code-authored connection on Deployment and provision it at deploy time. Both kinds
+  // of preservation — registered-around (issue #177) and install-once (issue #254) — share this
+  // plumbing; they differ only in what the reviewer is told.
+  const allPreserved = [...preservedFiles, ...installOncePreserved];
+  const preservedFileSet = new Set(allPreserved);
+  if (allPreserved.length > 0) {
     for (let i = writes.length - 1; i >= 0; i -= 1) {
       if (preservedFileSet.has(writes[i].path)) writes.splice(i, 1);
     }
+  }
+  if (preservedFiles.length > 0) {
     warnings.push(
       `${preservedFiles.length} existing file${preservedFiles.length === 1 ? " was" : "s were"} kept unchanged and left unmanaged by this install.`,
+    );
+  }
+  if (installOncePreserved.length > 0) {
+    warnings.push(
+      `Left ${installOncePreserved.map((p) => `\`${p}\``).join(", ")} untouched — the template writes ${installOncePreserved.length === 1 ? "that file" : "those files"} on first install only, so your edits are yours.`,
     );
   }
 
@@ -618,6 +714,22 @@ export function planInstall(ctx: PlanContext): InstallPlan {
   ];
 
   // ── 3. The lock write — always. files exclude package.json / harnesst-lock.json (they're merges). ──
+  // Per-file content hashes for the PLATFORM files this install actually wrote (issue #254), keyed
+  // by final repo path and sorted so the lock diff is driven by content, not iteration order. Only
+  // files we wrote appear: a preserved path's bytes aren't ours to vouch for.
+  const platformFiles = Object.fromEntries(
+    fileWrites
+      .filter((w) => isPlatformPath(w.path) && !preservedFileSet.has(w.path))
+      .map((w) => [w.path, platformFileHash(w.content)] as const)
+      .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)),
+  );
+  // Operator-set channel settings survive an update (issue #254). The entry is rebuilt from the
+  // manifest every time, so anything the OPERATOR set rather than the template declared has to be
+  // carried across explicitly — otherwise bumping a bundle's version silently reverts the channel
+  // to inert, which looks exactly like the agent going quiet for no reason. An absorbed standalone
+  // install's settings come along too: the composite takes over that install, configuration and all.
+  const carriedSettings =
+    existing?.settings ?? absorbed.find((e) => e.settings)?.settings;
   const entry: InstallEntry = {
     id: manifest.id,
     type: manifest.type,
@@ -631,11 +743,14 @@ export function planInstall(ctx: PlanContext): InstallPlan {
     files: [...newPaths]
       .filter((p) => !MERGED_FILES.has(p) && !preservedFileSet.has(p))
       .sort(),
-    // Record the deliberately-preserved paths (issue #177) so the Settings drift check treats
-    // them as present and a later repair/update auto-preserves them instead of blocking.
-    ...(preservedFiles.length > 0
-      ? { preservedFiles: [...preservedFiles].sort() }
+    // Record the deliberately-preserved paths (issue #177, and install-once — issue #254) so the
+    // Settings drift check treats them as present and a later repair/update keeps preserving them
+    // instead of blocking on the very files this install promised to leave alone.
+    ...(allPreserved.length > 0
+      ? { preservedFiles: [...allPreserved].sort() }
       : {}),
+    ...(Object.keys(platformFiles).length > 0 ? { platformFiles } : {}),
+    ...(carriedSettings ? { settings: carriedSettings } : {}),
     ...(manifest.dependencies ? { dependencies: manifest.dependencies } : {}),
     // Record composition provenance so Settings/uninstall can see what a parent bundled.
     ...(template.includes && template.includes.length > 0
@@ -709,6 +824,17 @@ export function planInstall(ctx: PlanContext): InstallPlan {
         member,
       ),
     });
+    // Regenerating the module is the moment an unowned add-on disappears (issue #254) — say so.
+    for (const orphan of orphanedSandboxAddons(
+      rootForMember(member),
+      nextSandboxEntries.map((e) => e.id),
+      ctx,
+      new Set(deletions),
+    )) {
+      warnings.push(
+        `\`${orphan}\` isn't owned by any install, so the regenerated \`${sbModulePath}\` no longer imports it and it will stop running. Install it from the marketplace instead of hand-authoring it.`,
+      );
+    }
   }
 
   return {
@@ -720,7 +846,7 @@ export function planInstall(ctx: PlanContext): InstallPlan {
       occupiedTemplatePaths.length > 0 &&
       preservableTemplatePaths.length === occupiedTemplatePaths.length &&
       nonFileConflictCount === 0,
-    preservedFiles,
+    preservedFiles: allPreserved,
     warnings,
     isUpdate,
     secrets: (manifest.secrets ?? []).map((s) => ({

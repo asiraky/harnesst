@@ -1,3 +1,9 @@
+// A frozen snapshot of an agent.ts as it exists in customer repos: harnesst's provider router and
+// playground directive selector, checked in and then aged. `setModel` must upgrade a module in
+// this shape in place — the regression it guards is a second router appended beside the first.
+//
+// Kept as .txt, not .ts: it imports `eve` and the `@ai-sdk/*` providers, none of which are
+// harnesst dependencies, so tsconfig's `**/*` include would fail on a .ts extension.
 import { createAnthropic } from "@ai-sdk/anthropic";
 import { createOpenAI } from "@ai-sdk/openai";
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible";

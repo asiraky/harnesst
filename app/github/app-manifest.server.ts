@@ -264,6 +264,11 @@ export function appInstallUrl(slug: string): string {
 
 /** One place the agent's App is installed — an account (user or org) and its repo grant. */
 export interface AppInstallation {
+  /**
+   * GitHub's installation id. The listing itself doesn't need it — `listAppRepositories` does:
+   * repository NAMES are only readable through an installation token, which is minted per id.
+   */
+  id: number;
   /** The account's login (user or organization name). */
   account: string;
   accountType: "User" | "Organization" | string;
@@ -320,16 +325,108 @@ export async function listAppInstallations(
     throw new Error(`GitHub rejected the App installations listing (HTTP ${res.status}).`);
   }
   const body = (await res.json()) as Array<{
+    id?: number;
     account: { login?: string; type?: string } | null;
     repository_selection?: string;
     html_url?: string;
   }>;
   return body.map((i) => ({
+    id: i.id ?? 0,
     account: i.account?.login ?? "(unknown)",
     accountType: i.account?.type ?? "User",
     repositorySelection: i.repository_selection ?? "selected",
     htmlUrl: i.html_url ?? "",
   }));
+}
+
+/**
+ * The `owner/repo` names one installation covers — the repository picker's options.
+ *
+ * Two hops, because GitHub splits the answer across two credentials: the App JWT can list
+ * installations and their GRANT ("all" / "selected") but never the names, and the names sit behind
+ * an INSTALLATION token. Same App credentials as everything else here (the agent's, never
+ * harnesst's Connect App), so a repo the agent can't work on can't appear in the picker either.
+ *
+ * One page of 100. An installation wider than that truncates, which costs nothing that matters —
+ * the panel keeps a typed field beside the picker precisely so a repo it can't offer is still
+ * enterable.
+ */
+export async function listInstallationRepositories(
+  creds: { appId: string; privateKey: string },
+  installationId: number,
+  fetchImpl: typeof fetch = fetch,
+  now: Date = new Date(),
+): Promise<string[]> {
+  const headers = (auth: string) => ({
+    accept: "application/vnd.github+json",
+    authorization: `Bearer ${auth}`,
+    "x-github-api-version": "2022-11-28",
+  });
+  const tokenRes = await fetchImpl(
+    `https://api.github.com/app/installations/${encodeURIComponent(String(installationId))}/access_tokens`,
+    {
+      method: "POST",
+      headers: headers(createAppJwt(creds.appId, creds.privateKey, now)),
+      signal: AbortSignal.timeout(5_000),
+    },
+  );
+  if (!tokenRes.ok) {
+    throw new Error(
+      `GitHub refused an installation token for installation ${installationId} (HTTP ${tokenRes.status}).`,
+    );
+  }
+  const { token } = (await tokenRes.json()) as { token?: string };
+  if (!token) throw new Error("GitHub's installation-token response carried no token.");
+  const res = await fetchImpl(
+    "https://api.github.com/installation/repositories?per_page=100",
+    { headers: headers(token), signal: AbortSignal.timeout(5_000) },
+  );
+  if (!res.ok) {
+    throw new Error(
+      `GitHub rejected the installation repositories listing (HTTP ${res.status}).`,
+    );
+  }
+  const body = (await res.json()) as {
+    repositories?: Array<{ full_name?: string }>;
+  };
+  return (body.repositories ?? [])
+    .map((r) => r.full_name)
+    .filter((name): name is string => typeof name === "string" && name !== "");
+}
+
+/**
+ * Every repository the agent's App can see, across every account it is installed on — deduped and
+ * sorted so the picker's order doesn't churn between loads.
+ *
+ * Best-effort BY CONSTRUCTION: the picker is a convenience over a field that stays typeable, so an
+ * installation that can't be read costs its own repositories and nothing else, and a total failure
+ * returns an empty list which the panel reads as "no picker". This must never throw — it runs
+ * inside the deployments loader, where a GitHub hiccup rendering the whole tab unusable would be a
+ * far worse failure than an unpicked repository name.
+ */
+export async function listAppRepositories(
+  creds: { appId: string; privateKey: string },
+  installations: Array<{ id: number }>,
+  fetchImpl: typeof fetch = fetch,
+  now: Date = new Date(),
+): Promise<string[]> {
+  const names = new Set<string>();
+  for (const installation of installations) {
+    if (!installation.id) continue;
+    try {
+      for (const name of await listInstallationRepositories(
+        creds,
+        installation.id,
+        fetchImpl,
+        now,
+      )) {
+        names.add(name);
+      }
+    } catch {
+      // Unreadable installation (revoked, suspended, rate-limited) — skip it, keep the rest.
+    }
+  }
+  return [...names].sort();
 }
 
 /* ─────────────────────── slug/App-ID uniqueness (issue #26) ─────────────────────── */

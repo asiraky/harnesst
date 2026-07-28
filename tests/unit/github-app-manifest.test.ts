@@ -17,6 +17,8 @@ import {
   findAppCredentialConflict,
   findStoredAppCredentialConflict,
   listAppInstallations,
+  listAppRepositories,
+  listInstallationRepositories,
   manifestSubmitUrl,
   signManifestState,
   verifyManifestState,
@@ -103,11 +105,13 @@ describe("App installations (Deployment card status)", () => {
       return new Response(
         JSON.stringify([
           {
+            id: 1,
             account: { login: "acme-org", type: "Organization" },
             repository_selection: "all",
             html_url: "https://github.com/organizations/acme-org/settings/installations/1",
           },
           {
+            id: 2,
             account: { login: "jane", type: "User" },
             repository_selection: "selected",
             html_url: "https://github.com/settings/installations/2",
@@ -126,12 +130,14 @@ describe("App installations (Deployment card status)", () => {
     expect(captured!.auth).toMatch(/^Bearer [\w-]+\.[\w-]+\.[\w-]+$/);
     expect(installations).toEqual([
       {
+        id: 1,
         account: "acme-org",
         accountType: "Organization",
         repositorySelection: "all",
         htmlUrl: "https://github.com/organizations/acme-org/settings/installations/1",
       },
       {
+        id: 2,
         account: "jane",
         accountType: "User",
         repositorySelection: "selected",
@@ -145,6 +151,98 @@ describe("App installations (Deployment card status)", () => {
     await expect(
       listAppInstallations({ appId: "12345", privateKey: pem }, fetchImpl),
     ).rejects.toThrow(/HTTP 401/);
+  });
+});
+
+describe("App repositories (the settings panel's picker)", () => {
+  const { privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
+  const pem = privateKey.export({ type: "pkcs1", format: "pem" }).toString();
+  const creds = { appId: "12345", privateKey: pem };
+
+  /** A fetch that answers the token mint per installation id, then that installation's repos. */
+  function githubStub(
+    repos: Record<number, string[] | number>,
+  ): { fetchImpl: typeof fetch; calls: Array<{ url: string; auth: string }> } {
+    const calls: Array<{ url: string; auth: string }> = [];
+    let current = 0;
+    const fetchImpl = (async (url: RequestInfo | URL, init?: RequestInit) => {
+      const href = String(url);
+      calls.push({
+        url: href,
+        auth: (init?.headers as Record<string, string>).authorization,
+      });
+      const mint = href.match(/\/app\/installations\/(\d+)\/access_tokens$/);
+      if (mint) {
+        current = Number(mint[1]);
+        const answer = repos[current];
+        // A number stands for "GitHub refused this installation" — status, not repositories.
+        if (typeof answer === "number") return new Response("{}", { status: answer });
+        return new Response(JSON.stringify({ token: `ghs_${current}` }), { status: 200 });
+      }
+      const answer = repos[current];
+      return new Response(
+        JSON.stringify({
+          repositories: (Array.isArray(answer) ? answer : []).map((full_name) => ({
+            full_name,
+          })),
+        }),
+        { status: 200 },
+      );
+    }) as typeof fetch;
+    return { fetchImpl, calls };
+  }
+
+  it("mints an installation token and lists that installation's full names", async () => {
+    const { fetchImpl, calls } = githubStub({ 7: ["acme/site", "acme/api"] });
+
+    const names = await listInstallationRepositories(creds, 7, fetchImpl);
+
+    expect(names).toEqual(["acme/site", "acme/api"]);
+    expect(calls[0].url).toBe(
+      "https://api.github.com/app/installations/7/access_tokens",
+    );
+    // The App JWT can mint the token but cannot read the names; the installation token reads them.
+    expect(calls[0].auth).toMatch(/^Bearer [\w-]+\.[\w-]+\.[\w-]+$/);
+    expect(calls[1].url).toBe(
+      "https://api.github.com/installation/repositories?per_page=100",
+    );
+    expect(calls[1].auth).toBe("Bearer ghs_7");
+  });
+
+  it("fails loudly on a refused token (the aggregate is what degrades, not this)", async () => {
+    const { fetchImpl } = githubStub({ 7: 403 });
+    await expect(listInstallationRepositories(creds, 7, fetchImpl)).rejects.toThrow(
+      /HTTP 403/,
+    );
+  });
+
+  it("unions every installation, deduped and sorted", async () => {
+    const { fetchImpl } = githubStub({
+      1: ["acme/site", "acme/api"],
+      2: ["jane/notes", "acme/site"],
+    });
+
+    expect(
+      await listAppRepositories(creds, [{ id: 1 }, { id: 2 }], fetchImpl),
+    ).toEqual(["acme/api", "acme/site", "jane/notes"]);
+  });
+
+  it("keeps the readable installations when one is refused", async () => {
+    // Degrade, never break: the picker is a convenience over a field that stays typeable.
+    const { fetchImpl } = githubStub({ 1: 403, 2: ["jane/notes"] });
+
+    expect(
+      await listAppRepositories(creds, [{ id: 1 }, { id: 2 }], fetchImpl),
+    ).toEqual(["jane/notes"]);
+  });
+
+  it("returns nothing — and throws nothing — when the App is installed nowhere or GitHub is down", async () => {
+    expect(await listAppRepositories(creds, [], githubStub({}).fetchImpl)).toEqual([]);
+
+    const exploding = (async () => {
+      throw new Error("ECONNRESET");
+    }) as typeof fetch;
+    expect(await listAppRepositories(creds, [{ id: 1 }], exploding)).toEqual([]);
   });
 });
 

@@ -242,6 +242,63 @@ describe("manifest schema", () => {
 });
 
 /**
+ * The two new ownership classes of issue #254. The manifest is where a template DECLARES them —
+ * platform by path convention (`harnesst/…`), install-once by field — so the rules that keep the
+ * classes from overlapping belong here, before any of it becomes a file write.
+ */
+describe("manifest schema — ownership classes (issue #254)", () => {
+  const CHANNEL: TemplateManifest = {
+    ...VALID,
+    id: "github",
+    type: "channel",
+    files: ["channels/github.ts", "harnesst/github-channel.ts"],
+  };
+
+  it("accepts a platform file alongside an install-once wrapper", () => {
+    const parsed = parseManifest({
+      ...CHANNEL,
+      installOnce: ["channels/github.ts"],
+    });
+    expect(parsed.installOnce).toEqual(["channels/github.ts"]);
+    expect(parsed.files).toContain("harnesst/github-channel.ts");
+  });
+
+  it("treats installOnce as optional (every existing template omits it)", () => {
+    expect(parseManifest(CHANNEL).installOnce).toBeUndefined();
+  });
+
+  it("rejects an installOnce path the template does not ship", () => {
+    expect(() =>
+      parseManifest({ ...CHANNEL, installOnce: ["channels/slack.ts"] }),
+    ).toThrow(/must be a subset of files/);
+  });
+
+  it("rejects a platform file declared install-once (platform files are always rewritten)", () => {
+    expect(() =>
+      parseManifest({
+        ...CHANNEL,
+        installOnce: ["harnesst/github-channel.ts"],
+      }),
+    ).toThrow(/platform-owned/);
+  });
+
+  it("rejects a duplicate installOnce path", () => {
+    expect(() =>
+      parseManifest({
+        ...CHANNEL,
+        installOnce: ["channels/github.ts", "channels/github.ts"],
+      }),
+    ).toThrow(/duplicate installOnce path/);
+  });
+
+  it("still rejects traversal in an installOnce path", () => {
+    expect(() =>
+      parseManifest({ ...CHANNEL, installOnce: ["../escape.ts"] }),
+    ).toThrow();
+  });
+});
+
+/**
  * The content-hash rule, re-implemented from marketplace/scripts/build-index.mjs. If either
  * drifts, the seed test below fails — which is exactly the guarantee we want.
  */
@@ -339,144 +396,122 @@ describe("fixture catalog (the real in-repo seed)", () => {
 });
 
 describe("composition against the real seed", () => {
-  it("resolves the engineer agent, materializing the bundled GitHub + Discord channels and send tool", async () => {
-    const resolved = await resolveTemplate(fixtureCatalog, "agent", "engineer");
+  // The Google Sheets bundle is a real multi-include template, so it carries the composition
+  // guarantee end to end: the resolved file set is exactly the union its manifest declares, the
+  // parent's hash is its own index row, and every include reports its own index-row hash in
+  // manifest order — the provenance the Settings drift check reads back out of the lock.
+  it("resolves the Google Sheets bundle, materializing the connector and its usage skill", async () => {
+    const resolved = await resolveTemplate(
+      fixtureCatalog,
+      "bundle",
+      "google-sheets-bundle",
+    );
 
-    // The GitHub + Discord channels and the outbound tool are flattened into the agent's file set.
     expect(new Set(Object.keys(resolved.files))).toEqual(
       new Set(resolved.manifest.files),
     );
-    expect(Object.keys(resolved.files)).toContain("channels/github.ts");
-    expect(Object.keys(resolved.files)).toContain("channels/discord.ts");
     expect(Object.keys(resolved.files)).toContain(
-      "tools/discord-send-message.ts",
+      "connections/google-sheets.ts",
     );
-    expect(resolved.files["channels/github.ts"]).toContain(
-      'from "eve/channels/github"',
+    expect(Object.keys(resolved.files)).toContain(
+      "data/google-sheets.openapi.json",
     );
-    expect(resolved.files["channels/discord.ts"]).toContain(
-      'from "eve/channels/discord"',
+    expect(Object.keys(resolved.files)).toContain("skills/google-sheets.md");
+
+    // The connector's provisioned secrets union into the bundle, which declares none itself.
+    const secretNames = (resolved.manifest.secrets ?? []).map((s) => s.name);
+    expect(secretNames).toEqual(
+      expect.arrayContaining([
+        "GOOGLE_OAUTH_CLIENT_ID",
+        "GOOGLE_OAUTH_CLIENT_SECRET",
+        "GOOGLE_OAUTH_REFRESH_TOKEN",
+      ]),
     );
-    expect(resolved.files["channels/discord.ts"]).toContain(
-      "discordContinuationToken",
-    );
-    expect(resolved.files["channels/discord.ts"]).toContain(
-      "renderInputRequestComponents",
-    );
-    expect(resolved.files["channels/discord.ts"]).toContain(
-      "splitDiscordMessageContent",
-    );
-    expect(resolved.files["channels/discord.ts"]).toContain(
-      'async "input.requested"(event, channel)',
-    );
-    expect(resolved.files["channels/discord.ts"]).toMatch(
+
+    const index = await fixtureCatalog.index();
+    const bundleRow = index.templates.find(
+      (t) => t.type === "bundle" && t.id === "google-sheets-bundle",
+    )!;
+    const connectionRow = index.templates.find(
+      (t) => t.type === "connection" && t.id === "google-sheets",
+    )!;
+    const skillRow = index.templates.find(
+      (t) => t.type === "skill" && t.id === "google-sheets-skill",
+    )!;
+    expect(resolved.hash).toBe(bundleRow.hash);
+    expect(resolved.includes).toEqual([
+      {
+        id: "google-sheets",
+        type: "connection",
+        name: "Google Sheets",
+        version: connectionRow.version,
+        hash: connectionRow.hash,
+      },
+      {
+        id: "google-sheets-skill",
+        type: "skill",
+        name: "Google Sheets usage",
+        version: skillRow.version,
+        hash: skillRow.hash,
+      },
+    ]);
+  });
+
+  // The Discord channel's behaviour is pinned against the real seed file, not a fixture: these
+  // are the exact strings a customer's repo receives, and every one of them is a bug we shipped.
+  it("materializes the Discord channel with its question, reply and typing plumbing", async () => {
+    const resolved = await resolveTemplate(fixtureCatalog, "channel", "discord");
+    const source = resolved.files["channels/discord.ts"];
+
+    expect(source).toContain('from "eve/channels/discord"');
+    expect(source).toContain("discordContinuationToken");
+    expect(source).toContain("renderInputRequestComponents");
+    expect(source).toContain("splitDiscordMessageContent");
+    expect(source).toContain('async "input.requested"(event, channel)');
+    expect(source).toMatch(
       /channel\.setContinuationToken\(\s*discordContinuationToken\(/,
     );
-    expect(resolved.files["channels/discord.ts"]).toContain(
+    expect(source).toContain(
       "discordContinuationToken(channel.discord.channelId, posted.id)",
     );
     // Issue #113: prose turns (no ask_question) park at wait: "next-user-message" with no
     // Discord reply path. The discord 0.3.2 channel posts a "Reply" button on session.waiting,
     // re-shapes the modal's sentinel answer into a message via a deliver wrapper, and tracks a
     // per-turn flag so the Reply button never clobbers a question's own button routing.
-    expect(resolved.files["channels/discord.ts"]).toContain(
-      'async "session.waiting"(event, channel)',
-    );
-    expect(resolved.files["channels/discord.ts"]).toContain(
+    expect(source).toContain('async "session.waiting"(event, channel)');
+    expect(source).toContain(
       "eve_input_freeform:eyJyZXF1ZXN0SWQiOiJlZGVuOnJlcGx5In0",
     );
-    expect(resolved.files["channels/discord.ts"]).toContain(
+    expect(source).toContain(
       'const HARNESST_REPLY_REQUEST_ID = "harnesst:reply"',
     );
-    expect(resolved.files["channels/discord.ts"]).toContain(
-      "r.requestId === HARNESST_REPLY_REQUEST_ID",
-    );
-    expect(resolved.files["channels/discord.ts"]).toContain(
-      "message: replies.map((r) => r.text).join",
-    );
-    expect(resolved.files["channels/discord.ts"]).toContain(
-      "harnesstTurnAskedQuestion",
-    );
-    expect(resolved.files["channels/discord.ts"]).toContain(
-      'async "turn.started"(event, channel)',
-    );
-    expect(resolved.files["channels/discord.ts"]).toContain(
-      "channel.discord.startTyping()",
-    );
-    // The send tool now proxies through harnesst's control plane (issue #32) — it reads the
-    // injected send URL/token, not the shared bot token, and no longer imports eve's Discord.
-    expect(resolved.files["tools/discord-send-message.ts"]).toContain(
-      "HARNESST_DISCORD_SEND_URL",
-    );
-    expect(resolved.files["tools/discord-send-message.ts"]).not.toContain(
-      "sendDiscordChannelMessage",
-    );
+    expect(source).toContain("r.requestId === HARNESST_REPLY_REQUEST_ID");
+    expect(source).toContain("message: replies.map((r) => r.text).join");
+    expect(source).toContain("harnesstTurnAskedQuestion");
+    expect(source).toContain('async "turn.started"(event, channel)');
+    expect(source).toContain("channel.discord.startTyping()");
 
-    // The GitHub App secrets (from the GitHub channel) and Discord's PROVISIONED secrets union
-    // in. The bot token is never a per-agent secret (issue #32) — harnesst holds it control-plane-side.
+    // PROVISIONED secrets only — the bot token is never a per-agent secret (issue #32), harnesst
+    // holds it control-plane-side.
     const secretNames = (resolved.manifest.secrets ?? []).map((s) => s.name);
     expect(secretNames).toEqual(
-      expect.arrayContaining([
-        "GITHUB_APP_ID",
-        "GITHUB_APP_PRIVATE_KEY",
-        "GITHUB_WEBHOOK_SECRET",
-        "GITHUB_APP_SLUG",
-        "DISCORD_APPLICATION_ID",
-        "DISCORD_PUBLIC_KEY",
-      ]),
+      expect.arrayContaining(["DISCORD_APPLICATION_ID", "DISCORD_PUBLIC_KEY"]),
     );
-    expect(secretNames).not.toContain("GITHUB_TOKEN");
     expect(secretNames).not.toContain("DISCORD_BOT_TOKEN");
+  });
 
-    // Provenance + hash lockstep: the parent's hash is its own index row; each include carries
-    // its own index-row hash, in manifest order.
-    const index = await fixtureCatalog.index();
-    const engineerRow = index.templates.find(
-      (t) => t.type === "agent" && t.id === "engineer",
-    )!;
-    const githubRow = index.templates.find(
-      (t) => t.type === "channel" && t.id === "github",
-    )!;
-    const discordRow = index.templates.find(
-      (t) => t.type === "channel" && t.id === "discord",
-    )!;
-    const discordToolRow = index.templates.find(
-      (t) => t.type === "tool" && t.id === "discord-send-message",
-    )!;
-    const toolchainRow = index.templates.find(
-      (t) => t.type === "skill" && t.id === "dev-toolchain",
-    )!;
-    expect(resolved.hash).toBe(engineerRow.hash);
-    expect(resolved.includes).toEqual([
-      {
-        id: "github",
-        type: "channel",
-        name: "GitHub",
-        version: githubRow.version,
-        hash: githubRow.hash,
-      },
-      {
-        id: "discord",
-        type: "channel",
-        name: "Discord",
-        version: discordRow.version,
-        hash: discordRow.hash,
-      },
-      {
-        id: "discord-send-message",
-        type: "tool",
-        name: "Discord Send Message",
-        version: discordToolRow.version,
-        hash: discordToolRow.hash,
-      },
-      {
-        id: "dev-toolchain",
-        type: "skill",
-        name: "Developer toolchain",
-        version: toolchainRow.version,
-        hash: toolchainRow.hash,
-      },
-    ]);
+  it("materializes the send tool proxied through the control plane", async () => {
+    const resolved = await resolveTemplate(
+      fixtureCatalog,
+      "tool",
+      "discord-send-message",
+    );
+    const source = resolved.files["tools/discord-send-message.ts"];
+
+    // The send tool proxies through harnesst's control plane (issue #32) — it reads the injected
+    // send URL/token, not the shared bot token, and no longer imports eve's Discord.
+    expect(source).toContain("HARNESST_DISCORD_SEND_URL");
+    expect(source).not.toContain("sendDiscordChannelMessage");
   });
 });
 

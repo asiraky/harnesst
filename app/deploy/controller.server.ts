@@ -19,6 +19,7 @@ import { randomBytes } from "node:crypto";
 
 import type { DataStore, Deployment, Release } from "~/data/ports";
 import {
+  channelIdsForEntry,
   hasChannelInstalled,
   overlayLock,
   requiredScopesByProvider,
@@ -147,6 +148,69 @@ function isReservedModelEnvName(name: string): boolean {
     name === "HARNESST_MODEL_GATEWAY_TOKEN" ||
     name === "HARNESST_MODEL_DIRECTIVE_SECRET"
   );
+}
+
+/**
+ * The env namespace harnesst reserves for channel settings (issue #254). Whole-namespace ownership
+ * is the point: the deploy sweeps EVERY key with this prefix before projecting the lock, so a user
+ * secret can never name the repositories an agent wakes on, and a setting deleted from the lock
+ * cannot survive as a stale var of the same name.
+ */
+const CHANNEL_ENV_PREFIX = "HARNESST_CHANNEL_";
+
+/**
+ * One env-name segment from an id or a settings key: `github` → `GITHUB`,
+ * `wakeOnNewIssues` → `WAKE_ON_NEW_ISSUES`, `github-bundle` → `GITHUB_BUNDLE`. Camel-case
+ * boundaries split first (the lock's keys are camelCase, the env's names are SCREAMING_SNAKE),
+ * then anything that can't appear in an env name collapses to a single underscore.
+ */
+function channelEnvSegment(value: string): string {
+  return value
+    .replace(/([a-z0-9])([A-Z])/g, "$1_$2")
+    .replace(/[^A-Za-z0-9]+/g, "_")
+    .toUpperCase()
+    .replace(/^_+|_+$/g, "");
+}
+
+/**
+ * Project a member's stored channel settings into deployment env (issue #254, D8):
+ * `HARNESST_CHANNEL_<CHANNEL>_<KEY>`. Settings live in the lock so they travel with the repo and
+ * are reviewable in the PR that changes them; they reach the running agent as ENV so channel
+ * behaviour stays configuration rather than code a customer has to edit.
+ *
+ * Resolution goes through `channelIdsForEntry`, so a bundle-carried channel (the shape the
+ * marketplace actually produces — the GitHub bundle's only lock row is the bundle) projects under
+ * the CHANNEL's id, not the bundle's, and a tool or hook that merely shares a channel's name
+ * projects nothing at all. An entry with no `settings` contributes nothing: absent reads as inert,
+ * which is what makes taking the update change no existing agent's behaviour.
+ *
+ * Values render the way a channel reading `process.env` wants them: lists comma-joined, booleans
+ * `"1"`/`""`. Pure — the caller owns the anti-shadowing sweep.
+ */
+export function channelSettingsEnv(
+  lock: HarnesstLock,
+  member: string | null,
+): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const entry of lock.installs) {
+    if (entry.member !== member || !entry.settings) continue;
+    for (const id of channelIdsForEntry(entry)) {
+      const channel = channelEnvSegment(id);
+      if (!channel) continue;
+      for (const [key, value] of Object.entries(entry.settings)) {
+        const name = channelEnvSegment(key);
+        if (!name) continue;
+        out[`${CHANNEL_ENV_PREFIX}${channel}_${name}`] = Array.isArray(value)
+          ? value.join(",")
+          : typeof value === "boolean"
+            ? value
+              ? "1"
+              : ""
+            : value;
+      }
+    }
+  }
+  return out;
 }
 
 async function cleanupNewDeploymentInfra(
@@ -534,6 +598,22 @@ export async function deployRelease(
     if (parkChannels.length > 0) {
       envVars.HARNESST_FOH_PARK_URL = `${controlPlaneBase}/api/foh/park`;
       envVars.HARNESST_TEAM_TOKEN ??= mintDelegationToken(dep.id);
+    }
+
+    // Channel settings (issue #254): what the operator configured on the Deployment tab — which
+    // repositories a channel watches, which labels wake the agent — projected out of the lock at
+    // THIS release's commit. This is how the settings panel reaches the running container at all:
+    // the channel code reads `process.env`, so a settings change takes effect on the next deploy,
+    // exactly like every other lock-carried configuration.
+    // The ENTIRE `HARNESST_CHANNEL_*` namespace is harnesst-owned, so the sweep is by prefix rather
+    // than by key: a user secret must not be able to widen the repositories an agent acts on, and
+    // a setting removed from the lock has to actually disappear from the container rather than
+    // linger in a user-set var of the same name. Delete-then-set, as above.
+    for (const key of Object.keys(envVars)) {
+      if (key.startsWith(CHANNEL_ENV_PREFIX)) delete envVars[key];
+    }
+    if (lock) {
+      Object.assign(envVars, channelSettingsEnv(lock, member));
     }
 
     // Run visibility (WS2): where the baked `agent/hooks/harnesst-runs.ts` reports each turn's

@@ -246,13 +246,15 @@ export function readModel(source: string): string | null {
 }
 
 // The workspace-config resolver call harnesst scaffolds (`model: harnesstAgentModel('<agent-name>')`,
-// exported by the repo's generated `harnesst-model.ts`). The module resolves the model at runtime
+// exported by the repo's generated `harnesst/model.ts`). The module resolves the model at runtime
 // from harnesst's org configuration, so the agent file itself never carries a model string.
+// Deliberately matched on the CALL, never on the import specifier: the module moved out of the
+// agent root in #254, and a repo mid-relocation still resolves its model the same way.
 const ORG_MODEL_RESOLVER = /\bmodel\s*:\s*harnesstAgentModel\s*\(\s*(['"`])([^'"`]*)\1/;
 
 /**
  * True when the module's model is resolved through the workspace configuration
- * (`harnesstAgentModel(...)` from the generated `harnesst-model.ts`). Such a module has no baked-in
+ * (`harnesstAgentModel(...)` from the generated `harnesst/model.ts`). Such a module has no baked-in
  * model: harnesst's Settings save writes the org override map instead of rewriting this file.
  */
 export function usesOrgModelResolver(source: string | null | undefined): boolean {

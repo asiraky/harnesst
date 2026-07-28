@@ -20,12 +20,14 @@ Consult these before authoring — they're the source of truth and stay current 
 
 ### Models are workspace configuration, never code
 
-Do not write a model string anywhere in an agent project — no `model: '<provider>/<model>'` literals and no provider `.chatModel(...)` calls. Each member root carries a harnesst-generated `harnesst-model.ts` exporting `harnesstAgentModel(agentName)`:
+Do not write a model string anywhere in an agent project — no `model: '<provider>/<model>'` literals and no provider `.chatModel(...)` calls. Every member has a harnesst-generated `model.ts` exporting `harnesstAgentModel(agentName)`. It sits in the member's `harnesst/` directory — the **sibling** of `agent/`, not inside it — so every import climbs out of the agent root first:
 
-- the member's `agent.ts` uses `model: harnesstAgentModel('<member-name>')` (`import { harnesstAgentModel } from './harnesst-model';`);
-- every subagent under `subagents/<name>/agent.ts` uses the **same call with the PARENT member's name** — never the subagent's own name — imported from `'../../harnesst-model'`.
+- the member's `agent.ts` uses `model: harnesstAgentModel('<member-name>')` (`import { harnesstAgentModel } from '../harnesst/model';`);
+- every subagent under `subagents/<name>/agent.ts` uses the **same call with the PARENT member's name** — never the subagent's own name — imported from `'../../../harnesst/model'`.
 
-That function resolves the workspace's configured model from harnesst at runtime, so when a human asks to change an agent's model, point them at Org settings (Default model / per-agent overrides) instead of editing files. When you create a new member yourself, copy `harnesst-model.ts` byte-for-byte from an existing member (the file is identical in every project); if the repo has none, have the human add the member through harnesst's Add-member flow (which scaffolds it) rather than inventing model wiring.
+That function resolves the workspace's configured model from harnesst at runtime, so when a human asks to change an agent's model, point them at Org settings (Default model / per-agent overrides) instead of editing files.
+
+`harnesst/` is platform-owned: you cannot write there, and you must not try. So do not create a member by hand — have the human add it through harnesst's Add-member flow, which scaffolds the module for you. An older repo may still carry the module at `agent/harnesst-model.ts`; leave it exactly where it is (publishing relocates it for you) rather than moving it or rewriting its imports yourself.
 
 ### Secrets
 

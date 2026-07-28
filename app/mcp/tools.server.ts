@@ -24,7 +24,7 @@ import {
   type ShipResult,
 } from "~/deploy/ship.server";
 import { getBranchHead as getBranchHeadDirect } from "~/github/repo.server";
-import { normalizeAgentPath } from "~/project/guard.server";
+import { normalizeAgentPath, platformPathRefusal } from "~/project/guard.server";
 import { publishNow, type PublishOutcome } from "~/publish/pipeline.server";
 import { getRuntime } from "~/seams/index.server";
 
@@ -203,6 +203,12 @@ function requireAuthor(identity: McpIdentity): void {
 function normalizePathBatch(paths: string[]): string[] {
   if (paths.length === 0) {
     throw new McpToolError("At least one path is required.", "invalid_input");
+  }
+  // Platform paths are rejected by the allowlist too, but "invalid path" would send the caller
+  // hunting for a typo in a path that is spelled correctly and simply isn't theirs (issue #254).
+  for (const path of paths) {
+    const refusal = platformPathRefusal(path);
+    if (refusal) throw new McpToolError(refusal, "invalid_input");
   }
   const normalized = paths.map((path) => normalizeAgentPath(path));
   if (normalized.some((path) => path === null)) {

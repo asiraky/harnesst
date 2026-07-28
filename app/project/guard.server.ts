@@ -18,7 +18,7 @@ import {
   getProject,
   type Project,
 } from "~/db/queries.server";
-import { ASSISTANT_CONFIG_ROOT } from "~/eve/parse";
+import { ASSISTANT_CONFIG_ROOT, isPlatformPath, PLATFORM_ROOT } from "~/eve/parse";
 
 /** A project guaranteed to have a connected GitHub repo. */
 export type ConnectedProject = Project & {
@@ -125,6 +125,27 @@ const ASSISTANT_CONFIG_PATH =
 
 export function isAssistantConfigPath(path: string): boolean {
   return ASSISTANT_CONFIG_PATH.test(path);
+}
+
+/**
+ * Platform-owned code is outside the editable surface (issue #254), and `normalizeAgentPath`
+ * already rejects it — it simply isn't in the allowlist. But "invalid path" is the wrong answer
+ * to "let me fix the channel": the path is well-formed, it belongs to someone else. Every write
+ * site checks `isPlatformPath` first so the refusal says what to do instead.
+ */
+export { isPlatformPath };
+export const PLATFORM_PATH_REFUSAL =
+  `\`${PLATFORM_ROOT}/\` is platform-owned and cannot be edited. Channel behaviour is ` +
+  "configured on the Deployment tab; if the platform files themselves are wrong, escalate to " +
+  "an administrator.";
+
+/**
+ * The refusal for a RAW (still user-shaped) path, or null when it isn't platform-owned. Applies
+ * the same leading-slash/whitespace tolerance as `normalizeAgentPath` so `/harnesst/model.ts`
+ * refuses for the right reason instead of falling through to the generic rejection.
+ */
+export function platformPathRefusal(raw: string): string | null {
+  return isPlatformPath(raw.trim().replace(/^\/+/, "")) ? PLATFORM_PATH_REFUSAL : null;
 }
 
 export function normalizeAgentPath(raw: string): string | null {
