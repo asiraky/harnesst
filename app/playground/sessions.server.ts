@@ -1286,7 +1286,8 @@ function parseEveLine(raw: string): EveStreamEvent | null {
 }
 
 interface TurnProjection {
-  turnId: string;
+  /** Turn id scoped to the emitting eve session — see `projectEventsToEntries`. */
+  key: string;
   index: number;
   userText: string | null;
   /** Every settled assistant message of the turn (they interleave with tool steps). */
@@ -1310,7 +1311,20 @@ interface TurnAction {
   isError?: boolean;
 }
 
-function projectEventsToEntries(
+/**
+ * Projects a cached/replayed eve event stream into the transcript entries the chat UI renders,
+ * grouping every event of a turn (user message, assistant messages, tool steps, errors) into one
+ * user + one assistant entry, in first-sighting order.
+ *
+ * Turn ids are only unique WITHIN the eve session that emitted them — eve restarts at `turn_0` per
+ * session — while a cross-redeploy reseed (#71) concatenates several eve sessions' logs into one
+ * cached stream. So the projection scopes turn identity by an epoch bumped on each
+ * `session.started`; without it the later session's `turn_0` overwrites the first turn's user text
+ * and glues its reply onto the opening exchange (#261).
+ *
+ * Exported for the projection unit tests.
+ */
+export function projectEventsToEntries(
   events: EveStreamEvent[],
   session: PlaygroundSession,
 ): ChatEntry[] {
@@ -1321,13 +1335,16 @@ function projectEventsToEntries(
   // is then the message's directive (if any) over that fallback. Static agents ignore
   // directives, so attribution must too.
   let dynamicModel = false;
+  // Which eve session's log we are inside; see the doc comment above.
+  let epoch = 0;
 
   const turnFor = (turnId: string | null): TurnProjection | null => {
     if (!turnId) return null;
-    let turn = turns.get(turnId);
+    const key = `${epoch}:${turnId}`;
+    let turn = turns.get(key);
     if (!turn) {
       turn = {
-        turnId,
+        key,
         index: ordered.length,
         userText: null,
         messages: [],
@@ -1341,7 +1358,7 @@ function projectEventsToEntries(
         actionsBySeq: new Map(),
         actionByCallId: new Map(),
       };
-      turns.set(turnId, turn);
+      turns.set(key, turn);
       ordered.push(turn);
     }
     return turn;
@@ -1349,6 +1366,10 @@ function projectEventsToEntries(
 
   for (const event of events) {
     const data = event.data;
+    // `session.started` is an eve session's first event — verified in prod: it appears exactly once
+    // per eve session in the cached stream and never lands mid-turn — so bumping the epoch here,
+    // before the turn is resolved, scopes the buckets with no schema change.
+    if (event.type === "session.started") epoch += 1;
     const turnId = typeof data.turnId === "string" ? data.turnId : null;
     const turn = turnFor(turnId);
     const at = event.meta?.at ? Date.parse(event.meta.at) : Date.now();
@@ -1506,7 +1527,7 @@ function projectEventsToEntries(
   for (const turn of ordered) {
     if (turn.userText) {
       entries.push({
-        id: `${turn.turnId}:user`,
+        id: `${turn.key}:user`,
         role: "user",
         text: turn.userText,
       });
@@ -1540,7 +1561,7 @@ function projectEventsToEntries(
           : null);
       const normalizedError = normalizeTurnError(replayError, { channelLabel });
       entries.push({
-        id: `${turn.turnId}:assistant`,
+        id: `${turn.key}:assistant`,
         role: "assistant",
         text: normalized.reply ?? "",
         structured: normalized.replyIsStructured,
