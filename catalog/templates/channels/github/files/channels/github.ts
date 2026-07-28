@@ -105,8 +105,14 @@ function renderRequest(request: {
 //     are case-preserving, so an exact-case comparison silently falls open and the agent wakes
 //     itself on its own label — an unbounded loop that costs money. It is a sender check because
 //     another agent's bot labelling this repo SHOULD wake this agent; only its own must not.
-//   - Dispatch keys off the TRANSITION — `raw.label.name`, the label that was just added — never a
-//     re-read of the issue's current labels. Re-reading is how one edit came to match three rules.
+//   - Dispatch matches the wake labels against the SNAPSHOT the webhook itself carries —
+//     `payload.issue.labels` / `payload.pull_request.labels` — never an API re-read. It cannot key
+//     off the transition (`payload.label`, the label just added), because eve narrows the payload
+//     to the issue/PR object before any hook runs and the top-level `label` never survives that
+//     (verified through eve 0.27.11; this channel shipped reading `raw.label.name` and no label
+//     ever woke anything, silently). The snapshot costs one honest impurity: any `labeled` action
+//     wakes the agent while a wake label is set, even when the label just added was a different
+//     one. The instructions absorb that — a woken agent that finds nothing to act on does nothing.
 //
 // The context handed to the agent is deliberately mechanism-free: it names what happened and
 // refuses to say what to do, because the policy lives in the customer's `instructions.md`. An
@@ -130,8 +136,8 @@ export interface GitHubWakeEvent {
   readonly kind: "issue" | "pull_request";
   readonly action: string;
   readonly number: number;
-  /** `raw.label.name` — the label just added. Null for every non-label action. */
-  readonly label: string | null;
+  /** Label names on the issue/PR in the webhook's own snapshot — all the label data a hook sees. */
+  readonly labels: readonly string[];
   readonly headSha: string | null;
   readonly repoFullName: string;
   readonly senderLogin: string;
@@ -161,10 +167,17 @@ function includesFolded(list: readonly string[], value: string): boolean {
   return list.some((entry) => entry.trim().toLowerCase() === needle);
 }
 
-/** The label a `labeled` webhook just added. Anything else — including `unlabeled` — has none. */
-function transitionLabel(raw: unknown): string | null {
-  const label = (raw as { label?: { name?: unknown } } | null | undefined)?.label;
-  return typeof label?.name === "string" && label.name.length > 0 ? label.name : null;
+/**
+ * The label names in the issue/PR object a hook receives. eve hands `onIssue`/`onPullRequest`
+ * `payload.issue` / `payload.pull_request` ONLY — the top-level `payload.label` naming the label
+ * just added is dropped before any handler runs — so this snapshot is the whole label surface.
+ */
+function snapshotLabels(raw: unknown): string[] {
+  const labels = (raw as { labels?: unknown } | null | undefined)?.labels;
+  if (!Array.isArray(labels)) return [];
+  return labels
+    .map((entry) => (entry as { name?: unknown } | null | undefined)?.name)
+    .filter((name): name is string => typeof name === "string" && name.length > 0);
 }
 
 /**
@@ -194,11 +207,16 @@ export function githubWakeContext(
   const where = `by @${event.senderLogin} in ${event.repoFullName}${head}`;
   const describe = (what: string) => `GitHub event: ${subject} ${what} ${where}.`;
 
+  // `labeled` only: `unlabeled` (and every other action) must never match, however many wake
+  // labels the snapshot still carries — matching the snapshot alone would wake the agent when a
+  // human took a label OFF.
+  const matched =
+    event.action === "labeled"
+      ? event.labels.filter((name) => includesFolded(settings.wakeLabels, name))
+      : [];
   const labelled =
-    event.action === "labeled" &&
-    event.label !== null &&
-    includesFolded(settings.wakeLabels, event.label)
-      ? describe(`labeled "${event.label}"`)
+    matched.length > 0
+      ? describe(`labeled (${matched.map((name) => `"${name}"`).join(", ")} set)`)
       : null;
 
   let what: string | null = null;
@@ -609,7 +627,7 @@ const base = githubChannel({
           kind: "issue",
           action: issue.action,
           number: issue.issueNumber,
-          label: transitionLabel(issue.raw),
+          labels: snapshotLabels(issue.raw),
           headSha: null,
           repoFullName: ctx.repository.fullName,
           senderLogin: ctx.sender.login,
@@ -630,7 +648,7 @@ const base = githubChannel({
           kind: "pull_request",
           action: pullRequest.action,
           number: pullRequest.pullRequestNumber,
-          label: transitionLabel(pullRequest.raw),
+          labels: snapshotLabels(pullRequest.raw),
           headSha: pullRequest.headSha,
           repoFullName: ctx.repository.fullName,
           senderLogin: ctx.sender.login,
