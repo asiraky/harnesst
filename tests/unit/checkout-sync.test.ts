@@ -27,25 +27,43 @@ const tree = (dirty: TreeState["dirty"], baseSha = "base0"): TreeState => ({
 });
 
 describe("checkout-sync: path policy", () => {
-  it("blocks assistant.json and .ts under .harnesst/assistant, allows everything else", () => {
+  it("blocks the assistant's own config surface entirely, allows everything else", () => {
+    // The assistant must not be able to author what governs its next turn — instructions,
+    // skills and schedules included, not just the .json/.ts layer.
     expect(isBlockedPath(".harnesst/assistant/assistant.json")).toBe(true);
     expect(isBlockedPath(".harnesst/assistant/tools/foo.ts")).toBe(true);
-    expect(isBlockedPath(".harnesst/assistant/instructions.md")).toBe(false);
-    expect(isBlockedPath(".harnesst/assistant/skills/x.md")).toBe(false);
+    expect(isBlockedPath(".harnesst/assistant/instructions.md")).toBe(true);
+    expect(isBlockedPath(".harnesst/assistant/skills/x.md")).toBe(true);
+    expect(isBlockedPath(".harnesst/assistant/schedules/nightly.md")).toBe(
+      true,
+    );
     expect(isBlockedPath("agent/tools/foo.ts")).toBe(false);
     expect(isBlockedPath("package.json")).toBe(false);
+    // A sibling path that merely shares the prefix string is not the config surface.
+    expect(isBlockedPath(".harnesst/assistant-notes.md")).toBe(false);
   });
 
   it("strips blocked paths from the commit and records them as warnings", () => {
     const plan = planCommit(
       tree([
-        { path: "agent/tools/foo.ts", status: "added", content: "export default 1;" },
-        { path: ".harnesst/assistant/assistant.json", status: "modified", content: "{}" },
+        {
+          path: "agent/tools/foo.ts",
+          status: "added",
+          content: "export default 1;",
+        },
+        {
+          path: ".harnesst/assistant/assistant.json",
+          status: "modified",
+          content: "{}",
+        },
         { path: ".harnesst/assistant/agent.ts", status: "added", content: "x" },
       ]),
     );
     expect(plan.files.map((f) => f.path)).toEqual(["agent/tools/foo.ts"]);
-    expect(plan.blocked).toEqual([".harnesst/assistant/agent.ts", ".harnesst/assistant/assistant.json"]);
+    expect(plan.blocked).toEqual([
+      ".harnesst/assistant/agent.ts",
+      ".harnesst/assistant/assistant.json",
+    ]);
     expect(policyWarnings(plan)[0]).toContain(".harnesst/assistant/agent.ts");
   });
 });
@@ -84,7 +102,12 @@ describe("checkout-sync: diff → commit mapping", () => {
     // flags it notFile and sends no body — and even if a body somehow arrived, the flag wins.
     const plan = planCommit(
       tree([
-        { path: "leak.txt", status: "added", notFile: true, content: "SECRET=oops" },
+        {
+          path: "leak.txt",
+          status: "added",
+          notFile: true,
+          content: "SECRET=oops",
+        },
         { path: "vendor", status: "added", notFile: true },
         { path: "ok.ts", status: "added", content: "ok" },
       ]),
@@ -95,9 +118,18 @@ describe("checkout-sync: diff → commit mapping", () => {
   });
 
   it("carries the executable bit into the plan and the hash", () => {
-    const plain = planCommit(tree([{ path: "run.sh", status: "added", content: "#!/bin/sh" }]));
+    const plain = planCommit(
+      tree([{ path: "run.sh", status: "added", content: "#!/bin/sh" }]),
+    );
     const exec = planCommit(
-      tree([{ path: "run.sh", status: "added", content: "#!/bin/sh", executable: true }]),
+      tree([
+        {
+          path: "run.sh",
+          status: "added",
+          content: "#!/bin/sh",
+          executable: true,
+        },
+      ]),
     );
     expect(plain.files[0].executable).toBeUndefined();
     expect(exec.files[0].executable).toBe(true);
@@ -151,7 +183,9 @@ describe("checkout-sync: diff → commit mapping", () => {
 describe("checkout-sync: naming", () => {
   it("derives branch and checkout path from the conversation id", () => {
     expect(conversationBranch("abc")).toBe("harnesst/conv-abc");
-    expect(conversationCheckoutPath("abc")).toBe("/workspace/home/checkouts/abc");
+    expect(conversationCheckoutPath("abc")).toBe(
+      "/workspace/home/checkouts/abc",
+    );
   });
 });
 
@@ -162,7 +196,11 @@ describe("checkout-sync: pre-turn ensure gate", () => {
 
   it("lets targets without a checkout sidecar proceed (unsupported, not failed)", () => {
     expect(
-      checkoutEnsureError({ ok: false, unsupported: true, reason: "no sidecar endpoint" }),
+      checkoutEnsureError({
+        ok: false,
+        unsupported: true,
+        reason: "no sidecar endpoint",
+      }),
     ).toBeNull();
   });
 
@@ -185,14 +223,22 @@ describe("checkout sidecar: raw-diff record classification", () => {
     `:100644 ${newMode} 0000000 1111111 ${status}`;
 
   it("classifies regular files, executables, deletions", () => {
-    expect(classifyRawRecord(meta("100644", "A"), "a.ts")).toEqual({ path: "a.ts", status: "added" });
-    expect(classifyRawRecord(meta("100644", "M"), "b.ts")).toEqual({ path: "b.ts", status: "modified" });
+    expect(classifyRawRecord(meta("100644", "A"), "a.ts")).toEqual({
+      path: "a.ts",
+      status: "added",
+    });
+    expect(classifyRawRecord(meta("100644", "M"), "b.ts")).toEqual({
+      path: "b.ts",
+      status: "modified",
+    });
     expect(classifyRawRecord(meta("100755", "A"), "run.sh")).toEqual({
       path: "run.sh",
       status: "added",
       executable: true,
     });
-    expect(classifyRawRecord(":100644 000000 1111111 0000000 D", "gone.ts")).toEqual({
+    expect(
+      classifyRawRecord(":100644 000000 1111111 0000000 D", "gone.ts"),
+    ).toEqual({
       path: "gone.ts",
       status: "deleted",
     });
