@@ -8,6 +8,7 @@
  */
 import {
   useEffect,
+  useMemo,
   useRef,
   type ComponentPropsWithoutRef,
   type ReactNode,
@@ -153,8 +154,10 @@ const SAFE_LINK_PROTOCOLS = new Set(["http:", "https:", "mailto:"]);
 type MarkdownNode = { type: string; value?: string; children?: MarkdownNode[] };
 
 export function MarkdownText({ text }: { text: string }) {
-  return (
-    <div className="space-y-2 break-words">
+  // A live turn re-renders the whole transcript on every streamed token, so keep the element
+  // keyed to its text: settled turns then skip re-parsing while a newer one is still arriving.
+  const rendered = useMemo(
+    () => (
       <Markdown
         remarkPlugins={REMARK_PLUGINS}
         urlTransform={markdownUrlTransform}
@@ -162,8 +165,10 @@ export function MarkdownText({ text }: { text: string }) {
       >
         {text}
       </Markdown>
-    </div>
+    ),
+    [text],
   );
+  return <div className="space-y-2 break-words">{rendered}</div>;
 }
 
 /**
