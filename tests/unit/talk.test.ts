@@ -152,6 +152,58 @@ describe("sendTurn", () => {
     expect(result.streamIndex).toBe(2);
   });
 
+  /**
+   * The subtle half of the same defect: a turn can complete an assistant message and then keep
+   * working with tools. A partial reply plus no terminal event is still a lost stream — reading it
+   * as a finished turn is how a delegation gets closed `completed` while the peer works on.
+   */
+  it("marks a stream that dropped after a partial reply as streamLost", async () => {
+    const at = new Date().toISOString();
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ continuationToken: "tok_1" }), {
+          status: 202,
+          headers: {
+            "content-type": "application/json",
+            "x-eve-session-id": "sess_1",
+          },
+        }),
+      )
+      .mockResolvedValueOnce(
+        streamResponse([
+          {
+            type: "message.received",
+            data: { message: "hi", turnId: "turn_1" },
+            meta: { at },
+          },
+          {
+            type: "message.completed",
+            data: {
+              turnId: "turn_1",
+              message: "Working on it — opening a PR.",
+            },
+            meta: { at },
+          },
+          {
+            type: "step.started",
+            data: { turnId: "turn_1", sequence: 1 },
+            meta: { at },
+          },
+        ]),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await sendTurn({
+      baseUrl: "https://agent.example.test",
+      message: "hi",
+    });
+
+    expect(result.streamLost).toBe(true);
+    expect(result.ok).toBe(false);
+    expect(result.reply).toBe("Working on it — opening a PR.");
+  });
+
   it("does NOT mark a genuine agent failure as streamLost", async () => {
     const at = new Date().toISOString();
     const fetchMock = vi

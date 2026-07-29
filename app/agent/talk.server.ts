@@ -653,6 +653,11 @@ async function* drainTurnStream(input: {
     }
   };
 
+  // Held outside the try so the `finally` can always release it: when the idle race or the abort
+  // wins, the pending `reader.read()` is still holding the HTTP response open. On the live path
+  // that leaked one socket per lost turn; on the reattach path it would leak one per poll.
+  let reader: ReadableStreamDefaultReader<Uint8Array> | null = null;
+
   try {
     const streamUrl = new URL(`${base}/eve/v1/session/${sessionId}/stream`);
     if (streamIndex > 0)
@@ -679,7 +684,7 @@ async function* drainTurnStream(input: {
     if (!res.ok || !res.body) {
       throw new Error(`stream returned ${res.status}`);
     }
-    const reader = res.body.getReader();
+    reader = res.body.getReader();
     const decoder = new TextDecoder();
     let buf = "";
     let settled = false;
@@ -940,7 +945,6 @@ async function* drainTurnStream(input: {
         }
       }
     }
-    reader.cancel().catch(() => {});
     const asked = inputRequests.length > 0;
     if (
       reply === null &&
@@ -950,10 +954,16 @@ async function* drainTurnStream(input: {
     ) {
       error = lastStepFailure;
     }
-    if (!settled && reply === null && !asked && error === null) {
-      error = `The Eve stream ended before the turn completed.`;
-      // Transport site 3: eve closed the stream without a terminal event. The container is still
-      // running the turn — we simply stopped being told about it.
+    // Transport site 3: eve closed the stream without a terminal event for our turn. The container
+    // is still running it — we simply stopped being told about it. Note this does NOT require an
+    // empty reply: a turn can complete an assistant message and then keep working with tools, so a
+    // partial reply plus no `turn.completed` is a lost stream, not a finished turn. (`asked` is
+    // excluded: `input.requested` means the turn parked itself, which is a real settled outcome.)
+    if (!settled && !asked && error === null) {
+      error =
+        reply === null
+          ? `The Eve stream ended before the turn completed.`
+          : `The Eve stream ended before the turn completed (the reply so far may be partial).`;
       streamLost = true;
     }
   } catch (streamError) {
@@ -962,6 +972,8 @@ async function* drainTurnStream(input: {
     // asked for the turn to end, so there is nothing to reattach to.
     error = `Couldn't read the reply stream: ${(streamError as Error).message}`;
     streamLost = input.signal?.aborted !== true;
+  } finally {
+    reader?.cancel().catch(() => {});
   }
 
   const normalized = normalizeReply(reply);

@@ -16,6 +16,7 @@ import { ensureLiveDeploymentForEnvironment } from "~/deploy/wake.server";
 import type { PlaygroundSession } from "~/playground/sessions.server";
 import type { AskDeps } from "~/team/ask.server";
 import { runAsk } from "~/team/ask.server";
+import { DELEGATION_REATTACH_CEILING_MS } from "~/team/reattach.server";
 import { finalizeDelegationOnResume } from "~/team/resume.server";
 import type { DeployTarget } from "~/seams/types";
 import { makeFakeStore, type FakeStore } from "../fakes/store";
@@ -578,11 +579,19 @@ describe("runAsk — severed stream hand-off", () => {
     await seedTarget("live", "http://deployer.local");
     const deleg = captureDelegationId();
     const finishes: unknown[] = [];
+    // A stepping clock: the turn started at NOW and streamed for 40 minutes before its stream
+    // dropped — longer than the reattach ceiling itself.
+    const HANDOFF = new Date(NOW.getTime() + 40 * 60_000);
+    let streamed = false;
     const deps = makeDeps({
-      sendTurn: async () => lost(),
+      sendTurn: async () => {
+        streamed = true;
+        return lost();
+      },
       recordFinish: async (input) => {
         finishes.push(input);
       },
+      now: () => (streamed ? HANDOFF : NOW),
     });
     const res = await runAsk(
       { deploymentId, teammate: "deployer", message: "Ship build 42" },
@@ -621,6 +630,12 @@ describe("runAsk — severed stream hand-off", () => {
         projectId: PROJECT,
         turnId: "turn_1",
         userMessage: 'From your teammate "pm": Ship build 42',
+        startedAt: NOW.toISOString(),
+        // The ceiling is anchored at the HAND-OFF, not the turn's start — otherwise a turn that
+        // streamed happily for longer than the ceiling would be born already expired.
+        deadlineAt: new Date(
+          HANDOFF.getTime() + DELEGATION_REATTACH_CEILING_MS,
+        ).toISOString(),
       }),
     ]);
     // Defect 3: the run is left `running` — the watcher settles it with the real outcome.
@@ -688,6 +703,37 @@ describe("runAsk — severed stream hand-off", () => {
       status: "failed",
     });
     // No watcher is coming, so the deferred run finish must run here instead.
+    expect(finishes).toHaveLength(1);
+    error.mockRestore();
+  });
+
+  /**
+   * The hand-off promises the calling model that harnesst is watching the turn. If the watcher
+   * could not be scheduled that promise is a lie AND nothing will ever settle the two rows, so the
+   * relay must fall back to reporting the failure rather than swallow it.
+   */
+  it("does not claim a watcher it failed to schedule", async () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    const deploymentId = await seedCallerDeployment();
+    await seedTarget("live", "http://deployer.local");
+    const deleg = captureDelegationId();
+    const finishes: unknown[] = [];
+    const res = await runAsk(
+      { deploymentId, teammate: "deployer", message: "hi" },
+      makeDeps({
+        sendTurn: async () => lost(),
+        scheduleReattach: async () => {
+          throw new Error("queue down");
+        },
+        recordFinish: async (input) => {
+          finishes.push(input);
+        },
+      }),
+    );
+    expect(res).toMatchObject({ ok: false });
+    expect(await store.delegations.findById(deleg.id())).toMatchObject({
+      status: "failed",
+    });
     expect(finishes).toHaveLength(1);
     error.mockRestore();
   });

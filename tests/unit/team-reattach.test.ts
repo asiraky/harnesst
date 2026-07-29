@@ -375,15 +375,6 @@ describe("reattachDelegation", () => {
       reason: "delegation is waiting",
     });
 
-    const stopped = await reattachDelegation(
-      payloadFor(await seedDelegation()),
-      makeDeps({ sessionRow: session({ status: "stopped" }) }),
-    );
-    expect(stopped).toEqual({
-      status: "skipped",
-      reason: "session was stopped",
-    });
-
     const missing = await reattachDelegation(
       payloadFor(await seedDelegation()),
       makeDeps({ loadSession: async () => null }),
@@ -391,15 +382,43 @@ describe("reattachDelegation", () => {
     expect(missing).toEqual({ status: "skipped", reason: "session not found" });
   });
 
-  it("never lets a bookkeeping failure strand the delegation", async () => {
+  /**
+   * A human hit /stop on the adopted conversation. The stop route settles the session row and the
+   * inbox but knows nothing about delegations or runs — if the watcher just stood down, both would
+   * sit `running` forever and the edge cap would keep counting a turn nobody is running.
+   */
+  it("settles the delegation when the adopted conversation was stopped", async () => {
+    const delegationId = await seedDelegation();
+    const deps = makeDeps({
+      sessionRow: session({ status: "stopped" }),
+      // A stopped turn has nothing left to drain — reading the peer's stream would be wrong.
+      resume: (() => {
+        throw new Error("must not drain a stopped session");
+      }) as unknown as ReattachDeps["resume"],
+    });
+    const res = await reattachDelegation(payloadFor(delegationId), deps);
+
+    expect(res).toEqual({ status: "settled", outcome: "failed" });
+    expect(await store.delegations.findById(delegationId)).toMatchObject({
+      status: "failed",
+    });
+    // The stopped session row is left exactly as /stop settled it...
+    expect(deps.cursors).toHaveLength(0);
+    expect(deps.failed).toHaveLength(0);
+    // ...but the run still has to stop claiming to be running.
+    expect(deps.finishes).toHaveLength(1);
+    expect(deps.finishes[0]).toMatchObject({
+      externalRunId: "sess_peer:turn_1",
+      result: { ok: false },
+    });
+  });
+
+  it("finalizes the delegation even when the other bookkeeping fails", async () => {
     const error = vi.spyOn(console, "error").mockImplementation(() => {});
     const delegationId = await seedDelegation();
     const deps = makeDeps({
       saveCursor: async () => {
         throw new Error("db down");
-      },
-      recordFinish: async () => {
-        throw new Error("ingest down");
       },
       clearPending: async () => {
         throw new Error("inbox down");
@@ -407,6 +426,28 @@ describe("reattachDelegation", () => {
     });
     const res = await reattachDelegation(payloadFor(delegationId), deps);
     expect(res).toEqual({ status: "settled", outcome: "completed" });
+    expect(await store.delegations.findById(delegationId)).toMatchObject({
+      status: "completed",
+    });
+    error.mockRestore();
+  });
+
+  /**
+   * The two writes that OWN the turn's fate get a retry instead of a log line: nothing else is
+   * coming for these rows, and re-running a tick is idempotent (it replays the peer's log from 0).
+   */
+  it("fails the job when a terminal write is lost, so the worker retries it", async () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    const delegationId = await seedDelegation();
+    const deps = makeDeps({
+      recordFinish: async () => {
+        throw new Error("ingest down");
+      },
+    });
+    await expect(
+      reattachDelegation(payloadFor(delegationId), deps),
+    ).rejects.toThrow("ingest down");
+    // The delegation is still finalized first — the throw is for the retry, not a bail-out.
     expect(await store.delegations.findById(delegationId)).toMatchObject({
       status: "completed",
     });

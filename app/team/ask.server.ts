@@ -396,8 +396,11 @@ export async function runAsk(
         userMessage: prefixed,
         metadata: runMeta,
         startedAt: startedAt.toISOString(),
+        // Anchored HERE, at the hand-off — not at the turn's start. The relay has already spent
+        // its whole idle budget by this point, and a turn that streamed happily for longer than
+        // the ceiling before dropping would otherwise be born already expired.
         deadlineAt: new Date(
-          startedAt.getTime() + DELEGATION_REATTACH_CEILING_MS,
+          deps.now().getTime() + DELEGATION_REATTACH_CEILING_MS,
         ).toISOString(),
       });
       return {

@@ -144,28 +144,25 @@ export type ReattachResult =
   | { status: "skipped"; reason: string };
 
 /**
- * Enqueue the first poll for a handed-off delegation. Best-effort, like the drain's initial
- * schedule: the relay has already adopted the session and told the calling model the truth, and a
- * scheduling hiccup must not turn that into a relay failure. The consequence of a lost job is a
- * delegation that sits `running` until the caps' own staleness cutoff — not a lie.
+ * Enqueue the first poll for a handed-off delegation. Deliberately NOT best-effort: the hand-off
+ * result tells the calling model that harnesst is watching the turn, and nothing else will ever
+ * settle the delegation or the run. If this throws, the relay's hand-off branch catches it and
+ * falls back to reporting the failure — an honest bad outcome beats two rows stuck `running`
+ * forever behind a promise nobody kept.
  */
 export async function scheduleDelegationReattach(
   store: DataStore,
   payload: ReattachPayload,
 ): Promise<void> {
-  try {
-    await enqueue(
-      "reattach_delegation",
-      { ...payload },
-      {
-        runAt: new Date(Date.now() + DELEGATION_REATTACH_POLL_MS),
-        maxAttempts: 3,
-      },
-      store,
-    );
-  } catch (error) {
-    console.warn("[team] failed to schedule delegation reattach", error);
-  }
+  await enqueue(
+    "reattach_delegation",
+    { ...payload },
+    {
+      runAt: new Date(Date.now() + DELEGATION_REATTACH_POLL_MS),
+      maxAttempts: 3,
+    },
+    store,
+  );
 }
 
 /**
@@ -254,16 +251,32 @@ export async function reattachDelegation(
   if (!session.externalSessionId) {
     return { status: "skipped", reason: "session has no eve handle" };
   }
-  // A human hit /stop on the adopted conversation — a deliberate end, not a lost turn.
-  if (session.status === "stopped") {
-    return { status: "skipped", reason: "session was stopped" };
-  }
   const delegation = await store.delegations.findById(payload.delegationId);
   if (!delegation) return { status: "skipped", reason: "delegation not found" };
   // Only a `running` row is ours: `waiting` means a human is already answering (the FOH drain owns
   // the settle from there), and completed/failed means something else already finished the job.
   if (delegation.status !== "running") {
     return { status: "skipped", reason: `delegation is ${delegation.status}` };
+  }
+
+  // A human hit /stop on the adopted conversation — a deliberate end, not a lost turn, so there is
+  // nothing left to drain. But the stop route settles only the session row and the inbox: it knows
+  // nothing about delegations or runs. Without this, both would sit `running` forever — the run
+  // unreadable, and the edge cap still counting a turn nobody is running.
+  if (session.status === "stopped") {
+    await settle(
+      session,
+      await peerTarget(store, session),
+      payload,
+      deps,
+      null,
+      "failed",
+      {
+        error:
+          "The conversation was stopped, so the rest of the delegated turn wasn't recovered.",
+      },
+    );
+    return { status: "settled", outcome: "failed" };
   }
 
   const target = await peerTarget(store, session);
@@ -340,10 +353,21 @@ async function settle(
   const { store } = deps;
   const error = override.error ?? result?.error ?? null;
   const sessionId = result?.sessionId ?? session.externalSessionId;
+  /**
+   * The writes that OWN this turn's fate: if either is lost the row it settles is stuck `running`
+   * with nothing else coming for it, so the failure is rethrown at the end to fail the job and earn
+   * a retry. (Re-running a tick is idempotent — it replays the peer's log from 0.) The
+   * session/inbox writes below are not in this set: they are recoverable by the ordinary FOH
+   * sweeps, and losing one must not block the two that are not.
+   */
+  let terminalFailure: unknown = null;
 
   // 1. Session row. A settled turn moves the cursor to its true end; with no target or no result
   //    there is nothing to write except the row's status, which must stop claiming to be running.
-  if (target && result) {
+  //    A row that /stop already settled is left alone — it is terminal and not ours to reopen.
+  if (session.status === "stopped") {
+    // nothing to write
+  } else if (target && result) {
     try {
       await deps.saveCursor({
         id: session.id,
@@ -369,9 +393,28 @@ async function settle(
   //    than reporting a transport failure as an agent failure — this is where it settles. Runs
   //    before the inbox so the question item can point at the run the operator should read.
   let runId: string | null = null;
-  if (target && result && sessionId && result.turnId) {
-    const runExternalId = externalRunId(sessionId, result.turnId);
+  // With no drained result — the conversation was stopped, or the ceiling passed with nothing new —
+  // the run still has to stop claiming to be running, so it is finalized from what the payload
+  // knows. An empty `steps` list never replaces a transcript (the ingest only rewrites steps when
+  // it is given some), so this cannot erase what earlier ticks recorded.
+  const runTurnId = result?.turnId ?? payload.turnId;
+  if (target && sessionId && runTurnId) {
+    const runExternalId = externalRunId(sessionId, runTurnId);
     const startedAt = new Date(payload.startedAt);
+    const finished: TurnResult = result ?? {
+      ok: false,
+      sessionId,
+      continuationToken: session.continuationToken,
+      streamIndex: session.streamIndex,
+      reply: null,
+      replyIsStructured: false,
+      inputRequests: [],
+      modelId: null,
+      turnId: runTurnId,
+      steps: [],
+      messages: [],
+      error,
+    };
     try {
       await deps.recordFinish({
         projectId: payload.projectId,
@@ -379,7 +422,7 @@ async function settle(
         releaseId: target.releaseId,
         externalRunId: runExternalId,
         externalSessionId: sessionId,
-        result: override.error ? { ...result, ok: false, error } : result,
+        result: override.error ? { ...finished, ok: false, error } : finished,
         userMessage: payload.userMessage,
         channel: "teammate",
         metadata: payload.metadata,
@@ -389,6 +432,7 @@ async function settle(
       runId = await deps.resolveRunId(payload.projectId, runExternalId);
     } catch (e) {
       console.error("[team] reattach run finalize failed:", e);
+      terminalFailure ??= e;
     }
   }
 
@@ -458,5 +502,10 @@ async function settle(
     });
   } catch (e) {
     console.error("[team] reattach delegation finalize failed:", e);
+    terminalFailure ??= e;
   }
+
+  // Fail the JOB, not just the log line: the worker retries with backoff, and a retried tick
+  // re-derives the same settlement from the peer's durable log.
+  if (terminalFailure) throw terminalFailure;
 }
