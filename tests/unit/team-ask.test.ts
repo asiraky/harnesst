@@ -530,18 +530,19 @@ describe("runAsk — tell mode (#269 fire-and-forget)", () => {
     ).toBe(0);
   });
 
-  it("closes the rows honestly when the tracking machinery fails after dispatch", async () => {
+  it("closes the delegation honestly when the tracking machinery fails after dispatch", async () => {
     const deploymentId = await seedCallerDeployment();
     await seedTargetLive();
-    let finishedRun = false;
+    let recordedStart = false;
     const res = await runAsk(
       { deploymentId, teammate: "deployer", message: "go", mode: "tell" },
       makeDeps({
         scheduleReattach: async () => {
           throw new Error("queue down");
         },
-        recordFinish: async () => {
-          finishedRun = true;
+        recordStart: async () => {
+          recordedStart = true;
+          return true;
         },
       }),
     );
@@ -549,7 +550,9 @@ describe("runAsk — tell mode (#269 fire-and-forget)", () => {
       ok: false,
       error: expect.stringContaining("couldn't set up tracking"),
     });
-    expect(finishedRun).toBe(true);
+    // The watcher is armed BEFORE any bookkeeping — nothing recorded a run for a hand-off that
+    // failed to become durable, and the row must not wedge the caps.
+    expect(recordedStart).toBe(false);
     expect(
       await store.delegations.countActiveEdge("pm", "deployer", new Date(0)),
     ).toBe(0);

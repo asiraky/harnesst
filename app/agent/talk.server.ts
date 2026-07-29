@@ -1071,7 +1071,7 @@ export interface DispatchResult {
 export async function dispatchTurn(input: {
   baseUrl: string;
   message: string;
-  /** Idle budget for the short turn-id watch — NOT a turn budget. */
+  /** Wall-clock budget for the whole dispatch (POST + turn-id watch) — NOT a turn budget. */
   timeoutMs?: number;
 }): Promise<DispatchResult> {
   let sessionId: string | null = null;
@@ -1079,29 +1079,45 @@ export async function dispatchTurn(input: {
   let turnId: string | null = null;
   let streamIndex = 0;
   let error: string | null = null;
-  for await (const event of streamTurn({
-    baseUrl: input.baseUrl,
-    message: input.message,
-    timeoutMs: input.timeoutMs ?? 10_000,
-  })) {
-    if (event.kind === "session") {
-      sessionId = event.sessionId;
-      continuationToken = event.continuationToken;
-    } else if (event.kind === "progress") {
-      streamIndex = event.streamIndex;
-    } else if (event.kind === "turn") {
-      turnId = event.turnId;
-      break; // dispatched and identified — stop watching
-    } else if (event.kind === "done") {
-      // The stream ended inside the watch window: a settled turn, a lost stream, or a refused
-      // POST. All that matters here is whether the message was accepted (sessionId) — the
-      // watcher re-derives the real outcome from the durable log either way.
-      sessionId = event.result.sessionId ?? sessionId;
-      continuationToken = event.result.continuationToken ?? continuationToken;
-      turnId = event.result.turnId;
-      streamIndex = event.result.streamIndex;
-      error = event.result.error;
+  // A HARD wall clock over the whole watch, POST included. The live stream connect has no
+  // pre-headers timeout (the idle race only starts once the reader exists), so without this a
+  // stalled connect would hold a "returns in seconds" tool open indefinitely.
+  const controller = new AbortController();
+  const deadline = setTimeout(
+    () => controller.abort(),
+    input.timeoutMs ?? 20_000,
+  );
+  try {
+    for await (const event of streamTurn({
+      baseUrl: input.baseUrl,
+      message: input.message,
+      timeoutMs: 10_000,
+      signal: controller.signal,
+    })) {
+      if (event.kind === "session") {
+        sessionId = event.sessionId;
+        continuationToken = event.continuationToken;
+      } else if (event.kind === "progress") {
+        streamIndex = event.streamIndex;
+      } else if (event.kind === "turn") {
+        turnId = event.turnId;
+        break; // dispatched and identified — stop watching
+      } else if (event.kind === "done") {
+        // The stream ended inside the watch window: a settled turn, a lost stream, or a refused
+        // POST. All that matters here is whether the message was accepted (sessionId) — the
+        // watcher re-derives the real outcome from the durable log either way.
+        sessionId = event.result.sessionId ?? sessionId;
+        continuationToken = event.result.continuationToken ?? continuationToken;
+        turnId = event.result.turnId;
+        streamIndex = event.result.streamIndex;
+        error = event.result.error;
+      }
     }
+  } finally {
+    clearTimeout(deadline);
+  }
+  if (!sessionId && controller.signal.aborted) {
+    error = "Timed out dispatching the turn.";
   }
   return {
     sessionId,

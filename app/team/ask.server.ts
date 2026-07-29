@@ -28,6 +28,7 @@ import {
   recordTurnStart,
 } from "~/observability/record.server";
 import { getRunIdByExternal } from "~/observability/store.server";
+import type { PlaygroundSession } from "~/playground/sessions.server";
 import {
   backfillPlaygroundEventsFromEve,
   createPlaygroundSession,
@@ -653,38 +654,13 @@ async function runTell(ctx: TellContext, deps: AskDeps): Promise<AskResult> {
     return deny(`Couldn't reach "${ctx.target.name}": ${detail}`);
   }
 
-  // Record the run `running` when the dispatch watch caught the turn id (it almost always does —
-  // eve echoes `message.received` in the first event batch). Without one there is no external
-  // run id yet; the reattach settle records the run from the turn id it discovers instead.
-  let runId: string | null = null;
-  let runExternalId: string | null = null;
-  if (dispatched.turnId) {
-    runExternalId = externalRunId(dispatched.sessionId, dispatched.turnId);
-    try {
-      await deps.recordStart(
-        {
-          projectId: ctx.projectId,
-          deploymentId: ctx.peerTarget.deploymentId,
-          releaseId: ctx.peerTarget.releaseId,
-          externalRunId: runExternalId,
-          externalSessionId: dispatched.sessionId,
-          userMessage: ctx.prefixed,
-          channel: "teammate",
-          metadata: ctx.runMeta,
-        },
-        ctx.startedAt,
-      );
-      runId = await deps.resolveRunId(ctx.projectId, runExternalId);
-    } catch (error) {
-      console.error("[team] recording delegated run failed:", error);
-    }
-  }
-  const runPath = runId
-    ? runPathFor(ctx.projectId, ctx.target.name, runId)
-    : null;
-
+  // Arm the watcher FIRST — before any best-effort bookkeeping. The dispatch above put the turn
+  // beyond recall, and until the reattach job is enqueued a control-plane crash would orphan the
+  // delegation with nobody watching; every await between the POST and the enqueue widens that
+  // window, so the run recording and the transcript backfill wait until the hand-off is durable.
+  let session: PlaygroundSession;
   try {
-    const session = await deps.createSession({
+    session = await deps.createSession({
       projectId: ctx.projectId,
       agentId: ctx.target.id,
       userId: null,
@@ -706,11 +682,6 @@ async function runTell(ctx: TellContext, deps: AskDeps): Promise<AskResult> {
       status: "running",
       lastEventAt: deps.now(),
     });
-    try {
-      await deps.backfillSession({ session, target: ctx.peerTarget });
-    } catch (error) {
-      console.error("[team] dispatched transcript backfill failed:", error);
-    }
     await deps.scheduleReattach(store, {
       sessionId: session.id,
       delegationId: ctx.delegationId,
@@ -725,59 +696,68 @@ async function runTell(ctx: TellContext, deps: AskDeps): Promise<AskResult> {
         deps.now().getTime() + DELEGATION_REATTACH_CEILING_MS,
       ).toISOString(),
     });
-    return {
-      ok: true,
-      status: "dispatched",
-      teammate: ctx.target.name,
-      note: `"${ctx.target.name}" has the task and is working on it now. This was a hand-off: you will not receive their reply — the run below records how it ends, and if they need a human they will ask one. Report the hand-off and move on; do NOT wait for or invent a result.`,
-      delegationId: ctx.delegationId,
-      runId,
-      runPath,
-    };
   } catch (error) {
     // The tracking machinery failed. The turn itself is beyond recall — the peer is running it —
-    // but with no session row and no watcher nothing would ever settle these rows, so close them
-    // honestly and tell the caller exactly what is and isn't known.
+    // but with no watcher nothing would ever settle the delegation, so close it honestly and
+    // tell the caller exactly what is and isn't known. (A session row created before the
+    // failure is recovered by the abandoned-session sweep — it stops being bumped.)
     console.error("[team] delegation dispatch hand-off failed:", error);
     const detail = `The task reached "${ctx.target.name}", but harnesst couldn't set up tracking for it, so its outcome won't be recorded. Do not blindly re-send — the teammate may still be doing the work.`;
-    if (runExternalId) {
-      await deps
-        .recordFinish({
-          projectId: ctx.projectId,
-          deploymentId: ctx.peerTarget.deploymentId,
-          releaseId: ctx.peerTarget.releaseId,
-          externalRunId: runExternalId,
-          externalSessionId: dispatched.sessionId,
-          result: {
-            ok: false,
-            sessionId: dispatched.sessionId,
-            continuationToken: dispatched.continuationToken,
-            streamIndex: dispatched.streamIndex,
-            reply: null,
-            replyIsStructured: false,
-            inputRequests: [],
-            modelId: null,
-            turnId: dispatched.turnId,
-            steps: [],
-            messages: [],
-            error: detail,
-          },
-          userMessage: ctx.prefixed,
-          channel: "teammate",
-          metadata: ctx.runMeta,
-          startedAt: ctx.startedAt,
-          wallClockMs: deps.now().getTime() - ctx.startedAt.getTime(),
-        })
-        .catch((e) =>
-          console.error("[team] recording delegated run failed:", e),
-        );
-    }
     await store.delegations.finalize(ctx.delegationId, {
       status: "failed",
       error: detail,
       externalSessionId: dispatched.sessionId,
-      runId,
     });
     return deny(detail);
   }
+
+  // Best-effort from here — the hand-off is durable, so nothing below may cost it. Record the
+  // run `running` when the dispatch watch caught the turn id (it almost always does — eve echoes
+  // `message.received` in the first event batch); without one there is no external run id yet,
+  // and the reattach settle records the run from the turn id it discovers instead.
+  let runId: string | null = null;
+  if (dispatched.turnId) {
+    try {
+      await deps.recordStart(
+        {
+          projectId: ctx.projectId,
+          deploymentId: ctx.peerTarget.deploymentId,
+          releaseId: ctx.peerTarget.releaseId,
+          externalRunId: externalRunId(dispatched.sessionId, dispatched.turnId),
+          externalSessionId: dispatched.sessionId,
+          userMessage: ctx.prefixed,
+          channel: "teammate",
+          metadata: ctx.runMeta,
+        },
+        ctx.startedAt,
+      );
+      runId = await deps.resolveRunId(
+        ctx.projectId,
+        externalRunId(dispatched.sessionId, dispatched.turnId),
+      );
+    } catch (error) {
+      console.error("[team] recording delegated run failed:", error);
+    }
+  }
+  const runPath = runId
+    ? runPathFor(ctx.projectId, ctx.target.name, runId)
+    : null;
+
+  try {
+    await deps.backfillSession({ session, target: ctx.peerTarget });
+  } catch (error) {
+    console.error("[team] dispatched transcript backfill failed:", error);
+  }
+
+  return {
+    ok: true,
+    status: "dispatched",
+    teammate: ctx.target.name,
+    note: `"${ctx.target.name}" has the task and is working on it now. This was a hand-off: you will not receive their reply — ${
+      runPath ? "the run below" : "their runs page"
+    } records how it ends, and if they need a human they will ask one. Report the hand-off and move on; do NOT wait for or invent a result.`,
+    delegationId: ctx.delegationId,
+    runId,
+    runPath,
+  };
 }
