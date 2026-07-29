@@ -97,6 +97,13 @@ function makeDeps(over: Partial<AskDeps> = {}): AskDeps & {
   return {
     store,
     sendTurn: async () => turnResult(),
+    dispatchTurn: async () => ({
+      sessionId: "sess_1",
+      continuationToken: "tok_1",
+      turnId: "turn_1",
+      streamIndex: 0,
+      error: null,
+    }),
     recordStart: async () => true,
     recordFinish: async () => {},
     resolveRunId: async () => "run_9",

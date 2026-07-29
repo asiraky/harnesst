@@ -688,8 +688,9 @@ function TeamSurface({
               for the whole team at once.
             </p>
             <p className="mt-2">
-              Teammates can delegate to each other: every agent gets an{" "}
-              <em>ask-teammate</em> tool wired to the rest of the roster, so the
+              Teammates can delegate to each other: every agent gets{" "}
+              <em>ask-teammate</em> and <em>tell-teammate</em> tools wired to
+              the rest of the roster, so the
               team behaves like an organisation, not a folder of agents. Manage
               who can ask whom under{" "}
               <span className="font-medium text-foreground">

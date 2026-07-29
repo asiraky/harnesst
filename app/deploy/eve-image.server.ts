@@ -51,6 +51,8 @@ import type { BuiltArtifact } from "~/seams/types";
 import {
   ASK_TEAMMATE_TOOL_PATH,
   ASK_TEAMMATE_TOOL_SOURCE,
+  TELL_TEAMMATE_TOOL_PATH,
+  TELL_TEAMMATE_TOOL_SOURCE,
 } from "~/team/tool-template";
 import {
   assertDockerDaemonReady,
@@ -272,14 +274,20 @@ async function fetchSource(
     await writeFile(path.join(buildDir, ".dockerignore"), HARNESST_DOCKERIGNORE);
   }
 
-  // Team delegation (D2): bake the generated ask-teammate tool into the member's build context,
-  // never the repo. The path is relative to the build dir (the member's package dir). A repo
-  // file already at that path wins — the user override is never clobbered.
+  // Team delegation (D2/#269): bake the generated delegation tools (blocking ask-teammate,
+  // fire-and-forget tell-teammate) into the member's build context, never the repo. The paths
+  // are relative to the build dir (the member's package dir). A repo file already at a path
+  // wins — the user override is never clobbered.
   if (input.injectTeammateTool) {
-    const toolPath = path.join(buildDir, ASK_TEAMMATE_TOOL_PATH);
-    if (!existsSync(toolPath)) {
-      await mkdir(path.dirname(toolPath), { recursive: true });
-      await writeFile(toolPath, ASK_TEAMMATE_TOOL_SOURCE);
+    for (const [relPath, source] of [
+      [ASK_TEAMMATE_TOOL_PATH, ASK_TEAMMATE_TOOL_SOURCE],
+      [TELL_TEAMMATE_TOOL_PATH, TELL_TEAMMATE_TOOL_SOURCE],
+    ] as const) {
+      const toolPath = path.join(buildDir, relPath);
+      if (!existsSync(toolPath)) {
+        await mkdir(path.dirname(toolPath), { recursive: true });
+        await writeFile(toolPath, source);
+      }
     }
   }
 

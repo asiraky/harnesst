@@ -1,7 +1,10 @@
 /**
- * Teammate delegation relay (Team delegation — D1/§2). A team member's `ask-teammate` tool POSTs
- * `{ teammate, message }` here with its `HARNESST_TEAM_TOKEN`; the route verifies the token to a
- * deployment id and hands that plus the body to `runAsk`. Everything else — caller resolution,
+ * Teammate delegation relay (Team delegation — D1/§2). A team member's `ask-teammate` or
+ * `tell-teammate` tool POSTs `{ teammate, message, mode }` here with its `HARNESST_TEAM_TOKEN`;
+ * the route verifies the token to a deployment id and hands that plus the body to `runAsk`.
+ * `mode: "ask"` blocks until the peer's turn settles; `mode: "tell"` (#269) dispatches the turn
+ * and returns immediately, leaving settlement to the #267 reattach watcher — same resolution,
+ * authorization, caps and wake either way. Everything else — caller resolution,
  * authorization, concurrency caps, target env/deployment resolution, the eve turn, run recording,
  * and the correlation row — lives here so the flow is unit-testable against an injected store +
  * `sendTurn` + recorders, with zero I/O.
@@ -13,8 +16,8 @@
  * an agent-opened FOH session adopts the peer's eve handles, and the caller gets a structured
  * `waiting_on_human` result — also on the 200 path.
  */
-import type { TurnResult } from "~/agent/talk.server";
-import { sendTurn } from "~/agent/talk.server";
+import type { DispatchResult, TurnResult } from "~/agent/talk.server";
+import { dispatchTurn, sendTurn } from "~/agent/talk.server";
 import type { Target } from "~/chat/playground.server";
 import type { DataStore, DeploymentWithRelease } from "~/data/ports";
 import { ensureLiveDeploymentForEnvironment } from "~/deploy/wake.server";
@@ -55,6 +58,8 @@ export interface AskDeps {
   store: DataStore;
   /** eve client (blocking) — injected so tests need no running instance. */
   sendTurn: typeof sendTurn;
+  /** eve client (fire-and-forget, #269) — posts the turn and returns without draining it. */
+  dispatchTurn: typeof dispatchTurn;
   recordStart: typeof recordTurnStart;
   recordFinish: typeof recordTurnFinish;
   resolveRunId: (
@@ -78,6 +83,7 @@ export function defaultAskDeps(): AskDeps {
   return {
     store: getRuntime().data,
     sendTurn,
+    dispatchTurn,
     recordStart: recordTurnStart,
     recordFinish: recordTurnFinish,
     resolveRunId: getRunIdByExternal,
@@ -96,6 +102,13 @@ export interface AskInput {
   deploymentId: string;
   teammate: string;
   message: string;
+  /**
+   * How the caller wants the delegation to run (#269). `ask` (the default) blocks until the
+   * peer's turn settles; `tell` returns as soon as the turn is dispatched and leaves the
+   * settlement to the background reattach watcher. Everything up to the dispatch — resolution,
+   * authorization, caps, wake — is identical.
+   */
+  mode?: "ask" | "tell";
 }
 
 export type AskResult =
@@ -130,6 +143,21 @@ export type AskResult =
       status: "handed_off";
       teammate: string;
       note: string;
+      runId: string | null;
+      runPath: string | null;
+    }
+  /**
+   * #269 `tell` mode: the peer's turn is dispatched and running — that is the whole promise.
+   * The reply goes nowhere by design (who a peer reports to is its own instruction-level
+   * policy); the run records how it ends. The note tells the calling model not to wait for or
+   * invent a result.
+   */
+  | {
+      ok: true;
+      status: "dispatched";
+      teammate: string;
+      note: string;
+      delegationId: string;
       runId: string | null;
       runPath: string | null;
     }
@@ -258,6 +286,45 @@ export async function runAsk(
 
   const prefixed = `From your teammate "${caller.name}": ${message}`;
   const startedAt = deps.now();
+
+  const runMeta = {
+    delegationId: delegation.id,
+    fromAgentId: caller.id,
+    fromAgentName: caller.name,
+  };
+
+  /** The peer's live handles — shared by relay parking (§9b), the #267 hand-off, and tell. */
+  const peerTarget: Target = {
+    deploymentId: live.id,
+    environmentId: targetEnv.id,
+    releaseId: live.releaseId,
+    url: live.url,
+    version: live.version,
+    environmentName: targetEnv.name,
+    gitSha: live.gitSha,
+  };
+
+  // 8-tell (#269). A tell is a hand-off BY CONSTRUCTION: dispatch the turn, then run the exact
+  // machinery the #267 severed-stream path runs — record the run `running`, adopt the peer
+  // session into an agent-opened FOH row, enqueue the reattach watcher that drains the turn to
+  // settlement in the background — and return. The delegation row stays `running`, so the
+  // caps bound fire-and-forget spam exactly as they bound asks.
+  if (input.mode === "tell") {
+    return runTell(
+      {
+        delegationId: delegation.id,
+        projectId: project.id,
+        callerName: caller.name,
+        target: { id: target.id, name: target.name },
+        peerTarget,
+        prefixed,
+        runMeta,
+        startedAt,
+      },
+      deps,
+    );
+  }
+
   let result: TurnResult;
   try {
     result = await deps.sendTurn({
@@ -279,12 +346,6 @@ export async function runAsk(
   //   talk.server.ts (never matched from the error text), and it only leads anywhere when eve
   //   handed us a session id to resume from.
   const handingOff = result.streamLost === true && Boolean(result.sessionId);
-
-  const runMeta = {
-    delegationId: delegation.id,
-    fromAgentId: caller.id,
-    fromAgentName: caller.name,
-  };
 
   // 8. Record the peer's run (channel "teammate", linked-trace metadata). Best-effort — a
   //    recording hiccup must not lose the reply.
@@ -340,17 +401,6 @@ export async function runAsk(
   }
 
   const runPath = runId ? runPathFor(project.id, target.name, runId) : null;
-
-  /** The peer's live handles — shared by relay parking (§9b) and the #267 hand-off. */
-  const peerTarget: Target = {
-    deploymentId: live.id,
-    environmentId: targetEnv.id,
-    releaseId: live.releaseId,
-    url: live.url,
-    version: live.version,
-    environmentName: targetEnv.name,
-    gitSha: live.gitSha,
-  };
 
   // 9. The severed stream (#267) — checked BEFORE the failure branch below, because a lost
   //    stream is not a failed turn. harnesst stopped watching it; the peer did not stop
@@ -560,4 +610,174 @@ export async function runAsk(
     runId,
     runPath,
   };
+}
+
+/** Everything `runTell` needs, all resolved by the shared front half of `runAsk`. */
+interface TellContext {
+  delegationId: string;
+  projectId: string;
+  callerName: string;
+  target: { id: string; name: string };
+  peerTarget: Target;
+  /** The provenance-prefixed message, exactly as the ask path sends it. */
+  prefixed: string;
+  runMeta: Record<string, unknown>;
+  startedAt: Date;
+}
+
+/**
+ * The fire-and-forget back half (#269). Dispatch the peer's turn, then run the same adoption the
+ * #267 severed-stream hand-off runs — run row `running`, agent-opened FOH session over the peer's
+ * eve handles, reattach watcher enqueued — and return to the caller in seconds. The watcher owns
+ * settlement from here: it drains the turn in the background, files any `input.requested` into
+ * the inbox, and finalizes the delegation and run with the true outcome. The peer's reply goes
+ * nowhere by design — who a peer reports to on completion is that agent's instruction-level
+ * policy, not a platform convention.
+ */
+async function runTell(ctx: TellContext, deps: AskDeps): Promise<AskResult> {
+  const { store } = deps;
+
+  // The POST is the hand-off. `dispatchTurn` never throws; no session id means the message was
+  // never accepted, so this really is a failure to reach the peer — nothing is running.
+  const dispatched: DispatchResult = await deps.dispatchTurn({
+    baseUrl: ctx.peerTarget.url,
+    message: ctx.prefixed,
+  });
+  if (!dispatched.sessionId) {
+    const detail =
+      dispatched.error ?? "The teammate did not accept the message.";
+    await store.delegations.finalize(ctx.delegationId, {
+      status: "failed",
+      error: detail,
+    });
+    return deny(`Couldn't reach "${ctx.target.name}": ${detail}`);
+  }
+
+  // Record the run `running` when the dispatch watch caught the turn id (it almost always does —
+  // eve echoes `message.received` in the first event batch). Without one there is no external
+  // run id yet; the reattach settle records the run from the turn id it discovers instead.
+  let runId: string | null = null;
+  let runExternalId: string | null = null;
+  if (dispatched.turnId) {
+    runExternalId = externalRunId(dispatched.sessionId, dispatched.turnId);
+    try {
+      await deps.recordStart(
+        {
+          projectId: ctx.projectId,
+          deploymentId: ctx.peerTarget.deploymentId,
+          releaseId: ctx.peerTarget.releaseId,
+          externalRunId: runExternalId,
+          externalSessionId: dispatched.sessionId,
+          userMessage: ctx.prefixed,
+          channel: "teammate",
+          metadata: ctx.runMeta,
+        },
+        ctx.startedAt,
+      );
+      runId = await deps.resolveRunId(ctx.projectId, runExternalId);
+    } catch (error) {
+      console.error("[team] recording delegated run failed:", error);
+    }
+  }
+  const runPath = runId
+    ? runPathFor(ctx.projectId, ctx.target.name, runId)
+    : null;
+
+  try {
+    const session = await deps.createSession({
+      projectId: ctx.projectId,
+      agentId: ctx.target.id,
+      userId: null,
+      surface: "foh",
+      environmentId: ctx.peerTarget.environmentId,
+      deploymentId: ctx.peerTarget.deploymentId,
+      releaseId: ctx.peerTarget.releaseId,
+      version: ctx.peerTarget.version,
+      // D6: never the delegated ask text — it can carry the caller's private context and the
+      // list title is visible to every team member.
+      title: `Delegated task from "${ctx.callerName}"`,
+      openedByAgentId: ctx.target.id,
+      delegationId: ctx.delegationId,
+      externalSessionId: dispatched.sessionId,
+      continuationToken: dispatched.continuationToken,
+      streamIndex: dispatched.streamIndex,
+      // Honest: the turn IS running. The watcher bumps this row every poll so the abandoned-
+      // session sweep doesn't mistake a long silent tool call for a dead drain.
+      status: "running",
+      lastEventAt: deps.now(),
+    });
+    try {
+      await deps.backfillSession({ session, target: ctx.peerTarget });
+    } catch (error) {
+      console.error("[team] dispatched transcript backfill failed:", error);
+    }
+    await deps.scheduleReattach(store, {
+      sessionId: session.id,
+      delegationId: ctx.delegationId,
+      projectId: ctx.projectId,
+      turnId: dispatched.turnId,
+      userMessage: ctx.prefixed,
+      metadata: ctx.runMeta,
+      startedAt: ctx.startedAt.toISOString(),
+      // Anchored at the dispatch — for a tell that IS the turn's start, so the watcher's
+      // ceiling bounds the whole background task.
+      deadlineAt: new Date(
+        deps.now().getTime() + DELEGATION_REATTACH_CEILING_MS,
+      ).toISOString(),
+    });
+    return {
+      ok: true,
+      status: "dispatched",
+      teammate: ctx.target.name,
+      note: `"${ctx.target.name}" has the task and is working on it now. This was a hand-off: you will not receive their reply — the run below records how it ends, and if they need a human they will ask one. Report the hand-off and move on; do NOT wait for or invent a result.`,
+      delegationId: ctx.delegationId,
+      runId,
+      runPath,
+    };
+  } catch (error) {
+    // The tracking machinery failed. The turn itself is beyond recall — the peer is running it —
+    // but with no session row and no watcher nothing would ever settle these rows, so close them
+    // honestly and tell the caller exactly what is and isn't known.
+    console.error("[team] delegation dispatch hand-off failed:", error);
+    const detail = `The task reached "${ctx.target.name}", but harnesst couldn't set up tracking for it, so its outcome won't be recorded. Do not blindly re-send — the teammate may still be doing the work.`;
+    if (runExternalId) {
+      await deps
+        .recordFinish({
+          projectId: ctx.projectId,
+          deploymentId: ctx.peerTarget.deploymentId,
+          releaseId: ctx.peerTarget.releaseId,
+          externalRunId: runExternalId,
+          externalSessionId: dispatched.sessionId,
+          result: {
+            ok: false,
+            sessionId: dispatched.sessionId,
+            continuationToken: dispatched.continuationToken,
+            streamIndex: dispatched.streamIndex,
+            reply: null,
+            replyIsStructured: false,
+            inputRequests: [],
+            modelId: null,
+            turnId: dispatched.turnId,
+            steps: [],
+            messages: [],
+            error: detail,
+          },
+          userMessage: ctx.prefixed,
+          channel: "teammate",
+          metadata: ctx.runMeta,
+          startedAt: ctx.startedAt,
+          wallClockMs: deps.now().getTime() - ctx.startedAt.getTime(),
+        })
+        .catch((e) =>
+          console.error("[team] recording delegated run failed:", e),
+        );
+    }
+    await store.delegations.finalize(ctx.delegationId, {
+      status: "failed",
+      error: detail,
+      externalSessionId: dispatched.sessionId,
+      runId,
+    });
+    return deny(detail);
+  }
 }

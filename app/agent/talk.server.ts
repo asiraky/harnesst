@@ -1044,6 +1044,74 @@ export async function* resumeTurnStream(input: {
   });
 }
 
+/**
+ * What `dispatchTurn` hands back the moment a turn is on its way (#269 fire-and-forget). Not a
+ * `TurnResult`: nothing has settled, and pretending otherwise is how a dispatch gets mistaken for
+ * an outcome. `sessionId === null` is the only failure signal — the message was never accepted.
+ */
+export interface DispatchResult {
+  sessionId: string | null;
+  continuationToken: string | null;
+  /** The turn id, when the short watch below saw it; null still hands off fine (adopt-any-turn). */
+  turnId: string | null;
+  /** Stream cursor at the moment we stopped watching. */
+  streamIndex: number;
+  /** Why the dispatch failed — set only when `sessionId` is null. */
+  error: string | null;
+}
+
+/**
+ * Send one message and return as soon as the turn is DISPATCHED, not settled (#269 tell mode).
+ * The POST puts the turn beyond recall — the container runs it whether or not anyone watches —
+ * so this only lingers on the stream long enough to catch the turn id (normally the first event
+ * batch), then abandons it; breaking out of the generator closes the reader. A caller that wants
+ * the turn's outcome must follow the durable stream itself (`resumeTurnStream` via the reattach
+ * watcher). Never throws: transport failures come back as `sessionId: null` + `error`.
+ */
+export async function dispatchTurn(input: {
+  baseUrl: string;
+  message: string;
+  /** Idle budget for the short turn-id watch — NOT a turn budget. */
+  timeoutMs?: number;
+}): Promise<DispatchResult> {
+  let sessionId: string | null = null;
+  let continuationToken: string | null = null;
+  let turnId: string | null = null;
+  let streamIndex = 0;
+  let error: string | null = null;
+  for await (const event of streamTurn({
+    baseUrl: input.baseUrl,
+    message: input.message,
+    timeoutMs: input.timeoutMs ?? 10_000,
+  })) {
+    if (event.kind === "session") {
+      sessionId = event.sessionId;
+      continuationToken = event.continuationToken;
+    } else if (event.kind === "progress") {
+      streamIndex = event.streamIndex;
+    } else if (event.kind === "turn") {
+      turnId = event.turnId;
+      break; // dispatched and identified — stop watching
+    } else if (event.kind === "done") {
+      // The stream ended inside the watch window: a settled turn, a lost stream, or a refused
+      // POST. All that matters here is whether the message was accepted (sessionId) — the
+      // watcher re-derives the real outcome from the durable log either way.
+      sessionId = event.result.sessionId ?? sessionId;
+      continuationToken = event.result.continuationToken ?? continuationToken;
+      turnId = event.result.turnId;
+      streamIndex = event.result.streamIndex;
+      error = event.result.error;
+    }
+  }
+  return {
+    sessionId,
+    continuationToken,
+    turnId,
+    streamIndex,
+    error: sessionId ? null : (error ?? "The agent did not accept the message."),
+  };
+}
+
 /** Send one message and wait for the turn to settle (or `timeoutMs`). */
 export async function sendTurn(input: {
   baseUrl: string;

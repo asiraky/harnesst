@@ -382,12 +382,15 @@ describe("ask-teammate tool injection (D2)", () => {
       injectTeammateTool: true,
     }).catch(() => {});
 
-    const toolWrite = (await writeCalls()).find(([p]) =>
-      String(p).endsWith("agents/deployer/agent/tools/ask-teammate.ts"),
-    );
-    expect(toolWrite).toBeTruthy();
-    expect(String(toolWrite![1])).toContain("defineTool");
-    expect(String(toolWrite![1])).toContain("/api/team/ask");
+    const calls = await writeCalls();
+    for (const file of ["ask-teammate.ts", "tell-teammate.ts"]) {
+      const toolWrite = calls.find(([p]) =>
+        String(p).endsWith(`agents/deployer/agent/tools/${file}`),
+      );
+      expect(toolWrite).toBeTruthy();
+      expect(String(toolWrite![1])).toContain("defineTool");
+      expect(String(toolWrite![1])).toContain("/api/team/ask");
+    }
   });
 
   it("does not inject when the flag is unset (single-agent / non-member builds)", async () => {
@@ -402,8 +405,10 @@ describe("ask-teammate tool injection (D2)", () => {
       installationId: "inst_1",
     }).catch(() => {});
 
-    const toolWrite = (await writeCalls()).find(([p]) =>
-      String(p).endsWith("tools/ask-teammate.ts"),
+    const toolWrite = (await writeCalls()).find(
+      ([p]) =>
+        String(p).endsWith("tools/ask-teammate.ts") ||
+        String(p).endsWith("tools/tell-teammate.ts"),
     );
     expect(toolWrite).toBeUndefined();
   });
