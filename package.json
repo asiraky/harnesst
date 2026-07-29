@@ -17,6 +17,7 @@
     "test": "vitest run",
     "test:e2e": "vitest run --config tests/e2e/vitest.config.ts tests/e2e",
     "catalog:validate": "node catalog/scripts/validate.mjs",
+    "lint:shipped": "tsx scripts/lint-shipped.ts",
     "catalog:index": "node catalog/scripts/build-index.mjs",
     "doctor": "npx react-doctor@latest",
     "email:dev": "email dev --dir app/email/templates --port 8092"
@@ -72,6 +73,7 @@
     "react-doctor": "^0.6.0",
     "react-email": "^6.6.9",
     "tailwindcss": "^4.2.2",
+    "tsx": "^4.22.4",
     "typescript": "^5.9.3",
     "vite": "^8.0.3",
     "vitest": "^4.1.9",
