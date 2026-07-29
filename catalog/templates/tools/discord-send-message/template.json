@@ -3,9 +3,12 @@
   "type": "tool",
   "name": "Discord Send Message",
   "description": "Send a message to a Discord channel by channel id via harnesst's control plane, using the installation's shared Discord app — scoped to servers this agent is connected to.",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "eve": ">=0.20.0",
-  "files": ["tools/discord-send-message.ts"],
+  "files": [
+    "tools/discord-send-message.ts"
+  ],
+  "assistantSkill": "assistant-skill.md",
   "dependencies": {
     "zod": "^4.4.3"
   }

@@ -288,7 +288,7 @@ export async function catalogOp(
 export interface AssistantBundle {
   /** Published `.harnesst/assistant/instructions.md`, or null. */
   instructions: string | null;
-  /** agent-relative target path → content (skills/user/*, schedules/user/*). */
+  /** agent-relative target path → content (skills/user/*, skills/installed/*, schedules/user/*). */
   files: Record<string, string>;
   /** Per-project model override from `.harnesst/assistant/assistant.json`, or null. */
   model: string | null;
@@ -339,6 +339,28 @@ export async function assembleBundle(
       }
     }),
   );
+
+  // Installed marketplace skills (issue #274): one per install in the PUBLISHED lock, delivered
+  // to `agent/skills/installed/<template-id>.md` — a namespace user skills can't collide with and
+  // the container's reset() can wipe. Prefer the lock's install-time snapshot (the skill the
+  // install shipped with); locks that predate the field backfill from the catalog's current
+  // version. A catalog outage or a skill-less template degrades to no skill, never an error.
+  const lock = overlayLock(source.files[LOCK_PATH] ?? null, []);
+  const seenInstallIds = new Set<string>();
+  for (const entry of lock.installs) {
+    // The id becomes a container file path — only well-formed slugs may travel.
+    if (!isTemplateSlug(entry.id) || seenInstallIds.has(entry.id)) continue;
+    seenInstallIds.add(entry.id);
+    let skill = entry.assistantSkill ?? null;
+    if (skill === null) {
+      try {
+        skill = (await deps.catalog.template(entry.type, entry.id)).assistantSkill;
+      } catch {
+        skill = null;
+      }
+    }
+    if (skill) files[`skills/installed/${entry.id}.md`] = skill;
+  }
 
   return { instructions, files, model, effort };
 }

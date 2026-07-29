@@ -69,6 +69,24 @@ function validateManifest(where, m) {
       if (reason) fail(where, `file path "${p}" ${reason}`);
     }
   }
+  // assistantSkill (issue #274): every template MUST ship one — it is the knowledge the harnesst
+  // assistant loads about this template (delivered via the assistant bundle, never installed
+  // into the repo). "Optional" means you ship a stub, not nothing. Mandatory HERE (the publish
+  // gate); harnesst's Zod schema keeps it optional so already-published catalogs parse during
+  // rollout.
+  if (m.assistantSkill === undefined) {
+    fail(where, "assistantSkill is required — every template ships an assistant skill (a stub at minimum)");
+  } else {
+    const reason = badPath(m.assistantSkill);
+    if (reason) fail(where, `assistantSkill "${m.assistantSkill}" ${reason}`);
+    else if (!m.assistantSkill.endsWith(".md")) {
+      fail(where, `assistantSkill "${m.assistantSkill}" must be a markdown file`);
+    }
+    if (Array.isArray(m.files) && m.files.includes(m.assistantSkill)) {
+      fail(where, "assistantSkill must not also be listed in files");
+    }
+  }
+
   // A file-less bundle with no includes would install nothing.
   if (
     m.type === "bundle" &&
@@ -385,6 +403,34 @@ function main() {
     // Shipped skill markdown must match the shape eve's discovery accepts.
     for (const [p, content] of Object.entries(t.files)) {
       validateSkillMarkdown(where, p, content);
+    }
+
+    // The assistant skill (issue #274) must exist beside files/ and pass the same eve flat-skill
+    // gate as shipped skills — it materializes at agent/skills/installed/<id>.md in the assistant
+    // image, so an unknown frontmatter key would fail the assistant's OWN build. Its description
+    // is the load trigger, so it is required even though eve tolerates flat skills without one.
+    if (typeof t.manifest.assistantSkill === "string" && !badPath(t.manifest.assistantSkill)) {
+      if (t.assistantSkill == null) {
+        fail(where, `assistantSkill "${t.manifest.assistantSkill}" is missing on disk`);
+      } else {
+        const keys = frontmatterKeys(t.assistantSkill);
+        if (keys === null) {
+          fail(where, `assistantSkill "${t.manifest.assistantSkill}" needs frontmatter with a description`);
+        } else {
+          for (const key of keys) {
+            if (!SKILL_FRONTMATTER_KEYS.includes(key)) {
+              fail(
+                where,
+                `assistantSkill "${t.manifest.assistantSkill}" frontmatter key "${key}" is not part of ` +
+                  `the public eve skill shape (only ${SKILL_FRONTMATTER_KEYS.join(", ")})`,
+              );
+            }
+          }
+          if (!keys.includes("description")) {
+            fail(where, `assistantSkill "${t.manifest.assistantSkill}" frontmatter must declare a description`);
+          }
+        }
+      }
     }
   }
 

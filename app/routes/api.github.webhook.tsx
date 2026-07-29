@@ -24,6 +24,7 @@ import {
   hasTeamLayout,
 } from "~/eve/parse";
 import { enqueue } from "~/jobs/queue.server";
+import { LOCK_PATH } from "~/marketplace/lock";
 import { invalidateRepoSource, warmAgentSource } from "~/github/cached.server";
 import { fetchAgentSource, listCommitFiles } from "~/github/repo.server";
 import { verifyGitHubSignature } from "~/github/webhook.server";
@@ -132,7 +133,13 @@ export async function action({ request }: ActionFunctionArgs) {
         { owner, repo },
         payload.pull_request.merge_commit_sha,
       );
-      if (changed.some((p) => p.startsWith(`${ASSISTANT_CONFIG_ROOT}/`))) {
+      // The lock counts as assistant config too (issue #274): installs/uninstalls change the
+      // installed skills the bundle delivers, so the assistant must re-fetch it.
+      if (
+        changed.some(
+          (p) => p.startsWith(`${ASSISTANT_CONFIG_ROOT}/`) || p === LOCK_PATH,
+        )
+      ) {
         await enqueue("assistant_restart", { projectId: project.id });
       }
     } catch {

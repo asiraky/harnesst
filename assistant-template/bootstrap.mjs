@@ -68,6 +68,10 @@ async function reset() {
     recursive: true,
     force: true,
   });
+  await rm(join(APP, "agent", "skills", "installed"), {
+    recursive: true,
+    force: true,
+  });
   await rm(join(APP, "agent", "schedules", "user"), {
     recursive: true,
     force: true,

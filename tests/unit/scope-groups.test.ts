@@ -58,6 +58,7 @@ const GROUPS = [
 
 /** A gmail-style connection template: no baseline scopes, three selectable groups. */
 const gmailTpl: CatalogTemplate = {
+  assistantSkill: null,
   manifest: {
     id: "gmail",
     type: "connection",
@@ -73,6 +74,7 @@ const gmailTpl: CatalogTemplate = {
 
 /** A plain (group-less) connector — the pre-#165 shape that must not change. */
 const sheetsTpl: CatalogTemplate = {
+  assistantSkill: null,
   manifest: {
     id: "google-sheets",
     type: "connection",
@@ -448,6 +450,7 @@ describe("resolveTemplate — scope groups propagate through composition (issue 
 
   it("a bundle unions baseline scopes and carries the include's groups (same provider)", async () => {
     const bundle: CatalogTemplate = {
+      assistantSkill: null,
       manifest: {
         id: "google-pack",
         type: "bundle",
@@ -473,6 +476,7 @@ describe("resolveTemplate — scope groups propagate through composition (issue 
   it("merges same-id groups across two composed connectors: scopes union, first label wins", async () => {
     const METADATA = "https://www.googleapis.com/auth/gmail.metadata";
     const otherMail: CatalogTemplate = {
+      assistantSkill: null,
       manifest: {
         id: "gmail-triage",
         type: "connection",
@@ -504,6 +508,7 @@ describe("resolveTemplate — scope groups propagate through composition (issue 
       files: { "connections/gmail-triage.ts": "export default {};\n" },
     };
     const bundle: CatalogTemplate = {
+      assistantSkill: null,
       manifest: {
         id: "mail-pack",
         type: "bundle",

@@ -3,9 +3,12 @@
   "type": "skill",
   "name": "Developer toolchain",
   "description": "A broad developer toolchain preinstalled in the agent's sandbox — git, gh, jq, ripgrep, build tools, python3, pnpm/yarn, and friends — plus a skill inventorying what's there. A deliberate superset: install once, stop apt-getting per session.",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "eve": ">=0.1.0",
-  "files": ["skills/dev-toolchain.md"],
+  "files": [
+    "skills/dev-toolchain.md"
+  ],
+  "assistantSkill": "assistant-skill.md",
   "sandbox": {
     "bootstrap": [
       "apt-get update && apt-get install -y --no-install-recommends ca-certificates curl wget git jq unzip zip rsync openssh-client build-essential pkg-config python3 python3-pip python3-venv sqlite3 ripgrep fd-find shellcheck tree file less nano && rm -rf /var/lib/apt/lists/*",

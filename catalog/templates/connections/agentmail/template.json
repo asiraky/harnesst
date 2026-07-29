@@ -3,7 +3,7 @@
   "type": "connection",
   "name": "AgentMail",
   "description": "Read and label mail in an AgentMail inbox (agentmail.to) with a user-supplied API key — no OAuth. Ships four tools: list the account's inboxes, list/search messages by date range, labels (e.g. unread), sender, or subject, read a full message including attachment downloads (invoice PDFs are the point), and add/remove labels. Read + label only by design: nothing shipped here can send, delete, or provision mail — the billing-inbox rule, enforced by omission.",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "eve": ">=0.1.0",
   "files": [
     "tools/agentmail-list-inboxes.ts",
@@ -11,6 +11,7 @@
     "tools/agentmail-get-message.ts",
     "tools/agentmail-update-labels.ts"
   ],
+  "assistantSkill": "assistant-skill.md",
   "dependencies": {
     "zod": "^4.4.3"
   },

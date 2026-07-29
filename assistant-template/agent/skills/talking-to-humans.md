@@ -12,6 +12,11 @@ FOH is a **surface in harnesst, not a package, channel, or tool you install in t
 member that is deployed appears there automatically, with a presence dot and a needs-you badge.
 There is nothing to add to an agent project to "enable FOH", and no HTTP endpoint to post to.
 
+**FOH is the default notification surface.** When a user says "notify me", "tell me", "let me
+know", or "message me" without naming a channel, they mean an inbox item here — in this chat
+application, where they are already talking to you. Never design the notification onto Discord,
+email, or any other channel unless the user names it.
+
 Communication rides three mechanisms:
 
 | Direction     | Mechanism                                                                                                        |
@@ -46,18 +51,21 @@ The parked question is delivered by **whichever channel started the session**:
 - **FOH session** (a human opened it) → inbox item, badge, inline answer. ✅
 - **A delegation** from a teammate → harnesst opens an agent-opened FOH session carrying the question
   and files a team-wide inbox item; the delegation resumes on its own once answered. ✅
-- **Discord** → the Discord channel posts the question as buttons. Works, different surface. ⚠️
-- **A schedule, a GitHub webhook, or any other unattended trigger** → **nobody owns the ask.** The
-  session parks and the run stalls with no human anywhere. ❌
+- **A channel whose installed skill documents FOH park** → the ask lands as a team-wide needs-you
+  inbox item; whoever answers in FOH resumes the channel-homed session. ✅
+- **A schedule, or a channel with no documented park** → nobody owns the ask; the session parks
+  and the run stalls with no human anywhere. ❌
 
-So: only design an agent to ask questions on work that arrives through FOH or a delegation. For
-scheduled or webhook-driven work, the agent must decide on its own and report, or push the message
-through a real channel (Discord, email) — never park. When a human asks for "check with me before
-doing X", establish which entry point X runs on before choosing the mechanism.
+Whether a given channel can park into FOH is documented **in that channel's installed skill**
+(`skills/installed/<template-id>.md`) — check it before designing. `ask_question` is the only
+agent→human API; the park is delivered by whichever channel homed the session, so the channel's
+skill is the ground truth for what happens to it.
 
-There is also **no way for an agent to message a human out of the blue**: an agent cannot open a
-session spontaneously. The only agent-initiated FOH session is the one harnesst creates when a
-delegated teammate parks on a question. Proactive outbound contact is a channel, not FOH.
+An agent cannot spontaneously open a session with no triggering turn — but any turn it is
+running, attended or not, can reach the inbox if its channel parks. "Notify me when X" therefore
+means designing the **wake and the ask together**: pick the trigger that fires on X, then finish
+that run with one self-contained `ask_question` carrying the news. When a human asks for "check
+with me before doing X", establish which entry point X runs on before choosing the mechanism.
 
 Completion needs no work at all: finishing a turn files a "finished" item in the human's inbox. The
 final message is what the human reads — make it a real answer, not a status ping.
@@ -85,7 +93,8 @@ What the agent's instructions should account for:
 ## When you build
 
 - "The agent should be able to ask me" needs **no new tool and no new channel** — it needs
-  `ask_question` used at the right decision points, and the work reaching it through FOH.
+  `ask_question` used at the right decision points, and the work reaching it through FOH, a
+  delegation, or a channel whose installed skill documents FOH park.
 - "The agent should be able to hand work to another agent" needs nothing either, beyond the repo being
   a team.
 - Never patch, vendor, or fork eve to change any of this — harnesst-side surfaces only.

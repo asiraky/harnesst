@@ -47,10 +47,15 @@ function stableStringify(value) {
  * sorted path order as `path\0content`, joined by newlines. Keep this in lockstep with
  * validate.mjs and tests/unit/marketplace.test.ts.
  */
-export function templateHash(manifest, files) {
+export function templateHash(manifest, files, assistantSkill) {
   const parts = [stableStringify(manifest)];
   for (const path of Object.keys(files).sort()) {
     parts.push(`${path}\0${files[path]}`);
+  }
+  // The assistant skill (issue #274) is content too — hashed last, keyed by its manifest path
+  // (validate.mjs forbids that path from also appearing in `files`).
+  if (manifest.assistantSkill && assistantSkill != null) {
+    parts.push(`${manifest.assistantSkill}\0${assistantSkill}`);
   }
   return createHash("sha1").update(parts.join("\n")).digest("hex");
 }
@@ -75,7 +80,16 @@ export function loadTemplates() {
       for (const rel of manifest.files ?? []) {
         files[rel] = readFileSync(join(dir, "files", rel), "utf8");
       }
-      out.push({ type, id, dir, manifest, files });
+      // The assistant skill lives beside files/ — read tolerantly; validate.mjs reports absence.
+      let assistantSkill = null;
+      if (manifest.assistantSkill) {
+        try {
+          assistantSkill = readFileSync(join(dir, manifest.assistantSkill), "utf8");
+        } catch {
+          assistantSkill = null;
+        }
+      }
+      out.push({ type, id, dir, manifest, files, assistantSkill });
     }
   }
   return out;
@@ -83,13 +97,13 @@ export function loadTemplates() {
 
 export function buildIndex(templates) {
   const rows = templates
-    .map(({ manifest, files }) => ({
+    .map(({ manifest, files, assistantSkill }) => ({
       id: manifest.id,
       type: manifest.type,
       name: manifest.name,
       version: manifest.version,
       description: manifest.description,
-      hash: templateHash(manifest, files),
+      hash: templateHash(manifest, files, assistantSkill),
     }))
     .sort((a, b) => a.type.localeCompare(b.type) || a.id.localeCompare(b.id));
   return { templates: rows };
