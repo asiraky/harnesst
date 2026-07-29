@@ -76,6 +76,13 @@ function makeDeps(over: Partial<AskDeps> = {}): AskDeps {
   return {
     store,
     sendTurn: async () => turnResult(),
+    dispatchTurn: async () => ({
+      sessionId: "sess_1",
+      continuationToken: "tok_1",
+      turnId: "turn_1",
+      streamIndex: 2,
+      error: null,
+    }),
     recordStart: async () => true,
     recordFinish: async () => {},
     resolveRunId: async () => "run_1",
@@ -390,6 +397,190 @@ describe("runAsk — peer outcomes", () => {
   });
 
   it("propagates a failed peer turn", async () => {
+    const deploymentId = await seedCallerDeployment();
+    await seedTargetLive();
+    const res = await runAsk(
+      { deploymentId, teammate: "deployer", message: "hi" },
+      makeDeps({
+        sendTurn: async () =>
+          turnResult({ ok: false, reply: null, error: "boom" }),
+      }),
+    );
+    expect(res).toEqual({ ok: false, error: "boom" });
+  });
+});
+
+describe("runAsk — tell mode (#269 fire-and-forget)", () => {
+  it("dispatches, adopts the session, schedules the watcher, and returns without draining", async () => {
+    const deploymentId = await seedCallerDeployment();
+    await seedTargetLive();
+
+    let sendTurnCalled = false;
+    let dispatchedTo = "";
+    let dispatchedMessage = "";
+    let sessionInput: Record<string, unknown> | null = null;
+    let reattachPayload: Record<string, unknown> | null = null;
+    const deps = makeDeps({
+      sendTurn: async () => {
+        sendTurnCalled = true;
+        return turnResult();
+      },
+      dispatchTurn: async (input) => {
+        dispatchedTo = input.baseUrl;
+        dispatchedMessage = input.message;
+        return {
+          sessionId: "sess_9",
+          continuationToken: "tok_9",
+          turnId: "turn_0",
+          streamIndex: 3,
+          error: null,
+        };
+      },
+      createSession: async (input) => {
+        sessionInput = input as unknown as Record<string, unknown>;
+        return { id: "ps_9", ...input } as unknown as PlaygroundSession;
+      },
+      scheduleReattach: async (_store, payload) => {
+        reattachPayload = payload as unknown as Record<string, unknown>;
+      },
+    });
+
+    const res = await runAsk(
+      { deploymentId, teammate: "deployer", message: "Go fix issue 20", mode: "tell" },
+      deps,
+    );
+
+    expect(res).toEqual({
+      ok: true,
+      status: "dispatched",
+      teammate: "deployer",
+      note: expect.stringContaining("do NOT wait for or invent a result"),
+      delegationId: expect.any(String),
+      runId: "run_1",
+      runPath: "/repos/proj_1/agents/deployer/runs/run_1",
+    });
+    expect(sendTurnCalled).toBe(false);
+    expect(dispatchedTo).toBe("http://deployer.local");
+    expect(dispatchedMessage).toBe('From your teammate "pm": Go fix issue 20');
+    // The adopted FOH row is honest about the running turn and never titled by the ask text.
+    expect(sessionInput).toMatchObject({
+      status: "running",
+      title: 'Delegated task from "pm"',
+      externalSessionId: "sess_9",
+      continuationToken: "tok_9",
+      openedByAgentId: "deployer",
+    });
+    expect(reattachPayload).toMatchObject({
+      sessionId: "ps_9",
+      turnId: "turn_0",
+      userMessage: 'From your teammate "pm": Go fix issue 20',
+    });
+    // The delegation stays running — the watcher settles it, and the caps keep counting it.
+    const delegationId = (res as { delegationId: string }).delegationId;
+    const row = await store.delegations.findById(delegationId);
+    expect(row?.status).toBe("running");
+  });
+
+  it("dispatches fine without a turn id — no run yet, the watcher records it later", async () => {
+    const deploymentId = await seedCallerDeployment();
+    await seedTargetLive();
+    let recordedStart = false;
+    const res = await runAsk(
+      { deploymentId, teammate: "deployer", message: "go", mode: "tell" },
+      makeDeps({
+        dispatchTurn: async () => ({
+          sessionId: "sess_9",
+          continuationToken: "tok_9",
+          turnId: null,
+          streamIndex: 0,
+          error: null,
+        }),
+        recordStart: async () => {
+          recordedStart = true;
+          return true;
+        },
+      }),
+    );
+    expect(res).toMatchObject({ ok: true, status: "dispatched", runId: null, runPath: null });
+    expect(recordedStart).toBe(false);
+  });
+
+  it("fails the delegation when the dispatch never reached the peer", async () => {
+    const deploymentId = await seedCallerDeployment();
+    await seedTargetLive();
+    const res = await runAsk(
+      { deploymentId, teammate: "deployer", message: "go", mode: "tell" },
+      makeDeps({
+        dispatchTurn: async () => ({
+          sessionId: null,
+          continuationToken: null,
+          turnId: null,
+          streamIndex: 0,
+          error: "connect ECONNREFUSED",
+        }),
+      }),
+    );
+    expect(res).toEqual({
+      ok: false,
+      error: expect.stringContaining('Couldn\'t reach "deployer"'),
+    });
+    // The row must not wedge the caps: it settled failed.
+    expect(
+      await store.delegations.countActiveEdge("pm", "deployer", new Date(0)),
+    ).toBe(0);
+  });
+
+  it("closes the delegation honestly when the tracking machinery fails after dispatch", async () => {
+    const deploymentId = await seedCallerDeployment();
+    await seedTargetLive();
+    let recordedStart = false;
+    const res = await runAsk(
+      { deploymentId, teammate: "deployer", message: "go", mode: "tell" },
+      makeDeps({
+        scheduleReattach: async () => {
+          throw new Error("queue down");
+        },
+        recordStart: async () => {
+          recordedStart = true;
+          return true;
+        },
+      }),
+    );
+    expect(res).toEqual({
+      ok: false,
+      error: expect.stringContaining("couldn't set up tracking"),
+    });
+    // The watcher is armed BEFORE any bookkeeping — nothing recorded a run for a hand-off that
+    // failed to become durable, and the row must not wedge the caps.
+    expect(recordedStart).toBe(false);
+    expect(
+      await store.delegations.countActiveEdge("pm", "deployer", new Date(0)),
+    ).toBe(0);
+  });
+
+  it("applies the edge cap to tells too", async () => {
+    const deploymentId = await seedCallerDeployment();
+    await seedTargetLive();
+    for (let i = 0; i < 3; i++) {
+      await store.delegations.insert({
+        projectId: PROJECT,
+        fromAgentId: "pm",
+        fromEnvironmentId: "env_pm_prod",
+        toAgentId: "deployer",
+        toEnvironmentId: "env_dep_prod",
+      });
+    }
+    const res = await runAsk(
+      { deploymentId, teammate: "deployer", message: "go", mode: "tell" },
+      makeDeps(),
+    );
+    expect(res).toEqual({
+      ok: false,
+      error: expect.stringContaining("in-flight"),
+    });
+  });
+
+  it("propagates a failed peer turn (ask mode unchanged)", async () => {
     const deploymentId = await seedCallerDeployment();
     await seedTargetLive();
     const res = await runAsk(
