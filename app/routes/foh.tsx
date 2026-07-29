@@ -14,7 +14,13 @@
  * every non-marketing GET to the app origin. Self-host default (env unset) is always FOH.
  */
 import { FolderGit2, Zap } from "lucide-react";
-import { Link, NavLink, Outlet, type LoaderFunctionArgs } from "react-router";
+import {
+  Link,
+  NavLink,
+  Outlet,
+  useLocation,
+  type LoaderFunctionArgs,
+} from "react-router";
 
 import { sessionLoader } from "~/auth/session.server";
 import {
@@ -92,10 +98,20 @@ function FohShell({ data }: { data: ShellData }) {
   // Presence + badges freshness: baseline 10s loader poll (D12-adjacent; the inbox flyout
   // has its own keyed-fetcher poll).
   useLiveRevalidate({ idleIntervalMs: 10_000 });
+  // Responsive panes (issue #265). Three panes need 544px of chrome before the conversation
+  // gets anything, so they only all coexist at lg. Below that the shell is a sliding window
+  // over the pane stack: at lg- this sidebar shows only at `/`, and below md it is the whole
+  // page there. Deeper routes hide it and render their own back button.
+  const atHome = useLocation().pathname === "/";
 
   return (
     <div className="flex h-dvh overflow-hidden bg-background">
-      <aside className="flex w-64 shrink-0 flex-col border-r">
+      <aside
+        className={cn(
+          "shrink-0 flex-col border-r",
+          atHome ? "flex w-full md:w-64" : "hidden w-64 lg:flex",
+        )}
+      >
         {/* Workspace name intentionally absent (issue #212 §1): nobody switches
             workspaces yet, and the label never sat aligned with the wordmark — it now
             lives in the account menu below instead. */}

@@ -3,7 +3,7 @@
  * first with unread badges, `+ new session`, and the right pane as <Outlet/> (the index child
  * shows the no-session empty state; /s/:sessionId shows the conversation).
  */
-import { Loader2, Plus, Settings2 } from "lucide-react";
+import { ChevronLeft, Loader2, Plus, Settings2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import {
   data,
@@ -22,6 +22,7 @@ import { SessionList } from "~/components/foh/session-list";
 import { Button } from "~/components/ui/button";
 import { bohAgentHref } from "~/foh/boh-links";
 import { requireFohProject } from "~/foh/guard.server";
+import { cn } from "~/lib/utils";
 import {
   createPlaygroundSession,
   listFohSessionsForAgent,
@@ -113,11 +114,32 @@ export default function FohAgent({ loaderData }: Route.ComponentProps) {
   const params = useParams();
   const newSessionFetcher = useFetcher<typeof action>();
   const basePath = `/t/${projectId}/${agentId}`;
+  const openSessionId = params.sessionId ?? null;
+  const showPending = usePendingPane(openSessionId);
+  // Below md only one pane fits, and the right one is whatever the user is waiting on: the
+  // list until a session is open OR the pending pane has taken over. Keying this off
+  // `openSessionId` alone would leave the full-width list covering a slow load's spinner.
+  const detailVisible = openSessionId !== null || showPending;
 
   return (
     <>
-      <section className="flex w-72 shrink-0 flex-col border-r">
+      <section
+        className={cn(
+          "shrink-0 flex-col border-r",
+          detailVisible ? "hidden w-72 md:flex" : "flex w-full md:w-72",
+        )}
+      >
         <div className="flex h-14 items-center gap-2 border-b px-3">
+          <Button
+            asChild
+            variant="ghost"
+            size="sm"
+            className="-ml-1 px-1.5 lg:hidden"
+          >
+            <Link to="/" aria-label="Back to team list">
+              <ChevronLeft className="size-4" aria-hidden />
+            </Link>
+          </Button>
           <h1 className="min-w-0 flex-1 truncate text-sm font-semibold">
             {agentName} — sessions
           </h1>
@@ -164,7 +186,7 @@ export default function FohAgent({ loaderData }: Route.ComponentProps) {
           />
         )}
       </section>
-      <SessionPane openSessionId={params.sessionId ?? null}>
+      <SessionPane pending={showPending} basePath={basePath}>
         <Outlet />
       </SessionPane>
     </>
@@ -189,13 +211,7 @@ function sessionIdFromPath(pathname: string): string | null {
  */
 const PENDING_PANE_DELAY_MS = 250;
 
-function SessionPane({
-  openSessionId,
-  children,
-}: {
-  openSessionId: string | null;
-  children: React.ReactNode;
-}) {
+function usePendingPane(openSessionId: string | null) {
   const navigation = useNavigation();
   const pendingId = navigation.location
     ? sessionIdFromPath(navigation.location.pathname)
@@ -217,16 +233,37 @@ function SessionPane({
     return () => clearTimeout(timer);
   }, [switching]);
 
-  if (!show) return <>{children}</>;
+  return show;
+}
+
+function SessionPane({
+  pending,
+  basePath,
+  children,
+}: {
+  pending: boolean;
+  basePath: string;
+  children: React.ReactNode;
+}) {
+  if (!pending) return <>{children}</>;
   return (
-    <section
-      className="flex min-w-0 flex-1 items-center justify-center"
-      aria-busy="true"
-    >
-      <p className="flex items-center gap-2 text-sm text-muted-foreground">
-        <Loader2 className="size-4 animate-spin" aria-hidden />
-        Opening conversation…
-      </p>
+    <section className="flex min-w-0 flex-1 flex-col" aria-busy="true">
+      {/* Below md this pane has hidden the session list, and a wait here can run to several
+          seconds (eve reconciliation) — without its own back control the user would be
+          stranded on a spinner with no way out. */}
+      <div className="flex h-14 shrink-0 items-center border-b px-4 md:hidden">
+        <Button asChild variant="ghost" size="sm" className="-ml-2 px-1.5">
+          <Link to={basePath} aria-label="Back to sessions">
+            <ChevronLeft className="size-4" aria-hidden />
+          </Link>
+        </Button>
+      </div>
+      <div className="flex min-h-0 flex-1 items-center justify-center">
+        <p className="flex items-center gap-2 text-sm text-muted-foreground">
+          <Loader2 className="size-4 animate-spin" aria-hidden />
+          Opening conversation…
+        </p>
+      </div>
     </section>
   );
 }
