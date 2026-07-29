@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   loadPlaygroundEntriesFromEve,
+  projectEventsToEntries,
   type PlaygroundSession,
 } from "~/playground/sessions.server";
 import type { Target } from "~/chat/playground.server";
@@ -643,5 +644,110 @@ describe("loadPlaygroundEntriesFromEve", () => {
     expect(entries[1].role).toBe("assistant");
     expect(entries[1].error).toContain("not found");
     expect(entries[1].errorRetryable).toBe(false);
+  });
+});
+
+describe("projectEventsToEntries", () => {
+  const at = new Date().toISOString();
+
+  function turnEvents(turnId: string, question: string, reply: string) {
+    return [
+      { type: "turn.started", data: { turnId }, meta: { at } },
+      {
+        type: "message.received",
+        data: { turnId, message: question },
+        meta: { at },
+      },
+      { type: "step.started", data: { turnId, sequence: 1 }, meta: { at } },
+      {
+        type: "step.completed",
+        data: { turnId, sequence: 1, name: `step-${turnId}-${question}` },
+        meta: { at },
+      },
+      {
+        type: "message.completed",
+        data: { turnId, message: reply },
+        meta: { at },
+      },
+      { type: "turn.completed", data: { turnId }, meta: { at } },
+    ];
+  }
+
+  // A cross-redeploy reseed (#71) concatenates two eve sessions' logs into one cached stream, and
+  // eve restarts turn ids at `turn_0` per session. Before the fix the evening `turn_0` landed in the
+  // morning `turn_0`'s bucket: the opening question was overwritten and the evening reply was glued
+  // onto the first exchange (#261).
+  const reseededStream = [
+    {
+      type: "session.started",
+      data: { runtime: { modelId: "m/x" } },
+      meta: { at },
+    },
+    ...turnEvents("turn_0", "morning question", "morning reply"),
+    ...turnEvents("turn_1", "midday question", "midday reply"),
+    {
+      type: "session.started",
+      data: { runtime: { modelId: "m/x" } },
+      meta: { at },
+    },
+    ...turnEvents("turn_0", "evening question", "evening reply"),
+  ];
+
+  it("keeps a reseeded transcript in stream order when turn ids collide across eve sessions", () => {
+    const entries = projectEventsToEntries(reseededStream, session());
+
+    expect(entries).toMatchObject([
+      { role: "user", text: "morning question" },
+      { role: "assistant", text: "morning reply" },
+      { role: "user", text: "midday question" },
+      { role: "assistant", text: "midday reply" },
+      { role: "user", text: "evening question" },
+      { role: "assistant", text: "evening reply" },
+    ]);
+    // Each reply carries only its own turn's step — no bleed across the reseed boundary.
+    expect(entries[1].steps?.map((s) => s.name)).toEqual([
+      "step-turn_0-morning question",
+    ]);
+    expect(entries[5].steps?.map((s) => s.name)).toEqual([
+      "step-turn_0-evening question",
+    ]);
+  });
+
+  it("gives every entry of a reseeded transcript a unique id (React key)", () => {
+    const ids = projectEventsToEntries(reseededStream, session()).map(
+      (entry) => entry.id,
+    );
+
+    expect(ids).toHaveLength(6);
+    expect(new Set(ids).size).toBe(ids.length);
+  });
+
+  it("groups a single eve session's turns exactly as before", () => {
+    const entries = projectEventsToEntries(
+      [
+        {
+          type: "session.started",
+          data: { runtime: { modelId: "m/x" } },
+          meta: { at },
+        },
+        ...turnEvents("turn_0", "first question", "first reply"),
+        ...turnEvents("turn_1", "second question", "second reply"),
+      ],
+      session(),
+    );
+
+    expect(entries).toMatchObject([
+      { role: "user", text: "first question" },
+      { role: "assistant", text: "first reply", modelId: "m/x" },
+      { role: "user", text: "second question" },
+      { role: "assistant", text: "second reply", modelId: "m/x" },
+    ]);
+    expect(entries[1].steps?.map((s) => s.name)).toEqual([
+      "step-turn_0-first question",
+    ]);
+    expect(entries[3].steps?.map((s) => s.name)).toEqual([
+      "step-turn_1-second question",
+    ]);
+    expect(new Set(entries.map((e) => e.id)).size).toBe(4);
   });
 });

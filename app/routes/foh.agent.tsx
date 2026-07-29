@@ -3,15 +3,15 @@
  * first with unread badges, `+ new session`, and the right pane as <Outlet/> (the index child
  * shows the no-session empty state; /s/:sessionId shows the conversation).
  */
-import { ChevronLeft, Loader2, Plus } from "lucide-react";
+import { ChevronLeft, Loader2, Plus, Settings2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import {
   data,
   redirect,
+  Link,
   useFetcher,
   useNavigation,
   useParams,
-  Link,
   Outlet,
   type ActionFunctionArgs,
   type LoaderFunctionArgs,
@@ -20,8 +20,9 @@ import {
 import { getSessionAuth, sessionLoader } from "~/auth/session.server";
 import { SessionList } from "~/components/foh/session-list";
 import { Button } from "~/components/ui/button";
-import { cn } from "~/lib/utils";
+import { bohAgentHref } from "~/foh/boh-links";
 import { requireFohProject } from "~/foh/guard.server";
+import { cn } from "~/lib/utils";
 import {
   createPlaygroundSession,
   listFohSessionsForAgent,
@@ -60,6 +61,11 @@ export const loader = (args: LoaderFunctionArgs) =>
         agentId: agent.id,
         agentName: agent.name,
         backOfHouse: access.backOfHouse,
+        // #246: the admin-only cross-link into this member's BOH config. Null (absent, not
+        // disabled) for plain members.
+        bohHref: access.backOfHouse
+          ? bohAgentHref(access.project, agent.name)
+          : null,
         sessions: sessions.map((session) => ({
           ...summarizePlaygroundSession(session, { unread: session.unread }),
           openedByAgent: session.openedByAgentId != null,
@@ -104,7 +110,7 @@ export function meta({ loaderData }: Route.MetaArgs) {
 }
 
 export default function FohAgent({ loaderData }: Route.ComponentProps) {
-  const { projectId, agentId, agentName, sessions } = loaderData;
+  const { projectId, agentId, agentName, sessions, bohHref } = loaderData;
   const params = useParams();
   const newSessionFetcher = useFetcher<typeof action>();
   const basePath = `/t/${projectId}/${agentId}`;
@@ -137,6 +143,17 @@ export default function FohAgent({ loaderData }: Route.ComponentProps) {
           <h1 className="min-w-0 flex-1 truncate text-sm font-semibold">
             {agentName} — sessions
           </h1>
+          {bohHref && (
+            <Link
+              to={bohHref}
+              prefetch="intent"
+              aria-label={`Manage ${agentName} in Repositories`}
+              title="Manage in Repositories"
+              className="rounded-sm p-1 text-muted-foreground/50 transition-colors hover:text-foreground"
+            >
+              <Settings2 className="size-3.5" aria-hidden />
+            </Link>
+          )}
           <newSessionFetcher.Form method="post">
             <input type="hidden" name="intent" value="new-session" />
             <Button
