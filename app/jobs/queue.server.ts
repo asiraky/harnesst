@@ -20,6 +20,8 @@ export type JobKind =
   | "assistant_restart"
   | "cleanup_deployment_container"
   | "drain_deployment"
+  // issue #267: keep watching a delegated turn whose relay reply stream died.
+  | "reattach_delegation"
   // issue #225: the whole publish pipeline (check → build → commit → version → deploy).
   | "publish";
 
@@ -42,18 +44,28 @@ export async function enqueue(
   opts?: { runAt?: Date; maxAttempts?: number },
   store: DataStore = getRuntime().data,
 ): Promise<string> {
-  return store.jobs.insert({ kind, payload, runAt: opts?.runAt, maxAttempts: opts?.maxAttempts });
+  return store.jobs.insert({
+    kind,
+    payload,
+    runAt: opts?.runAt,
+    maxAttempts: opts?.maxAttempts,
+  });
 }
 
 /**
  * Atomically claim the next runnable job (queued, due). Concurrent workers are safe: the store
  * claims each job for exactly one caller (SKIP LOCKED in the Drizzle impl).
  */
-export function claimNext(store: DataStore = getRuntime().data): Promise<Job | null> {
+export function claimNext(
+  store: DataStore = getRuntime().data,
+): Promise<Job | null> {
   return store.jobs.claimNext(new Date());
 }
 
-export async function markDone(jobId: string, store: DataStore = getRuntime().data): Promise<void> {
+export async function markDone(
+  jobId: string,
+  store: DataStore = getRuntime().data,
+): Promise<void> {
   await store.jobs.update(jobId, { status: "done", error: null });
 }
 
@@ -72,6 +84,8 @@ export async function markFailed(
 }
 
 /** Queue depth by status (ops/debug view). */
-export function queueStats(store: DataStore = getRuntime().data): Promise<Record<string, number>> {
+export function queueStats(
+  store: DataStore = getRuntime().data,
+): Promise<Record<string, number>> {
   return store.jobs.statsByStatus();
 }

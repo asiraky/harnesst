@@ -83,6 +83,7 @@ function makeDeps(over: Partial<AskDeps> = {}): AskDeps {
     createSession: async (input) =>
       ({ id: "ps_1", ...input }) as unknown as PlaygroundSession,
     backfillSession: async () => {},
+    scheduleReattach: async () => {},
     now: () => NOW,
     timeoutMs: 600_000,
     ...over,
@@ -91,15 +92,30 @@ function makeDeps(over: Partial<AskDeps> = {}): AskDeps {
 
 beforeEach(() => {
   store = makeFakeStore();
-  store.seedProject({ id: PROJECT, orgId: "org_1", repoOwner: "acme", repoName: "team" });
-  store.seedAgent({ id: "pm", projectId: PROJECT, name: "pm", root: "agents/pm/agent" });
+  store.seedProject({
+    id: PROJECT,
+    orgId: "org_1",
+    repoOwner: "acme",
+    repoName: "team",
+  });
+  store.seedAgent({
+    id: "pm",
+    projectId: PROJECT,
+    name: "pm",
+    root: "agents/pm/agent",
+  });
   store.seedAgent({
     id: "deployer",
     projectId: PROJECT,
     name: "deployer",
     root: "agents/deployer/agent",
   });
-  store.seedEnvironment({ id: "env_pm_prod", projectId: PROJECT, agentId: "pm", name: "production" });
+  store.seedEnvironment({
+    id: "env_pm_prod",
+    projectId: PROJECT,
+    agentId: "pm",
+    name: "production",
+  });
   store.seedEnvironment({
     id: "env_dep_prod",
     projectId: PROJECT,
@@ -145,7 +161,10 @@ describe("runAsk — success", () => {
     expect(sentUrl).toBe("http://deployer.local");
     expect(sentMessage).toBe('From your teammate "pm": Deploy build 42');
     expect(finishChannel).toBe("teammate");
-    expect(finishMeta).toMatchObject({ fromAgentId: "pm", fromAgentName: "pm" });
+    expect(finishMeta).toMatchObject({
+      fromAgentId: "pm",
+      fromAgentName: "pm",
+    });
   });
 
   it("allows an explicitly enabled override too", async () => {
@@ -168,13 +187,22 @@ describe("runAsk — success", () => {
 describe("runAsk — rejections", () => {
   it("rejects a self-ask", async () => {
     const deploymentId = await seedCallerDeployment();
-    const res = await runAsk({ deploymentId, teammate: "pm", message: "hi" }, makeDeps());
-    expect(res).toEqual({ ok: false, error: expect.stringContaining("yourself") });
+    const res = await runAsk(
+      { deploymentId, teammate: "pm", message: "hi" },
+      makeDeps(),
+    );
+    expect(res).toEqual({
+      ok: false,
+      error: expect.stringContaining("yourself"),
+    });
   });
 
   it("rejects an unknown teammate", async () => {
     const deploymentId = await seedCallerDeployment();
-    const res = await runAsk({ deploymentId, teammate: "ghost", message: "hi" }, makeDeps());
+    const res = await runAsk(
+      { deploymentId, teammate: "ghost", message: "hi" },
+      makeDeps(),
+    );
     expect(res.ok).toBe(false);
   });
 
@@ -191,7 +219,10 @@ describe("runAsk — rejections", () => {
       { deploymentId, teammate: "deployer", message: "hi" },
       makeDeps(),
     );
-    expect(res).toEqual({ ok: false, error: expect.stringContaining("not permitted") });
+    expect(res).toEqual({
+      ok: false,
+      error: expect.stringContaining("not permitted"),
+    });
   });
 
   it("errors when the target has no matching env name", async () => {
@@ -202,7 +233,10 @@ describe("runAsk — rejections", () => {
       { deploymentId, teammate: "deployer", message: "hi" },
       makeDeps(),
     );
-    expect(res).toEqual({ ok: false, error: expect.stringContaining("production") });
+    expect(res).toEqual({
+      ok: false,
+      error: expect.stringContaining("production"),
+    });
   });
 
   it("errors when the target has never been deployed", async () => {
@@ -211,7 +245,10 @@ describe("runAsk — rejections", () => {
       { deploymentId, teammate: "deployer", message: "hi" },
       makeDeps(),
     );
-    expect(res).toEqual({ ok: false, error: expect.stringContaining("never been deployed") });
+    expect(res).toEqual({
+      ok: false,
+      error: expect.stringContaining("never been deployed"),
+    });
   });
 
   it("errors when the target has a deployment but none is live", async () => {
@@ -232,12 +269,18 @@ describe("runAsk — rejections", () => {
       { deploymentId, teammate: "deployer", message: "hi" },
       makeDeps(),
     );
-    expect(res).toEqual({ ok: false, error: expect.stringContaining("no live deployment") });
+    expect(res).toEqual({
+      ok: false,
+      error: expect.stringContaining("no live deployment"),
+    });
   });
 
   it("rejects an empty message", async () => {
     const deploymentId = await seedCallerDeployment();
-    const res = await runAsk({ deploymentId, teammate: "deployer", message: "   " }, makeDeps());
+    const res = await runAsk(
+      { deploymentId, teammate: "deployer", message: "   " },
+      makeDeps(),
+    );
     expect(res).toEqual({ ok: false, error: expect.stringContaining("empty") });
   });
 });
@@ -263,7 +306,10 @@ describe("runAsk — concurrency caps", () => {
       { deploymentId, teammate: "deployer", message: "hi" },
       makeDeps(),
     );
-    expect(res).toEqual({ ok: false, error: expect.stringContaining("in-flight") });
+    expect(res).toEqual({
+      ok: false,
+      error: expect.stringContaining("in-flight"),
+    });
   });
 
   it("caps active delegations across the project (10)", async () => {
@@ -275,7 +321,10 @@ describe("runAsk — concurrency caps", () => {
       { deploymentId, teammate: "deployer", message: "hi" },
       makeDeps(),
     );
-    expect(res).toEqual({ ok: false, error: expect.stringContaining("too many delegations") });
+    expect(res).toEqual({
+      ok: false,
+      error: expect.stringContaining("too many delegations"),
+    });
   });
 });
 
@@ -313,7 +362,9 @@ describe("runAsk — peer outcomes", () => {
     await seedTargetLive();
     const res = await runAsk(
       { deploymentId, teammate: "deployer", message: "hi" },
-      makeDeps({ sendTurn: async () => turnResult({ ok: true, reply: "   " }) }),
+      makeDeps({
+        sendTurn: async () => turnResult({ ok: true, reply: "   " }),
+      }),
     );
     expect(res).toEqual({
       ok: false,
@@ -332,7 +383,10 @@ describe("runAsk — peer outcomes", () => {
         },
       }),
     );
-    expect(res).toEqual({ ok: false, error: expect.stringContaining("Couldn't reach") });
+    expect(res).toEqual({
+      ok: false,
+      error: expect.stringContaining("Couldn't reach"),
+    });
   });
 
   it("propagates a failed peer turn", async () => {
@@ -340,7 +394,10 @@ describe("runAsk — peer outcomes", () => {
     await seedTargetLive();
     const res = await runAsk(
       { deploymentId, teammate: "deployer", message: "hi" },
-      makeDeps({ sendTurn: async () => turnResult({ ok: false, reply: null, error: "boom" }) }),
+      makeDeps({
+        sendTurn: async () =>
+          turnResult({ ok: false, reply: null, error: "boom" }),
+      }),
     );
     expect(res).toEqual({ ok: false, error: "boom" });
   });

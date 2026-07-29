@@ -90,6 +90,22 @@ export interface TurnResult {
    * without it a redeploy dead-ends the conversation permanently. Absent on every other path.
    */
   resumeExpired?: boolean;
+  /**
+   * #267: the turn did not fail — HARNESST STOPPED WATCHING IT. The reply stream dropped, went
+   * idle past the budget, or ended before a terminal event, while the container kept running the
+   * turn to completion (that is by design; a turn legitimately runs 15+ minutes). The three
+   * transport-class outcomes used to be indistinguishable from "the agent genuinely failed"
+   * because they arrive as `ok: false` with free-text `error`, so callers could only tell them
+   * apart by matching strings — and none did, which is how a succeeded delegation was reported
+   * as unreachable.
+   *
+   * Set ONLY when the turn's outcome is genuinely unknown, never for a stop the user asked for
+   * (there is nothing to reattach to) and never for an agent-side failure. `sessionId` +
+   * `continuationToken` + `streamIndex` on the same result say exactly which session was
+   * abandoned and where in its stream reading stopped, so a caller can resume from there —
+   * see `resumeTurnStream` and `~/team/reattach.server`.
+   */
+  streamLost?: boolean;
 }
 
 /** The raw Eve durable-stream event (type + data + meta), as parsed from an NDJSON line. */
@@ -414,37 +430,6 @@ export async function* streamTurn(input: {
     }
   };
 
-  const readWithIdleTimeout = async (
-    reader: ReadableStreamDefaultReader<Uint8Array>,
-  ) => {
-    throwIfAborted();
-    let idleTimer: ReturnType<typeof setTimeout> | null = null;
-    let abortHandler: (() => void) | null = null;
-    try {
-      return await Promise.race([
-        reader.read(),
-        new Promise<never>((_, reject) => {
-          idleTimer = setTimeout(() => {
-            reject(
-              new Error(
-                `Timed out after ${Math.round(timeoutMs / 1000)}s with no Eve stream events.`,
-              ),
-            );
-          }, timeoutMs);
-          if (input.signal) {
-            abortHandler = () => reject(new Error("Turn was stopped."));
-            input.signal.addEventListener("abort", abortHandler, { once: true });
-          }
-        }),
-      ]);
-    } finally {
-      if (idleTimer) clearTimeout(idleTimer);
-      if (input.signal && abortHandler) {
-        input.signal.removeEventListener("abort", abortHandler);
-      }
-    }
-  };
-
   // 1. Start a session with the message — or continue the existing one.
   let sessionId: string | null = null;
   let continuationToken: string | null = null;
@@ -463,7 +448,10 @@ export async function* streamTurn(input: {
   if (via && !(input.inputResponses && input.inputResponses.length > 0)) {
     yield fail(
       "This conversation lives on the agent's own channel thread, so harnesst can only send it an answer to a question it is waiting on — not a new message. Reply on the thread itself to say something else.",
-      { sessionId: input.sessionId, continuationToken: input.continuationToken },
+      {
+        sessionId: input.sessionId,
+        continuationToken: input.continuationToken,
+      },
     );
     return;
   }
@@ -494,8 +482,12 @@ export async function* streamTurn(input: {
             headers: { "content-type": "application/json" },
             body: JSON.stringify({
               message: input.message,
-              ...(isFollowUp ? { continuationToken: input.continuationToken } : {}),
-              ...(isFollowUp && input.inputResponses && input.inputResponses.length > 0
+              ...(isFollowUp
+                ? { continuationToken: input.continuationToken }
+                : {}),
+              ...(isFollowUp &&
+              input.inputResponses &&
+              input.inputResponses.length > 0
                 ? { inputResponses: input.inputResponses }
                 : {}),
             }),
@@ -556,6 +548,61 @@ export async function* streamTurn(input: {
   yield { kind: "session", sessionId, continuationToken };
 
   // 2. Read the event stream until the turn settles.
+  yield* drainTurnStream({
+    base,
+    sessionId,
+    continuationToken,
+    startIndex: streamIndex,
+    matchMessage: input.message,
+    postedAt,
+    initialTurnId: null,
+    signal: input.signal,
+    timeoutMs,
+  });
+}
+
+/**
+ * Consume an eve session's event stream for ONE turn, yielding it as `TalkEvent`s and always
+ * ending with exactly one `done`. Shared by the two ways harnesst watches a turn:
+ *
+ *  - the LIVE path (`streamTurn`), which POSTed a message and identifies its turn by the echoed
+ *    `message.received` at a post-time timestamp (the stream replays history on connect);
+ *  - the REATTACH path (`resumeTurnStream`, #267), which posts nothing because the turn is
+ *    already running — it knows the turn id harnesst was watching when the stream dropped, or
+ *    adopts the first turn the stream shows past the cursor.
+ */
+async function* drainTurnStream(input: {
+  /** Instance base url, trailing slashes already stripped. */
+  base: string;
+  sessionId: string;
+  continuationToken: string | null;
+  /** Cursor to open the stream at; the settled `streamIndex` continues from here. */
+  startIndex: number;
+  /**
+   * Live path: the message text whose echo marks our turn. Null on the reattach path, where
+   * nothing was sent and any turn seen past the cursor is the one being followed.
+   */
+  matchMessage: string | null;
+  /** Live path: events older than this are replayed history, not our turn. */
+  postedAt: number;
+  /** Reattach path: the turn id harnesst already observed, when it observed one. */
+  initialTurnId: string | null;
+  signal?: AbortSignal | null;
+  timeoutMs: number;
+  /**
+   * Pre-headers budget, reattach path only. Eve answers "nothing new" by saying NOTHING AT ALL —
+   * a stream request positioned past the session's last event never sends so much as a response
+   * header (see `tailBudgetsMs` in playground/sessions.server.ts). The live path always opens at
+   * a cursor eve has events for, so it keeps its unbounded connect and its behavior is unchanged.
+   */
+  connectTimeoutMs?: number;
+}): AsyncGenerator<TalkEvent> {
+  const { base, sessionId, continuationToken, timeoutMs, postedAt } = input;
+  let streamIndex = input.startIndex;
+  // With no message to match, turn identity comes from the id we were given — or, when the
+  // stream dropped before harnesst ever saw `message.received`, from the first turn past the
+  // cursor. Nothing else sends to a delegated peer session, so that turn is ours.
+  const adoptAnyTurn = input.matchMessage === null;
   const steps: TurnStep[] = [];
   // A turn can interleave several assistant messages with tool steps — keep them all, each
   // tagged with the step count at completion time so the transcript can reconstruct order.
@@ -567,15 +614,68 @@ export async function* streamTurn(input: {
   let error: string | null = null;
   let lastStepFailure: string | null = null;
   let modelId: string | null = null;
-  let ourTurnId: string | null = null;
+  let ourTurnId: string | null = input.initialTurnId;
   let turnAnnounced = false;
+  // #267: set when the turn's outcome is unknown because the transport gave out — see
+  // `TurnResult.streamLost`. A deliberate stop is never one of these.
+  let streamLost = false;
+
+  const readWithIdleTimeout = async (
+    reader: ReadableStreamDefaultReader<Uint8Array>,
+  ) => {
+    if (input.signal?.aborted) throw new Error("Turn was stopped.");
+    let idleTimer: ReturnType<typeof setTimeout> | null = null;
+    let abortHandler: (() => void) | null = null;
+    try {
+      return await Promise.race([
+        reader.read(),
+        new Promise<never>((_, reject) => {
+          idleTimer = setTimeout(() => {
+            reject(
+              new Error(
+                `Timed out after ${Math.round(timeoutMs / 1000)}s with no Eve stream events.`,
+              ),
+            );
+          }, timeoutMs);
+          if (input.signal) {
+            abortHandler = () => reject(new Error("Turn was stopped."));
+            input.signal.addEventListener("abort", abortHandler, {
+              once: true,
+            });
+          }
+        }),
+      ]);
+    } finally {
+      if (idleTimer) clearTimeout(idleTimer);
+      if (input.signal && abortHandler) {
+        input.signal.removeEventListener("abort", abortHandler);
+      }
+    }
+  };
+
   try {
     const streamUrl = new URL(`${base}/eve/v1/session/${sessionId}/stream`);
     if (streamIndex > 0)
       streamUrl.searchParams.set("startIndex", String(streamIndex));
-    const res = await fetch(streamUrl, {
-      signal: input.signal ?? undefined,
-    });
+    // The connect budget (reattach path) aborts only the pre-headers phase; it is cleared the
+    // moment the response arrives, so the body reads stay governed by the idle race above.
+    const connectController = new AbortController();
+    const connectTimer =
+      input.connectTimeoutMs != null
+        ? setTimeout(() => connectController.abort(), input.connectTimeoutMs)
+        : null;
+    let res: Response;
+    try {
+      res = await fetch(streamUrl, {
+        signal: connectTimer
+          ? input.signal
+            ? AbortSignal.any([input.signal, connectController.signal])
+            : connectController.signal
+          : (input.signal ?? undefined),
+      });
+    } finally {
+      if (connectTimer) clearTimeout(connectTimer);
+    }
     if (!res.ok || !res.body) {
       throw new Error(`stream returned ${res.status}`);
     }
@@ -628,6 +728,14 @@ export async function* streamTurn(input: {
         const sequence =
           typeof data.sequence === "number" ? data.sequence : stepIndex;
         const turnId = typeof data.turnId === "string" ? data.turnId : null;
+        // Reattach with no known turn id: the first turn the stream shows past the cursor is the
+        // one we lost. (On the live path `matchMessage` is set, so this never fires and turn
+        // attribution stays exactly as it was.)
+        if (adoptAnyTurn && ourTurnId === null && turnId !== null) {
+          ourTurnId = turnId;
+          turnAnnounced = true;
+          yield { kind: "turn", turnId };
+        }
         const ours = ourTurnId !== null && turnId === ourTurnId;
 
         switch (type) {
@@ -636,7 +744,10 @@ export async function* streamTurn(input: {
             if (runtime && typeof runtime.modelId === "string") {
               // Dynamic-model agents report `dynamic:<fallback id>` — resolve to the model that
               // actually serves this turn (the sent message's directive, else the fallback).
-              modelId = effectiveModelId(runtime.modelId, input.message);
+              modelId = effectiveModelId(
+                runtime.modelId,
+                input.matchMessage ?? "",
+              );
               yield { kind: "model", modelId };
             }
             break;
@@ -644,7 +755,11 @@ export async function* streamTurn(input: {
           case "message.received":
             // Our turn = the (latest) received message matching what we just sent, at a
             // timestamp after we posted — replayed history is older and is skipped.
-            if (data.message === input.message && at >= postedAt) {
+            if (
+              input.matchMessage !== null &&
+              data.message === input.matchMessage &&
+              at >= postedAt
+            ) {
               ourTurnId = turnId;
               if (ourTurnId !== null && !turnAnnounced) {
                 turnAnnounced = true;
@@ -837,9 +952,16 @@ export async function* streamTurn(input: {
     }
     if (!settled && reply === null && !asked && error === null) {
       error = `The Eve stream ended before the turn completed.`;
+      // Transport site 3: eve closed the stream without a terminal event. The container is still
+      // running the turn — we simply stopped being told about it.
+      streamLost = true;
     }
   } catch (streamError) {
+    // Transport sites 1 and 2: the read threw (socket died) or the idle budget expired. Both
+    // leave the turn running inside the container. A deliberate stop is neither: the caller
+    // asked for the turn to end, so there is nothing to reattach to.
     error = `Couldn't read the reply stream: ${(streamError as Error).message}`;
+    streamLost = input.signal?.aborted !== true;
   }
 
   const normalized = normalizeReply(reply);
@@ -858,8 +980,48 @@ export async function* streamTurn(input: {
       steps,
       messages,
       error,
+      ...(streamLost ? { streamLost: true } : {}),
     },
   };
+}
+
+/**
+ * Follow a turn that is ALREADY RUNNING inside a container, from a cursor harnesst stopped
+ * reading at (#267). Nothing is posted: the peer's session is mid-turn, and eve's durable stream
+ * replays from `streamIndex` on connect, so a severed watcher can pick the turn back up exactly
+ * where it left off.
+ *
+ * `timeoutMs` here is a POLL budget, not a turn budget — a caller drains one bounded slice, then
+ * re-enqueues itself from the advanced cursor (see `~/team/reattach.server`). A slice that ends
+ * without the turn settling comes back as `streamLost`, which is the signal to poll again rather
+ * than a failure.
+ */
+export async function* resumeTurnStream(input: {
+  baseUrl: string;
+  sessionId: string;
+  continuationToken?: string | null;
+  /** The turn id harnesst was watching when the stream dropped; null adopts the next turn seen. */
+  turnId?: string | null;
+  /** Cursor to resume from — the abandoned `TurnResult.streamIndex`. */
+  streamIndex?: number | null;
+  signal?: AbortSignal | null;
+  /** Per-slice idle budget. */
+  timeoutMs?: number;
+  /** Pre-headers budget; eve never answers a request positioned past the session's last event. */
+  connectTimeoutMs?: number;
+}): AsyncGenerator<TalkEvent> {
+  yield* drainTurnStream({
+    base: input.baseUrl.replace(/\/+$/, ""),
+    sessionId: input.sessionId,
+    continuationToken: input.continuationToken ?? null,
+    startIndex: Math.max(0, input.streamIndex ?? 0),
+    matchMessage: null,
+    postedAt: 0,
+    initialTurnId: input.turnId ?? null,
+    signal: input.signal,
+    timeoutMs: input.timeoutMs ?? 15_000,
+    connectTimeoutMs: input.connectTimeoutMs ?? 5_000,
+  });
 }
 
 /** Send one message and wait for the turn to settle (or `timeoutMs`). */
