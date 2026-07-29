@@ -81,6 +81,14 @@ async function reset() {
 }
 
 async function main() {
+  // Whether the PREVIOUS boot materialized a user layer (marker "1"): if it did and this bundle
+  // turns out empty (last skill uninstalled, all config deleted), the compiled artifact still
+  // carries the old layer — ONE more rebuild is needed to compile the removal out. Marker "0"
+  // records exactly that removal boot, so the boot after it takes the fast path again.
+  const hadUserLayer = await readFile(USER_MARKER, "utf8").then(
+    (content) => content === "1",
+    () => false,
+  );
   await reset();
   const bundle = await fetchBundle();
   if (!bundle || typeof bundle !== "object") return;
@@ -126,9 +134,13 @@ async function main() {
     await writeFile(ENV_FILE, environment);
   }
 
+  // An empty bundle after a non-empty one still needs ONE rebuild (to compile the layer's
+  // removal out) — the entrypoint rebuilds on the marker's presence, and "0" won't read as a
+  // user layer next boot.
   if (wroteUserLayer) await writeFile(USER_MARKER, "1");
+  else if (hadUserLayer) await writeFile(USER_MARKER, "0");
   console.log(
-    `[assistant] user layer ${wroteUserLayer ? "materialized (rebuild required)" : "empty (fixed layer)"}.`,
+    `[assistant] user layer ${wroteUserLayer ? "materialized (rebuild required)" : hadUserLayer ? "removed (rebuild required)" : "empty (fixed layer)"}.`,
   );
 }
 
