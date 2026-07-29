@@ -134,10 +134,11 @@ export default function FohAgent({ loaderData }: Route.ComponentProps) {
             asChild
             variant="ghost"
             size="sm"
-            className="-ml-1 px-1.5 lg:hidden"
+            className="-ml-1 shrink-0 gap-0.5 px-1.5 lg:hidden"
           >
             <Link to="/" aria-label="Back to team list">
               <ChevronLeft className="size-4" aria-hidden />
+              Team
             </Link>
           </Button>
           <h1 className="min-w-0 flex-1 truncate text-sm font-semibold">

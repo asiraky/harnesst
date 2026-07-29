@@ -534,10 +534,11 @@ export default function FohSession({ loaderData }: Route.ComponentProps) {
           asChild
           variant="ghost"
           size="sm"
-          className="-ml-2 px-1.5 md:hidden"
+          className="-ml-2 shrink-0 gap-0.5 px-1.5 md:hidden"
         >
           <Link to={`/t/${projectId}/${agentId}`} aria-label="Back to sessions">
             <ChevronLeft className="size-4" aria-hidden />
+            Sessions
           </Link>
         </Button>
         <SessionStatusDot status={sessionFohStatus} />
