@@ -31,6 +31,10 @@ import {
   titleFromMessage,
 } from "~/playground/sessions.server";
 import { getRuntime } from "~/seams/index.server";
+import {
+  DELEGATION_REATTACH_CEILING_MS,
+  scheduleDelegationReattach,
+} from "./reattach.server";
 
 /** Default relay/peer-turn budget; the tool's fetch adds 60s of slack on top. */
 export const DEFAULT_DELEGATION_TIMEOUT_MS = 600_000;
@@ -53,12 +57,19 @@ export interface AskDeps {
   sendTurn: typeof sendTurn;
   recordStart: typeof recordTurnStart;
   recordFinish: typeof recordTurnFinish;
-  resolveRunId: (projectId: string, externalRunId: string) => Promise<string | null>;
+  resolveRunId: (
+    projectId: string,
+    externalRunId: string,
+  ) => Promise<string | null>;
   /** Wake a stopped peer (scale-to-zero) — injected so tests fake the container start. */
-  ensureLiveDeployment: (environmentId: string) => Promise<DeploymentWithRelease | null>;
+  ensureLiveDeployment: (
+    environmentId: string,
+  ) => Promise<DeploymentWithRelease | null>;
   /** FOH session substrate for relay parking (D6/D8) — injected: unit tests stay zero-I/O. */
   createSession: typeof createPlaygroundSession;
   backfillSession: typeof backfillPlaygroundEventsFromEve;
+  /** #267: hand a severed-stream turn to the background reattach watcher. */
+  scheduleReattach: typeof scheduleDelegationReattach;
   now: () => Date;
   timeoutMs: number;
 }
@@ -74,6 +85,7 @@ export function defaultAskDeps(): AskDeps {
       ensureLiveDeploymentForEnvironment(environmentId),
     createSession: createPlaygroundSession,
     backfillSession: backfillPlaygroundEventsFromEve,
+    scheduleReattach: scheduleDelegationReattach,
     now: () => new Date(),
     timeoutMs: delegationTimeoutMs(),
   };
@@ -107,6 +119,20 @@ export type AskResult =
       question: string;
       note: string;
     }
+  /**
+   * #267: harnesst lost the reply stream, NOT the turn. The peer is still working inside its
+   * container; the delegation stays open and a background watcher finishes the bookkeeping.
+   * Telling the caller "failed" here was the third defect in the issue — it is a lie, and it
+   * invites the model to re-do work that is already in flight.
+   */
+  | {
+      ok: true;
+      status: "handed_off";
+      teammate: string;
+      note: string;
+      runId: string | null;
+      runPath: string | null;
+    }
   | { ok: false; error: string };
 
 function deny(error: string): AskResult {
@@ -114,11 +140,18 @@ function deny(error: string): AskResult {
 }
 
 /** The peer member's run path (teams only reach the relay, so this is always member-scoped). */
-function runPathFor(projectId: string, agentName: string, runId: string): string {
+function runPathFor(
+  projectId: string,
+  agentName: string,
+  runId: string,
+): string {
   return `/repos/${projectId}/agents/${encodeURIComponent(agentName)}/runs/${runId}`;
 }
 
-export async function runAsk(input: AskInput, deps: AskDeps): Promise<AskResult> {
+export async function runAsk(
+  input: AskInput,
+  deps: AskDeps,
+): Promise<AskResult> {
   const { store } = deps;
 
   const teammate = input.teammate?.trim();
@@ -126,14 +159,18 @@ export async function runAsk(input: AskInput, deps: AskDeps): Promise<AskResult>
   if (!teammate) return deny("Name the teammate to ask.");
   if (!message.trim()) return deny("The message to your teammate is empty.");
   if (Buffer.byteLength(message, "utf8") > MAX_MESSAGE_BYTES) {
-    return deny("Your message is too long — keep a delegated request under 100KB.");
+    return deny(
+      "Your message is too long — keep a delegated request under 100KB.",
+    );
   }
 
   // 1. Resolve the caller from the token's deployment: deployment → env → agent → project.
   const deployment = await store.deployments.findById(input.deploymentId);
-  if (!deployment) return deny("Your deployment is no longer known to harnesst.");
+  if (!deployment)
+    return deny("Your deployment is no longer known to harnesst.");
   const callerEnv = await store.environments.findById(deployment.environmentId);
-  if (!callerEnv) return deny("Your environment is no longer known to harnesst.");
+  if (!callerEnv)
+    return deny("Your environment is no longer known to harnesst.");
   const caller = await store.agents.findById(callerEnv.agentId);
   if (!caller) return deny("Your agent is no longer part of this repository.");
   const project = await store.projects.findById(caller.projectId);
@@ -146,26 +183,35 @@ export async function runAsk(input: AskInput, deps: AskDeps): Promise<AskResult>
   );
   const target = roster.find((a) => a.name === teammate);
   if (!target) return deny(`No teammate named "${teammate}" is on this team.`);
-  if (target.id === caller.id) return deny("You can't delegate a task to yourself.");
+  if (target.id === caller.id)
+    return deny("You can't delegate a task to yourself.");
 
   // 3. Authorization — default-allow: only a disabled override row blocks the ask.
   const link = await store.agentLinks.get(caller.id, target.id);
   if (link && !link.enabled) {
-    return deny(`You're not permitted to ask "${teammate}". Ask a human to enable it in Settings.`);
+    return deny(
+      `You're not permitted to ask "${teammate}". Ask a human to enable it in Settings.`,
+    );
   }
 
   // 4. Concurrency caps — count only `running` rows younger than the timeout (+ slack), so a
   //    crashed relay can never wedge the caps.
-  const since = new Date(deps.now().getTime() - (deps.timeoutMs + STALE_SLACK_MS));
+  const since = new Date(
+    deps.now().getTime() - (deps.timeoutMs + STALE_SLACK_MS),
+  );
   const [edgeActive, projectActive] = await Promise.all([
     store.delegations.countActiveEdge(caller.id, target.id, since),
     store.delegations.countActiveProject(project.id, since),
   ]);
   if (edgeActive >= EDGE_CAP) {
-    return deny(`Too many in-flight asks to "${teammate}" already — wait for one to finish.`);
+    return deny(
+      `Too many in-flight asks to "${teammate}" already — wait for one to finish.`,
+    );
   }
   if (projectActive >= PROJECT_CAP) {
-    return deny("This team already has too many delegations in flight — try again shortly.");
+    return deny(
+      "This team already has too many delegations in flight — try again shortly.",
+    );
   }
 
   // 5. Target env = the peer's environment with the SAME NAME as the caller's (ship-fan-out
@@ -178,8 +224,11 @@ export async function runAsk(input: AskInput, deps: AskDeps): Promise<AskResult>
       `"${teammate}" has no "${callerEnv.name}" environment to reach — its environments differ from yours.`,
     );
   }
-  const targetDeployments = await store.deployments.listByEnvironment(targetEnv.id);
-  let live = targetDeployments.find((d) => d.status === "live" && d.url) ?? null;
+  const targetDeployments = await store.deployments.listByEnvironment(
+    targetEnv.id,
+  );
+  let live =
+    targetDeployments.find((d) => d.status === "live" && d.url) ?? null;
   if (!live) {
     const stopped = targetDeployments.find((d) => d.status === "stopped");
     if (!stopped) {
@@ -225,15 +274,45 @@ export async function runAsk(input: AskInput, deps: AskDeps): Promise<AskResult>
     return deny(`Couldn't reach "${teammate}": ${detail}`);
   }
 
+  // #267: a lost reply stream is a TRANSPORT failure — the turn is still running inside the
+  //   container. `streamLost` is a typed discriminator set at the three transport sites in
+  //   talk.server.ts (never matched from the error text), and it only leads anywhere when eve
+  //   handed us a session id to resume from.
+  const handingOff = result.streamLost === true && Boolean(result.sessionId);
+
+  const runMeta = {
+    delegationId: delegation.id,
+    fromAgentId: caller.id,
+    fromAgentName: caller.name,
+  };
+
   // 8. Record the peer's run (channel "teammate", linked-trace metadata). Best-effort — a
   //    recording hiccup must not lose the reply.
   let runId: string | null = null;
+  /**
+   * The deferred finish for a handed-off turn. On the hand-off path the run row stays `running`
+   * (which is TRUE — the turn is) and the reattach watcher settles it with the real outcome; but
+   * if the hand-off machinery itself fails below, the ask really does end here, so the run must
+   * be settled with the transport error rather than left running forever.
+   */
+  let finishRun: (() => Promise<void>) | null = null;
   if (result.sessionId && result.turnId) {
     const runExternalId = externalRunId(result.sessionId, result.turnId);
-    const runMeta = {
-      delegationId: delegation.id,
-      fromAgentId: caller.id,
-      fromAgentName: caller.name,
+    const settled = result;
+    const finish = async () => {
+      await deps.recordFinish({
+        projectId: project.id,
+        deploymentId: live.id,
+        releaseId: live.releaseId,
+        externalRunId: runExternalId,
+        externalSessionId: settled.sessionId!,
+        result: settled,
+        userMessage: prefixed,
+        channel: "teammate",
+        metadata: runMeta,
+        startedAt,
+        wallClockMs: deps.now().getTime() - startedAt.getTime(),
+      });
     };
     try {
       await deps.recordStart(
@@ -249,19 +328,11 @@ export async function runAsk(input: AskInput, deps: AskDeps): Promise<AskResult>
         },
         startedAt,
       );
-      await deps.recordFinish({
-        projectId: project.id,
-        deploymentId: live.id,
-        releaseId: live.releaseId,
-        externalRunId: runExternalId,
-        externalSessionId: result.sessionId,
-        result,
-        userMessage: prefixed,
-        channel: "teammate",
-        metadata: runMeta,
-        startedAt,
-        wallClockMs: deps.now().getTime() - startedAt.getTime(),
-      });
+      if (handingOff) {
+        finishRun = finish;
+      } else {
+        await finish();
+      }
       runId = await deps.resolveRunId(project.id, runExternalId);
     } catch (error) {
       console.error("[team] recording delegated run failed:", error);
@@ -270,9 +341,92 @@ export async function runAsk(input: AskInput, deps: AskDeps): Promise<AskResult>
 
   const runPath = runId ? runPathFor(project.id, target.name, runId) : null;
 
+  /** The peer's live handles — shared by relay parking (§9b) and the #267 hand-off. */
+  const peerTarget: Target = {
+    deploymentId: live.id,
+    environmentId: targetEnv.id,
+    releaseId: live.releaseId,
+    url: live.url,
+    version: live.version,
+    environmentName: targetEnv.name,
+    gitSha: live.gitSha,
+  };
+
+  // 9. The severed stream (#267) — checked BEFORE the failure branch below, because a lost
+  //    stream is not a failed turn. harnesst stopped watching it; the peer did not stop
+  //    running it. Adopt the peer session into an agent-opened FOH row — the SAME machinery §9b
+  //    uses, so a question the peer asks minutes from now has a surface to land on — leave the
+  //    delegation `running`, and enqueue the watcher that resumes the stream, drains it to
+  //    settlement, files any `input.requested` into the inbox, and finalizes delegation + run
+  //    with the true outcome. The calling model is told exactly that.
+  if (handingOff && result.sessionId) {
+    try {
+      const session = await deps.createSession({
+        projectId: project.id,
+        agentId: target.id,
+        userId: null,
+        surface: "foh",
+        environmentId: targetEnv.id,
+        deploymentId: live.id,
+        releaseId: live.releaseId,
+        version: live.version,
+        // D6: never the delegated ask text — it can carry the caller's private context and the
+        // list title is visible to every team member. Nothing has been said yet to title this by.
+        title: `Delegated task from "${caller.name}"`,
+        openedByAgentId: target.id,
+        delegationId: delegation.id,
+        externalSessionId: result.sessionId,
+        continuationToken: result.continuationToken,
+        streamIndex: result.streamIndex,
+        // Honest: the turn IS running. The watcher bumps this row every poll so the abandoned-
+        // session sweep doesn't mistake a long silent tool call for a dead drain.
+        status: "running",
+        lastEventAt: deps.now(),
+      });
+      try {
+        await deps.backfillSession({ session, target: peerTarget });
+      } catch (error) {
+        console.error("[team] handed-off transcript backfill failed:", error);
+      }
+      await deps.scheduleReattach(store, {
+        sessionId: session.id,
+        delegationId: delegation.id,
+        projectId: project.id,
+        turnId: result.turnId,
+        userMessage: prefixed,
+        metadata: runMeta,
+        startedAt: startedAt.toISOString(),
+        // Anchored HERE, at the hand-off — not at the turn's start. The relay has already spent
+        // its whole idle budget by this point, and a turn that streamed happily for longer than
+        // the ceiling before dropping would otherwise be born already expired.
+        deadlineAt: new Date(
+          deps.now().getTime() + DELEGATION_REATTACH_CEILING_MS,
+        ).toISOString(),
+      });
+      return {
+        ok: true,
+        status: "handed_off",
+        teammate: target.name,
+        note: `The reply stream from "${target.name}" dropped, but the task was handed over and their turn is still running. harnesst is watching it: if they need a human they will ask one, and the run below records how it ends. Do NOT re-ask or redo this work.`,
+        runId,
+        runPath,
+      };
+    } catch (error) {
+      // The hand-off machinery failed — without a session row and a watcher, nothing would ever
+      // settle this delegation, so fall through to the pre-#267 behavior: report the failure.
+      console.error("[team] delegation hand-off failed:", error);
+      if (finishRun) {
+        await finishRun().catch((e) =>
+          console.error("[team] recording delegated run failed:", e),
+        );
+      }
+    }
+  }
+
   // 9a. The peer turn failed outright — settle the row and surface the error.
   if (!result.ok) {
-    const error = result.error ?? `"${teammate}" couldn't complete the request.`;
+    const error =
+      result.error ?? `"${teammate}" couldn't complete the request.`;
     await store.delegations.finalize(delegation.id, {
       status: "failed",
       error,
@@ -298,15 +452,6 @@ export async function runAsk(input: AskInput, deps: AskDeps): Promise<AskResult>
         externalSessionId: result.sessionId,
         runId,
       });
-      const peerTarget: Target = {
-        deploymentId: live.id,
-        environmentId: targetEnv.id,
-        releaseId: live.releaseId,
-        url: live.url,
-        version: live.version,
-        environmentName: targetEnv.name,
-        gitSha: live.gitSha,
-      };
       const session = await deps.createSession({
         projectId: project.id,
         agentId: target.id,

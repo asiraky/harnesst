@@ -57,7 +57,9 @@ function buildDescription(teammates) {
       "conversation, so write a complete, self-contained request that includes every piece of " +
       "context they need. The returned value is the teammate's final answer. If it instead " +
       'carries status "waiting_on_human", the teammate paused to ask a human a question - ' +
-      "the delegation resumes and finishes on its own once a human answers, so do not re-ask.",
+      "the delegation resumes and finishes on its own once a human answers, so do not re-ask. " +
+      'Status "handed_off" means the reply stream dropped but the teammate is STILL working ' +
+      "on it - the task is handed over and tracked, so do not re-ask or redo it either.",
   ].join("\\n");
 }
 

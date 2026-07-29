@@ -69,7 +69,8 @@ describe.runIf(LIVE)("FOH delegation parking against real Postgres", () => {
     } = await import("~/db/schema");
     const { drizzleDataStore } = await import("~/data/drizzle.server");
     const { runAsk } = await import("~/team/ask.server");
-    const { createPlaygroundSession } = await import("~/playground/sessions.server");
+    const { createPlaygroundSession } =
+      await import("~/playground/sessions.server");
     const { streamTurnResponse } = await import("~/chat/turn-stream.server");
 
     const ORG = "org_foh_deleg";
@@ -103,11 +104,21 @@ describe.runIf(LIVE)("FOH delegation parking against real Postgres", () => {
       .returning();
     const [pmRel] = await db
       .insert(releases)
-      .values({ projectId: project.id, agentId: pm.id, version: "v1", gitSha: "a".repeat(40) })
+      .values({
+        projectId: project.id,
+        agentId: pm.id,
+        version: "v1",
+        gitSha: "a".repeat(40),
+      })
       .returning();
     const [ivyRel] = await db
       .insert(releases)
-      .values({ projectId: project.id, agentId: ivy.id, version: "v1", gitSha: "b".repeat(40) })
+      .values({
+        projectId: project.id,
+        agentId: ivy.id,
+        version: "v1",
+        gitSha: "b".repeat(40),
+      })
       .returning();
     const [pmDep] = await db
       .insert(deployments)
@@ -144,6 +155,7 @@ describe.runIf(LIVE)("FOH delegation parking against real Postgres", () => {
         ensureLiveDeployment: async () => null,
         createSession: createPlaygroundSession,
         backfillSession: async () => {}, // no eve behind the fake url
+        scheduleReattach: async () => {},
         now: () => new Date(),
         timeoutMs: 1_000,
       },
@@ -182,7 +194,9 @@ describe.runIf(LIVE)("FOH delegation parking against real Postgres", () => {
     });
     expect(session.pendingInputAt).not.toBeNull();
 
-    const pending = await drizzleDataStore.inboxItems.findPendingBySession(session.id);
+    const pending = await drizzleDataStore.inboxItems.findPendingBySession(
+      session.id,
+    );
     expect(pending).toMatchObject([
       {
         kind: "question",
@@ -196,7 +210,11 @@ describe.runIf(LIVE)("FOH delegation parking against real Postgres", () => {
     // 2. Wake-on-answer: a human's continuation turn on the agent-opened session completes,
     //    and the drain's finally block finalizes the waiting delegation.
     script([
-      { kind: "session", sessionId: "sess_ext_deleg", continuationToken: "tok_deleg" },
+      {
+        kind: "session",
+        sessionId: "sess_ext_deleg",
+        continuationToken: "tok_deleg",
+      },
       {
         kind: "progress",
         sessionId: "sess_ext_deleg",
@@ -209,7 +227,11 @@ describe.runIf(LIVE)("FOH delegation parking against real Postgres", () => {
       },
       {
         kind: "done",
-        result: turnResult({ reply: "Deployed to blue.", streamIndex: 3, turnId: null }),
+        result: turnResult({
+          reply: "Deployed to blue.",
+          streamIndex: 3,
+          turnId: null,
+        }),
       },
     ]);
     const target = {
@@ -242,7 +264,9 @@ describe.runIf(LIVE)("FOH delegation parking against real Postgres", () => {
       .where(eq(playgroundSessions.id, session.id));
     expect(sessionAfter.status).toBe("waiting");
     expect(sessionAfter.pendingInputAt).toBeNull();
-    const after = await drizzleDataStore.inboxItems.findPendingBySession(session.id);
+    const after = await drizzleDataStore.inboxItems.findPendingBySession(
+      session.id,
+    );
     expect(after).toMatchObject([{ kind: "finished" }]);
 
     // Cleanup (org cascade removes project/agents/envs/deployments/session/delegation/inbox).

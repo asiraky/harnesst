@@ -22,7 +22,9 @@ async function execute(job: Job): Promise<void> {
     case "rollback_release": {
       const p = job.payload as DeployReleasePayload;
       const dep =
-        job.kind === "deploy_release" ? await deployRelease(p) : await rollbackTo(p);
+        job.kind === "deploy_release"
+          ? await deployRelease(p)
+          : await rollbackTo(p);
       // A deployment that records `failed` is a real outcome, not a queue error — but
       // surfacing it as a job failure gets retries for transient build/docker flakes.
       if (dep.status === "failed") {
@@ -31,7 +33,8 @@ async function execute(job: Job): Promise<void> {
       return;
     }
     case "assistant_deploy": {
-      const { runAssistantDeploy } = await import("~/assistant/instance.server");
+      const { runAssistantDeploy } =
+        await import("~/assistant/instance.server");
       const p = job.payload as { projectId: string };
       const res = await runAssistantDeploy(p);
       if (res.status === "failed") {
@@ -42,13 +45,15 @@ async function execute(job: Job): Promise<void> {
     case "assistant_restart": {
       // Config-change refresh: stop/start so the entrypoint re-fetches the bundle and rebuilds.
       // Best-effort — a missing instance is a no-op (it provisions on next use), never a retry.
-      const { restartAssistantInstance } = await import("~/assistant/instance.server");
+      const { restartAssistantInstance } =
+        await import("~/assistant/instance.server");
       const p = job.payload as { projectId: string };
       await restartAssistantInstance(p.projectId);
       return;
     }
     case "cleanup_deployment_container": {
-      const { cleanupDeploymentContainer } = await import("~/deploy/cleanup.server");
+      const { cleanupDeploymentContainer } =
+        await import("~/deploy/cleanup.server");
       const p = job.payload as { deploymentId?: string };
       if (!p.deploymentId) throw new Error("cleanup job missing deploymentId");
       const result = await cleanupDeploymentContainer(p.deploymentId);
@@ -79,11 +84,32 @@ async function execute(job: Job): Promise<void> {
       console.log(`[jobs] drain_deployment ${p.deploymentId}: ${detail}`);
       return;
     }
+    case "reattach_delegation": {
+      const { reattachDelegation } = await import("~/team/reattach.server");
+      const p =
+        job.payload as unknown as import("~/team/reattach.server").ReattachPayload;
+      if (!p.sessionId || !p.delegationId) {
+        throw new Error("reattach job missing sessionId/delegationId");
+      }
+      // Like the drain: a `waiting` result is a SUCCESS — the tick enqueued its own successor.
+      const result = await reattachDelegation(p);
+      const detail =
+        result.status === "waiting"
+          ? `waiting (index ${result.streamIndex})`
+          : result.status === "settled"
+            ? `settled (${result.outcome})`
+            : result.status === "expired"
+              ? "expired at the reattach ceiling"
+              : `skipped: ${result.reason}`;
+      console.log(`[jobs] reattach_delegation ${p.delegationId}: ${detail}`);
+      return;
+    }
     case "publish": {
       // issue #225: the publish pipeline (check → build → commit → version → deploy). Progress and
       // failures surface through the workspace task's steps, not queue retries (maxAttempts:1).
       const { runPublish } = await import("~/publish/pipeline.server");
-      const p = job.payload as import("~/publish/pipeline.server").PublishPayload;
+      const p =
+        job.payload as import("~/publish/pipeline.server").PublishPayload;
       await runPublish(p);
       return;
     }
@@ -109,7 +135,9 @@ async function tick(): Promise<void> {
       console.log(`[jobs] done ${job.kind} ${job.id}`);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      console.error(`[jobs] ${job.kind} ${job.id} attempt ${job.attempts} failed: ${msg}`);
+      console.error(
+        `[jobs] ${job.kind} ${job.id} attempt ${job.attempts} failed: ${msg}`,
+      );
       await markFailed(job, msg);
     }
   }
@@ -124,7 +152,10 @@ async function tick(): Promise<void> {
  * forever, permanently disabling Publish for the project.
  */
 async function reconcilePublishesOnBoot(store: DataStore): Promise<void> {
-  const failedJobs = await store.jobs.failRunningByKind("publish", PUBLISH_INTERRUPTED_MESSAGE);
+  const failedJobs = await store.jobs.failRunningByKind(
+    "publish",
+    PUBLISH_INTERRUPTED_MESSAGE,
+  );
   const failedJobIds = new Set(failedJobs.map((j) => j.id));
   const running = await store.workspaceTasks.listRunningByKind("publish");
   let settled = 0;
@@ -151,10 +182,13 @@ function startWorker(): { stop: () => void } {
   // except publishes, which are settled as failed first (see reconcilePublishesOnBoot).
   const data = getRuntime().data;
   reconcilePublishesOnBoot(data)
-    .catch((err) => console.error("[jobs] publish boot reconciliation failed:", err))
+    .catch((err) =>
+      console.error("[jobs] publish boot reconciliation failed:", err),
+    )
     .then(() => data.jobs.requeueRunning())
     .then((n) => {
-      if (n > 0) console.log(`[jobs] requeued ${n} job(s) stranded by a restart`);
+      if (n > 0)
+        console.log(`[jobs] requeued ${n} job(s) stranded by a restart`);
     })
     .catch((err) => console.error("[jobs] boot recovery failed:", err));
 
