@@ -247,11 +247,17 @@ function GenericRenderer({ data }: { data: ToolData }) {
 }
 
 /**
- * Detect harnesst's generated delegation tool. eve derives a tool's name from its kebab filename
- * (`ask-teammate.ts` → `ask-teammate`); match the underscore form defensively too.
+ * Detect harnesst's generated delegation tools (blocking ask, fire-and-forget tell — #269). eve
+ * derives a tool's name from its kebab filename (`ask-teammate.ts` → `ask-teammate`); match the
+ * underscore forms defensively too.
  */
 function isDelegationTool(toolName: string | null): boolean {
-  return toolName === "ask-teammate" || toolName === "ask_teammate";
+  return (
+    toolName === "ask-teammate" ||
+    toolName === "ask_teammate" ||
+    toolName === "tell-teammate" ||
+    toolName === "tell_teammate"
+  );
 }
 
 /**
@@ -269,6 +275,12 @@ function DelegationRenderer({ data }: { data: ToolData }) {
         : null;
   const message = typeof input.message === "string" ? input.message : null;
   const reply = typeof output.reply === "string" ? output.reply : null;
+  // Structured non-reply outcomes (dispatched / waiting_on_human / handed_off) carry a note
+  // instead of a reply — show it so a hand-off doesn't render as an empty result.
+  const note =
+    output.ok === true && !reply && typeof output.note === "string"
+      ? output.note
+      : null;
   const error =
     output.ok === false && typeof output.error === "string" ? output.error : null;
   const runPath = typeof output.runPath === "string" ? output.runPath : null;
@@ -282,6 +294,13 @@ function DelegationRenderer({ data }: { data: ToolData }) {
       {reply && (
         <Section title="Reply">
           <Mono>{reply}</Mono>
+        </Section>
+      )}
+      {note && (
+        <Section title="Status">
+          <p className="text-sm text-muted-foreground whitespace-pre-wrap">
+            {note}
+          </p>
         </Section>
       )}
       {error && (

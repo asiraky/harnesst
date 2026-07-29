@@ -149,6 +149,13 @@ describe.runIf(LIVE)("FOH delegation parking against real Postgres", () => {
       {
         store: drizzleDataStore,
         sendTurn: async () => parked,
+        dispatchTurn: async () => ({
+          sessionId: null,
+          continuationToken: null,
+          turnId: null,
+          streamIndex: 0,
+          error: "not used",
+        }),
         recordStart: async () => true,
         recordFinish: async () => {},
         resolveRunId: async () => null,

@@ -766,7 +766,7 @@ function LiveBubble({
   );
 }
 
-function AgentEntry({
+export function AgentEntry({
   entry,
   onAnswer,
   onRetry,
@@ -781,32 +781,44 @@ function AgentEntry({
   busy?: boolean;
   running?: boolean;
 }) {
+  // A still-running turn rebuilt from the event cache (e.g. after switching to another
+  // session and back mid-turn) has steps but no reply text yet. Rendering the
+  // "(empty reply)" fallback there reads as a broken message — suppress the bubble and
+  // let the steps card carry the "Still working…" state, matching LiveBubble.
+  const awaitingReply =
+    running &&
+    !entry.error &&
+    !entry.structured &&
+    !entry.text &&
+    !entry.inputRequests?.length;
   return (
     <div className="space-y-2">
-      <AssistantBubble>
-        {entry.error ? (
-          <TurnError
-            message={entry.error}
-            detail={entry.errorDetail}
-            retryable={entry.errorRetryable}
-            onRetry={onRetry}
-            busy={busy}
-          />
-        ) : entry.structured ? (
-          <pre className="overflow-x-auto rounded-lg bg-muted/50 p-3 font-mono text-xs">
-            {entry.text}
-          </pre>
-        ) : entry.text || !entry.inputRequests?.length ? (
-          <MarkdownText text={entry.text || "(empty reply)"} />
-        ) : null}
-        {entry.inputRequests && (
-          <InputRequestsBlock
-            requests={entry.inputRequests}
-            onAnswer={onAnswer}
-            busy={busy}
-          />
-        )}
-      </AssistantBubble>
+      {!awaitingReply && (
+        <AssistantBubble>
+          {entry.error ? (
+            <TurnError
+              message={entry.error}
+              detail={entry.errorDetail}
+              retryable={entry.errorRetryable}
+              onRetry={onRetry}
+              busy={busy}
+            />
+          ) : entry.structured ? (
+            <pre className="overflow-x-auto rounded-lg bg-muted/50 p-3 font-mono text-xs">
+              {entry.text}
+            </pre>
+          ) : entry.text || !entry.inputRequests?.length ? (
+            <MarkdownText text={entry.text || "(empty reply)"} />
+          ) : null}
+          {entry.inputRequests && (
+            <InputRequestsBlock
+              requests={entry.inputRequests}
+              onAnswer={onAnswer}
+              busy={busy}
+            />
+          )}
+        </AssistantBubble>
+      )}
       <StepsCard
         steps={entry.steps ?? []}
         idPrefix={entry.id}

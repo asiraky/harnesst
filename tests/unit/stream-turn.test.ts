@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { streamTurn, type TalkEvent } from "~/agent/talk.server";
+import { dispatchTurn, streamTurn, type TalkEvent } from "~/agent/talk.server";
 
 /** Emit the events as one NDJSON body (the eve stream shape). */
 function streamResponse(events: unknown[]): Response {
@@ -532,5 +532,71 @@ describe("streamTurn", () => {
     }
     body = JSON.parse(String(fetchMock.mock.calls[0][1]?.body));
     expect(body.inputResponses).toBeUndefined();
+  });
+});
+
+describe("dispatchTurn (#269 fire-and-forget)", () => {
+  const at = new Date().toISOString();
+
+  it("returns the session and turn ids as soon as the turn is identified", async () => {
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(sessionStart())
+      .mockResolvedValueOnce(
+        streamResponse([
+          { type: "session.started", data: {}, meta: { at } },
+          {
+            type: "message.received",
+            data: { message: "go", turnId: "turn_0" },
+            meta: { at },
+          },
+          // Everything past the turn id must be irrelevant — the watch stops there.
+          { type: "step.started", data: { turnId: "turn_0" }, meta: { at } },
+        ]),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const out = await dispatchTurn({
+      baseUrl: "https://agent.example.test",
+      message: "go",
+    });
+    expect(out).toEqual({
+      sessionId: "sess_1",
+      continuationToken: "tok_1",
+      turnId: "turn_0",
+      streamIndex: 2,
+      error: null,
+    });
+  });
+
+  it("fails with an error when the POST is refused (nothing is running)", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn<typeof fetch>()
+        .mockResolvedValueOnce(new Response("nope", { status: 503 })),
+    );
+    const out = await dispatchTurn({
+      baseUrl: "https://agent.example.test",
+      message: "go",
+    });
+    expect(out.sessionId).toBeNull();
+    expect(out.error).toContain("503");
+  });
+
+  it("still counts as dispatched when the stream dies after the POST was accepted", async () => {
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(sessionStart())
+      .mockRejectedValueOnce(new Error("socket hang up"));
+    vi.stubGlobal("fetch", fetchMock);
+    const out = await dispatchTurn({
+      baseUrl: "https://agent.example.test",
+      message: "go",
+    });
+    // The POST landed — the turn is running; only the short turn-id watch failed.
+    expect(out.sessionId).toBe("sess_1");
+    expect(out.turnId).toBeNull();
+    expect(out.error).toBeNull();
   });
 });
