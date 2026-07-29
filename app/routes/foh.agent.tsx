@@ -169,7 +169,7 @@ export default function FohAgent({ loaderData }: Route.ComponentProps) {
           />
         )}
       </section>
-      <SessionPane pending={showPending}>
+      <SessionPane pending={showPending} basePath={basePath}>
         <Outlet />
       </SessionPane>
     </>
@@ -221,21 +221,32 @@ function usePendingPane(openSessionId: string | null) {
 
 function SessionPane({
   pending,
+  basePath,
   children,
 }: {
   pending: boolean;
+  basePath: string;
   children: React.ReactNode;
 }) {
   if (!pending) return <>{children}</>;
   return (
-    <section
-      className="flex min-w-0 flex-1 items-center justify-center"
-      aria-busy="true"
-    >
-      <p className="flex items-center gap-2 text-sm text-muted-foreground">
-        <Loader2 className="size-4 animate-spin" aria-hidden />
-        Opening conversation…
-      </p>
+    <section className="flex min-w-0 flex-1 flex-col" aria-busy="true">
+      {/* Below md this pane has hidden the session list, and a wait here can run to several
+          seconds (eve reconciliation) — without its own back control the user would be
+          stranded on a spinner with no way out. */}
+      <div className="flex h-14 shrink-0 items-center border-b px-4 md:hidden">
+        <Button asChild variant="ghost" size="sm" className="-ml-2 px-1.5">
+          <Link to={basePath} aria-label="Back to sessions">
+            <ChevronLeft className="size-4" aria-hidden />
+          </Link>
+        </Button>
+      </div>
+      <div className="flex min-h-0 flex-1 items-center justify-center">
+        <p className="flex items-center gap-2 text-sm text-muted-foreground">
+          <Loader2 className="size-4 animate-spin" aria-hidden />
+          Opening conversation…
+        </p>
+      </div>
     </section>
   );
 }
