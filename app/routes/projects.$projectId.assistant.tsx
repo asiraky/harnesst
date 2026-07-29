@@ -1136,7 +1136,7 @@ function SyncNote({ sync }: { sync: NonNullable<LiveTurn["sync"]> }) {
   );
 }
 
-function AgentEntry({
+export function AgentEntry({
   entry,
   onAnswer,
   onRetry,

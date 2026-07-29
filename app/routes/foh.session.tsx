@@ -766,7 +766,7 @@ function LiveBubble({
   );
 }
 
-function AgentEntry({
+export function AgentEntry({
   entry,
   onAnswer,
   onRetry,
