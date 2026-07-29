@@ -97,16 +97,18 @@ function FohShell({ data }: { data: ShellData }) {
   // Presence + badges freshness: baseline 10s loader poll (D12-adjacent; the inbox flyout
   // has its own keyed-fetcher poll).
   useLiveRevalidate({ idleIntervalMs: 10_000 });
-  // Below md the three panes become route-driven pages: the sidebar IS the page at `/`,
-  // and any deeper route hides it (children own the viewport; they render back buttons).
+  // Responsive panes (issue #265). Three panes need 544px of chrome before the conversation
+  // gets anything, so they only all coexist at lg. Below that the shell is a sliding window
+  // over the pane stack: at lg- this sidebar shows only at `/`, and below md it is the whole
+  // page there. Deeper routes hide it and render their own back button.
   const atHome = useLocation().pathname === "/";
 
   return (
     <div className="flex h-dvh overflow-hidden bg-background">
       <aside
         className={cn(
-          "w-full shrink-0 flex-col border-r md:flex md:w-64",
-          atHome ? "flex" : "hidden",
+          "shrink-0 flex-col border-r",
+          atHome ? "flex w-full md:w-64" : "hidden w-64 lg:flex",
         )}
       >
         {/* Workspace name intentionally absent (issue #212 §1): nobody switches

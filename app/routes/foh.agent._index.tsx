@@ -19,7 +19,7 @@ export default function FohAgentIndex() {
   const hasSessions = (parent?.sessions.length ?? 0) > 0;
 
   return (
-    // Hidden below md: with no session open the session list is the whole page.
+    // Hidden below md: with no session open the session list is the whole page there.
     <section className="hidden min-w-0 flex-1 items-center justify-center md:flex">
       <div className="max-w-sm px-6 text-center">
         <div className="mx-auto mb-3 flex size-12 items-center justify-center rounded-full bg-primary/10 text-primary">

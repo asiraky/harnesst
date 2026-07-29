@@ -108,15 +108,19 @@ export default function FohAgent({ loaderData }: Route.ComponentProps) {
   const params = useParams();
   const newSessionFetcher = useFetcher<typeof action>();
   const basePath = `/t/${projectId}/${agentId}`;
+  const openSessionId = params.sessionId ?? null;
+  const showPending = usePendingPane(openSessionId);
+  // Below md only one pane fits, and the right one is whatever the user is waiting on: the
+  // list until a session is open OR the pending pane has taken over. Keying this off
+  // `openSessionId` alone would leave the full-width list covering a slow load's spinner.
+  const detailVisible = openSessionId !== null || showPending;
 
   return (
     <>
-      {/* Mobile: this list is the whole page until a session opens, then the
-          conversation takes over (the shell already hid pane 1). */}
       <section
         className={cn(
-          "w-full shrink-0 flex-col border-r md:flex md:w-72",
-          params.sessionId ? "hidden" : "flex",
+          "shrink-0 flex-col border-r",
+          detailVisible ? "hidden w-72 md:flex" : "flex w-full md:w-72",
         )}
       >
         <div className="flex h-14 items-center gap-2 border-b px-3">
@@ -124,7 +128,7 @@ export default function FohAgent({ loaderData }: Route.ComponentProps) {
             asChild
             variant="ghost"
             size="sm"
-            className="-ml-1 px-1.5 md:hidden"
+            className="-ml-1 px-1.5 lg:hidden"
           >
             <Link to="/" aria-label="Back to team list">
               <ChevronLeft className="size-4" aria-hidden />
@@ -165,7 +169,7 @@ export default function FohAgent({ loaderData }: Route.ComponentProps) {
           />
         )}
       </section>
-      <SessionPane openSessionId={params.sessionId ?? null}>
+      <SessionPane pending={showPending}>
         <Outlet />
       </SessionPane>
     </>
@@ -190,13 +194,7 @@ function sessionIdFromPath(pathname: string): string | null {
  */
 const PENDING_PANE_DELAY_MS = 250;
 
-function SessionPane({
-  openSessionId,
-  children,
-}: {
-  openSessionId: string | null;
-  children: React.ReactNode;
-}) {
+function usePendingPane(openSessionId: string | null) {
   const navigation = useNavigation();
   const pendingId = navigation.location
     ? sessionIdFromPath(navigation.location.pathname)
@@ -218,7 +216,17 @@ function SessionPane({
     return () => clearTimeout(timer);
   }, [switching]);
 
-  if (!show) return <>{children}</>;
+  return show;
+}
+
+function SessionPane({
+  pending,
+  children,
+}: {
+  pending: boolean;
+  children: React.ReactNode;
+}) {
+  if (!pending) return <>{children}</>;
   return (
     <section
       className="flex min-w-0 flex-1 items-center justify-center"

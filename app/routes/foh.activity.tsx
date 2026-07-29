@@ -562,7 +562,7 @@ export default function FohActivity({ loaderData }: Route.ComponentProps) {
           asChild
           variant="ghost"
           size="sm"
-          className="-ml-2 px-1.5 md:hidden"
+          className="-ml-2 px-1.5 lg:hidden"
         >
           <Link to="/" aria-label="Back to team list">
             <ChevronLeft className="size-4" aria-hidden />

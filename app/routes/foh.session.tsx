@@ -545,7 +545,9 @@ export default function FohSession({ loaderData }: Route.ComponentProps) {
           {sessionTitle}
         </h1>
         {openedByAgent && (
-          <span className="shrink-0 rounded-full bg-muted px-2 py-0.5 text-[11px] text-muted-foreground">
+          // Agent names run to 64 chars: the chip has to give way on a phone rather
+          // than shove the title to zero width and the status off-screen.
+          <span className="min-w-0 max-w-[45%] truncate rounded-full bg-muted px-2 py-0.5 text-[11px] text-muted-foreground">
             opened by {agentName}
           </span>
         )}
