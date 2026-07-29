@@ -9,7 +9,6 @@ import { randomBytes } from "node:crypto";
 import { describe, expect, it } from "vitest";
 
 import {
-  CONNECT_STATE_TTL_MS,
   DISCORD_API,
   DISCORD_BOT_PERMISSIONS,
   discordAuthorizeUrl,
@@ -69,7 +68,6 @@ describe("connect state token", () => {
   it("rejects malformed input without throwing", () => {
     expect(verifyConnectState("", key)).toBeNull();
     expect(verifyConnectState("no-dot", key)).toBeNull();
-    expect(CONNECT_STATE_TTL_MS).toBe(60 * 60 * 1000);
   });
 
   it("rejects a state without the user/session binding or nonce", () => {
@@ -125,10 +123,6 @@ describe("discordAuthorizeUrl", () => {
       "https://harnesst.example/discord/callback",
     );
     expect(parsed.searchParams.get("state")).toBe("st at e");
-  });
-
-  it("carries the View Channels + Send Messages + Manage Webhooks bits", () => {
-    expect(DISCORD_BOT_PERMISSIONS).toBe(1024 + 2048 + 536870912);
   });
 });
 

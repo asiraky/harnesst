@@ -164,9 +164,9 @@ function validateManifest(where, m) {
     }
   }
   // capability (issue #166): operation-group enablement riding a connection's auth block. Group
-  // ids must exist in harnesst's capability registry — that cross-check lives in harnesst's unit tests
-  // (tests/unit/capabilities-catalog.test.ts), because this script deliberately has no dependency
-  // on harnesst app code; the SHAPE is enforced here.
+  // ids must exist in harnesst's capability registry — that cross-check lives in harnesst's lint
+  // (scripts/lint-shipped.ts), because this script deliberately has no dependency on harnesst app
+  // code; the SHAPE is enforced here.
   if (m.capability !== undefined) {
     if (
       !m.capability ||

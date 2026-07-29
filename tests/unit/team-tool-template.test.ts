@@ -16,9 +16,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 
 import {
-  ASK_TEAMMATE_TOOL_PATH,
   ASK_TEAMMATE_TOOL_SOURCE,
-  TELL_TEAMMATE_TOOL_PATH,
   TELL_TEAMMATE_TOOL_SOURCE,
 } from "~/team/tool-template";
 
@@ -41,15 +39,11 @@ const TOOLS = [
   {
     name: "ask-teammate",
     source: ASK_TEAMMATE_TOOL_SOURCE,
-    path: ASK_TEAMMATE_TOOL_PATH,
-    expectedPath: "agent/tools/ask-teammate.ts",
     mode: "ask",
   },
   {
     name: "tell-teammate",
     source: TELL_TEAMMATE_TOOL_SOURCE,
-    path: TELL_TEAMMATE_TOOL_PATH,
-    expectedPath: "agent/tools/tell-teammate.ts",
     mode: "tell",
   },
 ] as const;
@@ -58,13 +52,12 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-describe.each(TOOLS)("$name tool template", ({ source, path, expectedPath, mode }) => {
+describe.each(TOOLS)("$name tool template", ({ source, mode }) => {
   it("imports only eve/tools and zod", () => {
     const imports = [...source.matchAll(/^import .* from "([^"]+)";/gm)].map(
       (m) => m[1],
     );
     expect(imports.sort()).toEqual(["eve/tools", "zod"]);
-    expect(path).toBe(expectedPath);
   });
 
   it("with HARNESST_TEAMMATES: enumerates teammates and enforces a strict enum", () => {

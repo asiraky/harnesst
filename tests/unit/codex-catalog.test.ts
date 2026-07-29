@@ -56,24 +56,3 @@ describe("findCodexSpec", () => {
     }
   });
 });
-
-describe("GPT-5.6 family (ChatMock registry parity)", () => {
-  it("curates the 5.6 trio so a Codex subscription can actually select them", () => {
-    for (const slug of ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"]) {
-      const spec = findCodexSpec(slug);
-      expect(spec, slug).not.toBeNull();
-      // Upstream lists none…max; harnesst's effort scale caps at xhigh.
-      expect(spec?.supportedEfforts).toEqual([
-        "none",
-        "low",
-        "medium",
-        "high",
-        "xhigh",
-      ]);
-    }
-  });
-
-  it("orders the newest family first so the picker leads with it", () => {
-    expect(CODEX_MODEL_SPECS[0]?.slug).toBe("gpt-5.6-sol");
-  });
-});

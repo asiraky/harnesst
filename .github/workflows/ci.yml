@@ -37,6 +37,10 @@ jobs:
       # edit committed without `npm run catalog:index` surfaces in the suite as an opaque hash
       # mismatch. Validate first: it names the template and the rule that was broken.
       - run: npm run catalog:validate
+      # Frontmatter of shipped markdown + the catalog ↔ capability-registry cross-check. Neither has
+      # a function under test, so they are a lint rather than a test (issue #273) — but unparseable
+      # skill frontmatter hard-fails the eve image build, so it must still gate merge.
+      - run: npm run lint:shipped
       - run: npm test
 
   # The production Docker build runs `npm run build`; typecheck + tests do not exercise the

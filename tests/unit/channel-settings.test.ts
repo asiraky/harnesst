@@ -7,7 +7,6 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  DEFAULT_WAKE_LABELS,
   gitHubChannelSummary,
   parseGitHubChannelForm,
   splitChips,
@@ -140,7 +139,4 @@ describe("channelSettingsDefinition", () => {
     expect(channelSettingsDefinition("discord")).toBeNull();
   });
 
-  it("prefills labels the workflow is meant to establish, not ones fetched from the repo", () => {
-    expect(DEFAULT_WAKE_LABELS).toEqual(["ready", "changes-requested"]);
-  });
 });

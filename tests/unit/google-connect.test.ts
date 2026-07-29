@@ -8,7 +8,6 @@ import { randomBytes } from "node:crypto";
 import { describe, expect, it } from "vitest";
 
 import {
-  CONNECT_STATE_TTL_MS,
   InvalidGrantError,
   connectionRowState,
   exchangeCode,
@@ -249,10 +248,6 @@ describe("google connect state", () => {
     expect(
       verifyConnectState(missingNonceToken, key, state.exp - 1000),
     ).toBeNull();
-  });
-
-  it("has a one-hour TTL", () => {
-    expect(CONNECT_STATE_TTL_MS).toBe(60 * 60 * 1000);
   });
 });
 

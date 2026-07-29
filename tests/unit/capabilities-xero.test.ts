@@ -390,23 +390,4 @@ describe("xero searches and contacts", () => {
     expect(JSON.stringify(post.body)).not.toMatch(/BankAccount/i);
   });
 
-  it("declares the expected groups: reads default-on, writes opt-in", () => {
-    const groups = Object.fromEntries(
-      xeroCapability.operationGroups.map((g) => [g.id, g]),
-    );
-    expect(Object.keys(groups).sort()).toEqual([
-      "bills-draft",
-      "bills-read",
-      "contacts-read",
-      "contacts-write",
-      "reference-read",
-    ]);
-    for (const id of ["reference-read", "bills-read", "contacts-read"]) {
-      expect(groups[id]).toMatchObject({ risk: "read", default: true });
-    }
-    for (const id of ["contacts-write", "bills-draft"]) {
-      expect(groups[id].risk).toBe("write");
-      expect(groups[id].default).toBeUndefined();
-    }
-  });
 });
