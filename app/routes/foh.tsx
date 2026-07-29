@@ -13,7 +13,7 @@
  * paths on the marketing host never reach their loaders: the root session middleware bounces
  * every non-marketing GET to the app origin. Self-host default (env unset) is always FOH.
  */
-import { Zap } from "lucide-react";
+import { FolderGit2, Zap } from "lucide-react";
 import { Link, NavLink, Outlet, type LoaderFunctionArgs } from "react-router";
 
 import { sessionLoader } from "~/auth/session.server";
@@ -27,6 +27,7 @@ import { InboxIndicator } from "~/components/foh/inbox";
 import { PresenceDot } from "~/components/foh/presence-dot";
 import { MarketingLanding } from "~/components/marketing/landing";
 import { BrandWordmark } from "~/components/marketing/logo";
+import { bohTeamHref } from "~/foh/boh-links";
 import { loadFohSidebar } from "~/foh/sidebar.server";
 import { appOrigin, isMarketingHost } from "~/lib/marketing-host.server";
 import { useLiveRevalidate } from "~/lib/use-live-revalidate";
@@ -119,9 +120,25 @@ function FohShell({ data }: { data: ShellData }) {
             <ul className="space-y-4">
               {teams.map((team) => (
                 <li key={team.projectId}>
-                  <p className="px-2 pb-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                    {team.name}
-                  </p>
+                  {/* #246: hover-revealed BOH cross-link for admins — invisible at rest so
+                      the team header stays a calm label, not a control row. The surface is
+                      called "Repositories" in the UI (account-menu precedent). */}
+                  <div className="group/team flex items-center gap-1 px-2 pb-1">
+                    <p className="min-w-0 flex-1 truncate text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                      {team.name}
+                    </p>
+                    {backOfHouse && (
+                      <Link
+                        to={bohTeamHref(team.projectId)}
+                        prefetch="intent"
+                        aria-label={`Manage ${team.name} in Repositories`}
+                        title="Manage in Repositories"
+                        className="rounded-sm p-0.5 text-muted-foreground opacity-0 transition-opacity focus-visible:opacity-100 group-hover/team:opacity-100 hover:text-foreground"
+                      >
+                        <FolderGit2 className="size-3.5" aria-hidden />
+                      </Link>
+                    )}
+                  </div>
                   {team.agents.length === 0 ? (
                     <p className="px-2 py-1 text-xs text-muted-foreground/70">
                       No team members.
