@@ -8,6 +8,7 @@
  */
 import {
   ArrowRightLeft,
+  ChevronLeft,
   Clock,
   FlaskConical,
   Globe,
@@ -557,6 +558,16 @@ export default function FohActivity({ loaderData }: Route.ComponentProps) {
   return (
     <section className="flex min-w-0 flex-1 flex-col">
       <div className="flex h-14 shrink-0 items-center gap-2 border-b px-4">
+        <Button
+          asChild
+          variant="ghost"
+          size="sm"
+          className="-ml-2 px-1.5 md:hidden"
+        >
+          <Link to="/" aria-label="Back to team list">
+            <ChevronLeft className="size-4" aria-hidden />
+          </Link>
+        </Button>
         <Zap className="size-4 text-muted-foreground" aria-hidden />
         <h1 className="min-w-0 flex-1 truncate text-sm font-semibold">
           Activity — {projectName}

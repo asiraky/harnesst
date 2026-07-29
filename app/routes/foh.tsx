@@ -14,7 +14,13 @@
  * every non-marketing GET to the app origin. Self-host default (env unset) is always FOH.
  */
 import { Zap } from "lucide-react";
-import { Link, NavLink, Outlet, type LoaderFunctionArgs } from "react-router";
+import {
+  Link,
+  NavLink,
+  Outlet,
+  useLocation,
+  type LoaderFunctionArgs,
+} from "react-router";
 
 import { sessionLoader } from "~/auth/session.server";
 import {
@@ -91,10 +97,18 @@ function FohShell({ data }: { data: ShellData }) {
   // Presence + badges freshness: baseline 10s loader poll (D12-adjacent; the inbox flyout
   // has its own keyed-fetcher poll).
   useLiveRevalidate({ idleIntervalMs: 10_000 });
+  // Below md the three panes become route-driven pages: the sidebar IS the page at `/`,
+  // and any deeper route hides it (children own the viewport; they render back buttons).
+  const atHome = useLocation().pathname === "/";
 
   return (
     <div className="flex h-dvh overflow-hidden bg-background">
-      <aside className="flex w-64 shrink-0 flex-col border-r">
+      <aside
+        className={cn(
+          "w-full shrink-0 flex-col border-r md:flex md:w-64",
+          atHome ? "flex" : "hidden",
+        )}
+      >
         {/* Workspace name intentionally absent (issue #212 §1): nobody switches
             workspaces yet, and the label never sat aligned with the wordmark — it now
             lives in the account menu below instead. */}

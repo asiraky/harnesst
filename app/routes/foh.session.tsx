@@ -14,9 +14,10 @@
  * PEER session for delegation-opened rows).
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Square } from "lucide-react";
+import { ChevronLeft, Square } from "lucide-react";
 import {
   data,
+  Link,
   useRevalidator,
   type LoaderFunctionArgs,
 } from "react-router";
@@ -529,6 +530,16 @@ export default function FohSession({ loaderData }: Route.ComponentProps) {
   return (
     <section className="flex min-w-0 flex-1 flex-col">
       <header className="flex h-14 shrink-0 items-center gap-2 border-b px-4">
+        <Button
+          asChild
+          variant="ghost"
+          size="sm"
+          className="-ml-2 px-1.5 md:hidden"
+        >
+          <Link to={`/t/${projectId}/${agentId}`} aria-label="Back to sessions">
+            <ChevronLeft className="size-4" aria-hidden />
+          </Link>
+        </Button>
         <SessionStatusDot status={sessionFohStatus} />
         <h1 className="min-w-0 flex-1 truncate text-sm font-semibold">
           {sessionTitle}

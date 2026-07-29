@@ -15,7 +15,8 @@ export default function FohIndex() {
   const hasTeams = (shell?.teams.length ?? 0) > 0;
 
   return (
-    <section className="flex min-w-0 flex-1 items-center justify-center">
+    // Hidden below md: at `/` the sidebar is the whole page.
+    <section className="hidden min-w-0 flex-1 items-center justify-center md:flex">
       <div className="max-w-sm px-6 text-center">
         <div className="mx-auto mb-3 flex size-12 items-center justify-center rounded-full bg-primary/10 text-primary">
           {hasTeams ? (

@@ -3,7 +3,7 @@
  * first with unread badges, `+ new session`, and the right pane as <Outlet/> (the index child
  * shows the no-session empty state; /s/:sessionId shows the conversation).
  */
-import { Loader2, Plus } from "lucide-react";
+import { ChevronLeft, Loader2, Plus } from "lucide-react";
 import { useEffect, useState } from "react";
 import {
   data,
@@ -11,6 +11,7 @@ import {
   useFetcher,
   useNavigation,
   useParams,
+  Link,
   Outlet,
   type ActionFunctionArgs,
   type LoaderFunctionArgs,
@@ -19,6 +20,7 @@ import {
 import { getSessionAuth, sessionLoader } from "~/auth/session.server";
 import { SessionList } from "~/components/foh/session-list";
 import { Button } from "~/components/ui/button";
+import { cn } from "~/lib/utils";
 import { requireFohProject } from "~/foh/guard.server";
 import {
   createPlaygroundSession,
@@ -109,8 +111,25 @@ export default function FohAgent({ loaderData }: Route.ComponentProps) {
 
   return (
     <>
-      <section className="flex w-72 shrink-0 flex-col border-r">
+      {/* Mobile: this list is the whole page until a session opens, then the
+          conversation takes over (the shell already hid pane 1). */}
+      <section
+        className={cn(
+          "w-full shrink-0 flex-col border-r md:flex md:w-72",
+          params.sessionId ? "hidden" : "flex",
+        )}
+      >
         <div className="flex h-14 items-center gap-2 border-b px-3">
+          <Button
+            asChild
+            variant="ghost"
+            size="sm"
+            className="-ml-1 px-1.5 md:hidden"
+          >
+            <Link to="/" aria-label="Back to team list">
+              <ChevronLeft className="size-4" aria-hidden />
+            </Link>
+          </Button>
           <h1 className="min-w-0 flex-1 truncate text-sm font-semibold">
             {agentName} — sessions
           </h1>

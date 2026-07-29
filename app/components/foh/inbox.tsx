@@ -70,7 +70,10 @@ export function InboxIndicator() {
           )}
         </Button>
       </PopoverTrigger>
-      <PopoverContent align="start" className="w-96 p-0">
+      <PopoverContent
+        align="start"
+        className="w-96 max-w-[calc(100vw-1rem)] p-0"
+      >
         <p className="border-b px-3 py-2 text-xs font-medium text-muted-foreground">
           Inbox
         </p>
