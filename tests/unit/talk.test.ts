@@ -204,6 +204,75 @@ describe("sendTurn", () => {
     expect(result.reply).toBe("Working on it — opening a PR.");
   });
 
+  /**
+   * A turn that already asked for input has parked itself — the outcome is known and complete, so a
+   * socket dying afterwards costs nothing. Calling that a lost stream would hand the turn off to a
+   * watcher that can only sit there until the ceiling fails it, with the question already in hand.
+   */
+  it("treats a socket death after a question as a park, not a lost stream", async () => {
+    const at = new Date().toISOString();
+    let delivered = false;
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ continuationToken: "tok_1" }), {
+          status: 202,
+          headers: {
+            "content-type": "application/json",
+            "x-eve-session-id": "sess_1",
+          },
+        }),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          new ReadableStream<Uint8Array>({
+            // Delivered on the first read, dead on the second — `controller.error()` in `start`
+            // would discard the queued chunk and never hand the question over at all.
+            pull(controller) {
+              if (delivered) {
+                // ...the socket resets before `session.waiting` arrives.
+                controller.error(new Error("terminated"));
+                return;
+              }
+              delivered = true;
+              controller.enqueue(
+                new TextEncoder().encode(
+                  [
+                    JSON.stringify({
+                      type: "message.received",
+                      data: { message: "hi", turnId: "turn_1" },
+                      meta: { at },
+                    }),
+                    JSON.stringify({
+                      type: "input.requested",
+                      data: {
+                        turnId: "turn_1",
+                        requests: [{ requestId: "req_1", prompt: "Merge it?" }],
+                      },
+                      meta: { at },
+                    }),
+                  ].join("\n") + "\n",
+                ),
+              );
+            },
+          }),
+          { status: 200, headers: { "content-type": "application/x-ndjson" } },
+        ),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await sendTurn({
+      baseUrl: "https://agent.example.test",
+      message: "hi",
+    });
+
+    expect(result.streamLost).toBeUndefined();
+    expect(result.ok).toBe(true);
+    expect(result.inputRequests).toMatchObject([
+      { requestId: "req_1", prompt: "Merge it?" },
+    ]);
+  });
+
   it("does NOT mark a genuine agent failure as streamLost", async () => {
     const at = new Date().toISOString();
     const fetchMock = vi

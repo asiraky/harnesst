@@ -74,6 +74,12 @@ const REATTACH_SLICE_IDLE_MS = 15_000;
  */
 const REATTACH_CONNECT_TIMEOUT_MS = 5_000;
 
+/**
+ * Hard wall-clock cap on one slice. The idle budget above only bounds SILENCE; a turn chattering
+ * every few seconds would hold the slice open indefinitely and starve every other job.
+ */
+const REATTACH_SLICE_MAX_MS = 60_000;
+
 /** Everything a tick needs that is not already on the adopted session row. */
 export interface ReattachPayload {
   /** The agent-opened FOH session that adopted the peer's eve handles. */
@@ -193,7 +199,15 @@ async function peerTarget(
   };
 }
 
-/** Read one bounded slice of the peer's stream, caching every event it shows us. */
+/**
+ * Read one bounded slice of the peer's stream, caching every event it shows us.
+ *
+ * Bounded by WALL CLOCK, not just by the idle budget: a busy turn emitting an event every few
+ * seconds would reset the idle timer forever, and with the worker at concurrency 1 that one turn
+ * would block every deploy and publish behind it — and never reach the deadline check. Breaking out
+ * of the generator runs its `finally`, which cancels the reader and closes the stream; the tick
+ * then reports `waiting` exactly as if the slice had gone idle.
+ */
 async function drainSlice(
   session: PlaygroundSession,
   target: Target,
@@ -209,6 +223,7 @@ async function drainSlice(
     meta?: { at?: string };
   }> = [];
   let result: TurnResult | null = null;
+  const sliceEndsAt = deps.now().getTime() + REATTACH_SLICE_MAX_MS;
   for await (const event of deps.resume({
     baseUrl: target.url,
     sessionId: externalSessionId,
@@ -227,6 +242,7 @@ async function drainSlice(
     } else if (event.kind === "done") {
       result = event.result;
     }
+    if (deps.now().getTime() >= sliceEndsAt) break;
   }
   if (fresh.length > 0) {
     // Events land BEFORE the cursor moves — the cursor must never point past what is cached.
@@ -246,17 +262,26 @@ export async function reattachDelegation(
 ): Promise<ReattachResult> {
   const { store } = deps;
 
-  const session = await deps.loadSession(payload.sessionId);
-  if (!session) return { status: "skipped", reason: "session not found" };
-  if (!session.externalSessionId) {
-    return { status: "skipped", reason: "session has no eve handle" };
-  }
   const delegation = await store.delegations.findById(payload.delegationId);
   if (!delegation) return { status: "skipped", reason: "delegation not found" };
   // Only a `running` row is ours: `waiting` means a human is already answering (the FOH drain owns
   // the settle from there), and completed/failed means something else already finished the job.
   if (delegation.status !== "running") {
     return { status: "skipped", reason: `delegation is ${delegation.status}` };
+  }
+
+  const session = await deps.loadSession(payload.sessionId);
+  // The row we were watching is gone (the peer agent was removed from the roster, taking its
+  // sessions with it) or was never usable. There is nothing left to reattach to — but the
+  // delegation is still ours to close, and standing down here is what would leave it `running`
+  // forever with no successor and no deadline.
+  if (!session || !session.externalSessionId) {
+    await store.delegations.finalize(payload.delegationId, {
+      status: "failed",
+      error:
+        "The conversation harnesst was watching for this delegated turn is gone, so its outcome can't be recovered.",
+    });
+    return { status: "settled", outcome: "failed" };
   }
 
   // A human hit /stop on the adopted conversation — a deliberate end, not a lost turn, so there is
@@ -313,7 +338,9 @@ export async function reattachDelegation(
       // than silently abandoning a turn nobody else is watching.
       await deps.enqueueJob(
         "reattach_delegation",
-        { ...payload },
+        // Carry forward a turn id the slice discovered: the stream can break before harnesst ever
+        // sees `message.received`, and without this every successor re-adopts from scratch.
+        { ...payload, turnId: payload.turnId ?? result?.turnId ?? null },
         {
           runAt: new Date(deps.now().getTime() + DELEGATION_REATTACH_POLL_MS),
           maxAttempts: 3,
@@ -338,8 +365,21 @@ export async function reattachDelegation(
 /**
  * Terminal bookkeeping for a reattached turn — the same writes the live FOH drain performs in its
  * `finally` (chokepoint #1's terminal half), plus the delegation and run finalize the relay would
- * have done had its stream survived. Every write is guarded on its own: a hiccup in one must not
- * strand the others, because nothing else is coming for this turn.
+ * have done had its stream survived.
+ *
+ * ORDER IS LOad-BEARING, because the only recovery available is "throw, and let the worker retry
+ * the whole tick". A retry re-derives everything from the peer's durable log, but it is skipped
+ * once the delegation is no longer `running` — so the delegation finalize has to come LAST among
+ * the writes that must not be lost, and every one of those has to throw rather than log:
+ *
+ *   1. session row      — recoverable by the abandoned-session sweep; log and continue
+ *   2. run finalize     — MUST throw: after the delegation closes, no retry can repair it
+ *   3. needs-you flag   — setting it MUST throw (an inbox item with no park state is invisible);
+ *                         clearing it is recoverable by the loader reconcile, so that one logs
+ *   4. questions        — MUST throw; idempotent on requestId, so a retry cannot duplicate them
+ *   5. delegation       — MUST throw, and last: closing it disarms every retry above
+ *   6. finished notice  — after the point of no return precisely BECAUSE it has no dedupe key;
+ *                         a retry would post a second one, so it must never be the reason for one
  */
 async function settle(
   session: PlaygroundSession,
@@ -353,14 +393,6 @@ async function settle(
   const { store } = deps;
   const error = override.error ?? result?.error ?? null;
   const sessionId = result?.sessionId ?? session.externalSessionId;
-  /**
-   * The writes that OWN this turn's fate: if either is lost the row it settles is stuck `running`
-   * with nothing else coming for it, so the failure is rethrown at the end to fail the job and earn
-   * a retry. (Re-running a tick is idempotent — it replays the peer's log from 0.) The
-   * session/inbox writes below are not in this set: they are recoverable by the ordinary FOH
-   * sweeps, and losing one must not block the two that are not.
-   */
-  let terminalFailure: unknown = null;
 
   // 1. Session row. A settled turn moves the cursor to its true end; with no target or no result
   //    there is nothing to write except the row's status, which must stop claiming to be running.
@@ -432,80 +464,87 @@ async function settle(
       runId = await deps.resolveRunId(payload.projectId, runExternalId);
     } catch (e) {
       console.error("[team] reattach run finalize failed:", e);
-      terminalFailure ??= e;
+      throw e;
     }
   }
 
-  // 3. FOH needs-you (D4/D13): a parked turn keeps its flag and files its questions; a completed
-  //    or failed one clears the park. This is the point of the issue — the operator's question
-  //    reaches the inbox even though nobody was watching the stream when it was asked.
-  try {
-    if (outcome === "parked") {
-      const parked = await deps.markPending(session.id, deps.now());
-      if (parked) {
-        for (const request of result?.inputRequests ?? []) {
-          await deps.openQuestion(
-            {
-              projectId: payload.projectId,
-              sessionId: session.id,
-              agentId: session.agentId,
-              userId: null,
-              delegationId: payload.delegationId,
-              runId,
-              request,
-            },
-            store,
-          );
-        }
-      }
-    } else {
+  // 3. FOH needs-you (D4/D13): a parked turn keeps its flag, a settled one clears it. `parked`
+  //    is only honoured if the row still ACCEPTS the flag — a /stop that won the race between the
+  //    status check and here returns false, and calling that "waiting for a human" would park the
+  //    delegation on a conversation nobody can answer.
+  let parked = false;
+  if (outcome === "parked") {
+    parked = await deps.markPending(session.id, deps.now());
+  } else {
+    // Best-effort, unlike the park flag: a stale needs-you flag is exactly what the FOH loader's
+    // reconcile (chokepoint #2) exists to clean up, so losing this must not cost the delegation
+    // finalize below its one shot.
+    try {
       await deps.clearPending(session.id);
       await deps.resolveAsks(session.id, store);
-      if (outcome === "completed") {
-        await deps.recordFinished(
-          {
-            projectId: payload.projectId,
-            sessionId: session.id,
-            agentId: session.agentId,
-            userId: null,
-            // A finish summary, not the full reply — the inbox row is a pointer.
-            prompt: result?.reply ? result.reply.slice(0, 500) : null,
-          },
-          store,
-        );
-      }
+    } catch (e) {
+      console.error("[team] reattach needs-you clear failed:", e);
     }
-  } catch (e) {
-    console.error("[team] reattach inbox settle failed:", e);
   }
 
-  // 4. Finalize the delegation. `parked` becomes `waiting` — exactly the state §9b relay parking
-  //    produces — so a human's answer settles it through the ordinary FOH resume path
+  // 4. The questions themselves — the point of the whole issue: the operator's question reaches the
+  //    inbox even though nobody was watching the stream when it was asked.
+  if (parked) {
+    for (const request of result?.inputRequests ?? []) {
+      await deps.openQuestion(
+        {
+          projectId: payload.projectId,
+          sessionId: session.id,
+          agentId: session.agentId,
+          userId: null,
+          delegationId: payload.delegationId,
+          runId,
+          request,
+        },
+        store,
+      );
+    }
+  }
+
+  // 5. Finalize the delegation — LAST of the must-not-lose writes, because it is what disarms the
+  //    retry. `parked` becomes `waiting` — exactly the state §9b relay parking produces — so a
+  //    human's answer settles it through the ordinary FOH resume path
   //    (`finalizeDelegationOnResume`), with no second mechanism.
-  try {
-    await store.delegations.finalize(payload.delegationId, {
-      status:
-        outcome === "parked"
-          ? "waiting"
-          : outcome === "completed"
-            ? "completed"
-            : "failed",
-      ...(outcome === "failed"
-        ? {
-            error:
-              error ??
-              "The delegated turn failed after harnesst lost its reply stream.",
-          }
-        : {}),
-      externalSessionId: sessionId,
-      runId,
-    });
-  } catch (e) {
-    console.error("[team] reattach delegation finalize failed:", e);
-    terminalFailure ??= e;
-  }
+  const status = parked
+    ? ("waiting" as const)
+    : outcome === "completed"
+      ? ("completed" as const)
+      : ("failed" as const);
+  await store.delegations.finalize(payload.delegationId, {
+    status,
+    ...(status === "failed"
+      ? {
+          error:
+            error ??
+            "The delegated turn failed after harnesst lost its reply stream.",
+        }
+      : {}),
+    externalSessionId: sessionId,
+    runId,
+  });
 
-  // Fail the JOB, not just the log line: the worker retries with backoff, and a retried tick
-  // re-derives the same settlement from the peer's durable log.
-  if (terminalFailure) throw terminalFailure;
+  // 6. The team-wide "finished" notice. Deliberately after the delegation closed: it has no dedupe
+  //    key, so a retry would post a duplicate — and now no retry can reach it.
+  if (status === "completed") {
+    try {
+      await deps.recordFinished(
+        {
+          projectId: payload.projectId,
+          sessionId: session.id,
+          agentId: session.agentId,
+          userId: null,
+          // A finish summary, not the full reply — the inbox row is a pointer.
+          prompt: result?.reply ? result.reply.slice(0, 500) : null,
+        },
+        store,
+      );
+    } catch (e) {
+      console.error("[team] reattach finished notice failed:", e);
+    }
+  }
 }

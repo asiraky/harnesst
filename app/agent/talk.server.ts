@@ -967,11 +967,19 @@ async function* drainTurnStream(input: {
       streamLost = true;
     }
   } catch (streamError) {
-    // Transport sites 1 and 2: the read threw (socket died) or the idle budget expired. Both
-    // leave the turn running inside the container. A deliberate stop is neither: the caller
-    // asked for the turn to end, so there is nothing to reattach to.
-    error = `Couldn't read the reply stream: ${(streamError as Error).message}`;
-    streamLost = input.signal?.aborted !== true;
+    // A turn that already asked for input has PARKED itself — the outcome is known and complete,
+    // so a socket dying afterwards costs nothing. Treat it exactly as the clean-EOF path does,
+    // and let the caller park the row and file the question. (A deliberate stop still wins: the
+    // caller asked for the turn to end.)
+    if (inputRequests.length > 0 && input.signal?.aborted !== true) {
+      streamLost = false;
+    } else {
+      // Transport sites 1 and 2: the read threw (socket died) or the idle budget expired. Both
+      // leave the turn running inside the container. A deliberate stop is neither: the caller
+      // asked for the turn to end, so there is nothing to reattach to.
+      error = `Couldn't read the reply stream: ${(streamError as Error).message}`;
+      streamLost = input.signal?.aborted !== true;
+    }
   } finally {
     reader?.cancel().catch(() => {});
   }

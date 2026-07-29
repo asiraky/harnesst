@@ -320,6 +320,43 @@ describe("reattachDelegation", () => {
     });
   });
 
+  /**
+   * The slice's idle budget only bounds SILENCE. A turn chattering every few seconds would hold it
+   * open forever — and with the worker at concurrency 1, block every deploy and publish behind it.
+   */
+  it("cuts a chatty slice off at its wall clock and re-enqueues", async () => {
+    const delegationId = await seedDelegation();
+    // A stream that never settles, and a clock that advances a second per event.
+    let clock = NOW.getTime();
+    const endless = (async function* () {
+      for (let i = 1; ; i++) {
+        yield {
+          kind: "progress",
+          sessionId: "sess_peer",
+          continuationToken: "tok_peer",
+          streamIndex: i,
+          rawEvent: { type: "message.appended", data: {} },
+        };
+      }
+    })();
+    const deps = makeDeps({
+      resume: (() => endless) as unknown as ReattachDeps["resume"],
+      now: () => {
+        clock += 1_000;
+        return new Date(clock);
+      },
+    });
+    const res = await reattachDelegation(payloadFor(delegationId), deps);
+
+    expect(res.status).toBe("waiting");
+    // It gave up well before the endless stream did, and scheduled its own successor.
+    expect(deps.saved[0]!.count).toBeLessThan(120);
+    expect(deps.enqueued).toHaveLength(1);
+    expect(await store.delegations.findById(delegationId)).toMatchObject({
+      status: "running",
+    });
+  });
+
   it("settles the rows once the ceiling passes", async () => {
     const delegationId = await seedDelegation();
     const deps = makeDeps({
@@ -374,12 +411,23 @@ describe("reattachDelegation", () => {
       status: "skipped",
       reason: "delegation is waiting",
     });
+  });
 
-    const missing = await reattachDelegation(
-      payloadFor(await seedDelegation()),
+  /**
+   * The adopted session can vanish under the watcher — removing the peer agent from the roster
+   * takes its sessions with it. There is nothing left to reattach to, but the delegation is still
+   * ours to close: standing down is what would leave it `running` with no successor and no ceiling.
+   */
+  it("closes the delegation when the adopted session is gone", async () => {
+    const delegationId = await seedDelegation();
+    const res = await reattachDelegation(
+      payloadFor(delegationId),
       makeDeps({ loadSession: async () => null }),
     );
-    expect(missing).toEqual({ status: "skipped", reason: "session not found" });
+    expect(res).toEqual({ status: "settled", outcome: "failed" });
+    expect(await store.delegations.findById(delegationId)).toMatchObject({
+      status: "failed",
+    });
   });
 
   /**
@@ -433,10 +481,12 @@ describe("reattachDelegation", () => {
   });
 
   /**
-   * The two writes that OWN the turn's fate get a retry instead of a log line: nothing else is
-   * coming for these rows, and re-running a tick is idempotent (it replays the peer's log from 0).
+   * The writes that OWN the turn's fate get a retry instead of a log line: nothing else is coming
+   * for these rows, and re-running a tick is idempotent (it replays the peer's log from 0). The
+   * delegation must be left OPEN when one of them fails — closing it is what disarms the retry, and
+   * a retry that skips can never repair the run row it left behind.
    */
-  it("fails the job when a terminal write is lost, so the worker retries it", async () => {
+  it("fails the job with the delegation still open, so the retry is not skipped", async () => {
     const error = vi.spyOn(console, "error").mockImplementation(() => {});
     const delegationId = await seedDelegation();
     const deps = makeDeps({
@@ -447,10 +497,37 @@ describe("reattachDelegation", () => {
     await expect(
       reattachDelegation(payloadFor(delegationId), deps),
     ).rejects.toThrow("ingest down");
-    // The delegation is still finalized first — the throw is for the retry, not a bail-out.
     expect(await store.delegations.findById(delegationId)).toMatchObject({
-      status: "completed",
+      status: "running",
     });
+    // ...and nothing downstream ran, so the retry cannot double-post the finish notice.
+    expect(deps.finished).toHaveLength(0);
     error.mockRestore();
+  });
+
+  /**
+   * A /stop that wins the race between the status check and the settle: the row refuses the park
+   * flag, so calling the delegation "waiting for a human" would park it on a conversation nobody
+   * can answer.
+   */
+  it("does not park the delegation on a session that refused the needs-you flag", async () => {
+    const delegationId = await seedDelegation();
+    const deps = makeDeps({
+      resume: scriptedResume(
+        turnResult({
+          reply: null,
+          inputRequests: [{ requestId: "req_1", prompt: "Merge it?" }],
+        }),
+      ),
+      markPending: async () => false,
+    });
+    const res = await reattachDelegation(payloadFor(delegationId), deps);
+
+    expect(res).toEqual({ status: "settled", outcome: "parked" });
+    expect(await store.delegations.findById(delegationId)).toMatchObject({
+      status: "failed",
+    });
+    // No question is filed against a row that cannot show one.
+    expect(deps.questions).toHaveLength(0);
   });
 });
