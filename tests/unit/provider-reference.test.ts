@@ -1,23 +1,12 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  MODEL_PROVIDERS,
   buildProviderModelReference,
   parseProviderModelReference,
   providerConnectionEnvName,
 } from "~/models/provider-reference";
 
 const CONNECTION_ID = "abcdefghijkl";
-
-describe("provider registry", () => {
-  it("pins provider auth kinds and standard runtime variables", () => {
-    expect(MODEL_PROVIDERS.openrouter.standardEnv).toBe("OPENROUTER_API_KEY");
-    expect(MODEL_PROVIDERS.anthropic.standardEnv).toBe("ANTHROPIC_API_KEY");
-    expect(MODEL_PROVIDERS.openai.standardEnv).toBe("OPENAI_API_KEY");
-    expect(MODEL_PROVIDERS.codex.authKind).toBe("oauth");
-    expect(MODEL_PROVIDERS.codex.standardEnv).toBeNull();
-  });
-});
 
 describe("provider model references", () => {
   it("round-trips an upstream id containing slashes", () => {

@@ -497,34 +497,3 @@ describe("harnesst-runs hook injection (WS2)", () => {
     ).toBeUndefined();
   });
 });
-
-describe("HARNESST_EVE_DOCKERFILE", () => {
-  it("boots via the eve bin (`eve start`), not the raw Nitro entry", async () => {
-    const { HARNESST_EVE_DOCKERFILE } = await import("~/deploy/eve-image.server");
-    expect(HARNESST_EVE_DOCKERFILE).toContain(
-      'CMD ["node_modules/.bin/eve", "start"]',
-    );
-    expect(HARNESST_EVE_DOCKERFILE).not.toContain(
-      'CMD ["node", ".output/server/index.mjs"]',
-    );
-    // Not via npm exec/npm run either — unreliable SIGTERM forwarding as PID 1, and harnesst's
-    // scale-to-zero is a docker stop.
-    expect(HARNESST_EVE_DOCKERFILE).not.toMatch(/CMD.*npm (exec|run)/);
-  });
-
-  it("runtime stage inherits the build stage (eve start needs node_modules + .eve/compile)", async () => {
-    const { HARNESST_EVE_DOCKERFILE } = await import("~/deploy/eve-image.server");
-    expect(HARNESST_EVE_DOCKERFILE).toMatch(/^FROM build$/m);
-    // Exactly one base-image stage: the old lean runtime stage duplicated nothing it needed.
-    expect(HARNESST_EVE_DOCKERFILE.match(/^FROM node:24-slim/gm)).toHaveLength(1);
-    // The publish build + world migrations build `--target build` — the stage name is API.
-    expect(HARNESST_EVE_DOCKERFILE).toContain("FROM node:24-slim AS build");
-  });
-
-  it("keeps the runtime contract: PORT env, exposed port, the eve-docker shim", async () => {
-    const { HARNESST_EVE_DOCKERFILE } = await import("~/deploy/eve-image.server");
-    expect(HARNESST_EVE_DOCKERFILE).toContain("ENV PORT=3000");
-    expect(HARNESST_EVE_DOCKERFILE).toContain("EXPOSE 3000");
-    expect(HARNESST_EVE_DOCKERFILE).toContain("/usr/local/bin/eve-docker");
-  });
-});

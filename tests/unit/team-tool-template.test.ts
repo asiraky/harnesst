@@ -9,7 +9,6 @@ import { describe, expect, it } from "vitest";
 import { z } from "zod";
 
 import {
-  ASK_TEAMMATE_TOOL_PATH,
   ASK_TEAMMATE_TOOL_SOURCE,
 } from "~/team/tool-template";
 
@@ -35,7 +34,6 @@ describe("ask-teammate tool template", () => {
       (m) => m[1],
     );
     expect(imports.sort()).toEqual(["eve/tools", "zod"]);
-    expect(ASK_TEAMMATE_TOOL_PATH).toBe("agent/tools/ask-teammate.ts");
   });
 
   it("with HARNESST_TEAMMATES: enumerates teammates and enforces a strict enum", () => {

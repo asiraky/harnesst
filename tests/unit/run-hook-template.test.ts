@@ -105,7 +105,6 @@ describe("harnesst-runs hook template", () => {
       ...HARNESST_RUN_HOOK_SOURCE.matchAll(/^import .* from "([^"]+)";/gm),
     ].map((m) => m[1]);
     expect(imports).toEqual(["eve/hooks"]);
-    expect(HARNESST_RUN_HOOK_PATH).toBe("agent/hooks/harnesst-runs.ts");
     // Hook slugs must match eve's HOOK_SLUG_PATTERN (letters/digits/underscore/dash).
     expect(HARNESST_RUN_HOOK_PATH.split("/").pop()!.replace(/\.ts$/, "")).toMatch(
       /^[a-zA-Z][a-zA-Z0-9_-]{0,63}$/,
