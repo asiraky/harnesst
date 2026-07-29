@@ -151,24 +151,62 @@ export function TurnMeta({
 
 const SAFE_LINK_PROTOCOLS = new Set(["http:", "https:", "mailto:"]);
 
-type MarkdownNode = { type: string; value?: string; children?: MarkdownNode[] };
+type MarkdownNode = {
+  type: string;
+  tagName?: string;
+  value?: string;
+  children?: MarkdownNode[];
+};
+
+/**
+ * Nested containers (`>` and list indentation) are parsed recursively, so a reply nested
+ * thousands deep either blows the stack — a throw during render, which an error boundary can't
+ * contain on the server, so the whole transcript 500s — or takes seconds to parse. An agent reply
+ * is untrusted input, and nothing real nests anywhere near this deep, so past the limit the text
+ * is shown verbatim instead.
+ */
+const MAX_NESTING = 100;
 
 export function MarkdownText({ text }: { text: string }) {
   // A live turn re-renders the whole transcript on every streamed token, so keep the element
   // keyed to its text: settled turns then skip re-parsing while a newer one is still arriving.
   const rendered = useMemo(
-    () => (
-      <Markdown
-        remarkPlugins={REMARK_PLUGINS}
-        urlTransform={markdownUrlTransform}
-        components={MARKDOWN_COMPONENTS}
-      >
-        {text}
-      </Markdown>
-    ),
+    () =>
+      nestedTooDeep(text) ? (
+        <p className="leading-relaxed whitespace-pre-wrap">{text}</p>
+      ) : (
+        <Markdown
+          remarkPlugins={REMARK_PLUGINS}
+          rehypePlugins={REHYPE_PLUGINS}
+          urlTransform={markdownUrlTransform}
+          components={MARKDOWN_COMPONENTS}
+        >
+          {text}
+        </Markdown>
+      ),
     [text],
   );
   return <div className="space-y-2 break-words">{rendered}</div>;
+}
+
+/** Cheap upper bound on container nesting: leading `>` markers plus one level per two columns
+ * of indentation, whichever line goes deepest. */
+function nestedTooDeep(markdown: string): boolean {
+  for (const line of markdown.split("\n")) {
+    let markers = 0;
+    let columns = 0;
+    for (const ch of line) {
+      if (ch === " ") columns += 1;
+      else if (ch === "\t") columns += 4;
+      // Indentation only counts within the innermost container, so a marker resets it.
+      else if (ch === ">") {
+        markers += 1;
+        columns = 0;
+      } else break;
+    }
+    if (markers + Math.floor(columns / 2) > MAX_NESTING) return true;
+  }
+  return false;
 }
 
 /**
@@ -192,18 +230,43 @@ function remarkHtmlAsText() {
 const REMARK_PLUGINS = [remarkGfm, remarkBreaks, remarkHtmlAsText];
 
 /**
- * Hrefs pass through untouched so `MarkdownAnchor` can apply the allowlist itself and still show
- * the raw target when it rejects one — react-markdown's transform would erase it first. Other
- * URL attributes (image `src`) are filtered here, where there's nothing to preserve.
+ * Every `br` is followed by a source-formatting newline in the generated tree. Normally that's
+ * invisible, but paragraphs keep `whitespace-pre-wrap` (so a reply's aligned plaintext survives,
+ * as it did before), which would render it as a second line break. Drop it.
  */
-function markdownUrlTransform(url: string, key: string): string {
-  return key === "href" ? url : (safeHref(url) ?? "");
+function rehypeDropBreakNewline() {
+  return (tree: MarkdownNode) => {
+    const walk = (node: MarkdownNode) => {
+      const children = node.children ?? [];
+      children.forEach((child, index) => {
+        const next = children[index + 1];
+        if (child.tagName === "br" && next?.type === "text")
+          next.value = next.value?.replace(/^\n/, "");
+        walk(child);
+      });
+    };
+    walk(tree);
+  };
 }
 
-/** An app path stays same-tab; anything else has to parse as an allowlisted protocol. Returns
- * null when the target isn't safe to turn into a link. */
+const REHYPE_PLUGINS = [rehypeDropBreakNewline];
+
+/**
+ * URLs pass through untouched so `MarkdownAnchor` can apply the allowlist itself and still show
+ * the raw target when it rejects one — react-markdown's transform would erase it first. Links and
+ * images are the only URL-bearing output a markdown reply can produce (raw HTML is never
+ * rendered) and both go through that component, so nothing skips the check.
+ */
+function markdownUrlTransform(url: string): string {
+  return url;
+}
+
+/** An app path or same-page fragment stays same-tab; anything else has to parse as an allowlisted
+ * protocol. Returns null when the target isn't safe to turn into a link. */
 function safeHref(value: string): string | null {
   const trimmed = value.trim();
+  // GFM footnotes link to a fragment on the page being read.
+  if (trimmed.startsWith("#")) return trimmed;
   // One leading slash is an app path. `//host` is protocol-relative — i.e. external — so let it
   // fall through to URL parsing (which rejects it) rather than passing as an internal link.
   if (trimmed.startsWith("/") && !trimmed.startsWith("//")) return trimmed;
@@ -230,7 +293,8 @@ function MarkdownAnchor({
         {href ? ` (${href})` : null}
       </>
     );
-  const internal = safe.startsWith("/");
+  // App paths and fragments (a footnote jump) stay in this tab; only offsite targets open one.
+  const internal = safe.startsWith("/") || safe.startsWith("#");
   return (
     <a
       href={safe}
@@ -256,7 +320,11 @@ const HEADING_CLASS = "pt-1 font-semibold leading-snug";
 
 const MARKDOWN_COMPONENTS: Components = {
   a: MarkdownAnchor,
-  p: ({ children }) => <p className="leading-relaxed">{children}</p>,
+  // `whitespace-pre-wrap` keeps runs of spaces, so a reply that aligns plaintext by hand still
+  // lines up — the previous renderer preserved it and agents lean on it.
+  p: ({ children }) => (
+    <p className="leading-relaxed whitespace-pre-wrap">{children}</p>
+  ),
   // Chat lives inside a page that owns h1/h2, so markdown headings start at h3 and flatten out
   // rather than competing with the surface's own hierarchy.
   h1: ({ children }) => (
@@ -334,17 +402,17 @@ const MARKDOWN_COMPONENTS: Components = {
       {children}
     </td>
   ),
-  img: ({ src, alt, title }) =>
-    src ? (
-      <img
-        src={src}
-        alt={alt ?? ""}
-        title={title}
-        className="max-w-full rounded-lg"
-      />
-    ) : (
-      <>{alt}</>
-    ),
+  // An `<img>` would fetch an agent-supplied URL automatically — a tracking pixel, or a GET
+  // against any host the browser can reach — just from opening a transcript. The old renderer
+  // never loaded images, so keep it that way and offer the source as a link instead.
+  img: ({ src, alt, title }) => (
+    <MarkdownAnchor
+      href={typeof src === "string" ? src : undefined}
+      title={title}
+    >
+      {alt || src || "image"}
+    </MarkdownAnchor>
+  ),
 };
 
 /**

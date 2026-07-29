@@ -61,6 +61,13 @@ describe("MarkdownText links", () => {
     expect(internal).not.toContain("rel=");
   });
 
+  it("keeps a GFM footnote jump as a same-tab fragment link", () => {
+    const html = render("A claim[^1]\n\n[^1]: the source");
+    expect(html).toContain('href="#user-content-fn-1"');
+    // A jump within the page must not open a tab.
+    expect(html).not.toContain('href="#user-content-fn-1" target');
+  });
+
   it("shows the label and the raw target when a URL is rejected, never swallowing it", () => {
     const html = render("[click me](javascript:alert(1))");
     expect(html).not.toContain("<a");
@@ -115,6 +122,41 @@ describe("MarkdownText blocks", () => {
 
   it("keeps a single newline as a line break, as the old renderer did", () => {
     expect(render("first line\nsecond line")).toContain("<br/>");
+  });
+
+  it("preserves runs of spaces so hand-aligned plaintext still lines up", () => {
+    const html = render("Name:    Alice\nRole:    admin");
+    expect(html).toContain("whitespace-pre-wrap");
+    expect(html).toContain("Name:    Alice");
+  });
+
+  it("does not turn a line break into two under preserved whitespace", () => {
+    // A `br` carries a source-formatting newline that `whitespace-pre-wrap` would also render.
+    expect(render("first line\nsecond line")).not.toContain("<br/>\n");
+    expect(render("hard break  \nnext")).not.toContain("<br/>\n");
+  });
+
+  it("renders an image as a link rather than fetching it on open", () => {
+    const html = render("![pixel](https://attacker.example/pixel?id=1)");
+    expect(html).not.toContain("<img");
+    expect(html).toContain('href="https://attacker.example/pixel?id=1"');
+    expect(html).toContain(">pixel</a>");
+  });
+
+  it("shows the text verbatim rather than parsing absurdly nested input", () => {
+    // ~2000 nested blockquotes overflow the parser's stack; on the server that throws past any
+    // error boundary and takes the whole transcript with it.
+    const deep = "> ".repeat(2000) + "boom";
+    expect(() => render(deep)).not.toThrow();
+    const html = render(deep);
+    expect(html).not.toContain("<blockquote");
+    expect(html).toContain("boom");
+  });
+
+  it("still parses ordinary nesting", () => {
+    const html = render("> > quoted twice");
+    expect(html).toContain("<blockquote");
+    expect(html).toContain("quoted twice");
   });
 
   it("renders a code fence without a trailing blank line", () => {
