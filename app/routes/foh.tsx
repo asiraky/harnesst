@@ -105,7 +105,10 @@ function FohShell({ data }: { data: ShellData }) {
   const atHome = useLocation().pathname === "/";
 
   return (
-    <div className="flex h-dvh overflow-hidden bg-background">
+    // `fixed inset-0` rather than a flow-positioned `h-dvh` box: the shell then fills exactly
+    // the viewport no matter what any ancestor does to document height, so the header (and the
+    // back control it carries) can never be scrolled out of reach on a phone.
+    <div className="fixed inset-0 flex overflow-hidden overscroll-none bg-background">
       <aside
         className={cn(
           "shrink-0 flex-col border-r",

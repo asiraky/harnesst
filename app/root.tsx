@@ -62,7 +62,13 @@ export function Layout({ children }: { children: React.ReactNode }) {
     <html lang="en" suppressHydrationWarning>
       <head>
         <meta charSet="utf-8" />
-        <meta name="viewport" content="width=device-width, initial-scale=1" />
+        {/* `interactive-widget=resizes-content` shrinks the layout viewport when the on-screen
+            keyboard opens, so a `dvh`-sized shell keeps its composer above the keyboard instead
+            of letting it overlay one. */}
+        <meta
+          name="viewport"
+          content="width=device-width, initial-scale=1, interactive-widget=resizes-content"
+        />
         {/* Brand icons + PWA manifest. SVG is the primary favicon (crisp at any size);
             the .ico is the legacy fallback for older crawlers/browsers. */}
         <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
@@ -74,7 +80,11 @@ export function Layout({ children }: { children: React.ReactNode }) {
         <Meta />
         <Links />
       </head>
-      <body className="min-h-screen antialiased">
+      {/* `dvh`, not `screen`/`vh`: on mobile `100vh` is the LARGE viewport (toolbars retracted),
+          so a `100vh` floor under a `h-dvh` app shell makes the document permanently taller than
+          the viewport. The page then scrolls the shell's header — and its only back control —
+          off the top, and leaves dead space under a pinned composer (issue #265). */}
+      <body className="min-h-dvh antialiased">
         {children}
         <ScrollRestoration />
         <Scripts />
