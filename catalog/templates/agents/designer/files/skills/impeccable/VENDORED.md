@@ -17,6 +17,11 @@ directory:
 - `skill/SKILL.src.md` becomes `SKILL.md`
 - `skill/reference/**` becomes `reference/**`
 - `skill/scripts/**` becomes `scripts/**`
+- `.agents/skills/impeccable/scripts/detector/**` and
+  `.agents/skills/impeccable/scripts/lib/impeccable-config.mjs` become `scripts/detector/**` and
+  `scripts/lib/impeccable-config.mjs` — the bundled detector engine is only present in upstream's
+  generated provider trees, not in `skill/`, and `scripts/detect.mjs` (which the references invoke
+  mid-build) errors without it. It is self-contained node code, byte-identical to upstream.
 
 Upstream subagent definitions are not included. Designer v1 runs a linear eve workflow and performs
 its bounded finish/documentation passes in the main agent. `reference/designer-v1.md` is the local
@@ -33,10 +38,12 @@ adapter that defines that workflow.
 
 ## Rebase
 
-1. Check out the new upstream commit and copy `skill/reference/**`, `skill/scripts/**`, and
-   `skill/SKILL.src.md`.
-2. Reapply the transformations above. Do not copy `.agents/`, `.claude/`, `plugin/`, or another
-   generated provider tree.
+1. Check out the new upstream commit and copy `skill/reference/**`, `skill/scripts/**`,
+   `skill/SKILL.src.md`, plus the detector engine from the generated tree:
+   `.agents/skills/impeccable/scripts/detector/**` and
+   `.agents/skills/impeccable/scripts/lib/impeccable-config.mjs`.
+2. Reapply the transformations above. Beyond the detector engine files in step 1, do not copy
+   anything else from `.agents/`, `.claude/`, `plugin/`, or another generated provider tree.
 3. Review changes to `init.md`, `new-work.md`, `craft-floor.md`, `document.md`, and detector scripts
    against the linear adapter. Preserve chat HITL, static preview constraints, final detector
    ordering, and stable-name publishing.
