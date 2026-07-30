@@ -54,6 +54,10 @@ services:
       - host
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
+      # Published artifact bytes live here; must match HARNESST_ARTIFACTS_DIR in
+      # production.env or every stored artifact dies with the container layer on
+      # the next deploy.
+      - /opt/harnesst/volumes/artifacts:/var/lib/harnesst/artifacts
     healthcheck:
       test:
         - CMD
