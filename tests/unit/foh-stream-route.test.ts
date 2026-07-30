@@ -339,6 +339,65 @@ describe("FOH stream route", () => {
     );
   });
 
+  it("refuses a channel-homed send with no answer BEFORE any state mutates (issue #282)", async () => {
+    const via = {
+      channel: "github",
+      routePath: "/eve/v1/github/harnesst/answer",
+      rawToken: "repo:1:issue:2",
+      state: {},
+    };
+    mocks.getFohSessionForViewer.mockResolvedValue(
+      sessionRow({ resumeVia: via }),
+    );
+    await expect(
+      action(
+        args({ agentId: "agent_1", playgroundSessionId: "ps_1", message: "hi" }),
+      ),
+    ).rejects.toMatchObject({ init: { status: 409 } });
+    // Nothing was claimed, superseded, or streamed — the park and inbox are untouched.
+    expect(mocks.claimPlaygroundSessionForTurn).not.toHaveBeenCalled();
+    expect(mocks.beginFohTurn).not.toHaveBeenCalled();
+    expect(mocks.streamTurnResponse).not.toHaveBeenCalled();
+  });
+
+  it("channel-homed answer: claims, defers the supersede to the drain, threads preClaimStatus", async () => {
+    const via = {
+      channel: "github",
+      routePath: "/eve/v1/github/harnesst/answer",
+      rawToken: "repo:1:issue:2",
+      state: {},
+    };
+    mocks.getFohSessionForViewer.mockResolvedValue(
+      sessionRow({ resumeVia: via }),
+    );
+    mocks.claimPlaygroundSessionForTurn.mockResolvedValue(
+      sessionRow({ resumeVia: via, status: "running" }),
+    );
+    await action(
+      args({
+        agentId: "agent_1",
+        playgroundSessionId: "ps_1",
+        message: "1. /pricing shows old tiers",
+        inputResponses: JSON.stringify([
+          { requestId: "req_1", text: "1. /pricing shows old tiers" },
+        ]),
+      }),
+    );
+    expect(mocks.claimPlaygroundSessionForTurn).toHaveBeenCalled();
+    // The pre-delivery supersede is skipped for channel-homed rows (a refusal must not
+    // have cleared the park) — the drain clears it on the first delivered event instead.
+    expect(mocks.beginFohTurn).not.toHaveBeenCalled();
+    expect(mocks.streamTurnResponse).toHaveBeenCalledWith(
+      expect.objectContaining({
+        inputResponses: [
+          { requestId: "req_1", text: "1. /pricing shows old tiers" },
+        ],
+        // The row's status before the claim, for the refusal path's exact restore.
+        preClaimStatus: "waiting",
+      }),
+    );
+  });
+
   it("400s malformed input responses instead of falling back to text matching", async () => {
     await expect(
       action(

@@ -47,6 +47,7 @@ import { channelLabelFor } from "~/foh/channel-resume";
 import { openInboxQuestion, resolveInboxForSession } from "~/foh/inbox.server";
 import {
   composerAnswerFor,
+  freeformAnswerable,
   newestPendingRequest,
   repairFohSessionState,
 } from "~/foh/needs-you";
@@ -174,9 +175,20 @@ export const loader = (args: LoaderFunctionArgs) =>
         const repair = repairFohSessionState({
           status: currentSession.status,
           pendingInputAt: currentSession.pendingInputAt,
+          channelHomed: currentSession.resumeVia != null,
           lastEntry,
         });
         if (repair.action === "park") {
+          // Status first, park second (issue #282 review): if the park write below fails
+          // transiently, a `waiting` row with the flag unset re-enters this branch on the
+          // next load — the reverse order could leave `failed` + flag set, a state no
+          // repair predicate matches, so the restore would never be retried.
+          if (
+            repair.restoreStatus &&
+            (await restoreRepairedSessionToWaiting(currentSession.id))
+          ) {
+            currentSession = { ...currentSession, status: "waiting" };
+          }
           const at = new Date();
           // The park claim reports whether it won its stop-wins guard; a stop that raced
           // us must not get inbox items filed for its stopped session.
@@ -193,15 +205,6 @@ export const loader = (args: LoaderFunctionArgs) =>
               });
             }
             currentSession = { ...currentSession, pendingInputAt: at };
-            // A `failed` row whose transcript proves an un-errored pending ask was poisoned
-            // by a send refused before delivery (issue #282) — the turn never failed, eve is
-            // still parked. Put the row back to `waiting` so the header stops lying.
-            if (
-              repair.restoreStatus &&
-              (await restoreRepairedSessionToWaiting(currentSession.id))
-            ) {
-              currentSession = { ...currentSession, status: "waiting" };
-            }
           }
         } else if (repair.action === "settle") {
           await clearSessionPendingInput(currentSession.id);
@@ -386,12 +389,19 @@ export default function FohSession({ loaderData }: Route.ComponentProps) {
   // transcript. Mirrors the onAnswer wiring below (newest entry only).
   const pendingRequest = useMemo<ChatInputRequest | null>(() => {
     if (visibleLive) {
-      return visibleLive.done && !visibleLive.error
-        ? (visibleLive.inputRequests.at(-1) ?? null)
-        : null;
+      if (!visibleLive.done) return null;
+      if (!visibleLive.error) return visibleLive.inputRequests.at(-1) ?? null;
+      // An errored live turn that produced no transcript entry (e.g. a send refused
+      // before delivery) settled nothing at eve — the cached ask is still the live one,
+      // and without this fallback the error would hide the answer box until a reload.
+      return newestPendingRequest(entries.at(-1) ?? null);
     }
     return newestPendingRequest(entries.at(-1) ?? null);
   }, [entries, visibleLive]);
+  // Only a request that ACCEPTS typed input turns the composer into the answer box — an
+  // options-only approval is answered by its buttons, never by free text.
+  const typedAnswerRequest =
+    pendingRequest && freeformAnswerable(pendingRequest) ? pendingRequest : null;
 
   const send = useCallback(
     async (message: string, answer?: ChatInputAnswer) => {
@@ -438,7 +448,7 @@ export default function FohSession({ loaderData }: Route.ComponentProps) {
         answer ??
         composerAnswerFor({
           channelHomed: channelLabel != null,
-          pendingRequest,
+          pendingRequest: typedAnswerRequest,
           text: message,
         });
       if (correlated) form.set("inputResponses", JSON.stringify([correlated]));
@@ -521,7 +531,7 @@ export default function FohSession({ loaderData }: Route.ComponentProps) {
       agentId,
       channelLabel,
       entries.length,
-      pendingRequest,
+      typedAnswerRequest,
       projectId,
       revalidator,
       sessionId,
@@ -696,7 +706,7 @@ export default function FohSession({ loaderData }: Route.ComponentProps) {
       </ChatTranscript>
 
       <div className="mx-auto w-full max-w-5xl px-4 pb-4 pt-3 sm:px-6">
-        {channelLabel && !pendingRequest && !busy ? (
+        {channelLabel && !typedAnswerRequest && !busy ? (
           // Channel-homed with nothing to answer (issue #282): no free-text box the user
           // isn't allowed to use — the conversation continues on the channel's thread.
           <p className="rounded-2xl border bg-muted/30 px-4 py-3 text-sm text-muted-foreground">
@@ -712,7 +722,7 @@ export default function FohSession({ loaderData }: Route.ComponentProps) {
                 take a couple of minutes).
               </p>
             )}
-            {channelLabel && pendingRequest && !busy && (
+            {channelLabel && typedAnswerRequest && !busy && (
               <p className="mb-2 pl-1 text-xs text-muted-foreground">
                 Your reply answers {agentName}&rsquo;s question above and goes
                 back to the {channelLabel} thread.

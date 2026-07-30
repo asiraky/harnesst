@@ -8,6 +8,7 @@ import { describe, expect, it } from "vitest";
 import type { ChatInputRequest } from "~/chat/types";
 import {
   composerAnswerFor,
+  freeformAnswerable,
   newestPendingRequest,
   reconcileNeedsYouFromTail,
   repairFohSessionState,
@@ -185,37 +186,42 @@ describe("repairFohSessionState (loader-side durable retry, issue #221 finding 4
 
   it.each([
     // Park-repair: the drain's park write failed — the transcript proves the ask.
-    ["waiting + pending ask + flag unset", "waiting", null, asked(), "park"],
+    ["waiting + pending ask + flag unset", "waiting", null, asked(), true, "park"],
+    ["waiting + pending ask + flag unset (HTTP-homed)", "waiting", null, asked(), false, "park"],
     // Poisoned-row repair (issue #282): a refused send wrote `failed` and cleared the park,
     // but the transcript's newest entry is still the un-errored ask — eve is still parked.
-    ["failed + pending ask + flag unset", "failed", null, asked(), "park"],
+    // Channel-homed rows ONLY: an HTTP-homed failed turn is retried by resending, and
+    // rewriting it to `waiting` could reopen an already-consumed question.
+    ["failed + pending ask + flag unset", "failed", null, asked(), true, "park"],
+    ["failed + pending ask + flag unset (HTTP-homed)", "failed", null, asked(), false, "none"],
     // A REAL failed turn's newest entry carries the error — never re-parked.
-    ["failed + errored ask + flag unset", "failed", null, asked({ error: "boom" }), "none"],
-    ["failed + user last entry + flag unset", "failed", null, { role: "user" }, "none"],
+    ["failed + errored ask + flag unset", "failed", null, asked({ error: "boom" }), true, "none"],
+    ["failed + user last entry + flag unset", "failed", null, { role: "user" }, true, "none"],
     // Settle-repair: the drain's clear write failed — the badge lies.
-    ["waiting + no ask + flag set", "waiting", at, answered, "settle"],
-    ["failed + no ask + flag set", "failed", at, answered, "settle"],
-    ["completed + no ask + flag set", "completed", at, answered, "settle"],
+    ["waiting + no ask + flag set", "waiting", at, answered, true, "settle"],
+    ["failed + no ask + flag set", "failed", at, answered, true, "settle"],
+    ["completed + no ask + flag set", "completed", at, answered, true, "settle"],
     // A failed last entry is not a live ask, so a set flag settles.
-    ["failed + errored ask + flag set", "failed", at, asked({ error: "boom" }), "settle"],
-    ["waiting + user last entry + flag set", "waiting", at, { role: "user" }, "settle"],
-    ["waiting + empty transcript + flag set", "waiting", at, null, "settle"],
+    ["failed + errored ask + flag set", "failed", at, asked({ error: "boom" }), true, "settle"],
+    ["waiting + user last entry + flag set", "waiting", at, { role: "user" }, true, "settle"],
+    ["waiting + empty transcript + flag set", "waiting", at, null, true, "settle"],
     // Consistent rows are untouched.
-    ["consistent park (ask + flag)", "waiting", at, asked(), "none"],
-    ["consistent done (no ask, no flag)", "waiting", null, answered, "none"],
-    ["consistent empty (new)", "new", null, null, "none"],
+    ["consistent park (ask + flag)", "waiting", at, asked(), true, "none"],
+    ["consistent done (no ask, no flag)", "waiting", null, answered, true, "none"],
+    ["consistent empty (new)", "new", null, null, true, "none"],
     // Indeterminate states are never repaired.
-    ["running with an ask", "running", null, asked(), "none"],
-    ["running with a stale flag", "running", at, answered, "none"],
-    ["stopped with a stale flag", "stopped", at, answered, "none"],
-    ["stopped with an ask", "stopped", null, asked(), "none"],
+    ["running with an ask", "running", null, asked(), true, "none"],
+    ["running with a stale flag", "running", at, answered, true, "none"],
+    ["stopped with a stale flag", "stopped", at, answered, true, "none"],
+    ["stopped with an ask", "stopped", null, asked(), true, "none"],
   ] as const)(
     "%s",
-    (_name, status, pendingInputAt, lastEntry, expected) => {
+    (_name, status, pendingInputAt, lastEntry, channelHomed, expected) => {
       expect(
         repairFohSessionState({
           status,
           pendingInputAt,
+          channelHomed,
           lastEntry: lastEntry as Parameters<
             typeof repairFohSessionState
           >[0]["lastEntry"],
@@ -229,6 +235,7 @@ describe("repairFohSessionState (loader-side durable retry, issue #221 finding 4
     const decision = repairFohSessionState({
       status: "waiting",
       pendingInputAt: null,
+      channelHomed: false,
       lastEntry: { role: "assistant", inputRequests: requests, error: null },
     });
     expect(decision).toEqual({ action: "park", requests, restoreStatus: false });
@@ -238,6 +245,7 @@ describe("repairFohSessionState (loader-side durable retry, issue #221 finding 4
     const decision = repairFohSessionState({
       status: "failed",
       pendingInputAt: null,
+      channelHomed: true,
       lastEntry: asked(),
     });
     expect(decision).toEqual({
@@ -274,6 +282,23 @@ describe("newestPendingRequest (composer answer target, issue #282)", () => {
         lastEntry as Parameters<typeof newestPendingRequest>[0],
       ),
     ).toBeNull();
+  });
+});
+
+describe("freeformAnswerable (issue #282 review finding 4)", () => {
+  const option = { id: "yes", label: "Yes" };
+
+  it.each([
+    ["no options at all — typing is the only path", { options: [] }, true],
+    ["options absent entirely", {}, true],
+    ["options + allowFreeform true — both paths", { options: [option], allowFreeform: true }, true],
+    ["options-only approval (allowFreeform unset)", { options: [option] }, false],
+    ["options-only approval (allowFreeform false)", { options: [option], allowFreeform: false }, false],
+    ["options-only approval (allowFreeform null)", { options: [option], allowFreeform: null }, false],
+  ] as const)("%s", (_name, request, expected) => {
+    expect(
+      freeformAnswerable(request as Parameters<typeof freeformAnswerable>[0]),
+    ).toBe(expected);
   });
 });
 

@@ -25,6 +25,7 @@ import { channelDeliveryFor, channelLabelFor } from "~/foh/channel-resume";
 import { settleFohTurn } from "~/foh/needs-you";
 import { mintDelegationToken } from "~/team/token.server";
 import {
+  beginFohTurn,
   openInboxQuestion,
   recordInboxFinished,
   resolveInboxForSession,
@@ -33,6 +34,7 @@ import { finalizeDelegationOnResume } from "~/team/resume.server";
 import {
   clearSessionPendingInput,
   markSessionPendingInput,
+  releaseRefusedTurnClaim,
   savePlaygroundEvents,
   savePlaygroundSessionCursor,
   savePlaygroundSessionProgress,
@@ -171,6 +173,12 @@ export function streamTurnResponse(input: {
    * behavior is byte-identical to before.
    */
   claimId?: string | null;
+  /**
+   * The session row's status BEFORE the route's claim flipped it to `running` (issue #282).
+   * Read only on a `notDelivered` refusal, to put the row back exactly where it was. Callers
+   * whose sends can never be refused pre-delivery (builder, playground) omit it.
+   */
+  preClaimStatus?: string | null;
 }): Response {
   const {
     projectId,
@@ -256,6 +264,12 @@ export function streamTurnResponse(input: {
         let recorded = false;
         let startRecording: Promise<void> = Promise.resolve();
         let result: TurnResult | null = null;
+        // Deferred supersede for channel-homed FOH rows (issue #282): the route skips its
+        // pre-turn `beginFohTurn` for them, because clearing the parked ask before delivery
+        // is known to happen is exactly how a refused send used to erase the needs-you
+        // question. The first streamed event that isn't a pre-delivery refusal proves the
+        // agent was contacted — the park resolves there instead.
+        let deferredFohBegin = isFoh && activeSession.resumeVia != null;
         const turnController = new AbortController();
         activeTurnControllers.set(activeSession.id, turnController);
 
@@ -353,6 +367,17 @@ export function streamTurnResponse(input: {
             signal: turnController.signal,
             timeoutMs: TURN_IDLE_TIMEOUT_MS,
           })) {
+            if (
+              deferredFohBegin &&
+              !(event.kind === "done" && event.result.notDelivered)
+            ) {
+              deferredFohBegin = false;
+              try {
+                await beginFohTurn(activeSession.id);
+              } catch (e) {
+                console.error(`${tag} foh deferred turn-begin failed`, e);
+              }
+            }
             switch (event.kind) {
               case "session":
                 sessionId = event.sessionId;
@@ -526,21 +551,17 @@ export function streamTurnResponse(input: {
             // was contacted — failing to send is not a failed turn. Eve is exactly where it was
             // (a channel-homed row is by definition parked at `session.waiting`), so the row
             // must not be settled: no `failed` status, no cursor/handle movement, no needs-you
-            // clear, no inbox resolve, no delegation finalize, no run recording. The only write
-            // is restoring the status the pre-turn claim flipped to `running` — leaving that
-            // would strand the row "running" with nothing draining it. `waiting` is the truthful
-            // pre-turn state; everything else on the row is passed back unchanged.
+            // clear, no inbox resolve, no delegation finalize, no run recording, no
+            // `lastEventAt` bump (no event happened). The only write is putting back the
+            // status the pre-turn claim flipped to `running` — leaving that would strand the
+            // row "running" with nothing draining it.
             const notDelivered = settled.notDelivered === true;
             try {
               if (notDelivered) {
-                await savePlaygroundSessionCursor({
+                await releaseRefusedTurnClaim({
                   id: activeSession.id,
-                  target,
-                  externalSessionId: activeSession.externalSessionId,
-                  continuationToken: activeSession.continuationToken,
-                  streamIndex: activeSession.streamIndex,
-                  status: "waiting",
                   claimId: input.claimId ?? undefined,
+                  status: input.preClaimStatus ?? "waiting",
                 });
               } else {
                 await savePlaygroundSessionCursor({

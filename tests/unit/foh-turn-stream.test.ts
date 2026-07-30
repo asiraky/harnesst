@@ -19,6 +19,8 @@ const mocks = vi.hoisted(() => ({
   savePlaygroundSessionCursor: vi.fn(async () => {}),
   markSessionPendingInput: vi.fn(async () => true),
   clearSessionPendingInput: vi.fn(async () => {}),
+  releaseRefusedTurnClaim: vi.fn(async () => {}),
+  beginFohTurn: vi.fn(async () => {}),
   openInboxQuestion: vi.fn(async () => ({ id: "inb_1" })),
   resolveInboxForSession: vi.fn(async () => {}),
   recordInboxFinished: vi.fn(async () => ({ id: "inb_fin" })),
@@ -37,9 +39,11 @@ vi.mock("~/playground/sessions.server", () => ({
   savePlaygroundSessionCursor: mocks.savePlaygroundSessionCursor,
   markSessionPendingInput: mocks.markSessionPendingInput,
   clearSessionPendingInput: mocks.clearSessionPendingInput,
+  releaseRefusedTurnClaim: mocks.releaseRefusedTurnClaim,
   unbindPlaygroundSessionForReseed: mocks.unbindPlaygroundSessionForReseed,
 }));
 vi.mock("~/foh/inbox.server", () => ({
+  beginFohTurn: mocks.beginFohTurn,
   openInboxQuestion: mocks.openInboxQuestion,
   resolveInboxForSession: mocks.resolveInboxForSession,
   recordInboxFinished: mocks.recordInboxFinished,
@@ -480,6 +484,30 @@ describe("streamTurnResponse — channel-homed delivery", () => {
     await run({ session: session(), channel: "foh" });
 
     expect(mocks.streamTurn.mock.calls[0][0].deliverVia).toBeNull();
+    // HTTP-homed rows keep the route-level supersede — the drain never re-begins the turn.
+    expect(mocks.beginFohTurn).not.toHaveBeenCalled();
+  });
+
+  it("resolves the park only when the first event proves delivery (issue #282 deferred begin)", async () => {
+    script([
+      { kind: "session", sessionId: "sess_ext", continuationToken: "tok_1" },
+      { kind: "done", result: result({ reply: "ok" }) },
+    ]);
+
+    await run({
+      session: session({
+        externalSessionId: "sess_ext",
+        continuationToken: "github:repo:1310524517:issue:7",
+        pendingInputAt: new Date(),
+        resumeVia: RESUME_VIA,
+      } as Partial<PlaygroundSession>),
+      channel: "foh",
+    });
+
+    // The route no longer clears the park pre-delivery for channel-homed rows; the drain
+    // does it exactly once, on the first streamed event from the agent.
+    expect(mocks.beginFohTurn).toHaveBeenCalledTimes(1);
+    expect(mocks.beginFohTurn).toHaveBeenCalledWith("ps_1");
   });
 
   it("fails the turn instead of falling back to HTTP when the bearer cannot be minted", async () => {
@@ -505,16 +533,15 @@ describe("streamTurnResponse — channel-homed delivery", () => {
     expect(String(done.error)).toContain("HARNESST_SECRETS_KEY");
     // The row is left bound — the thread is still alive, only this server is misconfigured.
     expect(mocks.unbindPlaygroundSessionForReseed).not.toHaveBeenCalled();
-    // Issue #282: nothing was sent, so nothing settles — the row goes back to `waiting`
-    // (undoing the caller's pre-turn `running` claim) and the park state stays untouched.
-    expect(mocks.savePlaygroundSessionCursor).toHaveBeenCalledWith(
+    // Issue #282: nothing was sent, so nothing settles — the claim is released (status put
+    // back, no cursor movement, no lastEventAt bump) and the park state stays untouched.
+    expect(mocks.releaseRefusedTurnClaim).toHaveBeenCalledWith(
       expect.objectContaining({ id: "ps_1", status: "waiting" }),
     );
-    expect(mocks.savePlaygroundSessionCursor).not.toHaveBeenCalledWith(
-      expect.objectContaining({ status: "failed" }),
-    );
+    expect(mocks.savePlaygroundSessionCursor).not.toHaveBeenCalled();
     expect(mocks.clearSessionPendingInput).not.toHaveBeenCalled();
     expect(mocks.resolveInboxForSession).not.toHaveBeenCalled();
+    expect(mocks.beginFohTurn).not.toHaveBeenCalled();
     error.mockRestore();
   });
 
@@ -562,7 +589,7 @@ describe("streamTurnResponse — channel-homed delivery", () => {
     // The `talk.server.ts` guard refused the send before contacting the agent (`notDelivered`).
     // Eve is still parked on its question, so the drain must not settle anything: no `failed`
     // status, no cursor/handle movement, no needs-you clear, no inbox resolve, no run recording.
-    // The one write puts the status back to `waiting` — the pre-turn claim flipped it `running`.
+    // The one write releases the claim back to the caller's pre-claim status.
     const row = session({
       externalSessionId: "sess_ext",
       continuationToken: "github:repo:1310524517:issue:7",
@@ -593,24 +620,23 @@ describe("streamTurnResponse — channel-homed delivery", () => {
         channel: "foh",
         title: null,
         claimId: "claim_1",
+        preClaimStatus: "waiting",
       }),
     );
 
     // The client is still told what happened.
     expect(events.at(-1)).toMatchObject({ type: "done", ok: false });
-    // Exactly one row write: the status restore, carrying the row's own handles and the claim.
-    expect(mocks.savePlaygroundSessionCursor).toHaveBeenCalledTimes(1);
-    expect(mocks.savePlaygroundSessionCursor).toHaveBeenCalledWith(
-      expect.objectContaining({
-        id: "ps_1",
-        externalSessionId: "sess_ext",
-        continuationToken: "github:repo:1310524517:issue:7",
-        streamIndex: 12,
-        status: "waiting",
-        claimId: "claim_1",
-      }),
-    );
-    // The park state, inbox, transcript cache, recorder, and resume binding are untouched.
+    // Exactly one row write: the claim release, restoring the caller's pre-claim status.
+    expect(mocks.releaseRefusedTurnClaim).toHaveBeenCalledTimes(1);
+    expect(mocks.releaseRefusedTurnClaim).toHaveBeenCalledWith({
+      id: "ps_1",
+      claimId: "claim_1",
+      status: "waiting",
+    });
+    expect(mocks.savePlaygroundSessionCursor).not.toHaveBeenCalled();
+    // The park state, inbox, transcript cache, recorder, and resume binding are untouched —
+    // and the deferred channel-homed turn-begin never fired (no event proved delivery).
+    expect(mocks.beginFohTurn).not.toHaveBeenCalled();
     expect(mocks.clearSessionPendingInput).not.toHaveBeenCalled();
     expect(mocks.markSessionPendingInput).not.toHaveBeenCalled();
     expect(mocks.resolveInboxForSession).not.toHaveBeenCalled();

@@ -146,10 +146,12 @@ export type FohSessionRepair =
  *
  * - `waiting` + newest entry is an assistant ask (pending inputRequests, no error) but the
  *   flag is unset → park (the drain's park write failed).
- * - `failed` + newest entry is an assistant ask (no error) + flag unset → park AND restore
- *   the row to `waiting` (issue #282: a send refused before delivery wrote `failed` and
- *   cleared the park while eve stayed parked on the ask; a REAL failed turn's newest entry
- *   carries the error — or is the user's message — so it never matches this branch).
+ * - `failed` + newest entry is an assistant ask (no error) + flag unset, on a CHANNEL-HOMED
+ *   row only → park AND restore the row to `waiting` (issue #282: a send refused before
+ *   delivery wrote `failed` and cleared the park while eve stayed parked on the ask; a REAL
+ *   failed turn's newest entry carries the error — or is the user's message — so it never
+ *   matches this branch). HTTP-homed rows never take it: their failed turns are retried by
+ *   resending, and rewriting one to `waiting` could reopen an already-consumed question.
  * - `waiting`/`failed`/`completed` + NO pending ask on the newest entry but the flag is set
  *   → settle (the drain's clear write failed; the badge lies).
  * - Anything else (`running`, `stopped`, or a consistent row) → none.
@@ -157,6 +159,8 @@ export type FohSessionRepair =
 export function repairFohSessionState(input: {
   status: string;
   pendingInputAt: Date | null;
+  /** `resumeVia != null` — only channel-homed rows take the failed→park recovery. */
+  channelHomed: boolean;
   lastEntry: {
     role: string;
     inputRequests?: ChatInputRequest[];
@@ -168,7 +172,8 @@ export function repairFohSessionState(input: {
       ? (input.lastEntry.inputRequests ?? [])
       : [];
   if (
-    (input.status === "waiting" || input.status === "failed") &&
+    (input.status === "waiting" ||
+      (input.status === "failed" && input.channelHomed)) &&
     pendingAsks.length > 0 &&
     input.pendingInputAt === null
   ) {
@@ -207,6 +212,18 @@ export function newestPendingRequest(
     return null;
   }
   return lastEntry.inputRequests?.at(-1) ?? null;
+}
+
+/**
+ * Whether a request accepts a TYPED answer — the same rule `InputRequestsBlock` uses for its
+ * freeform hint: no options at all (typing is the only path), or `allowFreeform` explicitly
+ * set. An options-only approval (Approve/Deny, `allowFreeform` unset/false) must be answered
+ * by its buttons; offering it a text path would submit an answer the request disallows.
+ */
+export function freeformAnswerable(
+  request: Pick<ChatInputRequest, "options" | "allowFreeform">,
+): boolean {
+  return (request.options?.length ?? 0) === 0 || Boolean(request.allowFreeform);
 }
 
 /**
