@@ -1246,6 +1246,19 @@ export const playgroundSessions = pgTable(
     /** Explicit reasoning effort paired with modelId; null delegates to the provider default. */
     effort: text("effort"),
     lastEventAt: timestamp("last_event_at", { withTimezone: true }),
+    /**
+     * Front-of-house tidy-up: set when someone archives the conversation, cleared when it is
+     * restored or when an agent parks a fresh question onto it. Archiving is REVERSIBLE and
+     * hides the row from every FOH read; only a back-of-house admin can delete it for real.
+     */
+    archivedAt: timestamp("archived_at", { withTimezone: true }),
+    /**
+     * Who archived it, for the back-of-house listing. `set null` (not cascade): removing a
+     * person from the org must never take the conversations they tidied with them.
+     */
+    archivedBy: text("archived_by").references(() => user.id, {
+      onDelete: "set null",
+    }),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
@@ -1272,6 +1285,10 @@ export const playgroundSessions = pgTable(
       t.surface,
       t.updatedAt,
     ),
+    // Serves the back-of-house archived listing (one repo, newest archived first). The FOH
+    // reads keep using the scope index above — `archived_at IS NULL` there is a cheap filter
+    // on rows the scope key already narrowed.
+    index("playground_sessions_archived_idx").on(t.projectId, t.archivedAt),
   ],
 );
 

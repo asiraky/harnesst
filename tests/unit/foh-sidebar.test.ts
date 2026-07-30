@@ -136,12 +136,27 @@ describe("loadFohSidebar", () => {
       agentId: "agent_sam",
       userId: "u1",
     });
+    // #278: an item whose session was archived in the same instant it was filed. It must not
+    // become a badge — nothing behind it can ever clear it, since the session is out of FOH.
+    store.seedInboxItem({
+      id: "i_archived",
+      projectId: "proj_a",
+      sessionId: "s5",
+      kind: "question",
+      agentId: "agent_ivy",
+      userId: "u1",
+    });
     const sidebar = await loadFohSidebar(
       { userId: "u1", orgId: "org_1", backOfHouse: false },
       {
         store,
         memberProjectIds: async () => ["proj_a"],
         presence: flatPresence,
+        sessionsByIds: async (ids) =>
+          ids.map((id) => ({
+            id,
+            archivedAt: id === "s5" ? new Date("2026-07-02T00:00:00Z") : null,
+          })),
       },
     );
     const agents = Object.fromEntries(

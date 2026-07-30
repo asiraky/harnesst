@@ -102,6 +102,9 @@ export async function listTeamActivity(
           and(
             eq(playgroundSessions.projectId, projectId),
             eq(playgroundSessions.surface, "foh"),
+            // Archived conversations leave the feed with the list (#278): "session opened" is
+            // an entry about a conversation, and the conversation is no longer there to open.
+            isNull(playgroundSessions.archivedAt),
             memberView ? memberSessionScope(viewer) : undefined,
             cutoff(playgroundSessions.createdAt, before),
           ),

@@ -10,6 +10,7 @@ import {
   redirect,
   Link,
   useFetcher,
+  useNavigate,
   useNavigation,
   useParams,
   Outlet,
@@ -24,11 +25,13 @@ import { bohAgentHref } from "~/foh/boh-links";
 import { requireFohProject } from "~/foh/guard.server";
 import { cn } from "~/lib/utils";
 import {
+  countArchivedFohSessions,
   createPlaygroundSession,
   listFohSessionsForAgent,
   summarizePlaygroundSession,
 } from "~/playground/sessions.server";
 import { getRuntime } from "~/seams/index.server";
+import type { action as archiveAction } from "./api.foh.archive";
 import type { Route } from "./+types/foh.agent";
 
 async function requireFohAgent(projectId: string, agentId: string | undefined) {
@@ -48,19 +51,31 @@ export const loader = (args: LoaderFunctionArgs) =>
       const access = await requireFohProject(auth, args.params.projectId, {
         request: args.request,
       });
-      const agent = await requireFohAgent(access.project.id, args.params.agentId);
+      const agent = await requireFohAgent(
+        access.project.id,
+        args.params.agentId,
+      );
       const sessions = await listFohSessionsForAgent({
         projectId: access.project.id,
         agentId: agent.id,
         viewerId: auth.user.id,
         includeAll: access.backOfHouse,
       });
+      // #278: the archived shelf is admin-only, and so is knowing how full it is — a plain
+      // member never learns that conversations they can't see exist.
+      const archivedCount = access.backOfHouse
+        ? await countArchivedFohSessions(access.project.id)
+        : 0;
       return {
         projectId: access.project.id,
         projectName: access.project.name,
         agentId: agent.id,
         agentName: agent.name,
         backOfHouse: access.backOfHouse,
+        archivedCount,
+        archivedHref: access.backOfHouse
+          ? `/repos/${access.project.id}/sessions/archived`
+          : null,
         // #246: the admin-only cross-link into this member's BOH config. Null (absent, not
         // disabled) for plain members.
         bohHref: access.backOfHouse
@@ -92,9 +107,13 @@ export async function action(args: ActionFunctionArgs) {
     includeAll: access.backOfHouse,
   });
   // Row-spam guard (portal-page precedent): an accidental refresh-loop on the new-session
-  // form must not flood the table.
+  // form must not flood the table. Since #278 the list excludes archived rows, so this counts
+  // live conversations only — archiving is the way back under the ceiling.
   if (existing.length >= 100) {
-    return { error: "Too many conversations with this member — reuse one." };
+    return {
+      error:
+        "Too many conversations with this member — reuse or archive one first.",
+    };
   }
   const session = await createPlaygroundSession({
     projectId: access.project.id,
@@ -110,11 +129,20 @@ export function meta({ loaderData }: Route.MetaArgs) {
 }
 
 export default function FohAgent({ loaderData }: Route.ComponentProps) {
-  const { projectId, agentId, agentName, sessions, bohHref } = loaderData;
+  const {
+    projectId,
+    agentId,
+    agentName,
+    sessions,
+    bohHref,
+    archivedCount,
+    archivedHref,
+  } = loaderData;
   const params = useParams();
   const newSessionFetcher = useFetcher<typeof action>();
   const basePath = `/t/${projectId}/${agentId}`;
   const openSessionId = params.sessionId ?? null;
+  const archive = useArchive({ projectId, basePath, openSessionId });
   const showPending = usePendingPane(openSessionId);
   // Below md only one pane fits, and the right one is whatever the user is waiting on: the
   // list until a session is open OR the pending pane has taken over. Keying this off
@@ -175,6 +203,20 @@ export default function FohAgent({ loaderData }: Route.ComponentProps) {
             {newSessionFetcher.data.error}
           </p>
         )}
+        {archive.notice?.kind === "archived" && (
+          <div className="flex items-center gap-2 border-b bg-muted/50 px-3 py-2 text-xs">
+            <span className="min-w-0 flex-1 truncate text-muted-foreground">
+              Session archived — {archive.notice.title}
+            </span>
+            <button
+              type="button"
+              className="shrink-0 font-medium underline underline-offset-4 hover:text-foreground"
+              onClick={() => archive.undo()}
+            >
+              Undo
+            </button>
+          </div>
+        )}
         {sessions.length === 0 ? (
           <p className="px-3 py-6 text-center text-sm text-muted-foreground">
             No sessions with {agentName} yet.
@@ -184,7 +226,23 @@ export default function FohAgent({ loaderData }: Route.ComponentProps) {
             sessions={sessions}
             basePath={basePath}
             selectedId={params.sessionId ?? null}
+            onArchive={(session) => archive.archive(session.id)}
+            archivingId={archive.pendingId}
+            refusal={archive.refusal}
           />
+        )}
+        {/* Outside the empty-state ternary on purpose: archiving the last conversation is
+            exactly when an admin needs the way back to the shelf. */}
+        {archivedHref && archivedCount > 0 && (
+          <div className="shrink-0 border-t px-3 py-2">
+            <Link
+              to={archivedHref}
+              prefetch="intent"
+              className="text-xs text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
+            >
+              {archivedCount} archived
+            </Link>
+          </div>
         )}
       </section>
       <SessionPane pending={showPending} basePath={basePath}>
@@ -192,6 +250,101 @@ export default function FohAgent({ loaderData }: Route.ComponentProps) {
       </SessionPane>
     </>
   );
+}
+
+/**
+ * The undo strip is a courtesy, not a decision point — archiving is reversible from the
+ * back-of-house shelf forever, so the strip gets out of the way on its own rather than
+ * accumulating dismissed banners at the top of the list.
+ */
+const ARCHIVE_NOTICE_MS = 10_000;
+
+type ArchiveNotice =
+  | { kind: "archived"; sessionId: string; title: string }
+  | { kind: "refused"; sessionId: string; message: string };
+
+/**
+ * FOH archive/undo (#278). Local state, not loader data: the FOH shell revalidates on a 10s
+ * timer, which would wipe a strip that lived in the loader payload halfway through the undo
+ * window. Each response REPLACES the notice outright, so a second archive can never leave the
+ * first session's title on screen next to the second one's Undo.
+ */
+function useArchive({
+  projectId,
+  basePath,
+  openSessionId,
+}: {
+  projectId: string;
+  basePath: string;
+  openSessionId: string | null;
+}) {
+  const fetcher = useFetcher<typeof archiveAction>();
+  const navigate = useNavigate();
+  const [notice, setNotice] = useState<ArchiveNotice | null>(null);
+  const result = fetcher.data;
+
+  useEffect(() => {
+    if (!result) return;
+    if (!result.ok) {
+      setNotice({
+        kind: "refused",
+        sessionId: result.sessionId,
+        message: result.error,
+      });
+    } else if (result.intent === "unarchive") {
+      setNotice(null);
+    } else {
+      setNotice({
+        kind: "archived",
+        sessionId: result.sessionId,
+        title: result.title,
+      });
+    }
+  }, [result]);
+
+  useEffect(() => {
+    if (!notice) return;
+    const timer = setTimeout(() => setNotice(null), ARCHIVE_NOTICE_MS);
+    return () => clearTimeout(timer);
+  }, [notice]);
+
+  // React Router REUSES this component across `/t/:projectId/:agentId`, so without this the strip
+  // outlives the list it belongs to: switching agents mid-window would leave an Undo that silently
+  // restores the previous agent's conversation, and switching repos would post the old session id
+  // to the new repo's endpoint. The notice belongs to one list; it dies with it.
+  useEffect(() => setNotice(null), [basePath]);
+
+  // The conversation the user is reading can be the one they just archived — the server now
+  // 404s it, so step back to the list rather than let the revalidation break the pane.
+  useEffect(() => {
+    if (notice?.kind !== "archived" || notice.sessionId !== openSessionId)
+      return;
+    navigate(basePath, { replace: true });
+  }, [notice, openSessionId, basePath, navigate]);
+
+  const submit = (sessionId: string, intent: "archive" | "unarchive") => {
+    setNotice(null);
+    fetcher.submit(
+      { intent, playgroundSessionId: sessionId },
+      { method: "post", action: `/api/foh/${projectId}/archive` },
+    );
+  };
+
+  return {
+    notice,
+    refusal:
+      notice?.kind === "refused"
+        ? { sessionId: notice.sessionId, message: notice.message }
+        : null,
+    pendingId:
+      fetcher.state === "idle"
+        ? null
+        : (fetcher.formData?.get("playgroundSessionId")?.toString() ?? null),
+    archive: (sessionId: string) => submit(sessionId, "archive"),
+    undo: () => {
+      if (notice?.kind === "archived") submit(notice.sessionId, "unarchive");
+    },
+  };
 }
 
 /** `/t/:projectId/:agentId/s/:sessionId` → the session id, or null for any other path. */
