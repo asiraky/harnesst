@@ -30,6 +30,7 @@ import type {
   ChatStep,
 } from "~/chat/types";
 import {
+  ArtifactCard,
   AssistantBubble,
   ChatComposer,
   ChatTranscript,
@@ -42,6 +43,7 @@ import { SessionStatusDot } from "~/components/foh/session-list";
 import { TurnError } from "~/components/turn-error";
 import { Button } from "~/components/ui/button";
 import { sessionLoader } from "~/auth/session.server";
+import { newestTurnEntry } from "~/foh/artifact-entries";
 import { requireFohProject } from "~/foh/guard.server";
 import { channelLabelFor } from "~/foh/channel-resume";
 import { openInboxQuestion, resolveInboxForSession } from "~/foh/inbox.server";
@@ -171,7 +173,9 @@ export const loader = (args: LoaderFunctionArgs) =>
       // exception-swallowed (bookkeeping never breaks the page), and the repaired flag is
       // reflected into the returned session so THIS load's UI is already honest.
       try {
-        const lastEntry = entries.at(-1) ?? null;
+        // Artifact cards trail their turn (#290), so the repair reads the newest conversational
+        // entry — a card must never look like "the turn ended without a reply".
+        const lastEntry = newestTurnEntry(entries);
         const repair = repairFohSessionState({
           status: currentSession.status,
           pendingInputAt: currentSession.pendingInputAt,
@@ -384,6 +388,14 @@ export default function FohSession({ loaderData }: Route.ComponentProps) {
       : entries;
   }, [entries, sessionId, visibleLive]);
 
+  // The newest CONVERSATIONAL entry, which is what "newest turn" means for answering and for the
+  // running indicator. Not simply the last entry: an artifact card (#290) can trail the turn that
+  // produced it, and it must not take the answer/retry affordances off the question above it.
+  const newestTurn = useMemo(() => {
+    const entry = newestTurnEntry(shownEntries);
+    return { entry, index: entry ? shownEntries.indexOf(entry) : -1 };
+  }, [shownEntries]);
+
   // The one request a typed composer answer would resolve (issue #282): the newest pending
   // ask of the newest turn — from the live turn once it settles, else from the cached
   // transcript. Mirrors the onAnswer wiring below (newest entry only).
@@ -394,7 +406,7 @@ export default function FohSession({ loaderData }: Route.ComponentProps) {
       // An errored live turn that produced no transcript entry (e.g. a send refused
       // before delivery) settled nothing at eve — the cached ask is still the live one,
       // and without this fallback the error would hide the answer box until a reload.
-      return newestPendingRequest(entries.at(-1) ?? null);
+      return newestPendingRequest(newestTurnEntry(entries));
     }
     return newestPendingRequest(entries.at(-1) ?? null);
   }, [entries, visibleLive]);
@@ -652,16 +664,20 @@ export default function FohSession({ loaderData }: Route.ComponentProps) {
         {shownEntries.map((e, i) =>
           e.role === "user" ? (
             <UserBubble key={e.id} text={e.text} />
+          ) : e.role === "artifact" ? (
+            // A published image (#290) is not the reply — it sits under the turn that made it as
+            // its own card, and carries no answer/retry affordances.
+            e.artifact && <ArtifactCard key={e.id} artifact={e.artifact} />
           ) : (
             <AgentEntry
               key={e.id}
               entry={e}
               // Only the newest turn's pending requests are answerable.
               onAnswer={
-                i === shownEntries.length - 1 && !visibleLive ? send : undefined
+                i === newestTurn.index && !visibleLive ? send : undefined
               }
               onRetry={
-                i === shownEntries.length - 1 && !visibleLive && e.errorRetryable
+                i === newestTurn.index && !visibleLive && e.errorRetryable
                   ? () => {
                       const userText = [...shownEntries.slice(0, i)]
                         .reverse()
@@ -671,12 +687,11 @@ export default function FohSession({ loaderData }: Route.ComponentProps) {
                   : undefined
               }
               busy={busy}
-              running={replayingRunningSession && i === shownEntries.length - 1}
+              running={replayingRunningSession && i === newestTurn.index}
             />
           ),
         )}
-        {replayingRunningSession &&
-          shownEntries.at(-1)?.role !== "assistant" && (
+        {replayingRunningSession && newestTurn.entry?.role !== "assistant" && (
             <StepsCard
               steps={[]}
               idPrefix="running-session"
@@ -685,7 +700,7 @@ export default function FohSession({ loaderData }: Route.ComponentProps) {
           )}
         {sessionStatus === "failed" &&
           !visibleLive &&
-          shownEntries.at(-1)?.role === "user" && (
+          newestTurn.entry?.role === "user" && (
             <AssistantBubble>
               <p className="text-sm text-muted-foreground">
                 This turn was interrupted before it finished. Send the message

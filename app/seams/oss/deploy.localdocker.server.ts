@@ -85,7 +85,13 @@ export const WAKE_HEALTH_TIMEOUT_MS = Number(
   process.env.HARNESST_WAKE_HEALTH_TIMEOUT_MS ?? 120 * 1000,
 );
 
-const containerName = (deploymentId: string) => `harnesst-inst-${deploymentId}`;
+/**
+ * The instance container for a deployment. Exported because artifact copy-on-publish (#290) reads
+ * files out of the same container over the docker socket, and the naming rule must not be
+ * re-derived anywhere else.
+ */
+export const containerName = (deploymentId: string) =>
+  `harnesst-inst-${deploymentId}`;
 
 /**
  * Postgres database name for an environment's Workflow world. Keyed by the (stable) worldKey,

@@ -159,6 +159,14 @@
       "version": "0.2.1",
       "description": "Search and research the live web, returning results and optional page content. Routes through a service that bypasses the bot protection blocking plain fetches, so use it whenever the agent needs to search or read the web.",
       "hash": "f21c5039333453ce39dc15d3e6036939f793f5bb"
+    },
+    {
+      "id": "publish-artifact",
+      "type": "tool",
+      "name": "Publish Artifact",
+      "version": "0.1.0",
+      "description": "Publish an image the agent produced (a screenshot, a chart, a diagram) into the Front of House conversation, where it renders as a card the user can see. harnesst copies the file out of the agent's home directory and serves it back behind the user's own sign-in.",
+      "hash": "dfdd8e7d64ab998aa95bc989f451d1d5b00e872d"
     }
   ]
 }

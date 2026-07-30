@@ -55,9 +55,27 @@ export interface ChatInputAnswer {
   text?: string;
 }
 
+/**
+ * An artifact the agent published (issue #290) — an image copied out of its home volume at publish
+ * time and served back by harnesst. `url` is ALWAYS a harnesst app path minted from the row id;
+ * an agent-supplied URL never reaches this shape, which is what lets the card render an `<img>`
+ * while `MarkdownImage` still refuses to load anything the agent wrote in prose.
+ */
+export interface ChatArtifact {
+  id: string;
+  /** File name as the agent published it. */
+  name: string;
+  title: string | null;
+  contentType: string;
+  byteSize: number;
+  /** Same-origin, cookie-authenticated app path serving the bytes. */
+  url: string;
+}
+
 export interface ChatEntry {
   id: string;
-  role: "user" | "assistant";
+  /** `artifact` entries carry no prose — they render as a card from `artifact` alone (#290). */
+  role: "user" | "assistant" | "artifact";
   text: string;
   /** Playground: reply is structured JSON (render as code). */
   structured?: boolean;
@@ -73,6 +91,8 @@ export interface ChatEntry {
   files?: string[];
   secrets?: string[];
   checks?: { ran: boolean; ok: boolean };
+  /** FOH: the published artifact this entry renders. Set only on `role: "artifact"`. */
+  artifact?: ChatArtifact;
   error?: string | null;
   /** Raw error text for operators (rendered behind a details toggle). Additive. */
   errorDetail?: string | null;

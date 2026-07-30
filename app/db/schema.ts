@@ -1504,3 +1504,56 @@ export const inboxItems = pgTable(
       .where(sql`${t.status} = 'pending' and ${t.requestId} is not null`),
   ],
 );
+
+/**
+ * Published artifacts (issue #290) — one row per file an agent published out of its home volume
+ * into the control plane's own store. The bytes are COPIED at publish time (`storage_path`, on
+ * the control plane's artifact disk) rather than proxied from the instance: a deployment's URL is
+ * reallocated on every wake and its container is disposable, so an artifact whose lifetime was
+ * tied to either would break the moment the agent scaled to zero.
+ *
+ * A row is a transcript element, not a file record: it is keyed to the FOH session it was
+ * published into plus the `stream_index` position the cache had reached, so the card renders in
+ * the turn it belongs to (see `mergeArtifactEntries`) and survives every reload.
+ *
+ * `content_type` is the type SNIFFED from the bytes against the image allowlist, never the
+ * agent's claim — it is what the serving route puts on the wire.
+ */
+export const artifacts = pgTable(
+  "artifacts",
+  {
+    id: varchar("id", { length: 12 }).primaryKey().$defaultFn(newId),
+    projectId: varchar("project_id", { length: 12 })
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    /** The agent that published — the card's attribution. */
+    agentId: varchar("agent_id", { length: 12 })
+      .notNull()
+      .references(() => agents.id, { onDelete: "cascade" }),
+    sessionId: varchar("session_id", { length: 12 })
+      .notNull()
+      .references(() => playgroundSessions.id, { onDelete: "cascade" }),
+    /** Soft ref (no FK): which deployment published it. Provenance only — deployments come and go. */
+    deploymentId: varchar("deployment_id", { length: 12 }),
+    /** File name as the agent published it (basename only — never a path). */
+    name: text("name").notNull(),
+    /** Optional agent-supplied caption for the card. */
+    title: text("title"),
+    contentType: text("content_type").notNull(),
+    byteSize: integer("byte_size").notNull(),
+    /** sha256 of the stored bytes — content identity, and what makes a retried publish a no-op. */
+    sha256: text("sha256").notNull(),
+    /** Where the bytes live, relative to the control plane's artifact directory. */
+    storagePath: text("storage_path").notNull(),
+    /** Cache-space transcript position (see `playground_events.stream_index`) the card sorts after. */
+    streamIndex: integer("stream_index").notNull(),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    index("artifacts_session_idx").on(t.sessionId, t.streamIndex),
+    // The tool's POST is best-effort and WILL be retried (same reasoning as the park endpoint):
+    // republishing the same bytes into the same conversation must return the first row rather
+    // than stack duplicate cards. Paired with ON CONFLICT DO NOTHING on the insert.
+    uniqueIndex("artifacts_session_sha_uq").on(t.sessionId, t.sha256),
+  ],
+);

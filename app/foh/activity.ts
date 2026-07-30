@@ -276,7 +276,8 @@ export function summarizeExchangeSteps(rows: ExchangeStepRow[]): ExchangeStep[] 
  * never imports server code (ChatEntry is assignable to it).
  */
 export interface ExchangeEntry {
-  role: "user" | "assistant";
+  /** Widened for artifact cards (#290): they carry no text, so they project to no step. */
+  role: string;
   text: string;
   steps?: Array<{
     toolName?: string | null;

@@ -21,6 +21,7 @@ import {
   ChevronRight,
   CircleHelp,
   CornerDownLeft,
+  Image as ImageIcon,
   Loader2,
   ShieldAlert,
   Sparkles,
@@ -30,6 +31,7 @@ import remarkBreaks from "remark-breaks";
 import remarkGfm from "remark-gfm";
 
 import type {
+  ChatArtifact,
   ChatInputAnswer,
   ChatInputOption,
   ChatInputRequest,
@@ -638,6 +640,47 @@ function OptionRow({
       />
     </button>
   );
+}
+
+/**
+ * A published artifact (#290) as a card under the turn that produced it: the image itself, then a
+ * quiet caption line with the agent's title (or the file name) and the size.
+ *
+ * This is the ONE place harnesst loads an image in a transcript, and it is safe for exactly one
+ * reason: `artifact.url` is minted by harnesst from a row id, so the browser only ever fetches
+ * first-party bytes harnesst already copied and sniffed. `MarkdownImage` still refuses every
+ * `<img>` the agent writes in prose — an agent-supplied src is a tracking pixel or a browser-side
+ * GET against any host it can reach, and nothing here relaxes that.
+ *
+ * The card links to the same URL so a full-size look (or a download, for SVG) is one click away.
+ */
+export function ArtifactCard({ artifact }: { artifact: ChatArtifact }) {
+  const label = artifact.title?.trim() || artifact.name;
+  return (
+    <figure className="w-fit max-w-[85%] overflow-hidden rounded-xl border border-border bg-card shadow-sm">
+      <a href={artifact.url} target="_blank" rel="noreferrer">
+        <img
+          src={artifact.url}
+          alt={label}
+          // Bounded height so a tall screenshot doesn't push the rest of the transcript out of
+          // view; the transcript pins to the bottom as images load.
+          className="block max-h-96 max-w-full object-contain"
+        />
+      </a>
+      <figcaption className="flex items-center gap-2 border-t border-border/60 px-3 py-2 font-mono text-[11px] text-muted-foreground/70">
+        <ImageIcon className="size-3.5 shrink-0" aria-hidden />
+        <span className="min-w-0 flex-1 truncate">{label}</span>
+        <span className="shrink-0">{formatBytes(artifact.byteSize)}</span>
+      </figcaption>
+    </figure>
+  );
+}
+
+/** Compact byte size for the artifact caption (KB above a kilobyte, MB above a megabyte). */
+function formatBytes(bytes: number): string {
+  if (bytes >= 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  if (bytes >= 1024) return `${Math.round(bytes / 1024)} KB`;
+  return `${bytes} B`;
 }
 
 /** Typing indicator shown while the assistant turn is in flight — dots, not prose, so it
