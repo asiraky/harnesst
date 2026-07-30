@@ -24,7 +24,7 @@ export function releaseFreshness(
 /**
  * A colour-coded pill telling the user, at a glance, whether what's running is the
  * latest version: green "Latest" when it is, amber "vN available" when a newer
- * release exists. Reused wherever a running version is shown — the Overview status
+ * release exists. Reused wherever a running version is shown — the agent status
  * line and the deployment pipeline — so the signal reads the same everywhere.
  */
 export function FreshnessBadge({

@@ -1258,7 +1258,7 @@ export default function Deployment({
       {view === "repo" ? (
         <>
           {roster.length === 0 && (
-            <EmptyTeamState overviewHref={`/repos/${project.id}`} />
+            <EmptyTeamState agentsHref={`/repos/${project.id}`} />
           )}
           {roster.length > 0 && <TeamRollup loaderData={loaderData} />}
         </>
