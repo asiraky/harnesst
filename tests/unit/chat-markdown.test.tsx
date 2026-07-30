@@ -63,9 +63,10 @@ describe("MarkdownText links", () => {
 
   it("keeps a GFM footnote jump as a same-tab fragment link", () => {
     const html = render("A claim[^1]\n\n[^1]: the source");
-    expect(html).toContain('href="#user-content-fn-1"');
+    const href = html.match(/href="(#[^"]*fn-1)"/);
+    expect(href).not.toBeNull();
     // A jump within the page must not open a tab.
-    expect(html).not.toContain('href="#user-content-fn-1" target');
+    expect(html).not.toContain(`href="${href![1]}" target`);
   });
 
   it("shows the label and the raw target when a URL is rejected, never swallowing it", () => {
@@ -151,6 +152,44 @@ describe("MarkdownText blocks", () => {
     const html = render(deep);
     expect(html).not.toContain("<blockquote");
     expect(html).toContain("boom");
+  });
+
+  it("guards nesting stacked onto a single line, not just indented nesting", () => {
+    // `- - - …` opens a list per marker, so the depth is on one line rather than down the left edge.
+    const deep = "- ".repeat(1200) + "boom";
+    expect(() => render(deep)).not.toThrow();
+    expect(render(deep)).toContain("boom");
+  });
+
+  it("does not nest a second anchor inside a linked image", () => {
+    const html = render(
+      "[![pixel](https://attacker.example/pixel)](https://docs.example)",
+    );
+    // Nested anchors are invalid HTML the browser un-nests into two broken links.
+    expect(html).not.toMatch(/<a[^>]*>[^<]*<a/);
+    expect(html).toContain('href="https://docs.example"');
+    expect(html).toContain("pixel");
+  });
+
+  it("keeps the ids a footnote backlink needs", () => {
+    const html = render("A claim[^1]\n\n[^1]: the source");
+    // The backlink's href has to have a matching id to jump to.
+    const backref = html.match(/href="#([^"]*fnref-1)"/);
+    expect(backref).not.toBeNull();
+    expect(html).toContain(`id="${backref![1]}"`);
+  });
+
+  it("scopes footnote ids per turn so two replies on a page don't collide", () => {
+    // Both turns render in one tree, as a transcript does — ids are page-global.
+    const html = renderToStaticMarkup(
+      <>
+        <MarkdownText text={"First[^1]\n\n[^1]: a"} />
+        <MarkdownText text={"Second[^1]\n\n[^1]: b"} />
+      </>,
+    );
+    const ids = [...html.matchAll(/id="([^"]*fn-1)"/g)].map((m) => m[1]);
+    expect(ids).toHaveLength(2);
+    expect(ids[0]).not.toEqual(ids[1]);
   });
 
   it("still parses ordinary nesting", () => {

@@ -7,7 +7,10 @@
  * conversational feel.
  */
 import {
+  createContext,
+  useContext,
   useEffect,
+  useId,
   useMemo,
   useRef,
   type ComponentPropsWithoutRef,
@@ -168,6 +171,9 @@ type MarkdownNode = {
 const MAX_NESTING = 100;
 
 export function MarkdownText({ text }: { text: string }) {
+  // Footnote ids are page-global, so two replies that both use `[^1]` would emit the same id and
+  // the second one's link would jump to the first one's definition. Scope them to this turn.
+  const instance = useId().replace(/[^a-zA-Z0-9]/g, "");
   // A live turn re-renders the whole transcript on every streamed token, so keep the element
   // keyed to its text: settled turns then skip re-parsing while a newer one is still arriving.
   const rendered = useMemo(
@@ -178,33 +184,54 @@ export function MarkdownText({ text }: { text: string }) {
         <Markdown
           remarkPlugins={REMARK_PLUGINS}
           rehypePlugins={REHYPE_PLUGINS}
+          remarkRehypeOptions={{ clobberPrefix: `${instance}-` }}
           urlTransform={markdownUrlTransform}
           components={MARKDOWN_COMPONENTS}
         >
           {text}
         </Markdown>
       ),
-    [text],
+    [instance, text],
   );
   return <div className="space-y-2 break-words">{rendered}</div>;
 }
 
-/** Cheap upper bound on container nesting: leading `>` markers plus one level per two columns
- * of indentation, whichever line goes deepest. */
+/** Every container the parser recurses into — a `>` marker, a list marker, two columns of
+ * indentation — counted per line, since they all stack on a single line too (`- - - x`). */
+const CONTAINER_MARKER = /(?:[-*+]|\d{1,9}[.)])[ \t]/y;
+
 function nestedTooDeep(markdown: string): boolean {
   for (const line of markdown.split("\n")) {
-    let markers = 0;
+    let depth = 0;
     let columns = 0;
-    for (const ch of line) {
-      if (ch === " ") columns += 1;
-      else if (ch === "\t") columns += 4;
+    let i = 0;
+    while (i < line.length) {
+      const ch = line[i];
+      if (ch === " ") {
+        columns += 1;
+        i += 1;
+        continue;
+      }
+      if (ch === "\t") {
+        columns += 4;
+        i += 1;
+        continue;
+      }
       // Indentation only counts within the innermost container, so a marker resets it.
-      else if (ch === ">") {
-        markers += 1;
+      if (ch === ">") {
+        depth += 1;
         columns = 0;
-      } else break;
+        i += 1;
+        continue;
+      }
+      CONTAINER_MARKER.lastIndex = i;
+      const marker = CONTAINER_MARKER.exec(line);
+      if (!marker) break;
+      depth += 1;
+      columns = 0;
+      i += marker[0].length;
     }
-    if (markers + Math.floor(columns / 2) > MAX_NESTING) return true;
+    if (depth + Math.floor(columns / 2) > MAX_NESTING) return true;
   }
   return false;
 }
@@ -278,11 +305,18 @@ function safeHref(value: string): string | null {
   }
 }
 
+/** True inside an anchor's children — a linked image must not nest a second anchor, which is
+ * invalid HTML the browser un-nests into a broken pair of links. */
+const InsideAnchor = createContext(false);
+
 function MarkdownAnchor({
   href,
-  title,
   children,
-}: ComponentPropsWithoutRef<"a">) {
+  className,
+  // The hast node react-markdown passes alongside the props is not a DOM attribute.
+  node: _node,
+  ...rest
+}: ComponentPropsWithoutRef<"a"> & { node?: unknown }) {
   const safe = href ? safeHref(href) : null;
   // A rejected target must never silently swallow the anchor: show the label with the raw URL
   // beside it so the reader can still see what was linked.
@@ -296,15 +330,41 @@ function MarkdownAnchor({
   // App paths and fragments (a footnote jump) stay in this tab; only offsite targets open one.
   const internal = safe.startsWith("/") || safe.startsWith("#");
   return (
+    // `rest` carries what the parser generated — a footnote's `id` and aria metadata, without
+    // which its backlink has nothing to jump to.
     <a
+      {...rest}
       href={safe}
-      title={title}
       target={internal ? undefined : "_blank"}
       rel={internal ? undefined : "noreferrer"}
-      className="font-medium underline underline-offset-4"
+      className={cn("font-medium underline underline-offset-4", className)}
     >
-      {children}
+      <InsideAnchor.Provider value={true}>{children}</InsideAnchor.Provider>
     </a>
+  );
+}
+
+/**
+ * An `<img>` would fetch an agent-supplied URL automatically — a tracking pixel, or a GET against
+ * any host the browser can reach — just from opening a transcript. The old renderer never loaded
+ * images, so keep it that way and offer the source as a link instead. Inside a link already
+ * (`[![badge](img)](href)`) the label is all that's left to render.
+ */
+function MarkdownImage({
+  src,
+  alt,
+  title,
+}: ComponentPropsWithoutRef<"img"> & { node?: unknown }) {
+  const insideAnchor = useContext(InsideAnchor);
+  const label = alt || (typeof src === "string" ? src : "") || "image";
+  if (insideAnchor) return <>{label}</>;
+  return (
+    <MarkdownAnchor
+      href={typeof src === "string" ? src : undefined}
+      title={title}
+    >
+      {label}
+    </MarkdownAnchor>
   );
 }
 
@@ -402,17 +462,7 @@ const MARKDOWN_COMPONENTS: Components = {
       {children}
     </td>
   ),
-  // An `<img>` would fetch an agent-supplied URL automatically — a tracking pixel, or a GET
-  // against any host the browser can reach — just from opening a transcript. The old renderer
-  // never loaded images, so keep it that way and offer the source as a link instead.
-  img: ({ src, alt, title }) => (
-    <MarkdownAnchor
-      href={typeof src === "string" ? src : undefined}
-      title={title}
-    >
-      {alt || src || "image"}
-    </MarkdownAnchor>
-  ),
+  img: MarkdownImage,
 };
 
 /**
