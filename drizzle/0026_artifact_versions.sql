@@ -50,6 +50,11 @@ WINDOW "w" AS (
 	PARTITION BY "a"."session_id", "a"."name"
 	ORDER BY "a"."stream_index", "a"."created_at", "a"."id"
 );--> statement-breakpoint
+-- Dropped BEFORE the re-pointing below, not with the other index work at the end: it is unique on
+-- `(artifact_id, rel_path)`, and folding two same-named bundles onto one survivor gives that pair
+-- twice (each had its own `index.html`), which would abort the migration on a database that ever
+-- published one name as a page twice.
+DROP INDEX "artifact_files_path_uq";--> statement-breakpoint
 -- Bundle members move to the version they were published as, and to the surviving artifact.
 UPDATE "artifact_files" "f"
 SET "version_id" = "v"."id", "artifact_id" = "v"."artifact_id"
@@ -81,7 +86,6 @@ FROM (
 WHERE "a"."id" = "l"."artifact_id";--> statement-breakpoint
 ALTER TABLE "artifact_files" ALTER COLUMN "version_id" SET NOT NULL;--> statement-breakpoint
 DROP INDEX "artifacts_session_sha_uq";--> statement-breakpoint
-DROP INDEX "artifact_files_path_uq";--> statement-breakpoint
 ALTER TABLE "artifact_versions" ADD CONSTRAINT "artifact_versions_artifact_id_artifacts_id_fk" FOREIGN KEY ("artifact_id") REFERENCES "public"."artifacts"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "artifact_versions" ADD CONSTRAINT "artifact_versions_project_id_projects_id_fk" FOREIGN KEY ("project_id") REFERENCES "public"."projects"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 CREATE UNIQUE INDEX "artifact_versions_number_uq" ON "artifact_versions" USING btree ("artifact_id","version_number");--> statement-breakpoint

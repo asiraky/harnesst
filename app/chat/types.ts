@@ -84,8 +84,6 @@ export interface ChatArtifact {
    * agent's own reply is the narrative.
    */
   version: number;
-  /** How many versions the preview panel's picker can offer (older ones are pruned). */
-  versionCount: number;
 }
 
 export interface ChatEntry {

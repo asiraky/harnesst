@@ -97,9 +97,12 @@ export interface RecordArtifactInput {
   files?: ArtifactFileInput[];
   /** How many versions of one artifact stay openable (`MAX_ARTIFACT_VERSIONS_KEPT`). */
   keepVersions: number;
+  /** How many versions one name may ever have (`MAX_ARTIFACT_VERSIONS_TOTAL`) — the hard refusal. */
+  maxVersions: number;
 }
 
 export interface RecordedArtifact {
+  ok: true;
   artifact: Artifact;
   version: ArtifactVersion;
   /**
@@ -108,6 +111,20 @@ export interface RecordedArtifact {
    */
   appended: boolean;
 }
+
+/**
+ * Why a publish could not be recorded. A VALUE rather than a throw, and typed rather than null,
+ * because the two interesting reasons are invariants `publishArtifact` also checks BEFORE the copy:
+ * reaching them here means a concurrent publish got between that check and this write, and the
+ * agent still deserves the refusal it would have read a moment earlier.
+ */
+export type RecordArtifactRefusal = {
+  ok: false;
+  /** `kind`: the name is pinned to the other kind. `cap`: the version ceiling. */
+  reason: "kind" | "cap" | "contended";
+};
+
+export type RecordArtifactResult = RecordedArtifact | RecordArtifactRefusal;
 
 /** The newest version of an artifact, or null when it somehow has none. */
 export async function latestArtifactVersion(
@@ -133,16 +150,23 @@ export async function latestArtifactVersion(
  * the newest). Comparing against the top of the stack gets all three right.
  *
  * Not a transaction, and deliberately — same reasoning as the bundle insert it replaces: the worst
- * interleaving leaves an artifact whose newest version's members are incomplete, which the preview
- * route reads as a 404 on the missing file (the same outcome as a wiped store) and which a retry
- * completes. What the loop below protects instead is the NUMBERING: two concurrent publishes contend
- * on `artifact_versions_number_uq`, and the loser re-reads rather than inventing a duplicate
- * ordinal or silently dropping its bytes.
+ * interleaving leaves an artifact whose newest version's members are incomplete. What makes that
+ * survivable is that the members and the card update are written the SAME way whether the version
+ * was just appended or recognised as already on top (`settleVersion` below), so the retry the tool
+ * makes after a half-written publish finishes it instead of deduping onto the wreck. What
+ * the loop protects instead is the NUMBERING: two concurrent publishes contend on
+ * `artifact_versions_number_uq`, and the loser re-reads rather than inventing a duplicate ordinal
+ * or silently dropping its bytes.
+ *
+ * The two REFUSALS are here rather than only in `publishArtifact` because they are invariants, and
+ * an invariant checked before a copy that takes seconds is a suggestion: the kind pin decides which
+ * serving door an artifact's bytes come out of, and the version ceiling is what bounds a runaway
+ * refine loop.
  */
 export async function recordArtifact(
   input: RecordArtifactInput,
-): Promise<RecordedArtifact | null> {
-  const { files, keepVersions, ...row } = input;
+): Promise<RecordArtifactResult> {
+  const { files, keepVersions, maxVersions, ...row } = input;
   const [created] = await db
     .insert(artifacts)
     .values(row)
@@ -151,12 +175,32 @@ export async function recordArtifact(
   const artifact =
     created ??
     (await findSessionArtifact({ sessionId: row.sessionId, name: row.name }));
-  if (!artifact) return null;
+  if (!artifact) return { ok: false, reason: "contended" };
+  // The kind is pinned for the artifact's life, and this is the only place that can hold it: two
+  // concurrent FIRST publishes of one name with different kinds both read "no such artifact" in
+  // `publishArtifact` and both pass its check, and the one that loses the insert lands here. A
+  // version appended anyway would put page bytes under a row the cookie-authenticated image route
+  // serves, or leave an html card whose newest version has no members to preview.
+  if (artifact.kind !== row.kind) return { ok: false, reason: "kind" };
 
   for (let attempt = 0; attempt < 3; attempt += 1) {
     const latest = await latestArtifactVersion(artifact.id);
     if (latest && latest.sha256 === row.sha256) {
-      return { artifact, version: latest, appended: false };
+      // Already on top — which does not mean finished. The version row, its members and the card
+      // update are three statements, so a publish that died between them left the artifact one of
+      // its own retries away from being right; settling again (all of it idempotent) is what makes
+      // that retry heal instead of reporting success over a version the preview would 404 on.
+      const settled = await settleVersion({
+        artifact,
+        version: latest,
+        row,
+        files,
+        keepVersions,
+      });
+      return { ok: true, artifact: settled, version: latest, appended: false };
+    }
+    if (latest && latest.versionNumber >= maxVersions) {
+      return { ok: false, reason: "cap" };
     }
     const versionNumber = (latest?.versionNumber ?? 0) + 1;
     const [version] = await db
@@ -179,48 +223,76 @@ export async function recordArtifact(
     // winner may even have written these exact bytes, in which case this becomes a no-op.
     if (!version) continue;
 
-    if (files?.length) {
-      await db
-        .insert(artifactFiles)
-        .values(
-          files.map((file) => ({
-            ...file,
-            artifactId: artifact.id,
-            versionId: version.id,
-          })),
-        )
-        .onConflictDoNothing();
-    }
-
-    // The card follows the newest version — except for `stream_index`, which stays where the FIRST
-    // publish put it so the card updates in place instead of sliding down the transcript.
-    const [updated] = await db
-      .update(artifacts)
-      .set({
-        entryPath: row.entryPath,
-        contentType: row.contentType,
-        byteSize: row.byteSize,
-        sha256: row.sha256,
-        storagePath: row.storagePath,
-        latestVersionId: version.id,
-        versionNumber,
-        // Dense ordinals plus the prune below: this is the count, without a second query.
-        versionCount: Math.min(versionNumber, keepVersions),
-        ...(row.title ? { title: row.title } : {}),
-      })
-      // Only ever forward: a slow v2 update landing after v3's must not point the card back.
-      .where(
-        and(
-          eq(artifacts.id, artifact.id),
-          lte(artifacts.versionNumber, versionNumber),
-        ),
-      )
-      .returning();
-
-    await pruneArtifactVersions(artifact.id, keepVersions);
-    return { artifact: updated ?? artifact, version, appended: true };
+    const settled = await settleVersion({
+      artifact,
+      version,
+      row,
+      files,
+      keepVersions,
+    });
+    return { ok: true, artifact: settled, version, appended: true };
   }
-  return null;
+  return { ok: false, reason: "contended" };
+}
+
+/**
+ * Everything a version needs beyond its own row: its members, the card that points at it, and the
+ * retention prune. Split out because it runs on BOTH paths — the append and the dedupe — and every
+ * statement in it is idempotent, which is what lets the dedupe path re-run it. Members conflict on
+ * `(version_id, rel_path)` and the card only ever moves forward, so re-running writes nothing when
+ * the previous attempt already did.
+ */
+async function settleVersion(input: {
+  artifact: Artifact;
+  version: ArtifactVersion;
+  row: Pick<
+    RecordArtifactInput,
+    "entryPath" | "contentType" | "byteSize" | "sha256" | "storagePath" | "title"
+  >;
+  files?: ArtifactFileInput[];
+  keepVersions: number;
+}): Promise<Artifact> {
+  const { artifact, version, row, files, keepVersions } = input;
+  if (files?.length) {
+    await db
+      .insert(artifactFiles)
+      .values(
+        files.map((file) => ({
+          ...file,
+          artifactId: artifact.id,
+          versionId: version.id,
+        })),
+      )
+      .onConflictDoNothing();
+  }
+
+  // The card follows the newest version — except for `stream_index`, which stays where the FIRST
+  // publish put it so the card updates in place instead of sliding down the transcript.
+  const [updated] = await db
+    .update(artifacts)
+    .set({
+      entryPath: row.entryPath,
+      contentType: row.contentType,
+      byteSize: row.byteSize,
+      sha256: row.sha256,
+      storagePath: row.storagePath,
+      latestVersionId: version.id,
+      versionNumber: version.versionNumber,
+      // Dense ordinals plus the prune below: this is the count, without a second query.
+      versionCount: Math.min(version.versionNumber, keepVersions),
+      ...(row.title ? { title: row.title } : {}),
+    })
+    // Only ever forward: a slow v2 update landing after v3's must not point the card back.
+    .where(
+      and(
+        eq(artifacts.id, artifact.id),
+        lte(artifacts.versionNumber, version.versionNumber),
+      ),
+    )
+    .returning();
+
+  await pruneArtifactVersions(artifact.id, keepVersions);
+  return updated ?? artifact;
 }
 
 /**

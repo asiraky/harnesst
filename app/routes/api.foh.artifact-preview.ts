@@ -58,6 +58,10 @@ export async function action(args: ActionFunctionArgs) {
   const selected = requested
     ? versions.find((version) => version.id === requested)
     : versions[0];
+  // Every version of an html artifact has an entry, because `recordArtifact` refuses to append a
+  // version of the other kind (the check `publishArtifact` makes before the copy cannot hold that
+  // on its own). The guard stays as this door's own: a card no version answers is a 404, never a
+  // token over something the preview cannot serve.
   if (!selected || !selected.entryPath) {
     throw data({ ok: false, error: "Not found" }, { status: 404 });
   }

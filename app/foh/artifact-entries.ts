@@ -35,8 +35,6 @@ export interface ArtifactRow {
   streamIndex: number;
   /** Latest version's ordinal (#292) — 1 until the name is republished. */
   versionNumber: number;
-  /** How many versions are still stored, i.e. how many the preview panel can offer. */
-  versionCount: number;
   /** Latest version id, which the image URL is scoped to. */
   latestVersionId: string | null;
 }
@@ -88,7 +86,6 @@ export function artifactEntry(row: ArtifactRow): ChatEntry {
     byteSize: row.byteSize,
     url: html ? null : artifactUrl(row.projectId, row.id, row.latestVersionId),
     version: row.versionNumber,
-    versionCount: row.versionCount,
   };
   return { id: `artifact:${row.id}`, role: "artifact", text: "", artifact };
 }

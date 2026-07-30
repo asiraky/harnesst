@@ -23,7 +23,6 @@ const row = (over: Partial<ArtifactRow> = {}): ArtifactRow => ({
   byteSize: 10,
   streamIndex: 4,
   versionNumber: 1,
-  versionCount: 1,
   latestVersionId: "ver_1",
   ...over,
 });
@@ -47,7 +46,6 @@ describe("artifactEntry versions", () => {
     const second = artifactEntry(
       row({
         versionNumber: 2,
-        versionCount: 2,
         latestVersionId: "ver_2",
         byteSize: 40,
         title: "Redrawn",
@@ -60,7 +58,6 @@ describe("artifactEntry versions", () => {
     expect(second.artifact).toMatchObject({
       id: "art_1",
       version: 2,
-      versionCount: 2,
       byteSize: 40,
       title: "Redrawn",
       // Version-scoped, so the newest publish cannot be hidden behind a cached response of the
@@ -87,7 +84,7 @@ describe("mergeArtifactEntries with versions", () => {
     // the user is discussing it in, and read as a new thing the agent just made.
     const merged = mergeArtifactEntries(
       ENTRIES,
-      [row({ versionNumber: 2, versionCount: 2, latestVersionId: "ver_2" })],
+      [row({ versionNumber: 2, latestVersionId: "ver_2" })],
       ANCHORS,
     );
 

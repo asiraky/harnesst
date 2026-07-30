@@ -1560,7 +1560,11 @@ export const artifacts = pgTable(
     latestVersionId: varchar("latest_version_id", { length: 12 }),
     /** The latest version's ordinal — the card's "v3". Rises forever; retention never rewinds it. */
     versionNumber: integer("version_number").notNull().default(1),
-    /** How many versions are still STORED (≤ the retention cap) — what the picker can offer. */
+    /**
+     * How many versions are still STORED (≤ the retention cap). Denormalized for a future listing
+     * read; the preview panel's picker does NOT come from here — it is minted with the token, from
+     * the versions themselves, because the card's copy is a poll behind.
+     */
     versionCount: integer("version_count").notNull().default(1),
     createdAt: createdAt(),
   },

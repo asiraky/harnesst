@@ -61,7 +61,7 @@ import {
   recordArtifact,
   writeArtifactBytes,
   type ArtifactFileInput,
-  type RecordedArtifact,
+  type RecordArtifactResult,
 } from "~/foh/artifact-store.server";
 import { liveFohTurnForDeployment } from "~/playground/sessions.server";
 import { getRuntime } from "~/seams/index.server";
@@ -213,13 +213,26 @@ function deny(error: string): PublishArtifactResult {
   return { ok: false, error };
 }
 
+/** How the agent is told a name is pinned to a kind — `was` omitted when only the store knows it. */
+function kindPinned(name: string, kind: string, was?: string): string {
+  const words = (value: string) => (value === "html" ? "a page" : "an image");
+  return `${name} was already published in this conversation as ${was ? words(was) : "a different kind of file"}, so it cannot be republished as ${words(kind)}. Publish it under a different name.`;
+}
+
+/** How the agent is told one name has been refined as many times as it may be. */
+function versionsExhausted(name: string): string {
+  return `${name} has been published ${MAX_ARTIFACT_VERSIONS_TOTAL} times in this conversation, which is the limit for one file. Publish the next revision under a different name.`;
+}
+
 /**
  * A bundle's content identity: a sha256 over its members' `(rel_path, sha256)` manifest, sorted.
  * The entry document's own sha would not do — a page whose stylesheet changed while `index.html`
  * did not would read as "same bytes as the version on top", no version would be appended, and the
  * user would go on being shown the previous version of the page.
  */
-function bundleSha256(files: readonly ArtifactFileInput[]): string {
+function bundleSha256(
+  files: readonly { relPath: string; sha256: string }[],
+): string {
   const manifest = [...files]
     .sort((a, b) => (a.relPath < b.relPath ? -1 : a.relPath > b.relPath ? 1 : 0))
     .map((file) => `${file.relPath}\0${file.sha256}`)
@@ -289,16 +302,19 @@ export async function publishArtifact(
     // The kind is pinned for the artifact's life: the serving routes are chosen by it (an image is
     // served same-origin behind the viewer's cookie, a page only through the sandboxed preview), so
     // a row whose kind could change under a live preview token would move bytes between two very
-    // differently trusted doors.
-    return deny(
-      `${source.name} was already published in this conversation as ${existing.kind === "html" ? "a page" : "an image"}, so it cannot be republished as ${kind === "html" ? "a page" : "an image"}. Publish it under a different name.`,
-    );
+    // differently trusted doors. Only the free half of the refusal is here — `recordArtifact` holds
+    // it against the publish that raced this read.
+    return deny(kindPinned(source.name, kind, existing.kind));
   }
-  if (existing && existing.versionNumber >= MAX_ARTIFACT_VERSIONS_TOTAL) {
-    return deny(
-      `${source.name} has been published ${MAX_ARTIFACT_VERSIONS_TOTAL} times in this conversation, which is the limit for one file. Publish the next revision under a different name.`,
-    );
-  }
+  // At the version ceiling one publish is still legitimate: a REDELIVERY of the bytes already on
+  // top, because the tool's POST is best-effort and retried and denying it would report a failure
+  // for a publish that landed. Which one it is cannot be known before the copy, so the refusal
+  // moves down to where the bytes have a sha — still before any of them are written, so a runaway
+  // refine loop at the cap costs a copy and nothing on the disk.
+  const capSha =
+    existing && existing.versionNumber >= MAX_ARTIFACT_VERSIONS_TOTAL
+      ? existing.sha256
+      : null;
 
   const usage = await deps.usage({
     projectId: project.id,
@@ -339,13 +355,14 @@ export async function publishArtifact(
       : null,
     streamIndex: session.streamIndex,
     keepVersions: MAX_ARTIFACT_VERSIONS_KEPT,
+    maxVersions: MAX_ARTIFACT_VERSIONS_TOTAL,
   };
 
   // Budget-checked and destination-resolved before a single byte is read: everything above is a
   // couple of indexed queries, while the copies below hold up to 25 MB of this process's heap.
   return kind === "html"
-    ? publishBundle({ deployment, source, common }, deps)
-    : publishImage({ deployment, source, common }, deps);
+    ? publishBundle({ deployment, source, common, capSha }, deps)
+    : publishImage({ deployment, source, common, capSha }, deps);
 }
 
 /** The row fields both kinds share, resolved before any bytes are read. */
@@ -358,16 +375,39 @@ interface ArtifactRowCommon {
   title: string | null;
   streamIndex: number;
   keepVersions: number;
+  maxVersions: number;
 }
 
 interface PublishHalfInput {
   deployment: { id: string };
   source: { path: string; name: string };
   common: ArtifactRowCommon;
+  /**
+   * Set only when this name is already at the version ceiling: the sha of the version on top, the
+   * one content identity still allowed through (a retried delivery of it). Anything else is refused
+   * once its own sha is known — before its bytes are written.
+   */
+  capSha: string | null;
 }
 
 const BUSY = "harnesst is already copying as many files as it can at once. Try publishing again in a moment.";
 const RECORD_FAILED = "harnesst could not record the artifact. Try publishing again.";
+
+/**
+ * What the store refused, in the agent's words. Two of the three are the refusals `publishArtifact`
+ * already made before the copy: reaching them here means a concurrent publish of the same name got
+ * in between, and the agent should read the same thing it would have read a moment earlier rather
+ * than "try again" for something no retry can fix.
+ */
+function recordRefusal(
+  reason: "kind" | "cap" | "contended",
+  name: string,
+  kind: string,
+): string {
+  if (reason === "kind") return kindPinned(name, kind);
+  if (reason === "cap") return versionsExhausted(name);
+  return RECORD_FAILED;
+}
 
 /**
  * Publish one image (#290): copy the file under a concurrency slot, read its real type out of its
@@ -375,7 +415,7 @@ const RECORD_FAILED = "harnesst could not record the artifact. Try publishing ag
  * than claimed because the image route serves same-origin behind the operator's own cookie.
  */
 async function publishImage(
-  { deployment, source, common }: PublishHalfInput,
+  { deployment, source, common, capSha }: PublishHalfInput,
   deps: PublishArtifactDeps,
 ): Promise<PublishArtifactResult> {
   const slot = await withArtifactCopySlot(() =>
@@ -397,9 +437,12 @@ async function publishImage(
   }
 
   const sha256 = createHash("sha256").update(copied.bytes).digest("hex");
+  // At the ceiling only the bytes already on top may come through — see `capSha`. Checked before the
+  // write so a refused publish leaves nothing on the disk.
+  if (capSha && capSha !== sha256) return deny(versionsExhausted(source.name));
   const storagePath = await deps.writeBytes(sha256, copied.bytes);
 
-  let recorded: RecordedArtifact | null;
+  let recorded: RecordArtifactResult;
   try {
     recorded = await deps.record({
       ...common,
@@ -414,7 +457,7 @@ async function publishImage(
     console.error("[foh] artifact publish failed to record:", error);
     return deny(RECORD_FAILED);
   }
-  if (!recorded) return deny(RECORD_FAILED);
+  if (!recorded.ok) return deny(recordRefusal(recorded.reason, source.name, "image"));
   const { artifact, version, appended } = recorded;
 
   return {
@@ -440,7 +483,7 @@ async function publishImage(
  * decide what may be SERVED, and the preview route trusts the stored rows completely.
  */
 async function publishBundle(
-  { deployment, source, common }: PublishHalfInput,
+  { deployment, source, common, capSha }: PublishHalfInput,
   deps: PublishArtifactDeps,
 ): Promise<PublishArtifactResult> {
   const slot = await withArtifactCopySlot(() =>
@@ -480,20 +523,28 @@ async function publishBundle(
     return deny(`${entryPath} is empty, so there is no page to show.`);
   }
 
+  // Hashed before anything is written, because the bundle's identity is the members' manifest and
+  // the ceiling check below needs it: a refused publish must not have spent the disk first.
+  const hashed = members.map((member) => ({
+    ...member,
+    sha256: createHash("sha256").update(member.bytes).digest("hex"),
+  }));
+  const sha256 = bundleSha256(hashed);
+  if (capSha && capSha !== sha256) return deny(versionsExhausted(source.name));
+
   const files: ArtifactFileInput[] = [];
-  for (const member of members) {
-    const sha256 = createHash("sha256").update(member.bytes).digest("hex");
+  for (const member of hashed) {
     files.push({
       relPath: member.relPath,
       contentType: member.contentType,
       byteSize: member.bytes.length,
-      sha256,
-      storagePath: await deps.writeBytes(sha256, member.bytes),
+      sha256: member.sha256,
+      storagePath: await deps.writeBytes(member.sha256, member.bytes),
     });
   }
   const entry = files.find((file) => file.relPath === entryPath)!;
 
-  let recorded: RecordedArtifact | null;
+  let recorded: RecordArtifactResult;
   try {
     recorded = await deps.record({
       ...common,
@@ -503,7 +554,7 @@ async function publishBundle(
       // The SUM, not the entry's size: the daily per-repo byte ceiling reads this column, and
       // charging one member would let a bundle spend the disk a stylesheet at a time.
       byteSize: files.reduce((total, file) => total + file.byteSize, 0),
-      sha256: bundleSha256(files),
+      sha256,
       storagePath: entry.storagePath,
       files,
     });
@@ -511,7 +562,7 @@ async function publishBundle(
     console.error("[foh] artifact bundle publish failed to record:", error);
     return deny(RECORD_FAILED);
   }
-  if (!recorded) return deny(RECORD_FAILED);
+  if (!recorded.ok) return deny(recordRefusal(recorded.reason, source.name, "html"));
   const { artifact, version, appended } = recorded;
 
   return {

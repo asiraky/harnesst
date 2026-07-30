@@ -120,7 +120,7 @@ function makeDeps(
     ) ?? null;
 
   const record: PublishArtifactDeps["record"] = async (input) => {
-    const { files: members, keepVersions, ...row } = input;
+    const { files: members, keepVersions, maxVersions, ...row } = input;
     let artifact = await findArtifact({
       sessionId: row.sessionId,
       name: row.name,
@@ -136,10 +136,16 @@ function makeDeps(
       } as Artifact;
       rows.push(artifact);
     }
+    // The store's own refusals, which are the ones a publish racing another publish of the same
+    // name meets: the kind pin and the version ceiling are re-decided where the row is written.
+    if (artifact.kind !== row.kind) return { ok: false as const, reason: "kind" as const };
     const stack = versions.filter((v) => v.artifactId === artifact.id);
     const latest = stack.at(-1) ?? null;
     if (latest && latest.sha256 === row.sha256) {
-      return { artifact, version: latest, appended: false };
+      return { ok: true as const, artifact, version: latest, appended: false };
+    }
+    if (latest && latest.versionNumber >= maxVersions) {
+      return { ok: false as const, reason: "cap" as const };
     }
     const version = {
       ...row,
@@ -161,7 +167,7 @@ function makeDeps(
       versionCount: Math.min(version.versionNumber, keepVersions),
       ...(row.title ? { title: row.title } : {}),
     });
-    return { artifact, version, appended: true };
+    return { ok: true as const, artifact, version, appended: true };
   };
 
   return {
@@ -607,12 +613,14 @@ describe("publishArtifact versions", () => {
     expect(deps.copies).toHaveLength(1);
   });
 
-  it("refuses once one name has been republished to the limit, before reading a byte", async () => {
+  it("refuses new bytes once one name has been republished to the limit, without storing them", async () => {
     const deploymentId = await seedDeployment();
-    const deps = makeDeps();
+    let bytes = PNG;
+    const deps = makeDeps({ copy: async () => ({ ok: true, bytes }) });
 
     await publishArtifact({ deploymentId, path: "artifacts/chart.png" }, deps);
     deps.rows[0].versionNumber = MAX_ARTIFACT_VERSIONS_TOTAL;
+    bytes = Buffer.from([...PNG, 0x05]);
     const capped = await publishArtifact(
       { deploymentId, path: "artifacts/chart.png" },
       deps,
@@ -627,7 +635,54 @@ describe("publishArtifact versions", () => {
       new RegExp(`published ${MAX_ARTIFACT_VERSIONS_TOTAL} times`),
     );
     expect(capped.error).toMatch(/different name/i);
-    expect(deps.copies).toHaveLength(1);
+    // The refusal costs a copy (the bytes are what it is decided on) but never the disk: one write,
+    // from the publish that succeeded.
+    expect(deps.written).toHaveLength(1);
+    expect(deps.versions).toHaveLength(1);
+  });
+
+  it("still answers a redelivery at the limit as the no-op it is", async () => {
+    const deploymentId = await seedDeployment();
+    const deps = makeDeps();
+
+    const first = await publishArtifact(
+      { deploymentId, path: "artifacts/chart.png" },
+      deps,
+    );
+    deps.rows[0].versionNumber = MAX_ARTIFACT_VERSIONS_TOTAL;
+    // The tool's POST is best-effort and retried, so the request that follows a publish whose
+    // response was lost carries the bytes that already landed. Refusing it at the ceiling would
+    // tell the agent its publish failed when the card is showing it.
+    const retried = await publishArtifact(
+      { deploymentId, path: "artifacts/chart.png" },
+      deps,
+    );
+
+    expect(first).toMatchObject({ ok: true, updated: true });
+    expect(retried).toMatchObject({ ok: true, updated: false, version: 1 });
+    expect(deps.versions).toHaveLength(1);
+  });
+
+  it("relays the store's own kind refusal, which is where a racing publish meets it", async () => {
+    const deploymentId = await seedDeployment();
+    const deps = makeDeps();
+
+    await publishArtifact({ deploymentId, path: "artifacts/report.png" }, deps);
+    // What a publish that raced another publish of the same name sees: its pre-copy check read
+    // "no such name", and the row that exists by the time it writes is the other kind. The check
+    // before the copy cannot hold this — it is taken seconds earlier.
+    deps.findArtifact = async () => null;
+    const raced = await publishArtifact(
+      { deploymentId, path: "artifacts/report.png", kind: "html" },
+      deps,
+    );
+
+    expect(raced.ok).toBe(false);
+    if (raced.ok) return;
+    expect(raced.error).toMatch(/cannot be republished as a page/i);
+    // Nothing landed under the wrong kind: an html version on an image card is bytes at the
+    // cookie-authenticated image door.
+    expect(deps.versions).toHaveLength(1);
   });
 
   it("charges a new card to the conversation ceiling, but lets an existing one keep refining", async () => {
