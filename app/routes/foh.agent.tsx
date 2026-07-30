@@ -308,6 +308,12 @@ function useArchive({
     return () => clearTimeout(timer);
   }, [notice]);
 
+  // React Router REUSES this component across `/t/:projectId/:agentId`, so without this the strip
+  // outlives the list it belongs to: switching agents mid-window would leave an Undo that silently
+  // restores the previous agent's conversation, and switching repos would post the old session id
+  // to the new repo's endpoint. The notice belongs to one list; it dies with it.
+  useEffect(() => setNotice(null), [basePath]);
+
   // The conversation the user is reading can be the one they just archived — the server now
   // 404s it, so step back to the list rather than let the revalidation break the pane.
   useEffect(() => {

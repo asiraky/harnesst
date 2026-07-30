@@ -83,9 +83,16 @@ export async function resolveInboxForSession(
  */
 export async function resolveInboxForArchivedSession(
   sessionId: string,
+  /**
+   * The archive's own timestamp. Fences the resolve to the generation of items that existed
+   * when the row was archived: a channel park landing between the archive UPDATE and this call
+   * un-archives the session and files a FRESH question, and resolving that one would leave a
+   * live conversation parked on a question with no bell entry behind it.
+   */
+  archivedAt: Date,
   store: DataStore = getRuntime().data,
 ): Promise<void> {
-  await store.inboxItems.resolveBySession(sessionId);
+  await store.inboxItems.resolveBySession(sessionId, undefined, archivedAt);
 }
 
 /** Record a terminal-success `finished` item (D13) for a FOH session's recipient. */

@@ -169,11 +169,37 @@ describe("resolveInboxForArchivedSession (#278)", () => {
       store,
     );
 
-    await resolveInboxForArchivedSession(SESSION, store);
+    await resolveInboxForArchivedSession(SESSION, new Date(8_640_000_000_000), store);
 
     expect(store.getInboxItem(q.id)?.status).toBe("resolved");
     expect(store.getInboxItem(fin.id)?.status).toBe("resolved");
     expect(store.getInboxItem(otherSession.id)?.status).toBe("pending");
+  });
+
+  it("leaves alone an item filed AFTER the archive — a park that resurrected the row", async () => {
+    const before = await openInboxQuestion(
+      { projectId: PROJECT, sessionId: SESSION, userId: USER, request: request() },
+      store,
+    );
+    const archivedAt = new Date(Date.now() + 1_000);
+    const after = await openInboxQuestion(
+      {
+        projectId: PROJECT,
+        sessionId: SESSION,
+        userId: USER,
+        request: request({ requestId: "req_2" }),
+      },
+      store,
+    );
+    // The fake stamps createdAt from a monotonic counter, so force the ordering the race produces.
+    store.setInboxItemCreatedAt(after.id, new Date(archivedAt.getTime() + 1_000));
+
+    await resolveInboxForArchivedSession(SESSION, archivedAt, store);
+
+    // A channel park between the archive UPDATE and this call un-archives the session and files a
+    // fresh question. Resolving it would leave a LIVE conversation parked with no bell entry.
+    expect(store.getInboxItem(before.id)?.status).toBe("resolved");
+    expect(store.getInboxItem(after.id)?.status).toBe("pending");
   });
 });
 

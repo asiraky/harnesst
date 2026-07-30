@@ -288,7 +288,7 @@ export async function archiveFohSession(input: {
   // two statements, so a resolve that threw after the update committed left the conversation
   // hidden with items still pending, and this retry is the only path that can still repair it.
   if (session.archivedAt) {
-    await resolveInboxForArchivedSession(session.id);
+    await resolveInboxForArchivedSession(session.id, session.archivedAt);
     return { ok: true, session };
   }
   // A live turn has to be stopped deliberately first — archiving mid-turn would hide a
@@ -330,7 +330,7 @@ export async function archiveFohSession(input: {
       includeArchived: true,
     });
     if (current?.archivedAt) {
-      await resolveInboxForArchivedSession(current.id);
+      await resolveInboxForArchivedSession(current.id, current.archivedAt);
       return { ok: true, session: current };
     }
     return { ok: false, reason: "working" };
@@ -338,7 +338,7 @@ export async function archiveFohSession(input: {
   // The bell items go with the park — ALL of them, unlike a deliberate stop (api.foh.stop),
   // which leaves `finished` to be acknowledged by opening the session. Nobody can open this one
   // any more, so an unresolved item would be a permanent bell entry pointing at a 404.
-  await resolveInboxForArchivedSession(session.id);
+  await resolveInboxForArchivedSession(session.id, now);
   return { ok: true, session: row };
 }
 
@@ -523,7 +523,10 @@ export async function listArchivedFohSessions(
         : null) ??
       // created_by IS NULL with no opening agent: a channel park (WS1) nobody in harnesst started.
       "the team",
-    openedByAgent: session.createdBy == null,
+    // A channel park writes BOTH `created_by` and `opened_by_agent_id` as null — nobody in
+    // harnesst opened it and no peer agent did either. Keying off `created_by` alone labelled
+    // those "the team (agent)".
+    openedByAgent: session.openedByAgentId != null,
     archivedAt: (session.archivedAt ?? session.updatedAt).toISOString(),
     archivedBy: session.archivedBy
       ? (personLabel.get(session.archivedBy) ?? null)
@@ -1013,6 +1016,12 @@ export async function savePlaygroundSessionCursor(input: {
       and(
         eq(playgroundSessions.id, input.id),
         ne(playgroundSessions.status, "stopped"),
+        // Archive is a terminal state for this writer for the same reason `stopped` is (#278):
+        // a reconcile that read a live row, blocked on the eve tail, then lost a race with an
+        // archive would otherwise write `status: 'running'` onto a hidden row — a turn nobody
+        // can open or stop, which BOH would still offer to delete. Fencing the claim alone is
+        // not enough; the cursor writer reaches the row without one.
+        isNull(playgroundSessions.archivedAt),
         input.claimId
           ? eq(playgroundSessions.turnClaimId, input.claimId)
           : undefined,

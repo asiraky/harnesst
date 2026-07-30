@@ -400,7 +400,16 @@ export interface InboxItemRepo {
   /** Mark one item resolved (idempotent on already-resolved rows). */
   resolve(id: string): Promise<void>;
   /** Resolve every pending item for a session, optionally only the given kinds. */
-  resolveBySession(sessionId: string, kinds?: string[]): Promise<void>;
+  /**
+   * `createdAtOrBefore` fences the resolve to one generation of items: an archive resolves what
+   * existed when it ran, never a question filed a moment later by a park that resurrected the
+   * session (#278).
+   */
+  resolveBySession(
+    sessionId: string,
+    kinds?: string[],
+    createdAtOrBefore?: Date,
+  ): Promise<void>;
   /** A session's pending items, oldest first (dedupe by requestId happens here). */
   findPendingBySession(sessionId: string): Promise<InboxItem[]>;
   /**

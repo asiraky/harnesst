@@ -12,6 +12,7 @@ import { ensureProjectTeam, listMemberProjectIds } from "~/auth/teams.server";
 import type { DataStore, Project } from "~/data/ports";
 import { listAgents } from "~/db/queries.server";
 import { agentPresenceMap, type AgentPresence } from "~/foh/presence.server";
+import { listFohSessionsByIds } from "~/playground/sessions.server";
 import { getRuntime } from "~/seams/index.server";
 
 export interface FohViewer {
@@ -46,6 +47,31 @@ export interface FohSidebarDeps {
   memberProjectIds?: (userId: string, orgId: string) => Promise<string[]>;
   ensureTeam?: (orgId: string, project: Project) => Promise<unknown>;
   presence?: (agentIds: string[]) => Promise<Map<string, AgentPresence>>;
+  /** #278: resolves pending items' sessions so archived ones can be dropped from the badges. */
+  sessionsByIds?: (
+    ids: string[],
+  ) => Promise<Array<{ id: string; archivedAt?: Date | null }>>;
+}
+
+/**
+ * Drop pending items whose FOH session has been archived (#278). Archiving resolves the items it
+ * can see, but a park or a settling turn can file one in the same instant; filtering on the read
+ * side means such an item can never become a badge that nothing behind it can clear.
+ */
+async function withoutArchivedSessions<T extends { sessionId: string }>(
+  items: T[],
+  deps: FohSidebarDeps,
+): Promise<T[]> {
+  if (items.length === 0) return items;
+  const sessions = await (deps.sessionsByIds ?? listFohSessionsByIds)([
+    ...new Set(items.map((item) => item.sessionId)),
+  ]);
+  const archived = new Set(
+    sessions.flatMap((session) => (session.archivedAt ? [session.id] : [])),
+  );
+  return archived.size === 0
+    ? items
+    : items.filter((item) => !archived.has(item.sessionId));
 }
 
 /** The project ids the viewer may see in FOH — the one scope rule every FOH list shares. */
@@ -95,7 +121,7 @@ export async function loadFohSidebar(
     projects.map((project) => listAgents(project.id, store)),
   );
   const agentIds = rosters.flat().map((agent) => agent.id);
-  const [presence, pending] = await Promise.all([
+  const [presence, allPending] = await Promise.all([
     (deps.presence ?? ((ids: string[]) => agentPresenceMap(ids, { store })))(
       agentIds,
     ),
@@ -104,6 +130,10 @@ export async function loadFohSidebar(
       viewer.userId,
     ),
   ]);
+
+  // The badges must agree with the flyout, which drops archived sessions (#278). Counting an item
+  // the flyout won't show is the worst of both: a needs-you dot with nothing behind it.
+  const pending = await withoutArchivedSessions(allPending, deps);
 
   const needsYouByAgent = new Map<string, number>();
   for (const item of pending) {

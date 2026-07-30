@@ -778,7 +778,7 @@ export const drizzleDataStore: DataStore = {
         .set({ status: "resolved", resolvedAt: new Date(), updatedAt: new Date() })
         .where(and(eq(inboxItems.id, id), eq(inboxItems.status, "pending")));
     },
-    async resolveBySession(sessionId, kinds) {
+    async resolveBySession(sessionId, kinds, createdAtOrBefore) {
       await db
         .update(inboxItems)
         .set({ status: "resolved", resolvedAt: new Date(), updatedAt: new Date() })
@@ -787,6 +787,9 @@ export const drizzleDataStore: DataStore = {
             eq(inboxItems.sessionId, sessionId),
             eq(inboxItems.status, "pending"),
             kinds && kinds.length > 0 ? inArray(inboxItems.kind, kinds) : undefined,
+            createdAtOrBefore
+              ? lte(inboxItems.createdAt, createdAtOrBefore)
+              : undefined,
           ),
         );
     },

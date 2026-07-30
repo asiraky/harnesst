@@ -188,7 +188,10 @@ describe("archiveFohSession", () => {
     });
     // The all-kinds variant, not the question/approval one a stop uses: a `finished` item left
     // pending here would be a bell entry whose link 404s and which nothing can ever resolve.
-    expect(inbox.resolveInboxForArchivedSession).toHaveBeenCalledWith("ps_1");
+    expect(inbox.resolveInboxForArchivedSession).toHaveBeenCalledWith(
+      "ps_1",
+      expect.any(Date),
+    );
   });
 
   it("treats an already-archived row as done, but still retries the inbox cleanup", async () => {
@@ -206,7 +209,10 @@ describe("archiveFohSession", () => {
     // The cleanup DOES run again. The row update and the resolve are two statements, so a resolve
     // that threw after the update committed left the conversation hidden with items still
     // pending; this retry is the only path left that can repair it.
-    expect(inbox.resolveInboxForArchivedSession).toHaveBeenCalledWith("ps_1");
+    expect(inbox.resolveInboxForArchivedSession).toHaveBeenCalledWith(
+      "ps_1",
+      expect.any(Date),
+    );
   });
 
   it("reports not_found when the session is outside the viewer's scope", async () => {
@@ -250,7 +256,10 @@ describe("archiveFohSession", () => {
       ok: true,
       session: winner,
     });
-    expect(inbox.resolveInboxForArchivedSession).toHaveBeenCalledWith("ps_1");
+    expect(inbox.resolveInboxForArchivedSession).toHaveBeenCalledWith(
+      "ps_1",
+      expect.any(Date),
+    );
   });
 });
 

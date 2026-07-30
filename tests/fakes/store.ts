@@ -66,6 +66,8 @@ export interface FakeStore extends DataStore {
   ): InboxItem;
   /** Inspect an inbox item (including resolved ones the pending queries hide). */
   getInboxItem(id: string): InboxItem | null;
+  /** Restamp an item's createdAt — the fake's counter can't express a real-time race. */
+  setInboxItemCreatedAt(id: string, createdAt: Date): void;
   /** Inspect a viewer's read cursor for a session. */
   getConversationRead(sessionId: string, userId: string): ConversationRead | null;
   /** Force the next N release inserts to raise a version-collision (exercises retry). */
@@ -213,6 +215,10 @@ export function makeFakeStore(): FakeStore {
     },
     getInboxItem(iid) {
       return inboxItems.get(iid) ?? null;
+    },
+    setInboxItemCreatedAt(iid, createdAt) {
+      const item = inboxItems.get(iid);
+      if (item) inboxItems.set(iid, { ...item, createdAt });
     },
     getConversationRead(sessionId, userId) {
       return conversationReads.get(`${sessionId}|${userId}`) ?? null;
@@ -931,10 +937,11 @@ export function makeFakeStore(): FakeStore {
           updatedAt: new Date(seq),
         });
       },
-      async resolveBySession(sessionId, kinds) {
+      async resolveBySession(sessionId, kinds, createdAtOrBefore) {
         for (const [iid, item] of inboxItems) {
           if (item.sessionId !== sessionId || item.status !== "pending") continue;
           if (kinds && kinds.length > 0 && !kinds.includes(item.kind)) continue;
+          if (createdAtOrBefore && item.createdAt > createdAtOrBefore) continue;
           inboxItems.set(iid, {
             ...item,
             status: "resolved",
