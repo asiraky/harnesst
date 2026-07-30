@@ -103,10 +103,18 @@ export function PublishControl() {
   const running = !!data?.running;
   const runningRef = useRef(running);
   runningRef.current = running;
+  // A completed navigation can have staged repo drafts without remounting this global control
+  // (marketplace update/repair/uninstall redirects back to the same Settings route). Refresh on
+  // every committed location so the publish nudge appears with the confirmation instead of at
+  // the next idle poll.
+  useEffect(() => {
+    if (!projectId) return;
+    load(`/repos/${projectId}/publish`);
+  }, [projectId, location.key, load]);
+
   useEffect(() => {
     if (!projectId) return;
     const url = `/repos/${projectId}/publish`;
-    load(url);
     let timer: ReturnType<typeof setInterval>;
     const schedule = () => {
       const ms = runningRef.current ? ACTIVE_POLL_MS : IDLE_POLL_MS;
@@ -117,7 +125,8 @@ export function PublishControl() {
     };
     schedule();
     return () => clearInterval(timer);
-    // Re-run when the running state flips so the cadence switches between 3s and 10s.
+    // Re-run when the running state flips so the cadence switches between 3s and 10s. Immediate
+    // loads are owned by the location effect above; this effect only maintains the poll.
   }, [projectId, load, running]);
 
   const [open, setOpen] = useState(false);
