@@ -14,7 +14,7 @@ function renderInRouter(ui: React.ReactElement): string {
 
 const EXPECTED_LABELS: Record<"single" | "repo" | "member", string[]> = {
   single: ["Overview", "Deployment", "Playground", "Runs", "Assistant", "Settings"],
-  repo: ["Overview", "Deployment", "Assistant", "Settings"],
+  repo: ["Agents", "Deployment", "Assistant", "Settings"],
   member: ["Overview", "Deployment", "Playground", "Runs", "Settings"],
 };
 
@@ -29,6 +29,9 @@ describe("AgentNav", () => {
 
       for (const label of EXPECTED_LABELS[level]) {
         expect(html).toContain(`>${label}</a>`);
+      }
+      if (level === "repo") {
+        expect(html).not.toContain(">Overview</a>");
       }
       // Settings must be a link whose href ends in /settings (the tab users couldn't find on mobile).
       expect(html).toMatch(/href="\/repos\/NuOMEPzKzcmQ\/settings"/);

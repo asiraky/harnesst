@@ -662,7 +662,7 @@ function TeamSurface({
   };
 
   if (members.length === 0) {
-    return <EmptyTeamState overviewHref={base} action={<AddMemberDialog />} />;
+    return <EmptyTeamState agentsHref={base} action={<AddMemberDialog />} />;
   }
 
   return (
