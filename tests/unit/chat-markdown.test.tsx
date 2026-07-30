@@ -1,0 +1,227 @@
+/**
+ * `MarkdownText` renders every agent reply on every surface (FOH transcript, assistant,
+ * playground, marketplace), and until #272 its hand-rolled tokenizer only understood a strict
+ * `[label](url)` — bare URLs, emails, angle-bracket autolinks, parenthesised URLs and titled
+ * links all failed, the last two silently. These cover the table in that issue plus the
+ * surrounding markdown the old renderer already handled, so a parser swap can't regress it.
+ */
+import { renderToStaticMarkup } from "react-dom/server";
+import { describe, expect, it } from "vitest";
+
+import { MarkdownText } from "~/components/chat";
+
+const render = (text: string) =>
+  renderToStaticMarkup(<MarkdownText text={text} />);
+
+describe("MarkdownText links", () => {
+  it("autolinks a bare URL in prose", () => {
+    const html = render("See https://harnesst.dev/docs for details");
+    expect(html).toContain('href="https://harnesst.dev/docs"');
+    expect(html).toContain(">https://harnesst.dev/docs</a>");
+  });
+
+  it("autolinks a bare email address as mailto", () => {
+    const html = render("Email me at asiraky@gmail.com");
+    expect(html).toContain('href="mailto:asiraky@gmail.com"');
+  });
+
+  it("renders an angle-bracket autolink", () => {
+    const html = render("<https://harnesst.dev/docs>");
+    expect(html).toContain('href="https://harnesst.dev/docs"');
+  });
+
+  it("keeps a parenthesised URL intact instead of truncating at the first )", () => {
+    const html = render("[wiki](https://en.wikipedia.org/wiki/Foo_(bar))");
+    expect(html).toContain('href="https://en.wikipedia.org/wiki/Foo_(bar)"');
+    // The trailing paren belongs to the href, not the surrounding text.
+    expect(html).not.toContain("</a>)");
+  });
+
+  it("renders a titled link rather than dropping the anchor", () => {
+    const html = render('[titled](https://example.com "Docs")');
+    expect(html).toContain('href="https://example.com"');
+    expect(html).toContain('title="Docs"');
+    expect(html).toContain(">titled</a>");
+  });
+
+  it("renders a plain markdown link", () => {
+    const html = render("[the docs](https://harnesst.dev/docs)");
+    expect(html).toContain('href="https://harnesst.dev/docs"');
+    expect(html).toContain(">the docs</a>");
+  });
+
+  it("opens external links in a new tab and keeps app paths in-tab", () => {
+    const external = render("[out](https://harnesst.dev)");
+    expect(external).toContain('target="_blank"');
+    expect(external).toContain('rel="noreferrer"');
+
+    const internal = render("[settings](/projects/abc/settings)");
+    expect(internal).toContain('href="/projects/abc/settings"');
+    expect(internal).not.toContain("target=");
+    expect(internal).not.toContain("rel=");
+  });
+
+  it("keeps a GFM footnote jump as a same-tab fragment link", () => {
+    const html = render("A claim[^1]\n\n[^1]: the source");
+    const href = html.match(/href="(#[^"]*fn-1)"/);
+    expect(href).not.toBeNull();
+    // A jump within the page must not open a tab.
+    expect(html).not.toContain(`href="${href![1]}" target`);
+  });
+
+  it("shows the label and the raw target when a URL is rejected, never swallowing it", () => {
+    const html = render("[click me](javascript:alert(1))");
+    expect(html).not.toContain("<a");
+    expect(html).not.toContain("javascript:alert(1)&quot;");
+    // Both halves stay visible so nothing is silently lost.
+    expect(html).toContain("click me");
+    expect(html).toContain("javascript:alert(1)");
+  });
+
+  it("rejects a protocol-relative target instead of treating it as an app path", () => {
+    const html = render("[evil](//evil.example.com/steal)");
+    expect(html).not.toContain("<a");
+    expect(html).toContain("//evil.example.com/steal");
+  });
+});
+
+describe("MarkdownText blocks", () => {
+  it("still renders the inline and block markdown the old tokenizer handled", () => {
+    const html = render(
+      [
+        "# Heading",
+        "",
+        "Some **bold**, some _emphasis_, and `inline code`.",
+        "",
+        "- first",
+        "- second",
+        "",
+        "1. one",
+        "2. two",
+        "",
+        "> quoted",
+        "",
+        "---",
+        "",
+        "```ts",
+        "const x = 1;",
+        "```",
+      ].join("\n"),
+    );
+
+    expect(html).toContain("<h3");
+    expect(html).toContain("<strong>bold</strong>");
+    expect(html).toContain("<em>emphasis</em>");
+    expect(html).toContain("inline code</code>");
+    expect(html).toContain("<ul");
+    expect(html).toContain("<ol");
+    expect(html).toContain("<blockquote");
+    expect(html).toContain("<hr");
+    expect(html).toContain("<pre");
+    expect(html).toContain("const x = 1;");
+  });
+
+  it("keeps a single newline as a line break, as the old renderer did", () => {
+    expect(render("first line\nsecond line")).toContain("<br/>");
+  });
+
+  it("preserves runs of spaces so hand-aligned plaintext still lines up", () => {
+    const html = render("Name:    Alice\nRole:    admin");
+    expect(html).toContain("whitespace-pre-wrap");
+    expect(html).toContain("Name:    Alice");
+  });
+
+  it("does not turn a line break into two under preserved whitespace", () => {
+    // A `br` carries a source-formatting newline that `whitespace-pre-wrap` would also render.
+    expect(render("first line\nsecond line")).not.toContain("<br/>\n");
+    expect(render("hard break  \nnext")).not.toContain("<br/>\n");
+  });
+
+  it("renders an image as a link rather than fetching it on open", () => {
+    const html = render("![pixel](https://attacker.example/pixel?id=1)");
+    expect(html).not.toContain("<img");
+    expect(html).toContain('href="https://attacker.example/pixel?id=1"');
+    expect(html).toContain(">pixel</a>");
+  });
+
+  it("shows the text verbatim rather than parsing absurdly nested input", () => {
+    // ~2000 nested blockquotes overflow the parser's stack; on the server that throws past any
+    // error boundary and takes the whole transcript with it.
+    const deep = "> ".repeat(2000) + "boom";
+    expect(() => render(deep)).not.toThrow();
+    const html = render(deep);
+    expect(html).not.toContain("<blockquote");
+    expect(html).toContain("boom");
+  });
+
+  it("guards nesting stacked onto a single line, not just indented nesting", () => {
+    // `- - - …` opens a list per marker, so the depth is on one line rather than down the left edge.
+    const deep = "- ".repeat(1200) + "boom";
+    expect(() => render(deep)).not.toThrow();
+    expect(render(deep)).toContain("boom");
+  });
+
+  it("does not nest a second anchor inside a linked image", () => {
+    const html = render(
+      "[![pixel](https://attacker.example/pixel)](https://docs.example)",
+    );
+    // Nested anchors are invalid HTML the browser un-nests into two broken links.
+    expect(html).not.toMatch(/<a[^>]*>[^<]*<a/);
+    expect(html).toContain('href="https://docs.example"');
+    expect(html).toContain("pixel");
+  });
+
+  it("keeps the ids a footnote backlink needs", () => {
+    const html = render("A claim[^1]\n\n[^1]: the source");
+    // The backlink's href has to have a matching id to jump to.
+    const backref = html.match(/href="#([^"]*fnref-1)"/);
+    expect(backref).not.toBeNull();
+    expect(html).toContain(`id="${backref![1]}"`);
+  });
+
+  it("scopes footnote ids per turn so two replies on a page don't collide", () => {
+    // Both turns render in one tree, as a transcript does — ids are page-global.
+    const html = renderToStaticMarkup(
+      <>
+        <MarkdownText text={"First[^1]\n\n[^1]: a"} />
+        <MarkdownText text={"Second[^1]\n\n[^1]: b"} />
+      </>,
+    );
+    const ids = [...html.matchAll(/id="([^"]*fn-1)"/g)].map((m) => m[1]);
+    expect(ids).toHaveLength(2);
+    expect(ids[0]).not.toEqual(ids[1]);
+  });
+
+  it("still parses ordinary nesting", () => {
+    const html = render("> > quoted twice");
+    expect(html).toContain("<blockquote");
+    expect(html).toContain("quoted twice");
+  });
+
+  it("renders a code fence without a trailing blank line", () => {
+    expect(render("```\nhello\n```")).toContain("<code>hello</code>");
+  });
+
+  it("renders a GFM table", () => {
+    const html = render(["| a | b |", "| --- | --- |", "| 1 | 2 |"].join("\n"));
+    expect(html).toContain("<table");
+    expect(html).toContain("<th");
+    expect(html).toContain("<td");
+  });
+
+  it("shows raw HTML as escaped text and never as live markup", () => {
+    const html = render(
+      "Use <branch-name> and never <script>alert(1)</script>",
+    );
+    expect(html).toContain("&lt;branch-name&gt;");
+    expect(html).toContain("&lt;script&gt;");
+    expect(html).not.toContain("<script>");
+  });
+
+  it("renders mid-stream text with unterminated markers without throwing", () => {
+    expect(() =>
+      render("Half **bold and an open fence\n```ts\nconst a"),
+    ).not.toThrow();
+    expect(render("Half **bold")).toContain("Half **bold");
+  });
+});

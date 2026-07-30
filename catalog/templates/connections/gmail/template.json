@@ -3,12 +3,13 @@
   "type": "connection",
   "name": "Gmail",
   "description": "Read, label, and send mail from the connected Google account. One template, selectable permission levels: pick Read mail / Manage labels / Send mail at install (read-only by default), connect the mailbox on the agent's Deployment tab, and the agent gets gmail__* tools via eve's OpenAPI connection — access tokens self-refresh at runtime, and the granted level is visible to the agent so it never promises what it can't do.",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "eve": ">=0.20.0",
   "files": [
     "connections/gmail.ts",
     "data/gmail.openapi.json"
   ],
+  "assistantSkill": "assistant-skill.md",
   "auth": {
     "provider": "google",
     "kind": "oauth2",
@@ -17,20 +18,26 @@
         "id": "read",
         "label": "Read mail",
         "description": "Search and read messages and attachments in the connected mailbox.",
-        "scopes": ["https://www.googleapis.com/auth/gmail.readonly"],
+        "scopes": [
+          "https://www.googleapis.com/auth/gmail.readonly"
+        ],
         "default": true
       },
       {
         "id": "labels",
         "label": "Manage labels",
         "description": "Apply and remove labels, mark mail read, archive — includes read access.",
-        "scopes": ["https://www.googleapis.com/auth/gmail.modify"]
+        "scopes": [
+          "https://www.googleapis.com/auth/gmail.modify"
+        ]
       },
       {
         "id": "send",
         "label": "Send mail",
         "description": "Send messages as the connected account.",
-        "scopes": ["https://www.googleapis.com/auth/gmail.send"]
+        "scopes": [
+          "https://www.googleapis.com/auth/gmail.send"
+        ]
       }
     ]
   },

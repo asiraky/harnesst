@@ -10,7 +10,7 @@
  * - Answers are a follow-up user message on the session (a `message.received` on a later
  *   turn), never an in-turn resolution — so within one turn, requests only accumulate.
  */
-import type { ChatInputRequest } from "~/chat/types";
+import type { ChatInputAnswer, ChatInputRequest } from "~/chat/types";
 
 export type FohTurnOutcome = "parked" | "completed" | "failed";
 
@@ -128,8 +128,11 @@ export function reconcileNeedsYouFromTail(
 }
 
 export type FohSessionRepair =
-  /** The park write failed at drain time — re-park these requests into the inbox. */
-  | { action: "park"; requests: ChatInputRequest[] }
+  /** The park write failed at drain time — re-park these requests into the inbox.
+   *  `restoreStatus` marks a `failed` row whose transcript proves the failure never
+   *  reached the agent (issue #282: a refused send poisoned the row while eve stayed
+   *  parked) — the caller must also put the row back to `waiting`. */
+  | { action: "park"; requests: ChatInputRequest[]; restoreStatus: boolean }
   /** The settle write failed — the needs-you badge lies; clear the flag and resolve items. */
   | { action: "settle" }
   /** Consistent (or indeterminate: running/stopped) — leave everything alone. */
@@ -143,6 +146,12 @@ export type FohSessionRepair =
  *
  * - `waiting` + newest entry is an assistant ask (pending inputRequests, no error) but the
  *   flag is unset → park (the drain's park write failed).
+ * - `failed` + newest entry is an assistant ask (no error) + flag unset, on a CHANNEL-HOMED
+ *   row only → park AND restore the row to `waiting` (issue #282: a send refused before
+ *   delivery wrote `failed` and cleared the park while eve stayed parked on the ask; a REAL
+ *   failed turn's newest entry carries the error — or is the user's message — so it never
+ *   matches this branch). HTTP-homed rows never take it: their failed turns are retried by
+ *   resending, and rewriting one to `waiting` could reopen an already-consumed question.
  * - `waiting`/`failed`/`completed` + NO pending ask on the newest entry but the flag is set
  *   → settle (the drain's clear write failed; the badge lies).
  * - Anything else (`running`, `stopped`, or a consistent row) → none.
@@ -150,6 +159,8 @@ export type FohSessionRepair =
 export function repairFohSessionState(input: {
   status: string;
   pendingInputAt: Date | null;
+  /** `resumeVia != null` — only channel-homed rows take the failed→park recovery. */
+  channelHomed: boolean;
   lastEntry: {
     role: string;
     inputRequests?: ChatInputRequest[];
@@ -161,11 +172,16 @@ export function repairFohSessionState(input: {
       ? (input.lastEntry.inputRequests ?? [])
       : [];
   if (
-    input.status === "waiting" &&
+    (input.status === "waiting" ||
+      (input.status === "failed" && input.channelHomed)) &&
     pendingAsks.length > 0 &&
     input.pendingInputAt === null
   ) {
-    return { action: "park", requests: pendingAsks };
+    return {
+      action: "park",
+      requests: pendingAsks,
+      restoreStatus: input.status === "failed",
+    };
   }
   if (
     (input.status === "waiting" ||
@@ -177,4 +193,52 @@ export function repairFohSessionState(input: {
     return { action: "settle" };
   }
   return { action: "none" };
+}
+
+/**
+ * The one input request a typed composer answer would resolve: the NEWEST pending request of
+ * the newest transcript entry, when that entry is an un-errored assistant ask (the needs-you
+ * doctrine: such a turn IS parked). Within a turn requests only accumulate, so the last one
+ * is the newest; an errored entry or a user entry has nothing pending.
+ */
+export function newestPendingRequest(
+  lastEntry: {
+    role: string;
+    inputRequests?: ChatInputRequest[];
+    error?: string | null;
+  } | null,
+): ChatInputRequest | null {
+  if (!lastEntry || lastEntry.role !== "assistant" || lastEntry.error) {
+    return null;
+  }
+  return lastEntry.inputRequests?.at(-1) ?? null;
+}
+
+/**
+ * Whether a request accepts a TYPED answer — the same rule `InputRequestsBlock` uses for its
+ * freeform hint: no options at all (typing is the only path), or `allowFreeform` explicitly
+ * set. An options-only approval (Approve/Deny, `allowFreeform` unset/false) must be answered
+ * by its buttons; offering it a text path would submit an answer the request disallows.
+ */
+export function freeformAnswerable(
+  request: Pick<ChatInputRequest, "options" | "allowFreeform">,
+): boolean {
+  return (request.options?.length ?? 0) === 0 || Boolean(request.allowFreeform);
+}
+
+/**
+ * The request-correlated answer a plain composer send carries (issue #282). Channel-homed
+ * sessions (`resumeVia` set) can ONLY deliver answers, so typed text correlates to the newest
+ * pending request — the freeform half of the HITL contract. HTTP-homed sessions return null:
+ * their composer text stays the intentional continue/supersede path with no correlation
+ * attached (a clicked option card passes its own explicit answer and never comes through
+ * here).
+ */
+export function composerAnswerFor(input: {
+  channelHomed: boolean;
+  pendingRequest: { requestId: string } | null;
+  text: string;
+}): ChatInputAnswer | null {
+  if (!input.channelHomed || !input.pendingRequest) return null;
+  return { requestId: input.pendingRequest.requestId, text: input.text };
 }

@@ -40,6 +40,11 @@ export function templateContentHash(template: CatalogTemplate): string {
   for (const path of Object.keys(template.files).sort()) {
     parts.push(`${path}\0${template.files[path]}`);
   }
+  // The assistant skill (issue #274) is content too — hashed last, keyed by its manifest path
+  // (which the schema forbids from also appearing in `files`, so the entry can't be ambiguous).
+  if (template.manifest.assistantSkill && template.assistantSkill !== null) {
+    parts.push(`${template.manifest.assistantSkill}\0${template.assistantSkill}`);
+  }
   return createHash("sha1").update(parts.join("\n")).digest("hex");
 }
 

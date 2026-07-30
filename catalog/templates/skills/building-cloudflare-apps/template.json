@@ -3,9 +3,12 @@
   "type": "skill",
   "name": "Building Cloudflare apps",
   "description": "How to build a full-stack web app on Cloudflare Workers — a React + Vite SPA with a Worker API backend: choosing the scaffold, project layout, wrangler.jsonc semantics, the SPA-vs-Worker routing rules, the verify workflow, and bindings. Building only; deploying and shipping to a forge are separate skills.",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "eve": ">=0.1.0",
-  "files": ["skills/building-cloudflare-apps.md"],
+  "files": [
+    "skills/building-cloudflare-apps.md"
+  ],
+  "assistantSkill": "assistant-skill.md",
   "sandbox": {
     "bootstrap": [
       "apt-get update && apt-get install -y --no-install-recommends ca-certificates curl git jq && rm -rf /var/lib/apt/lists/*",

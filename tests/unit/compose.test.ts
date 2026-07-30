@@ -17,6 +17,7 @@ import { fakeCatalog } from "../fakes/catalog";
 
 /** A channel bundled by reference: files, a secret, a connection, deps, and sandbox setup. */
 const channelTpl: CatalogTemplate = {
+  assistantSkill: null,
   manifest: {
     id: "discord",
     type: "channel",
@@ -41,6 +42,7 @@ const channelTpl: CatalogTemplate = {
 
 /** A tool bundled by reference: one file, one dependency that collides with the parent's. */
 const toolTpl: CatalogTemplate = {
+  assistantSkill: null,
   manifest: {
     id: "search",
     type: "tool",
@@ -56,6 +58,7 @@ const toolTpl: CatalogTemplate = {
 
 /** The parent agent that includes the channel + the tool. */
 const agentTpl: CatalogTemplate = {
+  assistantSkill: null,
   manifest: {
     id: "engineer",
     type: "agent",
@@ -178,6 +181,7 @@ describe("resolveTemplate — flattening an agent that includes a channel + a to
 
 describe("resolveTemplate — nesting", () => {
   const tool: CatalogTemplate = {
+    assistantSkill: null,
     manifest: {
       id: "t",
       type: "tool",
@@ -191,6 +195,7 @@ describe("resolveTemplate — nesting", () => {
     files: { "tools/t.ts": "export default {};\n" },
   };
   const skill: CatalogTemplate = {
+    assistantSkill: null,
     manifest: {
       id: "s",
       type: "skill",
@@ -204,6 +209,7 @@ describe("resolveTemplate — nesting", () => {
     files: { "skills/s.md": "# S\n" },
   };
   const agent: CatalogTemplate = {
+    assistantSkill: null,
     manifest: {
       id: "a",
       type: "agent",
@@ -252,6 +258,7 @@ describe("resolveTemplate — a template with no includes resolves to itself", (
 
 describe("resolveTemplate — a file-less bundle (pure composition, issue #42)", () => {
   const bundleTpl: CatalogTemplate = {
+    assistantSkill: null,
     manifest: {
       id: "chat-pack",
       type: "bundle",
@@ -293,6 +300,7 @@ describe("resolveTemplate — a file-less bundle (pure composition, issue #42)",
 
 describe("resolveTemplate — auth descriptors (issue #30)", () => {
   const connTpl: CatalogTemplate = {
+    assistantSkill: null,
     manifest: {
       id: "google-sheets",
       type: "connection",
@@ -310,6 +318,7 @@ describe("resolveTemplate — auth descriptors (issue #30)", () => {
     files: { "connections/google-sheets.ts": "export default {};\n" },
   };
   const skillTpl: CatalogTemplate = {
+    assistantSkill: null,
     manifest: {
       id: "sheets-skill",
       type: "skill",
@@ -322,6 +331,7 @@ describe("resolveTemplate — auth descriptors (issue #30)", () => {
     files: { "skills/sheets.md": "# sheets\n" },
   };
   const bundleTpl: CatalogTemplate = {
+    assistantSkill: null,
     manifest: {
       id: "sheets-bundle",
       type: "bundle",
@@ -370,6 +380,7 @@ describe("resolveTemplate — auth descriptors (issue #30)", () => {
 
   it("dedupes by provider and unions scopes across two connections", async () => {
     const connB: CatalogTemplate = {
+      assistantSkill: null,
       manifest: {
         id: "google-drive",
         type: "connection",
@@ -390,6 +401,7 @@ describe("resolveTemplate — auth descriptors (issue #30)", () => {
       files: { "connections/google-drive.ts": "export default {};\n" },
     };
     const bundle2: CatalogTemplate = {
+      assistantSkill: null,
       manifest: {
         id: "google-bundle",
         type: "bundle",
@@ -421,6 +433,7 @@ describe("resolveTemplate — auth descriptors (issue #30)", () => {
 describe("resolveTemplate — guard rails", () => {
   it("throws on a cycle, naming it", async () => {
     const a: CatalogTemplate = {
+      assistantSkill: null,
       manifest: {
         id: "a",
         type: "skill",
@@ -434,6 +447,7 @@ describe("resolveTemplate — guard rails", () => {
       files: { "skills/a.md": "# A\n" },
     };
     const b: CatalogTemplate = {
+      assistantSkill: null,
       manifest: {
         id: "b",
         type: "skill",
@@ -457,6 +471,7 @@ describe("resolveTemplate — guard rails", () => {
     const chain: CatalogTemplate[] = [];
     for (let i = 0; i <= 8; i++) {
       chain.push({
+        assistantSkill: null,
         manifest: {
           id: `s${i}`,
           type: "skill",
@@ -478,6 +493,7 @@ describe("resolveTemplate — guard rails", () => {
 
   it("throws on a duplicate file path across two artifacts, naming path + both", async () => {
     const t1: CatalogTemplate = {
+      assistantSkill: null,
       manifest: {
         id: "t1",
         type: "tool",
@@ -490,6 +506,7 @@ describe("resolveTemplate — guard rails", () => {
       files: { "shared/x.ts": "// t1\n" },
     };
     const t2: CatalogTemplate = {
+      assistantSkill: null,
       manifest: {
         id: "t2",
         type: "tool",
@@ -502,6 +519,7 @@ describe("resolveTemplate — guard rails", () => {
       files: { "shared/x.ts": "// t2\n" },
     };
     const agent: CatalogTemplate = {
+      assistantSkill: null,
       manifest: {
         id: "clash",
         type: "agent",
@@ -525,6 +543,7 @@ describe("resolveTemplate — guard rails", () => {
 
   it("throws when a template includes an agent", async () => {
     const agentInclude: CatalogTemplate = {
+      assistantSkill: null,
       manifest: {
         id: "bad",
         type: "agent",
@@ -546,6 +565,7 @@ describe("resolveTemplate — guard rails", () => {
 
   it("propagates the source error for a missing reference", async () => {
     const agent: CatalogTemplate = {
+      assistantSkill: null,
       manifest: {
         id: "orphan",
         type: "agent",

@@ -294,6 +294,10 @@ function templateHash(t: CatalogTemplate): string {
   for (const path of Object.keys(t.files).sort()) {
     parts.push(`${path}\0${t.files[path]}`);
   }
+  // The assistant skill (issue #274) hashes last, keyed by its manifest path.
+  if (t.manifest.assistantSkill && t.assistantSkill !== null) {
+    parts.push(`${t.manifest.assistantSkill}\0${t.assistantSkill}`);
+  }
   return createHash("sha1").update(parts.join("\n")).digest("hex");
 }
 
@@ -312,6 +316,10 @@ describe("fixture catalog (the real in-repo seed)", () => {
 
       // The recorded hash matches an independent recomputation — the seed hasn't drifted.
       expect(templateHash(template)).toBe(entry.hash);
+
+      // Every seed template ships an assistant skill (issue #274 — the catalog CI mandates it).
+      expect(template.manifest.assistantSkill).toBeTruthy();
+      expect(template.assistantSkill).toBeTruthy();
 
       // The index row agrees with the manifest.
       expect(entry.name).toBe(template.manifest.name);
@@ -488,6 +496,7 @@ describe("composition against the real seed", () => {
 
 describe("fakeCatalog", () => {
   const tpl: CatalogTemplate = {
+    assistantSkill: null,
     manifest: VALID,
     files: { "tools/cloudflare-deploy.ts": "export default {};\n" },
   };

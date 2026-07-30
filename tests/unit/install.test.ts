@@ -38,6 +38,7 @@ const REGISTRY = "fixture";
 
 /** A tool template: one file, one dependency, one secret. */
 const toolTpl: CatalogTemplate = {
+  assistantSkill: null,
   manifest: {
     id: "cloudflare-deploy",
     type: "tool",
@@ -56,6 +57,7 @@ const toolTpl: CatalogTemplate = {
 
 /** An agent template: instructions + module + a tool, two deps. */
 const agentTpl: CatalogTemplate = {
+  assistantSkill: null,
   manifest: {
     id: "cloudflare-deployment-engineer",
     type: "agent",
@@ -75,6 +77,7 @@ const agentTpl: CatalogTemplate = {
 };
 
 const browserSkillTpl: CatalogTemplate = {
+  assistantSkill: null,
   manifest: {
     id: "agent-browser",
     type: "skill",
@@ -162,6 +165,29 @@ describe("planInstall — path mapping", () => {
         null,
       ),
     ).toBeDefined();
+  });
+
+  it("snapshots the template's assistant skill into the lock entry (issue #274)", () => {
+    const plan = planInstall(
+      memberCtx({
+        template: { ...toolTpl, assistantSkill: "# Tool skill\n" },
+      }),
+    );
+    const lockWrite = plan.writes.find((w) => w.path === "harnesst-lock.json")!;
+    const entry = findInstall(
+      parseLock(JSON.parse(lockWrite.content)),
+      "cloudflare-deploy",
+      "pm",
+    )!;
+    expect(entry.assistantSkill).toBe("# Tool skill\n");
+
+    // A skill-less (pre-#274 catalog) template writes no field at all.
+    const bare = planInstall(memberCtx());
+    const bareWrite = bare.writes.find((w) => w.path === "harnesst-lock.json")!;
+    expect(
+      findInstall(parseLock(JSON.parse(bareWrite.content)), "cloudflare-deploy", "pm")!
+        .assistantSkill,
+    ).toBeUndefined();
   });
 
   it("maps an agent into a NEW team member with a generated package.json", () => {
@@ -334,6 +360,7 @@ describe("planInstall — lock secrets snapshot (§4.5)", () => {
 
 /** A connection template with an OAuth descriptor — resolves to `auths` (issue #30). */
 const sheetsConnTpl: CatalogTemplate & { auths?: ResolvedAuth[] } = {
+  assistantSkill: null,
   manifest: {
     id: "google-sheets",
     type: "connection",
@@ -569,6 +596,7 @@ describe("planInstall — sandbox setup", () => {
       ),
     );
     const cloudflareSkill: CatalogTemplate = {
+      assistantSkill: null,
       manifest: {
         id: "cloudflare-cli",
         type: "skill",
@@ -1095,6 +1123,7 @@ describe("planInstall — resolved (composed) templates", () => {
       hash: string;
     }>;
   } = {
+    assistantSkill: null,
     manifest: {
       id: "engineer",
       type: "agent",
@@ -1187,6 +1216,7 @@ describe("planInstall — resolved (composed) templates", () => {
     };
     // The new resolved version no longer includes Discord — its file is gone from the flatten.
     const noDiscord: CatalogTemplate & { hash?: string } = {
+      assistantSkill: null,
       manifest: {
         id: "engineer",
         type: "agent",
@@ -1229,6 +1259,7 @@ describe("planInstall — resolved (composed) templates", () => {
       files: ["agents/x/agent/agent.ts", "agents/x/agent/channels/discord.ts"],
     };
     const discordChannel: CatalogTemplate = {
+      assistantSkill: null,
       manifest: {
         id: "discord",
         type: "channel",
@@ -1284,6 +1315,7 @@ describe("planInstall — composite absorbs a standalone include install (issue 
       hash: string;
     }>;
   } = {
+    assistantSkill: null,
     manifest: {
       id: "chat-pack",
       type: "bundle",
@@ -1393,6 +1425,7 @@ describe("planInstall — composite absorbs a standalone include install (issue 
  * 0.7.0 folds the whole channel back into one overwritable file.
  */
 const platformChannelTpl: CatalogTemplate = {
+  assistantSkill: null,
   manifest: {
     id: "github",
     type: "channel",
@@ -1412,6 +1445,7 @@ const platformChannelTpl: CatalogTemplate = {
 
 /** The folded 0.7.0 shape: one self-contained channel file, no platform half. */
 const foldedChannelTpl: CatalogTemplate = {
+  assistantSkill: null,
   manifest: {
     id: "github",
     type: "channel",
@@ -1704,6 +1738,7 @@ describe("planInstall — orphaned sandbox add-ons (issue #254)", () => {
           "agents/pm/agent/skills/agent-browser.md",
         ],
         template: {
+          assistantSkill: null,
           manifest: {
             ...browserSkillTpl.manifest,
             id: "browser-bundle",

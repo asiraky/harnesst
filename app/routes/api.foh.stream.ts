@@ -258,6 +258,28 @@ export async function action(args: ActionFunctionArgs) {
     };
   }
 
+  // A channel-homed row only ever accepts an answer to a pending request (the drain's
+  // `deliverVia` guard would refuse this send anyway — see talk.server.ts). Refusing it
+  // HERE, before the claim and `beginFohTurn`, is what keeps a refusal from mutating any
+  // state (issue #282): the route-level `beginFohTurn` below clears the needs-you park and
+  // inbox items before delivery is known to succeed, which is exactly the poison the issue
+  // describes. The composer UI no longer offers this path; this guards stale tabs.
+  if (
+    !isNewSession &&
+    session.resumeVia &&
+    session.externalSessionId &&
+    session.continuationToken &&
+    !inputResponses
+  ) {
+    throw data(
+      {
+        error:
+          "This conversation lives on the agent's own channel thread, so harnesst can only send it an answer to a question it is waiting on — not a new message.",
+      },
+      { status: 409 },
+    );
+  }
+
   // Atomic turn claim (issue #221 finding 5): compare-and-swap the session to `running` with
   // this request's fencing token — two tabs (or two members, or two harnesst replicas) posting to
   // one session race here, and exactly one wins. Runs after target resolution/reseed (the
@@ -266,6 +288,9 @@ export async function action(args: ActionFunctionArgs) {
   // idle timeout) is taken over. The fresh-session path claims its own new row too — the
   // uniform code path costs one UPDATE and cannot lose.
   const claimId = crypto.randomUUID();
+  // Kept for the refusal path (issue #282): a send refused before delivery restores the row
+  // to exactly this status instead of settling a turn that never happened.
+  const preClaimStatus = session.status;
   const claimed = await claimPlaygroundSessionForTurn({
     id: session.id,
     target,
@@ -280,9 +305,13 @@ export async function action(args: ActionFunctionArgs) {
     );
   }
   session = claimed;
-  if (!isNewSession) {
+  if (!isNewSession && !session.resumeVia) {
     // Supersede (D13): whatever this turn says, eve resolves any parked ask from it — clear
-    // the needs-you park and its inbox items before streaming.
+    // the needs-you park and its inbox items before streaming. NOT for a channel-homed row
+    // (issue #282): its send can still be refused before the agent is contacted (an
+    // unmintable bearer, an invalid descriptor), and clearing the park first is how a
+    // refusal used to delete the needs-you question while eve kept waiting. The drain runs
+    // the same clear on the first streamed event instead — proof the agent was reached.
     await beginFohTurn(session.id);
   }
 
@@ -320,5 +349,6 @@ export async function action(args: ActionFunctionArgs) {
     messagePrefix,
     inputResponses: continuingSession ? inputResponses : null,
     claimId,
+    preClaimStatus,
   });
 }

@@ -3,7 +3,10 @@
   "type": "skill",
   "name": "Authoring eve agents with harnesst MCP",
   "description": "End-to-end guidance for authoring eve agents through harnesst's MCP server: save complete files, review every pending change, publish once, and poll every deployment until live.",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "eve": ">=0.1.0",
-  "files": ["skills/harnesst-mcp-authoring/SKILL.md"]
+  "files": [
+    "skills/harnesst-mcp-authoring/SKILL.md"
+  ],
+  "assistantSkill": "assistant-skill.md"
 }

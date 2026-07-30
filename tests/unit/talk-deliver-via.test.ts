@@ -237,6 +237,10 @@ describe("streamTurn delivery", () => {
     expect(done.result.sessionId).toBe("sess_1");
     expect(done.result.continuationToken).toBe("github:repo:1:issue:7");
     expect(done.result.resumeExpired).toBeUndefined();
+    // Issue #282: the agent was never contacted, and the result says so — the drain reads
+    // this to leave the session row (status, cursor, park state) completely untouched.
+    expect(done.result.notDelivered).toBe(true);
+    expect(done.result.turnId).toBeNull();
   });
 
   it("explains a 409 in human terms — the container was redeployed, nothing is broken", async () => {
@@ -266,6 +270,8 @@ describe("streamTurn delivery", () => {
     // The caller is told the resume handle is spent, so it can unbind the row and let the NEXT
     // message take the ordinary reseed path instead of failing forever.
     expect(done.result.resumeExpired).toBe(true);
+    // The POST was attempted — this is a real failed turn, not an undelivered refusal.
+    expect(done.result.notDelivered).toBeUndefined();
     // No stream was opened — the turn stopped at delivery.
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
@@ -294,6 +300,8 @@ describe("streamTurn delivery", () => {
     // NOT a spent resume — a GitHub outage or a model error must leave the row bound so a retry
     // can still reach the same thread.
     expect(done.result.resumeExpired).toBeUndefined();
+    // The delivery was attempted (the route answered) — not an undelivered refusal.
+    expect(done.result.notDelivered).toBeUndefined();
   });
 
   it("keeps the row bound when the route reports its own send failure as a 409", async () => {

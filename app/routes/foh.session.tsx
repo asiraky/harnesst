@@ -43,8 +43,14 @@ import { TurnError } from "~/components/turn-error";
 import { Button } from "~/components/ui/button";
 import { sessionLoader } from "~/auth/session.server";
 import { requireFohProject } from "~/foh/guard.server";
+import { channelLabelFor } from "~/foh/channel-resume";
 import { openInboxQuestion, resolveInboxForSession } from "~/foh/inbox.server";
-import { repairFohSessionState } from "~/foh/needs-you";
+import {
+  composerAnswerFor,
+  freeformAnswerable,
+  newestPendingRequest,
+  repairFohSessionState,
+} from "~/foh/needs-you";
 import { fohSessionStatus } from "~/foh/status";
 import {
   cacheCoversCompletedLiveTurn,
@@ -60,6 +66,7 @@ import {
   markSessionPendingInput,
   playgroundCacheIsComplete,
   reconcilePlaygroundSessionFromEve,
+  restoreRepairedSessionToWaiting,
   settleAbandonedPlaygroundSession,
 } from "~/playground/sessions.server";
 import { shouldSettleAbandonedSession } from "~/playground/settle";
@@ -168,9 +175,20 @@ export const loader = (args: LoaderFunctionArgs) =>
         const repair = repairFohSessionState({
           status: currentSession.status,
           pendingInputAt: currentSession.pendingInputAt,
+          channelHomed: currentSession.resumeVia != null,
           lastEntry,
         });
         if (repair.action === "park") {
+          // Status first, park second (issue #282 review): if the park write below fails
+          // transiently, a `waiting` row with the flag unset re-enters this branch on the
+          // next load — the reverse order could leave `failed` + flag set, a state no
+          // repair predicate matches, so the restore would never be retried.
+          if (
+            repair.restoreStatus &&
+            (await restoreRepairedSessionToWaiting(currentSession.id))
+          ) {
+            currentSession = { ...currentSession, status: "waiting" };
+          }
           const at = new Date();
           // The park claim reports whether it won its stop-wins guard; a stop that raced
           // us must not get inbox items filed for its stopped session.
@@ -237,6 +255,12 @@ export const loader = (args: LoaderFunctionArgs) =>
         sessionStatus: currentSession.status,
         sessionFohStatus: fohSessionStatus(currentSession),
         openedByAgent: currentSession.openedByAgentId != null,
+        // Channel-homed rows (resumeVia set) live on that channel's thread and only take
+        // answers — the UI must say so. The label is the only thing exposed; nothing
+        // channel-specific leaks to the client.
+        channelLabel: currentSession.resumeVia
+          ? channelLabelFor(currentSession.resumeVia.channel)
+          : null,
         lastEventAt: currentSession.lastEventAt?.toISOString() ?? null,
         entries,
         historyError,
@@ -277,6 +301,7 @@ export default function FohSession({ loaderData }: Route.ComponentProps) {
     sessionStatus,
     sessionFohStatus,
     openedByAgent,
+    channelLabel,
     lastEventAt,
     entries,
     historyError,
@@ -359,6 +384,25 @@ export default function FohSession({ loaderData }: Route.ComponentProps) {
       : entries;
   }, [entries, sessionId, visibleLive]);
 
+  // The one request a typed composer answer would resolve (issue #282): the newest pending
+  // ask of the newest turn — from the live turn once it settles, else from the cached
+  // transcript. Mirrors the onAnswer wiring below (newest entry only).
+  const pendingRequest = useMemo<ChatInputRequest | null>(() => {
+    if (visibleLive) {
+      if (!visibleLive.done) return null;
+      if (!visibleLive.error) return visibleLive.inputRequests.at(-1) ?? null;
+      // An errored live turn that produced no transcript entry (e.g. a send refused
+      // before delivery) settled nothing at eve — the cached ask is still the live one,
+      // and without this fallback the error would hide the answer box until a reload.
+      return newestPendingRequest(entries.at(-1) ?? null);
+    }
+    return newestPendingRequest(entries.at(-1) ?? null);
+  }, [entries, visibleLive]);
+  // Only a request that ACCEPTS typed input turns the composer into the answer box — an
+  // options-only approval is answered by its buttons, never by free text.
+  const typedAnswerRequest =
+    pendingRequest && freeformAnswerable(pendingRequest) ? pendingRequest : null;
+
   const send = useCallback(
     async (message: string, answer?: ChatInputAnswer) => {
       // This closure outlives navigation (the reader keeps draining the fetch), so every
@@ -397,8 +441,17 @@ export default function FohSession({ loaderData }: Route.ComponentProps) {
       form.set("agentId", agentId);
       form.set("playgroundSessionId", forSession);
       // A clicked question/approval card answers exactly ITS request (issue #221 finding
-      // 2); composer text stays the intentional continue/supersede path.
-      if (answer) form.set("inputResponses", JSON.stringify([answer]));
+      // 2). On an HTTP-homed session, composer text stays the intentional continue/
+      // supersede path; on a channel-homed one it correlates to the newest pending ask —
+      // the only thing such a session can deliver (issue #282).
+      const correlated =
+        answer ??
+        composerAnswerFor({
+          channelHomed: channelLabel != null,
+          pendingRequest: typedAnswerRequest,
+          text: message,
+        });
+      if (correlated) form.set("inputResponses", JSON.stringify([correlated]));
 
       const controller = new AbortController();
       streamAbortRef.current = controller;
@@ -474,7 +527,15 @@ export default function FohSession({ loaderData }: Route.ComponentProps) {
         await revalidator.revalidate();
       }
     },
-    [agentId, entries.length, projectId, revalidator, sessionId],
+    [
+      agentId,
+      channelLabel,
+      entries.length,
+      typedAnswerRequest,
+      projectId,
+      revalidator,
+      sessionId,
+    ],
   );
 
   const stopTurn = useCallback(async () => {
@@ -550,6 +611,13 @@ export default function FohSession({ loaderData }: Route.ComponentProps) {
           // than shove the title to zero width and the status off-screen.
           <span className="min-w-0 max-w-[45%] truncate rounded-full bg-muted px-2 py-0.5 text-[11px] text-muted-foreground">
             opened by {agentName}
+          </span>
+        )}
+        {channelLabel && (
+          // Channel-homed (issue #282): the conversation lives on the channel's thread and
+          // this page can only deliver answers — say so where the status chips live.
+          <span className="min-w-0 max-w-[45%] truncate rounded-full bg-muted px-2 py-0.5 text-[11px] text-muted-foreground">
+            on {channelLabel} · answers only
           </span>
         )}
         <span className="shrink-0 text-xs text-muted-foreground">
@@ -638,18 +706,40 @@ export default function FohSession({ loaderData }: Route.ComponentProps) {
       </ChatTranscript>
 
       <div className="mx-auto w-full max-w-5xl px-4 pb-4 pt-3 sm:px-6">
-        {!online && (
-          <p className="mb-2 pl-1 text-xs text-muted-foreground">
-            {agentName} is asleep — your next message wakes them (this can take
-            a couple of minutes).
+        {channelLabel && !typedAnswerRequest && !busy ? (
+          // Channel-homed with nothing to answer (issue #282): no free-text box the user
+          // isn't allowed to use — the conversation continues on the channel's thread.
+          <p className="rounded-2xl border bg-muted/30 px-4 py-3 text-sm text-muted-foreground">
+            This conversation continues on {agentName}&rsquo;s {channelLabel}{" "}
+            thread. When {agentName} asks a question here, you can answer it —
+            to say anything else, reply on the {channelLabel} thread.
           </p>
+        ) : (
+          <>
+            {!online && (
+              <p className="mb-2 pl-1 text-xs text-muted-foreground">
+                {agentName} is asleep — your next message wakes them (this can
+                take a couple of minutes).
+              </p>
+            )}
+            {channelLabel && typedAnswerRequest && !busy && (
+              <p className="mb-2 pl-1 text-xs text-muted-foreground">
+                Your reply answers {agentName}&rsquo;s question above and goes
+                back to the {channelLabel} thread.
+              </p>
+            )}
+            <ChatComposer
+              placeholder={
+                channelLabel
+                  ? `Answer ${agentName}’s question…`
+                  : `Message ${agentName}…`
+              }
+              busy={busy}
+              onSend={send}
+              controls={composerControls}
+            />
+          </>
         )}
-        <ChatComposer
-          placeholder={`Message ${agentName}…`}
-          busy={busy}
-          onSend={send}
-          controls={composerControls}
-        />
       </div>
     </section>
   );

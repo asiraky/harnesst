@@ -743,6 +743,9 @@ export function planInstall(ctx: PlanContext): InstallPlan {
     files: [...newPaths]
       .filter((p) => !MERGED_FILES.has(p) && !preservedFileSet.has(p))
       .sort(),
+    // Snapshot the assistant skill content (issue #274) so the install pins the skill it shipped
+    // with — bundle assembly reads it from here, falling back to the catalog for older locks.
+    ...(template.assistantSkill ? { assistantSkill: template.assistantSkill } : {}),
     // Record the deliberately-preserved paths (issue #177) so the Settings drift check treats
     // them as present and a later repair/update keeps honouring the registration instead of
     // blocking on the very files this install promised to leave alone. Template-shipped paths

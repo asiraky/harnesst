@@ -25,6 +25,7 @@ import { channelDeliveryFor, channelLabelFor } from "~/foh/channel-resume";
 import { settleFohTurn } from "~/foh/needs-you";
 import { mintDelegationToken } from "~/team/token.server";
 import {
+  beginFohTurn,
   openInboxQuestion,
   recordInboxFinished,
   resolveInboxForSession,
@@ -33,6 +34,7 @@ import { finalizeDelegationOnResume } from "~/team/resume.server";
 import {
   clearSessionPendingInput,
   markSessionPendingInput,
+  releaseRefusedTurnClaim,
   savePlaygroundEvents,
   savePlaygroundSessionCursor,
   savePlaygroundSessionProgress,
@@ -171,6 +173,12 @@ export function streamTurnResponse(input: {
    * behavior is byte-identical to before.
    */
   claimId?: string | null;
+  /**
+   * The session row's status BEFORE the route's claim flipped it to `running` (issue #282).
+   * Read only on a `notDelivered` refusal, to put the row back exactly where it was. Callers
+   * whose sends can never be refused pre-delivery (builder, playground) omit it.
+   */
+  preClaimStatus?: string | null;
 }): Response {
   const {
     projectId,
@@ -256,6 +264,12 @@ export function streamTurnResponse(input: {
         let recorded = false;
         let startRecording: Promise<void> = Promise.resolve();
         let result: TurnResult | null = null;
+        // Deferred supersede for channel-homed FOH rows (issue #282): the route skips its
+        // pre-turn `beginFohTurn` for them, because clearing the parked ask before delivery
+        // is known to happen is exactly how a refused send used to erase the needs-you
+        // question. The first streamed event that isn't a pre-delivery refusal proves the
+        // agent was contacted — the park resolves there instead.
+        let deferredFohBegin = isFoh && activeSession.resumeVia != null;
         const turnController = new AbortController();
         activeTurnControllers.set(activeSession.id, turnController);
 
@@ -322,6 +336,9 @@ export function streamTurnResponse(input: {
               steps: [],
               messages: [],
               error: delivery.error,
+              // "Nothing was sent" (see the messages above) — the agent was never contacted,
+              // so the finally below must not settle this as a failed turn.
+              notDelivered: true,
             };
             send({
               type: "done",
@@ -336,8 +353,7 @@ export function streamTurnResponse(input: {
               modelId: null,
               version: target.version,
             });
-            // `finally` still runs: the cursor save, the FOH settle and the inbox bookkeeping
-            // all happen exactly as they do for any other failed turn.
+            // `finally` still runs, and its `notDelivered` branch leaves the row untouched.
             return;
           }
           for await (const event of streamTurn({
@@ -351,6 +367,17 @@ export function streamTurnResponse(input: {
             signal: turnController.signal,
             timeoutMs: TURN_IDLE_TIMEOUT_MS,
           })) {
+            if (
+              deferredFohBegin &&
+              !(event.kind === "done" && event.result.notDelivered)
+            ) {
+              deferredFohBegin = false;
+              try {
+                await beginFohTurn(activeSession.id);
+              } catch (e) {
+                console.error(`${tag} foh deferred turn-begin failed`, e);
+              }
+            }
             switch (event.kind) {
               case "session":
                 sessionId = event.sessionId;
@@ -520,26 +547,43 @@ export function streamTurnResponse(input: {
           await progressSave;
           if (result) {
             const settled: TurnResult = result;
+            // Issue #282: a `notDelivered` result means the send was refused BEFORE the agent
+            // was contacted — failing to send is not a failed turn. Eve is exactly where it was
+            // (a channel-homed row is by definition parked at `session.waiting`), so the row
+            // must not be settled: no `failed` status, no cursor/handle movement, no needs-you
+            // clear, no inbox resolve, no delegation finalize, no run recording, no
+            // `lastEventAt` bump (no event happened). The only write is putting back the
+            // status the pre-turn claim flipped to `running` — leaving that would strand the
+            // row "running" with nothing draining it.
+            const notDelivered = settled.notDelivered === true;
             try {
-              await savePlaygroundSessionCursor({
-                id: activeSession.id,
-                target,
-                externalSessionId:
-                  settled.sessionId ?? activeSession.externalSessionId,
-                continuationToken:
-                  settled.continuationToken ?? activeSession.continuationToken,
-                // Capped at what's durably cached (see the invariant above): if the final event
-                // batch never landed, leaving the cursor behind means the missing events are
-                // re-read from Eve later (the next turn's drain, or the loader's reconcile for a
-                // failed session) and cached then — instead of being skipped forever.
-                streamIndex: Math.min(
-                  Math.max(settled.streamIndex, activeSession.streamIndex),
-                  persistedEventIndex,
-                ),
-                title,
-                status: settled.ok ? "waiting" : "failed",
-                claimId: input.claimId ?? undefined,
-              });
+              if (notDelivered) {
+                await releaseRefusedTurnClaim({
+                  id: activeSession.id,
+                  claimId: input.claimId ?? undefined,
+                  status: input.preClaimStatus ?? "waiting",
+                });
+              } else {
+                await savePlaygroundSessionCursor({
+                  id: activeSession.id,
+                  target,
+                  externalSessionId:
+                    settled.sessionId ?? activeSession.externalSessionId,
+                  continuationToken:
+                    settled.continuationToken ?? activeSession.continuationToken,
+                  // Capped at what's durably cached (see the invariant above): if the final event
+                  // batch never landed, leaving the cursor behind means the missing events are
+                  // re-read from Eve later (the next turn's drain, or the loader's reconcile for a
+                  // failed session) and cached then — instead of being skipped forever.
+                  streamIndex: Math.min(
+                    Math.max(settled.streamIndex, activeSession.streamIndex),
+                    persistedEventIndex,
+                  ),
+                  title,
+                  status: settled.ok ? "waiting" : "failed",
+                  claimId: input.claimId ?? undefined,
+                });
+              }
             } catch (e) {
               console.error(`${tag} persist session cursor failed`, e);
             }
@@ -560,7 +604,9 @@ export function streamTurnResponse(input: {
             // pending flag and inbox items; a completed turn clears them and files the
             // `finished` item; a failed turn clears them (the session itself shows
             // done-with-error). Exception-swallowed like every other post-turn write.
-            if (isFoh) {
+            // A refused send (`notDelivered`) is none of these: eve still holds the pending
+            // question, so the park state and any delegation stay exactly as they were.
+            if (isFoh && !notDelivered) {
               const decision = settleFohTurn(settled);
               try {
                 if (decision.clearPending) {
@@ -599,7 +645,9 @@ export function streamTurnResponse(input: {
                 }
               }
             }
-            if (settled.sessionId && settled.turnId) {
+            // (`turnId` is always null on a `notDelivered` result — there was no turn to
+            // record; the guard keeps that invariant explicit.)
+            if (settled.sessionId && settled.turnId && !notDelivered) {
               try {
                 await startRecording;
                 await recordTurnFinish({

@@ -436,7 +436,12 @@ export async function runPublish(
   // commit lands the config and an assistant restart picks it up. The skipped steps stay
   // visible with their reason (an absent step reads as a bug).
   const assistantConfigOnly = drafts.every((d) => isAssistantConfigPath(d.path));
-  const touchesAssistantConfig = drafts.some((d) => isAssistantConfigPath(d.path));
+  // The lock counts for the RESTART trigger (issue #274: installs change the assistant's
+  // installed skills) but never for assistant-config-ONLY — a lock change rides an install's
+  // real file writes, which still need build/version/deploy.
+  const touchesAssistantConfig = drafts.some(
+    (d) => isAssistantConfigPath(d.path) || d.path === LOCK_PATH,
+  );
   if (assistantConfigOnly) {
     for (const key of ["build", "version", "deploy"] as const) {
       step(key).status = "skipped";

@@ -856,6 +856,28 @@ export async function markSessionPendingInput(
   return updated.length > 0;
 }
 
+/**
+ * Put a `failed` row back to `waiting` after a park repair proved the failure never reached
+ * the agent (issue #282: a send refused before delivery wrote `failed` while eve stayed
+ * parked on its ask). Guarded on `status = 'failed'` so it can never stomp a running claim
+ * or resurrect a stopped session. Returns whether a row was updated.
+ */
+export async function restoreRepairedSessionToWaiting(
+  sessionId: string,
+): Promise<boolean> {
+  const updated = await db
+    .update(playgroundSessions)
+    .set({ status: "waiting", updatedAt: new Date() })
+    .where(
+      and(
+        eq(playgroundSessions.id, sessionId),
+        eq(playgroundSessions.status, "failed"),
+      ),
+    )
+    .returning({ id: playgroundSessions.id });
+  return updated.length > 0;
+}
+
 /** Clear the needs-you park (turn completed/failed, or a continuation send superseded it). */
 export async function clearSessionPendingInput(
   sessionId: string,
@@ -971,6 +993,38 @@ export async function savePlaygroundSessionProgress(input: {
     // Stop wins races with the detached drain. Once the user has deliberately stopped a turn,
     // an already-queued progress save must not flip the row back to `running`. The claim fence
     // (when carried) makes a superseded drain's late writes hit zero rows the same way.
+    .where(
+      and(
+        eq(playgroundSessions.id, input.id),
+        ne(playgroundSessions.status, "stopped"),
+        input.claimId
+          ? eq(playgroundSessions.turnClaimId, input.claimId)
+          : undefined,
+      ),
+    );
+}
+
+/**
+ * Release a turn claim whose send was refused before the agent was ever contacted (issue
+ * #282): put the row's status back to what it was before the claim and touch NOTHING else —
+ * no cursor movement, no `lastEventAt` bump (no event happened; other viewers must not see
+ * phantom activity). Claim-fenced and stop-wins like every other drain write. A pre-claim
+ * `running` (the claim took over a stale turn) restores to `waiting` — writing `running`
+ * back would strand a row nothing is draining.
+ */
+export async function releaseRefusedTurnClaim(input: {
+  id: string;
+  /** Fencing token; when absent the release still runs, guarded by stop-wins only. */
+  claimId?: string | null;
+  /** The row's status before the claim flipped it to `running`. */
+  status: string;
+}): Promise<void> {
+  await db
+    .update(playgroundSessions)
+    .set({
+      status: input.status === "running" ? "waiting" : input.status,
+      updatedAt: new Date(),
+    })
     .where(
       and(
         eq(playgroundSessions.id, input.id),

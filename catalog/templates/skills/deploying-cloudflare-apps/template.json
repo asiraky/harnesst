@@ -3,9 +3,12 @@
   "type": "skill",
   "name": "Deploying Cloudflare apps",
   "description": "How to deploy an app to Cloudflare and provision what it needs — wrangler config and deploys, KV/D1/R2/Queues/Pages, dry-runs, and getting deploy credentials into a CI pipeline. Cloudflare only; getting the code and wiring a specific forge's pipeline are separate skills.",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "eve": ">=0.1.0",
-  "files": ["skills/deploying-cloudflare-apps.md"],
+  "files": [
+    "skills/deploying-cloudflare-apps.md"
+  ],
+  "assistantSkill": "assistant-skill.md",
   "sandbox": {
     "bootstrap": [
       "apt-get update && apt-get install -y --no-install-recommends ca-certificates curl git jq && rm -rf /var/lib/apt/lists/*",

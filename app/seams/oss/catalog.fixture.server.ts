@@ -57,6 +57,10 @@ export const fixtureCatalog: CatalogSource = {
         async (rel) => [rel, await readFile(join(dir, "files", rel), "utf8")] as const,
       ),
     );
-    return { manifest, files: Object.fromEntries(entries) };
+    // The assistant skill lives beside files/, not under it — it never installs into a repo.
+    const assistantSkill = manifest.assistantSkill
+      ? await readFile(join(dir, manifest.assistantSkill), "utf8")
+      : null;
+    return { manifest, files: Object.fromEntries(entries), assistantSkill };
   },
 };

@@ -46,7 +46,10 @@ import { ASSISTANT_CONFIG_ROOT } from "~/eve/parse";
 import { buildScheduleFile, parseScheduleFile } from "~/eve/scheduleFile";
 import { slugifyResourceName } from "~/eve/templates";
 import { getAgentSource } from "~/github/cached.server";
+import { LOCK_PATH, overlayLock } from "~/marketplace/lock";
+import { isTemplateSlug } from "~/marketplace/manifest";
 import { requireProject, requireRepo } from "~/project/guard.server";
+import { getRuntime } from "~/seams/index.server";
 import { getWorkspaceAssistantSelection } from "~/org/workspace.server";
 import { findWorkspaceModel } from "~/models/union.server";
 import { isReasoningEffort, type ReasoningEffort } from "~/models/reasoning";
@@ -78,20 +81,27 @@ export const loader = (args: LoaderFunctionArgs) =>
       const editSkill = url.searchParams.get("skill");
       const editSchedule = url.searchParams.get("schedule");
 
-      const [source, instructionsView, modelView, fixed, workspaceSelection] =
-        await Promise.all([
-          getAgentSource(project.repoInstallationId, {
-            owner: project.repoOwner,
-            repo: project.repoName,
-          }),
-          resolveFileView(project, INSTRUCTIONS),
-          resolveFileView(project, MODEL_FILE),
-          assistantFixedLayer(),
-          getWorkspaceAssistantSelection(project.orgId).catch(() => ({
-            model: null,
-            effort: null,
-          })),
-        ]);
+      const [
+        source,
+        instructionsView,
+        modelView,
+        lockView,
+        fixed,
+        workspaceSelection,
+      ] = await Promise.all([
+        getAgentSource(project.repoInstallationId, {
+          owner: project.repoOwner,
+          repo: project.repoName,
+        }),
+        resolveFileView(project, INSTRUCTIONS),
+        resolveFileView(project, MODEL_FILE),
+        resolveFileView(project, LOCK_PATH),
+        assistantFixedLayer(),
+        getWorkspaceAssistantSelection(project.orgId).catch(() => ({
+          model: null,
+          effort: null,
+        })),
+      ]);
       // An unset project override inherits only the connected workspace default. There is no
       // implicit provider/model when the workspace has no connection.
       const inheritedModel = workspaceSelection.model;
@@ -106,6 +116,41 @@ export const loader = (args: LoaderFunctionArgs) =>
         .filter((p) => p.startsWith(`${prefix}schedules/`) && p.endsWith(".md"))
         .map(basenameSlug)
         .sort();
+
+      // Template-installed assistant skills (issue #274): the template author's contract,
+      // delivered via the bundle — shown read-only, never editable or deletable here. Prefer the
+      // lock's install-time snapshot; older locks backfill from the catalog (outage → omitted).
+      const lock = overlayLock(lockView.content ?? null, []);
+      const catalog = getRuntime().catalog;
+      const seenInstallIds = new Set<string>();
+      const installedSkills: {
+        id: string;
+        name: string;
+        version: string;
+        content: string;
+      }[] = [];
+      for (const entry of lock.installs) {
+        if (!isTemplateSlug(entry.id) || seenInstallIds.has(entry.id)) continue;
+        seenInstallIds.add(entry.id);
+        let content = entry.assistantSkill ?? null;
+        if (content === null) {
+          try {
+            content = (await catalog.template(entry.type, entry.id))
+              .assistantSkill;
+          } catch {
+            content = null;
+          }
+        }
+        if (content) {
+          installedSkills.push({
+            id: entry.id,
+            name: entry.name,
+            version: entry.version,
+            content,
+          });
+        }
+      }
+      installedSkills.sort((a, b) => a.id.localeCompare(b.id));
 
       let model: string | null = null;
       let effort: ReasoningEffort | null = null;
@@ -152,6 +197,7 @@ export const loader = (args: LoaderFunctionArgs) =>
         inheritedModel,
         inheritedEffort,
         skills,
+        installedSkills,
         schedules,
         fixed,
         editSkillSlug: editSkill,
@@ -260,6 +306,7 @@ export default function AssistantConfig({ loaderData }: Route.ComponentProps) {
     inheritedModel,
     inheritedEffort,
     skills,
+    installedSkills,
     schedules,
     fixed,
     editSkillSlug,
@@ -400,6 +447,48 @@ export default function AssistantConfig({ loaderData }: Route.ComponentProps) {
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
+            {installedSkills.length > 0 && (
+              <div className="space-y-2">
+                <div className="flex items-center gap-2">
+                  <Lock
+                    className="size-3.5 text-muted-foreground"
+                    aria-hidden
+                  />
+                  <span className="text-sm font-medium">
+                    Installed by templates
+                  </span>
+                  <Badge variant="secondary" className="text-xs">
+                    read-only
+                  </Badge>
+                </div>
+                <ul className="space-y-1.5">
+                  {installedSkills.map((skill) => (
+                    <li key={skill.id} className="text-sm">
+                      <details>
+                        <summary className="flex cursor-pointer list-none items-center justify-between gap-2">
+                          <span className="font-mono underline-offset-4 hover:underline">
+                            installed/{skill.id}.md
+                          </span>
+                          <Badge variant="outline" className="text-xs">
+                            {skill.name} · v{skill.version}
+                          </Badge>
+                        </summary>
+                        <div className="mt-2 max-h-80 overflow-auto rounded-lg border bg-muted/40 p-4">
+                          <MarkdownText text={skill.content} />
+                        </div>
+                      </details>
+                    </li>
+                  ))}
+                </ul>
+                <p className="text-xs text-muted-foreground">
+                  These ship with installed marketplace templates — the
+                  template author's contract with the assistant. Updating or
+                  uninstalling the template changes them; they can't be edited
+                  here.
+                </p>
+                <Separator />
+              </div>
+            )}
             {skills.length > 0 && (
               <ul className="space-y-1.5">
                 {skills.map((slug) => (
