@@ -10,6 +10,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import type { ChatInputRequest } from "~/chat/types";
 import {
   inboxKindForRequest,
+  listInboxForViewer,
   openInboxQuestion,
   recordInboxFinished,
   resolveFinishedOnRead,
@@ -255,6 +256,46 @@ describe("D5 visibility (listPendingForProjects / countPendingForProjects)", () 
     expect(
       await store.inboxItems.countPendingForProjects([PROJECT, "proj_2"], USER),
     ).toBe(3);
+  });
+});
+
+describe("listInboxForViewer enrichment (#278)", () => {
+  it("drops items whose session is archived, like ones whose session vanished", async () => {
+    store.seedAgent({ id: "agent_1", projectId: PROJECT, name: "Ada" });
+    const live = await recordInboxFinished(
+      { projectId: PROJECT, sessionId: "sess_live", userId: USER },
+      store,
+    );
+    await recordInboxFinished(
+      { projectId: PROJECT, sessionId: "sess_archived", userId: USER },
+      store,
+    );
+    await recordInboxFinished(
+      { projectId: PROJECT, sessionId: "sess_gone", userId: USER },
+      store,
+    );
+
+    const rows = await listInboxForViewer(
+      { userId: USER, projectIds: [PROJECT] },
+      store,
+      {
+        // `sess_gone` is absent from the result entirely — the existing vanished-session drop.
+        sessionsByIds: async () => [
+          { id: "sess_live", agentId: "agent_1", title: "Live", archivedAt: null },
+          {
+            id: "sess_archived",
+            agentId: "agent_1",
+            title: "Tidied away",
+            archivedAt: new Date("2026-07-02T00:00:00Z"),
+          },
+        ],
+      },
+    );
+
+    // Archiving resolves the items it can see, but a turn settling in the same instant files a
+    // `finished` item just after. Dropping on the read side means that race cannot leave a bell
+    // entry whose link 404s.
+    expect(rows.map((row) => row.id)).toEqual([live.id]);
   });
 });
 

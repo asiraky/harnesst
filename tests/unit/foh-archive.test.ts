@@ -191,7 +191,7 @@ describe("archiveFohSession", () => {
     expect(inbox.resolveInboxForArchivedSession).toHaveBeenCalledWith("ps_1");
   });
 
-  it("treats an already-archived row as done without a second write", async () => {
+  it("treats an already-archived row as done, but still retries the inbox cleanup", async () => {
     const archived = session({
       archivedAt: new Date("2026-07-01T00:00:00Z"),
       archivedBy: "user_9",
@@ -201,8 +201,12 @@ describe("archiveFohSession", () => {
     const result = await archiveFohSession(SCOPE);
 
     expect(result).toEqual({ ok: true, session: archived });
+    // The archive marks are not rewritten — the first caller's `archivedBy` and timestamp stand.
     expect(dbState.updates).toHaveLength(0);
-    expect(inbox.resolveInboxForArchivedSession).not.toHaveBeenCalled();
+    // The cleanup DOES run again. The row update and the resolve are two statements, so a resolve
+    // that threw after the update committed left the conversation hidden with items still
+    // pending; this retry is the only path left that can repair it.
+    expect(inbox.resolveInboxForArchivedSession).toHaveBeenCalledWith("ps_1");
   });
 
   it("reports not_found when the session is outside the viewer's scope", async () => {
@@ -219,12 +223,34 @@ describe("archiveFohSession", () => {
     dbState.selects.push([session({ status: "waiting" })]);
     // The guarded UPDATE (status <> 'running') matched nothing: someone started a turn.
     dbState.updateResults.push([]);
+    // The re-read finds the row still unarchived, which is what makes it a claim and not a
+    // concurrent archive.
+    dbState.selects.push([session({ status: "running" })]);
 
     expect(await archiveFohSession(SCOPE)).toEqual({
       ok: false,
       reason: "working",
     });
     expect(inbox.resolveInboxForArchivedSession).not.toHaveBeenCalled();
+  });
+
+  it("succeeds when a CONCURRENT ARCHIVE, not a turn, matched the row first", async () => {
+    // Two clicks read the same waiting row; the other one won. The zero-row UPDATE looks
+    // identical to the claim case above, so the loser must re-read to tell them apart —
+    // answering "still working" here would deny an Undo for a row that IS archived.
+    const winner = session({
+      archivedAt: new Date("2026-07-02T00:00:00Z"),
+      archivedBy: "user_2",
+    });
+    dbState.selects.push([session({ status: "waiting" })]);
+    dbState.updateResults.push([]);
+    dbState.selects.push([winner]);
+
+    expect(await archiveFohSession(SCOPE)).toEqual({
+      ok: true,
+      session: winner,
+    });
+    expect(inbox.resolveInboxForArchivedSession).toHaveBeenCalledWith("ps_1");
   });
 });
 

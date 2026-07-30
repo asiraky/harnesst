@@ -284,7 +284,13 @@ export async function archiveFohSession(input: {
   });
   if (!session) return { ok: false, reason: "not_found" };
   // Idempotent: a double-click, or a stale tab acting on a row someone already tidied away.
-  if (session.archivedAt) return { ok: true, session };
+  // The inbox resolve runs AGAIN rather than being skipped: the row update and the resolve are
+  // two statements, so a resolve that threw after the update committed left the conversation
+  // hidden with items still pending, and this retry is the only path that can still repair it.
+  if (session.archivedAt) {
+    await resolveInboxForArchivedSession(session.id);
+    return { ok: true, session };
+  }
   // A live turn has to be stopped deliberately first — archiving mid-turn would hide a
   // conversation that is still writing events into itself (D4 status mapping).
   if (fohSessionStatus(session) === "working") {
@@ -312,7 +318,23 @@ export async function archiveFohSession(input: {
       ),
     )
     .returning();
-  if (!row) return { ok: false, reason: "working" };
+  if (!row) {
+    // Zero rows means one of two different things, and they must not be conflated: a turn
+    // claimed the row (refuse), or a concurrent archive won (succeed — telling the loser of two
+    // simultaneous clicks "still working" would deny them the Undo for a row that IS archived).
+    const current = await getFohSessionForViewer({
+      id: session.id,
+      projectId: input.projectId,
+      viewerId: input.viewerId,
+      includeAll: input.includeAll,
+      includeArchived: true,
+    });
+    if (current?.archivedAt) {
+      await resolveInboxForArchivedSession(current.id);
+      return { ok: true, session: current };
+    }
+    return { ok: false, reason: "working" };
+  }
   // The bell items go with the park — ALL of them, unlike a deliberate stop (api.foh.stop),
   // which leaves `finished` to be acknowledged by opening the session. Nobody can open this one
   // any more, so an unresolved item would be a permanent bell entry pointing at a 404.
@@ -901,6 +923,12 @@ export async function claimPlaygroundSessionForTurn(input: {
     .where(
       and(
         eq(playgroundSessions.id, input.id),
+        // Archive and claim are mutually exclusive transitions (#278). The archive predicate
+        // refuses a `running` row; this refuses an archived one. Without both halves, a stream
+        // route that resolved a live row and then spent time waking/reseeding could claim a row
+        // archived in the meantime — a running turn on a conversation no FOH read can reach, so
+        // it cannot be opened or stopped, and BOH would offer to delete it outright.
+        isNull(playgroundSessions.archivedAt),
         or(
           ne(playgroundSessions.status, "running"),
           lt(playgroundSessions.updatedAt, staleBefore),

@@ -148,9 +148,14 @@ export async function listInboxForViewer(
   input: { userId: string; projectIds: string[] },
   store: DataStore = getRuntime().data,
   deps: {
-    sessionsByIds?: (
-      ids: string[],
-    ) => Promise<Array<{ id: string; agentId: string; title: string | null }>>;
+    sessionsByIds?: (ids: string[]) => Promise<
+      Array<{
+        id: string;
+        agentId: string;
+        title: string | null;
+        archivedAt?: Date | null;
+      }>
+    >;
   } = {},
 ): Promise<InboxViewItem[]> {
   const items = await store.inboxItems.listPendingForProjects(
@@ -174,7 +179,12 @@ export async function listInboxForViewer(
 
   return items.flatMap((item) => {
     const session = sessionById.get(item.sessionId);
-    if (!session) return [];
+    // An archived session is dropped for the same reason a vanished one is (#278): its `href`
+    // now 404s, so a row pointing at it is a dead bell entry. Archiving resolves the items it
+    // can see, but a turn settling in the same instant files a `finished` item just after —
+    // making this a read-side invariant means that race cannot leave a stuck row behind,
+    // whereas a check-before-insert on the writer would only narrow the window.
+    if (!session || session.archivedAt) return [];
     const agentId = session.agentId;
     return [
       {
