@@ -3,10 +3,11 @@
   "type": "skill",
   "name": "Legal Advisor",
   "description": "Draft privacy policies, terms of service, cookie policies, DPAs, disclaimers, and other compliance documents — GDPR/CCPA/LGPD-aware, jurisdiction-specific, with mandatory disclosures and a compliance checklist.",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "eve": ">=0.1.0",
   "files": [
     "skills/legal-advisor/SKILL.md",
     "skills/legal-advisor/references/templates.md"
-  ]
+  ],
+  "assistantSkill": "assistant-skill.md"
 }

@@ -49,6 +49,8 @@ function harness(opts?: {
   repoFiles?: Record<string, string>;
   /** Catalog index rows, or a throw to stand in for a catalog outage. */
   catalogIndex?: () => Promise<{ templates: unknown[] }>;
+  /** Catalog template lookup override (installed-skill backfill / outage). */
+  catalogTemplate?: (type: string, id: string) => Promise<unknown>;
 }) {
   const store = makeFakeStore();
   store.seedProject({
@@ -77,8 +79,9 @@ function harness(opts?: {
       name: "fake",
       index: (opts?.catalogIndex ??
         (async () => ({ templates: [{ id: "x" }] }))) as never,
-      template: async () =>
-        ({ manifest: { id: "x" }, files: { "a.ts": "1" } }) as never,
+      template: (opts?.catalogTemplate ??
+        (async () =>
+          ({ manifest: { id: "x" }, files: { "a.ts": "1" } }) as never)) as never,
     },
   };
   return { store, deps, repoFiles };
@@ -104,6 +107,58 @@ describe("assistant authoring: bundle", () => {
     expect(bundle.files).toEqual({
       "skills/user/deploys.md": "# deploys",
       "schedules/user/daily.md": "# daily",
+    });
+  });
+
+  it("delivers installed skills from the lock's snapshot (issue #274)", async () => {
+    const { deps } = harness({
+      repoFiles: {
+        "harnesst-lock.json": lockWith({
+          ...LEGAL_ADVISOR,
+          assistantSkill: "---\ndescription: legal\n---\n\n# Legal\n",
+        }),
+      },
+    });
+    const bundle = await assembleBundle(project, deps);
+    expect(bundle.files).toEqual({
+      "skills/installed/legal-advisor.md":
+        "---\ndescription: legal\n---\n\n# Legal\n",
+    });
+  });
+
+  it("backfills a pre-#274 lock entry's skill from the catalog, and degrades on outage", async () => {
+    const older = { ...LEGAL_ADVISOR, id: "github", type: "channel" as const };
+    const { deps } = harness({
+      repoFiles: {
+        "harnesst-lock.json": lockWith(LEGAL_ADVISOR, older),
+      },
+      catalogTemplate: async (_type, id) => {
+        if (id === "github") {
+          return { manifest: { id }, files: {}, assistantSkill: "# GitHub\n" };
+        }
+        throw new Error("catalog outage");
+      },
+    });
+    const bundle = await assembleBundle(project, deps);
+    // github backfilled from the catalog; legal-advisor's lookup threw → silently omitted.
+    expect(bundle.files).toEqual({
+      "skills/installed/github.md": "# GitHub\n",
+    });
+  });
+
+  it("never turns a malformed lock id into a bundle path, and dedupes per template id", async () => {
+    const { deps } = harness({
+      repoFiles: {
+        "harnesst-lock.json": lockWith(
+          { ...LEGAL_ADVISOR, id: "../evil", assistantSkill: "# nope\n" },
+          { ...LEGAL_ADVISOR, member: null, assistantSkill: "# root copy\n" },
+          { ...LEGAL_ADVISOR, member: "ivy", assistantSkill: "# ivy copy\n" },
+        ),
+      },
+    });
+    const bundle = await assembleBundle(project, deps);
+    expect(bundle.files).toEqual({
+      "skills/installed/legal-advisor.md": "# root copy\n",
     });
   });
 

@@ -96,7 +96,11 @@ export const githubCatalog: CatalogSource = {
             [rel, await fetchText(rawUrl(ptr, `${base}/files/${rel}`))] as const,
         ),
       );
-      return { manifest, files: Object.fromEntries(entries) };
+      // The assistant skill lives beside files/, not under it — it never installs into a repo.
+      const assistantSkill = manifest.assistantSkill
+        ? await fetchText(rawUrl(ptr, `${base}/${manifest.assistantSkill}`))
+        : null;
+      return { manifest, files: Object.fromEntries(entries), assistantSkill };
     });
   },
 };

@@ -12,6 +12,7 @@ import type { CatalogSource, CatalogTemplate } from "~/seams/types";
 import { makeFakeStore } from "../fakes/store";
 
 const connection: CatalogTemplate = {
+  assistantSkill: null,
   manifest: {
     id: "example-api",
     type: "connection",
@@ -51,6 +52,7 @@ const connection: CatalogTemplate = {
 };
 
 const bundle: CatalogTemplate = {
+  assistantSkill: null,
   manifest: {
     id: "example-bundle",
     type: "bundle",
@@ -65,6 +67,7 @@ const bundle: CatalogTemplate = {
 };
 
 const agent: CatalogTemplate = {
+  assistantSkill: null,
   manifest: {
     id: "example-agent",
     type: "agent",

@@ -83,6 +83,12 @@ export interface ResolvedTemplate {
   files: Record<string, string>;
   /** The PARENT's own content hash — matches its index row (includes never change it). */
   hash: string;
+  /**
+   * The PARENT's own assistant skill (issue #274) — never merged from includes: a composite's
+   * skill is the author's contract for the whole bundle, so it must cover what it bundles itself
+   * (frontmatter can't survive concatenation, and one install gets one skill).
+   */
+  assistantSkill: string | null;
   /** Direct include references, each with its own name/version/hash (composition provenance). */
   includes: ResolvedInclude[];
   /**
@@ -323,6 +329,7 @@ async function resolve(
     manifest: resolvedManifest,
     files,
     hash: ownHash,
+    assistantSkill: template.assistantSkill,
     includes: provenance,
     auths,
   };

@@ -303,6 +303,12 @@ export interface CatalogTemplate {
   manifest: TemplateManifest;
   /** install-relative path → file content (exactly the manifest's `files` set). */
   files: Record<string, string>;
+  /**
+   * Content of the manifest's `assistantSkill` markdown (issue #274) — the template's knowledge
+   * for the harnesst assistant, delivered via the assistant bundle rather than installed into the
+   * repo. Null only for templates published before the field existed.
+   */
+  assistantSkill: string | null;
 }
 
 export interface CatalogSource {

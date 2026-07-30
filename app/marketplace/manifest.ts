@@ -127,6 +127,15 @@ export const templateManifestSchema = z
    * files) — see the superRefine below.
    */
   files: z.array(relativeFilePath),
+  /**
+   * The template's ASSISTANT skill (issue #274): a markdown file, sibling to `files/` in the
+   * template directory (e.g. "assistant-skill.md"), that teaches the harnesst assistant what this
+   * template can do — for a channel, what wakes the agent and whether it can park into Front of
+   * House. It is NOT installed into the customer repo; it rides the assistant bundle, snapshotted
+   * into `harnesst-lock.json` at install time. Optional HERE so already-published catalogs keep
+   * parsing during rollout — the catalog CI (validate.mjs) makes it mandatory for every template.
+   */
+  assistantSkill: relativeFilePath.optional(),
   /** npm name → version range, JSON-merged into the target's package.json at install (PRD §7.8). */
   dependencies: z.record(npmName, z.string().min(1)).optional(),
   /**
@@ -246,6 +255,15 @@ export const templateManifestSchema = z
         inclusive: true,
         path: ["files"],
         message: "files must be non-empty (only a bundle may ship no files of its own)",
+      });
+    }
+    // The assistant skill is a manifest-level artifact, never an installed file — the same path
+    // in `files` would make the content hash ambiguous and install the skill into the repo.
+    if (m.assistantSkill && m.files.includes(m.assistantSkill)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["assistantSkill"],
+        message: "assistantSkill must not also be listed in files",
       });
     }
     // A file-less bundle with no includes would install nothing — reject it as authored noise.

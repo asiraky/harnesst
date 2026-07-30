@@ -4,161 +4,161 @@
       "id": "github-bundle",
       "type": "bundle",
       "name": "GitHub",
-      "version": "0.5.1",
+      "version": "0.5.2",
       "description": "Everything an agent needs to work GitHub as itself: the GitHub App channel (its @mention identity and credentials), the gh CLI in its sandbox, and the skill that turns the App's private key into a working token.",
-      "hash": "03e88fc3dd0062bfeab2f05022a44648801f35a3"
+      "hash": "0e63e0a58b0b87e5533c12246726e90f1bab820a"
     },
     {
       "id": "google-sheets-bundle",
       "type": "bundle",
       "name": "Google Sheets",
-      "version": "0.2.0",
+      "version": "0.2.1",
       "description": "Everything an agent needs to work with Google Sheets: the connector (install → Connect Google → read/write spreadsheets) plus a usage skill teaching A1 notation, read-before-write, and the values vs batchUpdate operations. Recommended way to add Sheets.",
-      "hash": "9e231c66e6b8354380c56662bde4e3336781c9ef"
+      "hash": "f30462f82f4bdc34042441f136a0085d43c9447e"
     },
     {
       "id": "discord",
       "type": "channel",
       "name": "Discord",
-      "version": "0.3.2",
+      "version": "0.3.3",
       "description": "Talk to this agent from Discord — one-click connect via harnesst's shared Discord app, a slash command named after the agent, and signature-verified interactions via eve's discordChannel.",
-      "hash": "cca69ed447148b0fe1d8ba990de756d180c4646a"
+      "hash": "61a84a0de5f61afd6866a91dc45be01a10452ee3"
     },
     {
       "id": "github",
       "type": "channel",
       "name": "GitHub",
-      "version": "0.7.1",
+      "version": "0.7.2",
       "description": "Talk to this agent by @mentioning it in GitHub issue and pull-request comments — a GitHub App with webhook signature verification via eve's githubChannel.",
-      "hash": "29cf0add79e8ea3ef661867fe962725be6a433d5"
+      "hash": "0eb5c76251f1ed5639dbcfb546d9af167a6604e9"
     },
     {
       "id": "agentmail",
       "type": "connection",
       "name": "AgentMail",
-      "version": "0.1.0",
+      "version": "0.1.1",
       "description": "Read and label mail in an AgentMail inbox (agentmail.to) with a user-supplied API key — no OAuth. Ships four tools: list the account's inboxes, list/search messages by date range, labels (e.g. unread), sender, or subject, read a full message including attachment downloads (invoice PDFs are the point), and add/remove labels. Read + label only by design: nothing shipped here can send, delete, or provision mail — the billing-inbox rule, enforced by omission.",
-      "hash": "8a547611ed49bcaf34f96a23bc3eaf46a358af46"
+      "hash": "945e5972b874ba9849f58b59e79b291c0d11b47a"
     },
     {
       "id": "gmail",
       "type": "connection",
       "name": "Gmail",
-      "version": "0.1.0",
+      "version": "0.1.1",
       "description": "Read, label, and send mail from the connected Google account. One template, selectable permission levels: pick Read mail / Manage labels / Send mail at install (read-only by default), connect the mailbox on the agent's Deployment tab, and the agent gets gmail__* tools via eve's OpenAPI connection — access tokens self-refresh at runtime, and the granted level is visible to the agent so it never promises what it can't do.",
-      "hash": "d198bd49bfdb88c15bcb41717dca2906ab5f4b7e"
+      "hash": "2c7f5e36e63a5650037b117e7b9199395c118e85"
     },
     {
       "id": "google-sheets",
       "type": "connection",
       "name": "Google Sheets",
-      "version": "0.2.0",
+      "version": "0.2.1",
       "description": "Read and write Google Sheets from this agent. Install it, then click Connect Google on the agent's Deployment tab to authorize your account, and the agent gets google_sheets__* tools (read/append/update cells, metadata, batch updates) via eve's OpenAPI connection — access tokens self-refresh at runtime.",
-      "hash": "9aa2c0d631d62bd519a32db8032254eb120eba8f"
+      "hash": "06068ffb59039ba93d436dfd98bfd00a6f2918d5"
     },
     {
       "id": "mayi",
       "type": "connection",
       "name": "May I?",
-      "version": "0.2.0",
+      "version": "0.2.1",
       "description": "Human approvals for agent actions via May I? (mayi.sh). Install it, click Connect on the agent's Deployment tab (harnesst registers the OAuth client automatically — no operator app to create), and gated tools park until a human approves in the May I? app, then resume with a signed receipt. Scheduled work that may need an approval must use the handler form of an eve schedule and hand the run to the channel with receive(mayi, ...) — task-mode schedules can't park for a human.",
-      "hash": "b778b606644040ebd9a4e3d7130c9fa6ab045f98"
+      "hash": "7dbbc202750fde0a22becbb1046cb9bd71e68d29"
     },
     {
       "id": "xero",
       "type": "connection",
       "name": "Xero",
-      "version": "0.1.1",
+      "version": "0.1.2",
       "description": "Bookkeeping operations against a Xero organisation through harnesst's brokered-capability framework: the agent's container never holds any Xero credential. harnesst keeps the OAuth grant and executes only a whitelisted set of operations — read reference data, search bills, look up and create contacts, and create DRAFT bills (a human approves them in Xero) with attached source files. Which operation groups are enabled is your choice at install time and editable any time from the Deployment tab, with instant effect.",
-      "hash": "8aba539a50f4e88223a75984e9663d35e8607435"
+      "hash": "6e7a0a4bd3cf3f9924bea2a49d8da3e76f5e5bd7"
     },
     {
       "id": "agent-browser",
       "type": "skill",
       "name": "Agent Browser",
-      "version": "0.1.1",
+      "version": "0.1.2",
       "description": "Browser automation with the agent-browser CLI: navigate pages, inspect accessibility snapshots, click/fill by refs, capture screenshots, and run web QA from the sandbox shell.",
-      "hash": "5192b2f4f448389ea17329b5c3e241c998cf725d"
+      "hash": "fa43ab5d85e1138eace5b5295df1ed86a9464053"
     },
     {
       "id": "building-cloudflare-apps",
       "type": "skill",
       "name": "Building Cloudflare apps",
-      "version": "0.1.0",
+      "version": "0.1.1",
       "description": "How to build a full-stack web app on Cloudflare Workers — a React + Vite SPA with a Worker API backend: choosing the scaffold, project layout, wrangler.jsonc semantics, the SPA-vs-Worker routing rules, the verify workflow, and bindings. Building only; deploying and shipping to a forge are separate skills.",
-      "hash": "2d7809dc41bdf9971b66193e6be67a43cc592a36"
+      "hash": "ccda01d5c64cd5fbbcd7301dff07d97b08b9c482"
     },
     {
       "id": "deploying-cloudflare-apps",
       "type": "skill",
       "name": "Deploying Cloudflare apps",
-      "version": "0.1.0",
+      "version": "0.1.1",
       "description": "How to deploy an app to Cloudflare and provision what it needs — wrangler config and deploys, KV/D1/R2/Queues/Pages, dry-runs, and getting deploy credentials into a CI pipeline. Cloudflare only; getting the code and wiring a specific forge's pipeline are separate skills.",
-      "hash": "fcfeb9fec37e3017f8f0410923f36dbc5934596e"
+      "hash": "b38a4876c3135e592e311856cf3893361b8a84b8"
     },
     {
       "id": "dev-toolchain",
       "type": "skill",
       "name": "Developer toolchain",
-      "version": "0.1.0",
+      "version": "0.1.1",
       "description": "A broad developer toolchain preinstalled in the agent's sandbox — git, gh, jq, ripgrep, build tools, python3, pnpm/yarn, and friends — plus a skill inventorying what's there. A deliberate superset: install once, stop apt-getting per session.",
-      "hash": "41984ed836ce423397e415bc44ee1ea027833f8d"
+      "hash": "0df979cc50e84216b3e04fecef4093d51bad5182"
     },
     {
       "id": "github-app-auth",
       "type": "skill",
       "name": "GitHub App auth",
-      "version": "0.3.2",
+      "version": "0.3.3",
       "description": "Exchange the agent's GitHub App private key for a short-lived installation token (GH_TOKEN) and commit as the App's bot identity, with gh and git preinstalled in the sandbox — the credential mechanics every GitHub-using agent needs, and nothing else.",
-      "hash": "9e498e92ac01d6f9869c44b59c8d8c742217667d"
+      "hash": "b0fa75b493efe0905b6f44678b88f518b0d81743"
     },
     {
       "id": "google-sheets-skill",
       "type": "skill",
       "name": "Google Sheets usage",
-      "version": "0.1.0",
+      "version": "0.1.1",
       "description": "Practical guidance for driving the google_sheets__* tools: A1 notation, read-before-write discipline, RAW vs USER_ENTERED, append vs update, and the batchUpdate request shapes for structural changes.",
-      "hash": "2c6db05b9eb0f1e5ff9f4c6f777ac6030e507b05"
+      "hash": "2d176c2e0a59aafc6ad63387596f1e74d230b422"
     },
     {
       "id": "harnesst-mcp-authoring",
       "type": "skill",
       "name": "Authoring eve agents with harnesst MCP",
-      "version": "0.1.0",
+      "version": "0.1.1",
       "description": "End-to-end guidance for authoring eve agents through harnesst's MCP server: save complete files, review every pending change, publish once, and poll every deployment until live.",
-      "hash": "2aec95b425003fa028e0a3f0346b1d4b2a0d4adf"
+      "hash": "fff8fcce8d3adbb0fbc910ab6ebd244fba2eb1c7"
     },
     {
       "id": "legal-advisor",
       "type": "skill",
       "name": "Legal Advisor",
-      "version": "0.1.2",
+      "version": "0.1.3",
       "description": "Draft privacy policies, terms of service, cookie policies, DPAs, disclaimers, and other compliance documents — GDPR/CCPA/LGPD-aware, jurisdiction-specific, with mandatory disclosures and a compliance checklist.",
-      "hash": "5a2857befa07af846d1ae478da4359cdeb1b95c4"
+      "hash": "49f06d50b5c6961ce64c025f5db1f404445bd2e0"
     },
     {
       "id": "reviewing-a-pull-request",
       "type": "skill",
       "name": "Reviewing a pull request",
-      "version": "0.2.0",
+      "version": "0.2.1",
       "description": "Two-axis PR review from a local checkout — standards (repo conventions plus a code-smell baseline) and spec (does it do what the issue asked) — delivered as one ranked review.",
-      "hash": "5dbaed44109ffb17db1f219915f893c5038dd298"
+      "hash": "a41401066deffe40b06c35483564c71cd5824555"
     },
     {
       "id": "discord-send-message",
       "type": "tool",
       "name": "Discord Send Message",
-      "version": "0.2.0",
+      "version": "0.2.1",
       "description": "Send a message to a Discord channel by channel id via harnesst's control plane, using the installation's shared Discord app — scoped to servers this agent is connected to.",
-      "hash": "da04f11360c41de6e9e11d974972b74ee76b809f"
+      "hash": "1f06dd4e32f0994f9c43693c4e2f40c4bda40ad9"
     },
     {
       "id": "firecrawl-search",
       "type": "tool",
       "name": "Web Search",
-      "version": "0.2.0",
+      "version": "0.2.1",
       "description": "Search and research the live web, returning results and optional page content. Routes through a service that bypasses the bot protection blocking plain fetches, so use it whenever the agent needs to search or read the web.",
-      "hash": "0990e24fd273e84f8551c67210b75690a7710d04"
+      "hash": "f21c5039333453ce39dc15d3e6036939f793f5bb"
     }
   ]
 }

@@ -50,6 +50,7 @@ const XERO_SCOPES = [
 
 /** A xero-style capability connection template (provider real, so registry defaults apply). */
 const xeroTpl: CatalogTemplate = {
+  assistantSkill: null,
   manifest: {
     id: "xero",
     type: "connection",
@@ -322,6 +323,7 @@ describe("resolveTemplate — capability groups propagate through composition", 
 
   it("a bundle unions capability group ids per provider in first-occurrence order", async () => {
     const billing: CatalogTemplate = {
+      assistantSkill: null,
       manifest: {
         id: "xero-billing",
         type: "connection",
@@ -336,6 +338,7 @@ describe("resolveTemplate — capability groups propagate through composition", 
       files: { "tools/xero-search-bills.ts": "export default {};\n" },
     };
     const bundle: CatalogTemplate = {
+      assistantSkill: null,
       manifest: {
         id: "books-pack",
         type: "bundle",

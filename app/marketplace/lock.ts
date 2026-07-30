@@ -40,6 +40,16 @@ const installEntrySchema = z.object({
   /** FINAL repo-relative paths the install owns (excludes package.json / harnesst-lock.json). */
   files: z.array(z.string().min(1)),
   /**
+   * Snapshot of the template's assistant skill CONTENT at install time (issue #274) — the
+   * markdown the harnesst assistant loads about this template, delivered to the assistant instance
+   * via the bundle (`skills/installed/<template-id>.md`), never installed into the repo tree.
+   * Snapshotted like `secrets`/`auth` so the install pins the skill it shipped with: the catalog
+   * only serves its current version, and a newer template's skill may describe capabilities the
+   * installed code doesn't have. Old locks without the field backfill from the catalog on bundle
+   * assembly. LOCK_VERSION stays 1 — optional, old locks parse fine.
+   */
+  assistantSkill: z.string().min(1).optional(),
+  /**
    * Paths this install deliberately PRESERVED at register time (issue #177): files that already
    * existed outside the lock and were kept byte-for-byte and left UNMANAGED. They are NOT in
    * `files`, so uninstall never deletes them; recording them here lets the Settings drift check
