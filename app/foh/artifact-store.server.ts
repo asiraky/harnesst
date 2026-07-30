@@ -13,9 +13,10 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 import { db } from "~/db/client.server";
-import { artifacts } from "~/db/schema";
+import { artifactFiles, artifacts } from "~/db/schema";
 
 export type Artifact = typeof artifacts.$inferSelect;
+export type ArtifactFile = typeof artifactFiles.$inferSelect;
 
 /**
  * Directory the bytes are written to. Production points this at a mounted volume
@@ -73,6 +74,8 @@ export async function insertArtifact(input: {
   deploymentId: string;
   name: string;
   title: string | null;
+  kind: string;
+  entryPath: string | null;
   contentType: string;
   byteSize: number;
   sha256: string;
@@ -96,6 +99,38 @@ export async function insertArtifact(input: {
     )
     .limit(1);
   return existing;
+}
+
+/** One member of a page bundle, as the publish flow stores it. */
+export interface ArtifactFileInput {
+  relPath: string;
+  contentType: string;
+  byteSize: number;
+  sha256: string;
+  storagePath: string;
+}
+
+/**
+ * Record a page bundle (#291): the card's row plus one row per member. Idempotent the same way a
+ * single image is — a retried publish lands on `artifacts_session_sha_uq`, whose key is the members'
+ * manifest, so the first row (and its already-written files) is returned rather than a second card.
+ *
+ * Not a transaction, and deliberately: the failure this could leave behind is an artifact row whose
+ * member rows are incomplete, which the preview route reads as a 404 on the missing file — the same
+ * outcome as a wiped store, and better than a publish the agent must retry because one INSERT of
+ * forty raced. The member insert is itself conflict-tolerant, so a retry completes the set.
+ */
+export async function insertArtifactBundle(input: {
+  artifact: Parameters<typeof insertArtifact>[0];
+  files: ArtifactFileInput[];
+}): Promise<Artifact> {
+  const row = await insertArtifact(input.artifact);
+  if (!row) return row;
+  await db
+    .insert(artifactFiles)
+    .values(input.files.map((file) => ({ ...file, artifactId: row.id })))
+    .onConflictDoNothing();
+  return row;
 }
 
 /** What a publish is measured against (see `publishArtifact`'s budgets). */
@@ -165,6 +200,40 @@ export async function findProjectArtifact(input: {
     .select()
     .from(artifacts)
     .where(and(eq(artifacts.id, input.id), eq(artifacts.projectId, input.projectId)))
+    .limit(1);
+  return row ?? null;
+}
+
+/**
+ * One artifact by id alone — for the preview route (#291), which has no browser session and so no
+ * project to constrain the lookup with. The project is not dropped from the authorization, it moves
+ * into the signed token: the route compares `artifact.projectId` to the token's claim and then
+ * re-runs the conversation-visibility check for the token's user. An id on its own still proves
+ * nothing, because reaching this function at all requires a valid HMAC over that id.
+ */
+export async function findArtifactById(id: string): Promise<Artifact | null> {
+  const [row] = await db
+    .select()
+    .from(artifacts)
+    .where(eq(artifacts.id, id))
+    .limit(1);
+  return row ?? null;
+}
+
+/** One member of a bundle, by the normalized relative path a preview request asked for. */
+export async function findArtifactFile(input: {
+  artifactId: string;
+  relPath: string;
+}): Promise<ArtifactFile | null> {
+  const [row] = await db
+    .select()
+    .from(artifactFiles)
+    .where(
+      and(
+        eq(artifactFiles.artifactId, input.artifactId),
+        eq(artifactFiles.relPath, input.relPath),
+      ),
+    )
     .limit(1);
   return row ?? null;
 }

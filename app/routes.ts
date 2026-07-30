@@ -44,6 +44,21 @@ export default [
     "api/foh/:projectId/artifact/:artifactId",
     "routes/api.foh.artifact.ts",
   ),
+  // Mints a short-lived preview capability for one HTML artifact (#291). POST, because minting is a
+  // side effect and this loader-shaped surface is prefetched on hover.
+  route(
+    "api/foh/:projectId/artifact-preview",
+    "routes/api.foh.artifact-preview.ts",
+  ),
+  // Sandboxed HTML artifact bytes (#291). Its own top-level path, not under /api/foh/, for two
+  // reasons: the token authenticates it instead of the browser session (so it does not belong with
+  // the cookie-guarded family), and the page's own relative URLs resolve against this prefix — a
+  // short, stable one keeps a bundle's `assets/app.css` inside its own artifact. The splat is the
+  // bundle-relative path; empty means the entry document.
+  route(
+    "artifacts/preview/:token/:artifactId/*",
+    "routes/artifacts.preview.$token.$artifactId.$.ts",
+  ),
   // Marketing surface. The landing lives inside the FOH index route (host split, D11:
   // MARKETING_HOST serves it; every other host serves FOH). Case studies + sitemap +
   // robots stay pathname-routed with per-host behavior in their loaders.

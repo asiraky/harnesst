@@ -1,12 +1,22 @@
 /**
- * Artifact media rules (issue #290) — the two judgements that decide whether an agent's publish
- * is accepted, both pure so they unit-test with no docker, no disk and no database.
+ * Artifact media rules (issues #290, #291) — the judgements that decide whether an agent's publish
+ * is accepted, all pure so they unit-test with no docker, no disk and no database.
  *
- * WHAT MAY BE PUBLISHED: a path inside the agent's own home volume, and bytes that ARE one of
- * four image formats. The content type is SNIFFED, never taken from the request: the agent names
- * a file, so a claimed `image/png` on an HTML payload would turn the serving route — same-origin,
- * cookie-authenticated — into stored XSS against the operator's own session. The extension is
- * likewise only ever a tie-breaker for SVG, which has no binary magic.
+ * WHAT MAY BE PUBLISHED: a path inside the agent's own home volume, and either bytes that ARE one
+ * of four image formats, or a small static PAGE BUNDLE (an `index.html` plus css/js/font/image
+ * siblings). For an image the content type is SNIFFED, never taken from the request: the agent
+ * names a file, so a claimed `image/png` on an HTML payload would turn the image serving route —
+ * same-origin, cookie-authenticated — into stored XSS against the operator's own session.
+ *
+ * A bundle cannot work that way, because HTML, CSS and JS have no magic bytes at all: there is
+ * nothing to sniff and every heuristic is guessable around. So the bundle rules invert the
+ * compensating control instead of pretending to sniff — the member's EXTENSION picks its type from
+ * a closed allowlist, and the bytes are only ever served by the preview route, whose response
+ * carries `Content-Security-Policy: sandbox allow-scripts; …` (see `artifact-preview.server.ts`).
+ * Header-level `sandbox` survives a top-level navigation, which is what makes serving
+ * agent-authored HTML from harnesst's own origin safe; the image route refuses bundle rows
+ * outright. Image members are still cross-checked against the sniff — an extension allowlist is a
+ * weaker claim than magic bytes, so where magic exists it is required to agree.
  *
  * Client+server safe: no node builtins, no server imports (the serving route and the FOH card
  * both read `ARTIFACT_INLINE_TYPES`).
@@ -23,7 +33,7 @@ export const ARTIFACT_MAX_BYTES = 25 * 1024 * 1024;
  */
 export const ARTIFACT_HOME_ROOT = "/workspace/home";
 
-/** v1 is images only. Ordered by how they are sniffed below, not by preference. */
+/** The image formats a single-file publish may be. Ordered by how they are sniffed below. */
 export const ARTIFACT_CONTENT_TYPES = [
   "image/png",
   "image/jpeg",
@@ -34,17 +44,181 @@ export const ARTIFACT_CONTENT_TYPES = [
 export type ArtifactContentType = (typeof ARTIFACT_CONTENT_TYPES)[number];
 
 /**
- * Types the serving route hands over for inline rendering. SVG is deliberately absent: it renders
- * safely inside an `<img>` (scripts never run in an image context) but a DIRECT navigation to the
- * URL would execute them same-origin, and the response CSP is not ours to set — the session
- * middleware overwrites it (`hardenDynamicResponse`). So SVG ships with a download disposition,
- * which navigations honour and image loads ignore.
+ * Types the IMAGE serving route hands over for inline rendering. SVG is deliberately absent: it
+ * renders safely inside an `<img>` (scripts never run in an image context) but a DIRECT navigation
+ * to the URL would execute them same-origin. That route serves no CSP of its own, so SVG ships with
+ * a download disposition instead, which navigations honour and image loads ignore. (The bundle
+ * preview route does own its CSP — see `artifact-preview.server.ts` — which is precisely why it is
+ * the only route allowed to serve a bundle's bytes.)
  */
 export const ARTIFACT_INLINE_TYPES: readonly string[] = [
   "image/png",
   "image/jpeg",
   "image/webp",
 ];
+
+/**
+ * What a published artifact IS, and the row's `kind` column. `image` is a single sniffed image file
+ * served by the cookie-authenticated image route; `html` is a page bundle served only through the
+ * sandboxed, token-authenticated preview route.
+ */
+export const ARTIFACT_KINDS = ["image", "html"] as const;
+export type ArtifactKind = (typeof ARTIFACT_KINDS)[number];
+
+/** Most files a page bundle may hold. A page, not a site — see the byte cap above for the rest. */
+export const ARTIFACT_BUNDLE_MAX_FILES = 40;
+
+/** The entry document of a multi-file bundle, by convention and by web convention. */
+export const ARTIFACT_BUNDLE_ENTRY = "index.html";
+
+/**
+ * The closed allowlist of bundle member types, keyed by lowercase extension. Deliberately small:
+ * everything here is a STATIC asset a rendered page needs, and nothing here is a container format
+ * that could carry another (no zip, no pdf, no video). An unlisted extension is refused rather than
+ * skipped — silently dropping a font or a stylesheet would show the user a page that renders wrong
+ * for no visible reason, and the agent owns the directory it asked us to publish.
+ */
+const BUNDLE_MEMBER_TYPES: Readonly<Record<string, string>> = {
+  html: "text/html",
+  htm: "text/html",
+  css: "text/css",
+  js: "text/javascript",
+  mjs: "text/javascript",
+  json: "application/json",
+  map: "application/json",
+  svg: "image/svg+xml",
+  png: "image/png",
+  jpg: "image/jpeg",
+  jpeg: "image/jpeg",
+  webp: "image/webp",
+  woff2: "font/woff2",
+  woff: "font/woff",
+};
+
+/** Extensions an agent may publish inside a bundle, for the refusal message. */
+export const ARTIFACT_BUNDLE_EXTENSIONS: readonly string[] =
+  Object.keys(BUNDLE_MEMBER_TYPES);
+
+/** Longest single path segment inside a bundle, and the deepest a bundle may nest. */
+const MAX_SEGMENT_LENGTH = 100;
+const MAX_BUNDLE_DEPTH = 8;
+
+/**
+ * A bundle-relative path, normalized, or null when it is not one. Used on BOTH sides: the tar
+ * entry names `docker cp` hands back (container-controlled, so never trusted) and the `*` splat of
+ * a preview request (browser-controlled). Segments are restricted to a conservative character
+ * class rather than merely stripped of `..`: the value ends up in a database lookup key and a
+ * `Content-Disposition`, and there is no legitimate asset name outside it.
+ */
+export function normalizeBundleRelPath(raw: unknown): string | null {
+  if (typeof raw !== "string") return null;
+  const trimmed = raw.trim();
+  if (!trimmed || trimmed.startsWith("/") || trimmed.length > MAX_NAME_LENGTH) {
+    return null;
+  }
+  const segments = trimmed.split("/").filter((s) => s !== "" && s !== ".");
+  if (segments.length === 0 || segments.length > MAX_BUNDLE_DEPTH) return null;
+  for (const segment of segments) {
+    if (segment.length > MAX_SEGMENT_LENGTH) return null;
+    // Leading dot excluded on purpose: a bundle has no dotfiles, and `.` prefixes are how
+    // configuration and credentials are named everywhere else in a home directory.
+    if (!/^[A-Za-z0-9_][A-Za-z0-9._-]*$/.test(segment)) return null;
+  }
+  return segments.join("/");
+}
+
+/** The content type a bundle member's extension declares, or null when it is not on the list. */
+export function bundleMemberContentType(relPath: string): string | null {
+  const name = relPath.slice(relPath.lastIndexOf("/") + 1);
+  const dot = name.lastIndexOf(".");
+  if (dot <= 0) return null;
+  return BUNDLE_MEMBER_TYPES[name.slice(dot + 1).toLowerCase()] ?? null;
+}
+
+export interface BundleMember {
+  relPath: string;
+  contentType: string;
+}
+
+/**
+ * Accept one bundle member, or refuse it. The path must normalize, the extension must be on the
+ * allowlist, and — where the declared type is one harnesst can actually sniff — the bytes must BE
+ * that type. The sniff cross-check is what stops a bundle from being a smuggling envelope: an
+ * `.png` member holding HTML would otherwise be served as `image/png`, which `nosniff` renders
+ * inert but which is still a lie the store would keep.
+ */
+export function resolveBundleMember(
+  rawRelPath: unknown,
+  bytes: Uint8Array,
+): BundleMember | null {
+  const relPath = normalizeBundleRelPath(rawRelPath);
+  if (!relPath) return null;
+  const contentType = bundleMemberContentType(relPath);
+  if (!contentType) return null;
+  if ((ARTIFACT_CONTENT_TYPES as readonly string[]).includes(contentType)) {
+    const name = relPath.slice(relPath.lastIndexOf("/") + 1);
+    if (sniffArtifactContentType(bytes, name) !== contentType) return null;
+  }
+  return { relPath, contentType };
+}
+
+/**
+ * The document a bundle opens at: `index.html` at the root, else the one and only HTML file in it.
+ * Ambiguity is refused rather than guessed — picking one of two pages would silently show the user
+ * the wrong thing, and "name it index.html" is a fix the agent can act on.
+ */
+export function pickBundleEntry(relPaths: readonly string[]): string | null {
+  if (relPaths.includes(ARTIFACT_BUNDLE_ENTRY)) return ARTIFACT_BUNDLE_ENTRY;
+  const pages = relPaths.filter(
+    (relPath) => bundleMemberContentType(relPath) === "text/html",
+  );
+  return pages.length === 1 ? pages[0] : null;
+}
+
+/**
+ * Which kind of artifact a publish is. `kind` from the agent decides when it says anything;
+ * otherwise the name does, so an agent that publishes `report.html` without reading the tool
+ * description gets the bundle path instead of "that is not an image". Null = refuse.
+ */
+export function artifactKindFor(
+  raw: unknown,
+  name: string,
+): ArtifactKind | null {
+  if (raw === null || raw === undefined || raw === "") {
+    return /\.html?$/i.test(name) ? "html" : "image";
+  }
+  if (typeof raw !== "string") return null;
+  return (ARTIFACT_KINDS as readonly string[]).includes(raw)
+    ? (raw as ArtifactKind)
+    : null;
+}
+
+/**
+ * Powerful features denied to the preview iframe (#291). The `allow` attribute's default is `'src'`,
+ * NOT deny — a framed document always matches its own src origin, so without this a preview could
+ * prompt for the camera and the prompt would render in harnesst's own chrome, attributed to
+ * harnesst. Composition is an intersection and disabling is one-way (a child can never re-enable
+ * what a parent turned off), so the app-wide `Permissions-Policy` header and this attribute
+ * reinforce each other rather than either being redundant.
+ */
+export const ARTIFACT_PREVIEW_IFRAME_ALLOW = [
+  "camera 'none'",
+  "microphone 'none'",
+  "geolocation 'none'",
+  "display-capture 'none'",
+  "midi 'none'",
+  "payment 'none'",
+  "usb 'none'",
+  "serial 'none'",
+  "xr-spatial-tracking 'none'",
+].join("; ");
+
+/** `charset` for the text types a bundle serves — without it a UTF-8 page renders as mojibake. */
+export function artifactCharsetType(contentType: string): string {
+  return contentType.startsWith("text/") || contentType === "application/json"
+    ? `${contentType}; charset=utf-8`
+    : contentType;
+}
 
 /** Longest file name kept — the name is display copy, not an identifier. */
 const MAX_NAME_LENGTH = 200;
@@ -132,7 +306,22 @@ export function artifactRendersInline(contentType: string): boolean {
   return ARTIFACT_INLINE_TYPES.includes(contentType);
 }
 
-/** The app path that serves one artifact's bytes. The only URL an artifact is ever reached by. */
+/** The app path that serves one IMAGE artifact's bytes. Cookie-authenticated, same-origin. */
 export function artifactUrl(projectId: string, artifactId: string): string {
   return `/api/foh/${projectId}/artifact/${artifactId}`;
+}
+
+/**
+ * The app path one bundle file is previewed at (#291). The token is IN THE PATH rather than a
+ * cookie or a query string so that every subresource the page loads authenticates itself: a
+ * sandboxed iframe is a null-origin, cookie-less context, and a query string would be dropped by
+ * relative `href`/`src` resolution inside the page anyway.
+ */
+export function artifactPreviewPath(
+  token: string,
+  artifactId: string,
+  relPath: string,
+): string {
+  const encoded = relPath.split("/").map(encodeURIComponent).join("/");
+  return `/artifacts/preview/${token}/${artifactId}/${encoded}`;
 }

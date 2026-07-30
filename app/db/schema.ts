@@ -1509,11 +1509,34 @@ export const artifacts = pgTable(
     name: text("name").notNull(),
     /** Optional agent-supplied caption for the card. */
     title: text("title"),
+    /**
+     * `image` (#290) or `html` (#291). An image is one sniffed file served by the
+     * cookie-authenticated image route; `html` is a page BUNDLE whose files live in
+     * `artifact_files` and are only ever served through the sandboxed preview route. Defaulted so
+     * every row that predates bundles reads correctly without a backfill.
+     */
+    kind: text("kind").notNull().default("image"),
+    /** Bundle only: the member the preview opens at, relative to the bundle root (`index.html`). */
+    entryPath: text("entry_path"),
     contentType: text("content_type").notNull(),
+    /**
+     * Bytes this artifact cost: the file's own size for an image, and the SUM of the bundle's
+     * members for a page — the budget in `artifactUsage` reads this column, so anything else would
+     * let a bundle spend the daily disk ceiling one member at a time.
+     */
     byteSize: integer("byte_size").notNull(),
-    /** sha256 of the stored bytes — content identity, and what makes a retried publish a no-op. */
+    /**
+     * Content identity, and what makes a retried publish a no-op. For an image it is the sha256 of
+     * the bytes; for a bundle it is a sha256 over the members' `(rel_path, sha256)` manifest, so
+     * republishing a page whose stylesheet changed is a NEW artifact even though `index.html` did
+     * not move — the file's own sha would have deduped that into the stale card.
+     */
     sha256: text("sha256").notNull(),
-    /** Where the bytes live, relative to the control plane's artifact directory. */
+    /**
+     * Where the bytes live, relative to the control plane's artifact directory. For a bundle this
+     * is the ENTRY member's stored path; every member (the entry included) also has its own
+     * `artifact_files` row, which is what the preview route reads.
+     */
     storagePath: text("storage_path").notNull(),
     /** Cache-space transcript position (see `playground_events.stream_index`) the card sorts after. */
     streamIndex: integer("stream_index").notNull(),
@@ -1525,5 +1548,38 @@ export const artifacts = pgTable(
     // republishing the same bytes into the same conversation must return the first row rather
     // than stack duplicate cards. Paired with ON CONFLICT DO NOTHING on the insert.
     uniqueIndex("artifacts_session_sha_uq").on(t.sessionId, t.sha256),
+  ],
+);
+
+/**
+ * The files of one page-bundle artifact (issue #291). A child table rather than more `artifacts`
+ * rows for two reasons: a bundle is ONE card in the transcript and one budget charge, and
+ * `artifacts_session_sha_uq` would collide the moment two members held identical bytes (two empty
+ * files, the same logo twice) — a normal thing in a static page and not an error.
+ *
+ * Bytes stay in the same flat content-addressed store as an image's: nothing about `rel_path`
+ * reaches the filesystem, so an agent-supplied path can never shape one. The path is a lookup key
+ * the preview route matches a request against, and only a normalized one is ever written
+ * (`normalizeBundleRelPath`).
+ */
+export const artifactFiles = pgTable(
+  "artifact_files",
+  {
+    id: varchar("id", { length: 12 }).primaryKey().$defaultFn(newId),
+    artifactId: varchar("artifact_id", { length: 12 })
+      .notNull()
+      .references(() => artifacts.id, { onDelete: "cascade" }),
+    /** Bundle-relative path (`index.html`, `assets/app.css`) — normalized, never raw. */
+    relPath: text("rel_path").notNull(),
+    /** The type the member's extension declares, from the bundle allowlist. */
+    contentType: text("content_type").notNull(),
+    byteSize: integer("byte_size").notNull(),
+    sha256: text("sha256").notNull(),
+    storagePath: text("storage_path").notNull(),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    // The preview route's only lookup, and the idempotency key a retried publish lands on.
+    uniqueIndex("artifact_files_path_uq").on(t.artifactId, t.relPath),
   ],
 );

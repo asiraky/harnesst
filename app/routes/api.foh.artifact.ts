@@ -44,6 +44,11 @@ export async function loader(args: LoaderFunctionArgs) {
     ? await findProjectArtifact({ id: artifactId, projectId: access.project.id })
     : null;
   if (!artifact) throw data("Not found", { status: 404 });
+  // Images only, and this is a security boundary rather than a lookup nicety (#291): this response
+  // sets no CSP, so serving a page bundle's `text/html` here would execute agent-authored script
+  // same-origin against the viewer's own cookie. Bundles have exactly one door — the preview route,
+  // whose response sandboxes itself.
+  if (artifact.kind !== "image") throw data("Not found", { status: 404 });
 
   const session = await getFohSessionForViewer({
     id: artifact.sessionId,

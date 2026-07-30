@@ -10,7 +10,9 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  copyArtifactBundleFromInstance,
   copyArtifactFromInstance,
+  filesInTar,
   firstFileInTar,
   type DockerStreamer,
   type StreamResult,
@@ -18,11 +20,14 @@ import {
 
 const TAR_BLOCK = 512;
 
-/** One tar entry: type "0" is a regular file, "2" a symlink (no payload), "5" a directory. */
+/**
+ * One tar entry: type "0" is a regular file, "2" a symlink (no payload), "5" a directory, "x" a PAX
+ * extension record.
+ */
 function tarEntry(
   name: string,
   body: Buffer,
-  type: "0" | "2" | "5" = "0",
+  type: "0" | "2" | "5" | "x" = "0",
   linkName = "",
 ): Buffer {
   const header = Buffer.alloc(TAR_BLOCK, 0);
@@ -184,5 +189,233 @@ describe("firstFileInTar", () => {
     expect(
       firstFileInTar(tarEntry("chart.png", Buffer.alloc(0), "2", "/etc/shadow")),
     ).toBeNull();
+  });
+});
+
+/**
+ * The bundle walk (#291) is strict where `firstFileInTar` is lenient, and that asymmetry IS the
+ * confinement boundary: resolving a directory's realpath proves nothing about the files under it, so
+ * a link entry inside the archive is the only signal left that a member points elsewhere. Skipping
+ * one would publish a page missing its linked file; interpreting one would publish the link's target.
+ */
+describe("filesInTar", () => {
+  const html = Buffer.from("<html>hi</html>");
+
+  it("returns every regular file and ignores directory entries", () => {
+    const tar = Buffer.concat([
+      tarEntry("site/", Buffer.alloc(0), "5"),
+      tarEntry("site/index.html", html),
+      tarEntry("site/assets/", Buffer.alloc(0), "5"),
+      tarEntry("site/assets/app.css", Buffer.from("body{}")),
+    ]);
+
+    const walk = filesInTar(tar, 10);
+
+    expect(walk.ok).toBe(true);
+    if (!walk.ok) return;
+    expect(walk.files.map((f) => f.name)).toEqual([
+      "site/index.html",
+      "site/assets/app.css",
+    ]);
+    expect(walk.files[0].bytes).toEqual(html);
+  });
+
+  it("refuses a link entry rather than skipping past it", () => {
+    const tar = Buffer.concat([
+      tarEntry("site/index.html", html),
+      tarEntry("site/secret.png", Buffer.alloc(0), "2", "/root/.ssh/id.png"),
+    ]);
+    expect(filesInTar(tar, 10)).toEqual({ ok: false, reason: "link" });
+  });
+
+  it("refuses more files than the cap allows", () => {
+    const tar = Buffer.concat([
+      tarEntry("site/a.html", html),
+      tarEntry("site/b.css", html),
+      tarEntry("site/c.css", html),
+    ]);
+    expect(filesInTar(tar, 2)).toEqual({ ok: false, reason: "count" });
+    expect(filesInTar(tar, 3).ok).toBe(true);
+  });
+
+  it("refuses extension records instead of mis-framing the header that follows one", () => {
+    const pax = Buffer.concat([
+      tarEntry("PaxHeaders/index.html", Buffer.from("30 path=whatever\n"), "x"),
+      tarEntry("site/index.html", html),
+    ]);
+    expect(filesInTar(pax, 10)).toEqual({ ok: false, reason: "extended" });
+  });
+
+  it("refuses a header whose size runs past the end of the archive", () => {
+    const truncated = tarEntry("site/index.html", html).subarray(
+      0,
+      TAR_BLOCK + 4,
+    );
+    expect(filesInTar(truncated, 10)).toEqual({
+      ok: false,
+      reason: "malformed",
+    });
+  });
+});
+
+describe("copyArtifactBundleFromInstance", () => {
+  const html = Buffer.from("<html>hi</html>");
+  const css = Buffer.from("body{color:red}");
+  const bundleInput = {
+    deploymentId: "dep_1",
+    path: "/workspace/home/artifacts/site",
+    maxBytes: 1024 * 1024,
+    maxFiles: 10,
+  };
+  const dirDocker = (copy: StreamResult) =>
+    fakeDocker({
+      resolve: {
+        ok: true,
+        stdout: Buffer.from("dir\n/workspace/home/artifacts/site"),
+      },
+      copy,
+    });
+
+  it("re-roots every member against the directory's basename", async () => {
+    const docker = dirDocker({
+      ok: true,
+      stdout: Buffer.concat([
+        tarEntry("site/", Buffer.alloc(0), "5"),
+        tarEntry("site/index.html", html),
+        tarEntry("site/assets/app.css", css),
+      ]),
+    });
+
+    const result = await copyArtifactBundleFromInstance(bundleInput, docker);
+
+    expect(result).toEqual({
+      ok: true,
+      files: [
+        { name: "index.html", bytes: html },
+        { name: "assets/app.css", bytes: css },
+      ],
+    });
+    // The RESOLVED directory is copied, and never with -L.
+    expect(docker.calls[1]).toContain(
+      "harnesst-inst-dep_1:/workspace/home/artifacts/site",
+    );
+    expect(docker.calls[1]).not.toContain("-L");
+  });
+
+  it("takes a single HTML file, whose archive is one entry named after the file", async () => {
+    const docker = fakeDocker({
+      // A plain file resolves as one: the bundle copy accepts a directory as well, not instead.
+      resolve: {
+        ok: true,
+        stdout: Buffer.from("file\n/workspace/home/artifacts/page.html"),
+      },
+      copy: { ok: true, stdout: tarEntry("page.html", html) },
+    });
+
+    const result = await copyArtifactBundleFromInstance(
+      { ...bundleInput, path: "/workspace/home/artifacts/page.html" },
+      docker,
+    );
+
+    expect(result).toEqual({ ok: true, files: [{ name: "page.html", bytes: html }] });
+  });
+
+  it("refuses an entry that does not sit under the copied root rather than re-rooting it", async () => {
+    const docker = dirDocker({
+      ok: true,
+      stdout: Buffer.concat([
+        tarEntry("site/index.html", html),
+        tarEntry("../../etc/passwd", Buffer.from("root:x:0:0")),
+      ]),
+    });
+
+    const result = await copyArtifactBundleFromInstance(bundleInput, docker);
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error).toMatch(/from outside the directory/);
+  });
+
+  it("turns the walk's refusals into copy the agent can act on", async () => {
+    const link = await copyArtifactBundleFromInstance(
+      bundleInput,
+      dirDocker({
+        ok: true,
+        stdout: Buffer.concat([
+          tarEntry("site/index.html", html),
+          tarEntry("site/logo.png", Buffer.alloc(0), "2", "/root/id.png"),
+        ]),
+      }),
+    );
+    expect(link.ok).toBe(false);
+    if (link.ok) return;
+    expect(link.error).toMatch(/contains a symlink/i);
+
+    const tooMany = await copyArtifactBundleFromInstance(
+      { ...bundleInput, maxFiles: 1 },
+      dirDocker({
+        ok: true,
+        stdout: Buffer.concat([
+          tarEntry("site/index.html", html),
+          tarEntry("site/app.css", css),
+        ]),
+      }),
+    );
+    expect(tooMany.ok).toBe(false);
+    if (tooMany.ok) return;
+    expect(tooMany.error).toMatch(/at most 1 files/);
+  });
+
+  it("refuses a page bigger than the byte ceiling once the members are SUMMED", async () => {
+    // Neither member is over the limit on its own — charging per file is how a page would spend the
+    // ceiling a stylesheet at a time.
+    const big = Buffer.alloc(700 * 1024, 0x61);
+    const docker = dirDocker({
+      ok: true,
+      stdout: Buffer.concat([
+        tarEntry("site/index.html", big),
+        tarEntry("site/app.css", big),
+      ]),
+    });
+
+    const result = await copyArtifactBundleFromInstance(
+      { ...bundleInput, maxBytes: 1024 * 1024 },
+      docker,
+    );
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error).toMatch(/larger than the 1 MB artifact limit/);
+  });
+
+  it("refuses an empty directory and an all-empty page", async () => {
+    const empty = await copyArtifactBundleFromInstance(
+      bundleInput,
+      dirDocker({ ok: true, stdout: tarEntry("site/", Buffer.alloc(0), "5") }),
+    );
+    expect(empty.ok).toBe(false);
+    if (empty.ok) return;
+    expect(empty.error).toMatch(/no files to publish/i);
+
+    const blank = await copyArtifactBundleFromInstance(
+      bundleInput,
+      dirDocker({ ok: true, stdout: tarEntry("site/index.html", Buffer.alloc(0)) }),
+    );
+    expect(blank.ok).toBe(false);
+    if (blank.ok) return;
+    expect(blank.error).toMatch(/is empty/i);
+  });
+
+  it("still refuses a directory that resolves outside the home volume", async () => {
+    const docker = fakeDocker({
+      resolve: { ok: true, stdout: Buffer.from("dir\n/root/.ssh") },
+    });
+
+    const result = await copyArtifactBundleFromInstance(bundleInput, docker);
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error).toMatch(/points outside \/workspace\/home/);
+    expect(docker.calls).toHaveLength(1);
   });
 });

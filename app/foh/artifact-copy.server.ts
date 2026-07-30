@@ -1,6 +1,6 @@
 /**
- * Copy-on-publish (issue #290): read one file out of an agent's instance over the mounted Docker
- * socket, at publish time, and hand the bytes back.
+ * Copy-on-publish (issues #290, #291): read one file — or the files of one page bundle — out of an
+ * agent's instance over the mounted Docker socket, at publish time, and hand the bytes back.
  *
  * Why the control plane reads it rather than the agent uploading it: the tool's POST crosses
  * harnesst's own edge (`client_max_body_size 25m`) and would have to base64 a screenshot through a
@@ -38,13 +38,21 @@ import { resolveArtifactSource } from "~/foh/artifact-media";
 // the two from drifting apart the day the prefix changes.
 import { containerName as instanceContainerName } from "~/seams/oss/deploy.localdocker.server";
 
-/** A tar entry as read off `docker cp` — the single regular file the copy asked for. */
+/** A tar entry as read off `docker cp` — one regular file the copy asked for. */
 export interface TarFile {
   name: string;
   bytes: Buffer;
 }
 
 const TAR_BLOCK = 512;
+
+/** Read a NUL-terminated field out of a tar header. */
+function field(header: Buffer, offset: number, length: number): string {
+  return header
+    .subarray(offset, offset + length)
+    .toString("utf8")
+    .replace(/\0.*$/, "");
+}
 
 /**
  * The first regular file in a tar stream, or null when there is none (`docker cp` of a directory
@@ -74,6 +82,66 @@ export function firstFileInTar(tar: Buffer): TarFile | null {
     offset = body + padded;
   }
   return null;
+}
+
+/**
+ * Why a bundle walk cannot reuse `firstFileInTar` (#291): that reader is deliberately LENIENT —
+ * it skips whatever it does not understand looking for one payload. For a directory copy the
+ * entries it would skip are the confinement boundary. Resolving a directory's realpath says
+ * nothing about where the files INSIDE it point, and `docker cp` without `-L` archives an inner
+ * symlink as a payload-less link entry, so refusing link entries is the whole per-member defence
+ * and "skip and carry on" would quietly publish a bundle missing its linked file (or, worse,
+ * normalize away the evidence that one was there).
+ *
+ * So this walk is strict in the other direction: every entry is classified, and anything that is
+ * not a regular file or a directory aborts the copy.
+ */
+export type TarWalkResult =
+  | { ok: true; files: TarFile[] }
+  /** A header this parser will not interpret, or one whose framing does not add up. */
+  | { ok: false; reason: "malformed" | "link" | "extended" | "count" };
+
+/**
+ * Every regular file in a tar stream, or the reason the stream was refused.
+ *
+ * PAX/GNU extension records ('x'/'g'/'L'/'K') are REFUSED rather than skipped: skipping them
+ * leaves the following header's truncated name in play, and interpreting them is a parser this
+ * does not need — docker truncates mtimes to whole seconds precisely so ordinary paths stay
+ * USTAR, and USTAR's own 155-byte `prefix` field (read below) covers long paths.
+ */
+export function filesInTar(tar: Buffer, maxFiles: number): TarWalkResult {
+  const files: TarFile[] = [];
+  let offset = 0;
+  while (offset + TAR_BLOCK <= tar.length) {
+    const header = tar.subarray(offset, offset + TAR_BLOCK);
+    const base = field(header, 0, 100);
+    // Two consecutive zero blocks end the archive; a single one is enough to stop reading.
+    if (!base) break;
+    const size = Number.parseInt(field(header, 124, 12).trim(), 8);
+    if (!Number.isFinite(size) || size < 0) {
+      return { ok: false, reason: "malformed" };
+    }
+    const type = String.fromCharCode(header[156]);
+    const prefix = field(header, 257, 6).startsWith("ustar")
+      ? field(header, 345, 155)
+      : "";
+    const name = prefix ? `${prefix}/${base}` : base;
+    const body = offset + TAR_BLOCK;
+    const padded = Math.ceil(size / TAR_BLOCK) * TAR_BLOCK;
+    if (type === "0" || type === "\0") {
+      if (body + size > tar.length) return { ok: false, reason: "malformed" };
+      if (files.length >= maxFiles) return { ok: false, reason: "count" };
+      files.push({ name, bytes: tar.subarray(body, body + size) });
+    } else if (type === "5") {
+      // A directory entry carries no payload; the members' own relative paths recreate the tree.
+    } else if (type === "1" || type === "2") {
+      return { ok: false, reason: "link" };
+    } else {
+      return { ok: false, reason: "extended" };
+    }
+    offset = body + padded;
+  }
+  return { ok: true, files };
 }
 
 export type StreamResult =
@@ -132,7 +200,9 @@ const REALPATH_SCRIPT = `const fs = require("node:fs");
 let out;
 try {
   const real = fs.realpathSync(process.argv[1]);
-  out = (fs.statSync(real).isFile() ? "file\\n" : "notfile\\n") + real;
+  const stat = fs.statSync(real);
+  const kind = stat.isFile() ? "file" : stat.isDirectory() ? "dir" : "notfile";
+  out = kind + "\\n" + real;
 } catch (error) {
   out = "error\\n" + (error && error.code ? error.code : "UNKNOWN");
 }
@@ -142,18 +212,24 @@ process.stdout.write(out);`;
 const REALPATH_MAX_BYTES = 8 * 1024;
 
 type RealPathResult =
-  | { ok: true; path: string }
+  | { ok: true; path: string; directory: boolean }
   | { ok: false; error: string };
 
 /**
  * The real path of `path` inside the container, with every symlink resolved and confirmed to still
  * live under the agent's home root. This is the confinement boundary: everything after it copies a
  * path the container itself resolved, not one the agent described.
+ *
+ * A DIRECTORY is only accepted when the caller asked for one (a page bundle). Note what resolving
+ * a directory does and does not buy: it proves the directory itself is inside the home volume, and
+ * nothing at all about the files under it — per-member confinement is the tar walk's link refusal
+ * in `filesInTar`, which is why that walk aborts instead of skipping.
  */
 async function realPathInInstance(
   container: string,
   path: string,
   stream: DockerStreamer,
+  allowDirectory = false,
 ): Promise<RealPathResult> {
   const result = await stream(
     ["exec", container, "node", "-e", REALPATH_SCRIPT, path],
@@ -178,13 +254,15 @@ async function realPathInInstance(
     }
     return { ok: false, error: `harnesst couldn't read ${path} (${detail}).` };
   }
-  if (verdict === "notfile") {
+  if (verdict === "notfile" || (verdict === "dir" && !allowDirectory)) {
     return {
       ok: false,
-      error: `${path} is not a regular file — publish a single image file.`,
+      error: allowDirectory
+        ? `${path} is not a file or a directory, so there is nothing to publish.`
+        : `${path} is not a regular file — publish a single image file.`,
     };
   }
-  if (verdict !== "file" || !detail) {
+  if ((verdict !== "file" && verdict !== "dir") || !detail) {
     return { ok: false, error: `harnesst couldn't resolve ${path}.` };
   }
   // The whole point of resolving: a link (or a symlinked parent directory) that leaves the home
@@ -196,7 +274,7 @@ async function realPathInInstance(
       error: `${path} points outside /workspace/home (it resolves elsewhere in the container), so harnesst will not publish it.`,
     };
   }
-  return { ok: true, path: confined.path };
+  return { ok: true, path: confined.path, directory: verdict === "dir" };
 }
 
 /** Map a docker CLI failure onto something the agent can act on. */
@@ -255,4 +333,106 @@ export async function copyArtifactFromInstance(
     };
   }
   return { ok: true, bytes: file.bytes };
+}
+
+export type ArtifactBundleCopyResult =
+  | { ok: true; files: TarFile[] }
+  | { ok: false; error: string };
+
+/** MB, for the refusal copy — the caps are bytes, the messages are human. */
+function megabytes(bytes: number): number {
+  return Math.floor(bytes / (1024 * 1024));
+}
+
+/**
+ * Every file of a page bundle (#291): the same confinement story as the single-file copy, plus two
+ * things a directory needs.
+ *
+ * RE-ROOTING. `docker cp <container>:<dir> -` names its entries after the directory's basename
+ * (`site/`, `site/index.html`), so a member's bundle-relative path is what is left once that root
+ * is stripped. The names come from the container, so every one is re-validated by the caller
+ * (`resolveBundleMember`) before it is stored, and an entry that does not sit under the root at all
+ * aborts the copy rather than being re-rooted by guesswork.
+ *
+ * CAPS. The stream cap already bounds the heap; a bundle adds a FILE-COUNT cap, because the per-copy
+ * heap bound (`MAX_CONCURRENT_ARTIFACT_COPIES × maxBytes`) says nothing about the number of database
+ * rows and store writes one publish can cause. The summed member bytes are checked against the same
+ * ceiling a single file gets, so a bundle cannot spend more disk than an image can.
+ */
+export async function copyArtifactBundleFromInstance(
+  input: {
+    deploymentId: string;
+    path: string;
+    maxBytes: number;
+    maxFiles: number;
+  },
+  stream: DockerStreamer = realDockerStreamer,
+): Promise<ArtifactBundleCopyResult> {
+  const container = instanceContainerName(input.deploymentId);
+  const real = await realPathInInstance(container, input.path, stream, true);
+  if (!real.ok) return { ok: false, error: real.error };
+  const result = await stream(
+    ["cp", `${container}:${real.path}`, "-"],
+    input.maxBytes + TAR_BLOCK * (2 + input.maxFiles),
+  );
+  if (!result.ok) {
+    if ("overflow" in result) {
+      return {
+        ok: false,
+        error: `That page is larger than the ${megabytes(input.maxBytes)} MB artifact limit.`,
+      };
+    }
+    return { ok: false, error: dockerFailureText(result.error, input.path) };
+  }
+
+  const walk = filesInTar(result.stdout, input.maxFiles);
+  if (!walk.ok) {
+    if (walk.reason === "link") {
+      return {
+        ok: false,
+        error: `${input.path} contains a symlink, and harnesst does not follow links out of a published page. Copy the real file in and publish again.`,
+      };
+    }
+    if (walk.reason === "count") {
+      return {
+        ok: false,
+        error: `A published page can hold at most ${input.maxFiles} files. Inline or drop the extras and publish again.`,
+      };
+    }
+    return {
+      ok: false,
+      error: `harnesst couldn't read ${input.path}. Keep the page's file names short and plain (letters, digits, dots, dashes).`,
+    };
+  }
+
+  const root = real.path.slice(real.path.lastIndexOf("/") + 1);
+  const files: TarFile[] = [];
+  for (const file of walk.files) {
+    // A single-FILE publish arrives as one entry named exactly the basename.
+    if (file.name === root) {
+      files.push({ name: root, bytes: file.bytes });
+      continue;
+    }
+    if (!file.name.startsWith(`${root}/`)) {
+      return {
+        ok: false,
+        error: `harnesst couldn't read ${input.path} — it holds a file (${file.name}) from outside the directory.`,
+      };
+    }
+    files.push({ name: file.name.slice(root.length + 1), bytes: file.bytes });
+  }
+  if (files.length === 0) {
+    return { ok: false, error: `There are no files to publish in ${input.path}.` };
+  }
+  const total = files.reduce((sum, file) => sum + file.bytes.length, 0);
+  if (total === 0) {
+    return { ok: false, error: `${input.path} is empty.` };
+  }
+  if (total > input.maxBytes) {
+    return {
+      ok: false,
+      error: `That page is larger than the ${megabytes(input.maxBytes)} MB artifact limit.`,
+    };
+  }
+  return { ok: true, files };
 }
