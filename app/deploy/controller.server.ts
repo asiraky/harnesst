@@ -21,6 +21,7 @@ import type { DataStore, Deployment, Release } from "~/data/ports";
 import {
   channelIdsForEntry,
   hasChannelInstalled,
+  hasToolInstalled,
   overlayLock,
   requiredScopesByProvider,
   type HarnesstLock,
@@ -597,6 +598,21 @@ export async function deployRelease(
       : [];
     if (parkChannels.length > 0) {
       envVars.HARNESST_FOH_PARK_URL = `${controlPlaneBase}/api/foh/park`;
+      envVars.HARNESST_TEAM_TOKEN ??= mintDelegationToken(dep.id);
+    }
+
+    // Artifact publishing (#290): where the `publish-artifact` tool files an image it produced, so
+    // the user sees it as a card in the Front of House conversation. Same control-plane base URL
+    // and the same per-deployment delegation token as the team relay / Discord proxy / channel
+    // park: no new secret, and the endpoint re-derives project/agent/conversation from the token's
+    // deployment id. Harnesst-owned, so anti-shadowing (delete, then set) as above.
+    // Gated on the committed lock actually carrying the tool, for the same reason the park URL is:
+    // a publish URL plus a delegation token in a container with no publishing tool would hand
+    // copy-out-of-my-home-volume rights to code that never asked for them. `hasToolInstalled`
+    // looks through bundles, since a composite install drops its parts' own lock rows.
+    delete envVars.HARNESST_FOH_ARTIFACTS_URL;
+    if (lock && hasToolInstalled(lock, "publish-artifact", member)) {
+      envVars.HARNESST_FOH_ARTIFACTS_URL = `${controlPlaneBase}/api/foh/artifacts`;
       envVars.HARNESST_TEAM_TOKEN ??= mintDelegationToken(dep.id);
     }
 

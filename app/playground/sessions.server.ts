@@ -27,6 +27,11 @@ import {
   playgroundSessions,
   type SessionResumeVia,
 } from "~/db/schema";
+import {
+  mergeArtifactEntries,
+  turnAnchorsFromEvents,
+} from "~/foh/artifact-entries";
+import { listArtifactsForSession } from "~/foh/artifact-store.server";
 import { channelLabelFor } from "~/foh/channel-resume";
 import {
   openInboxQuestion,
@@ -250,6 +255,69 @@ export async function getFohSessionForViewer(input: {
     )
     .limit(1);
   return row ?? null;
+}
+
+/**
+ * Where an agent's out-of-band write (artifact publishing, #290) is allowed to land: the ONE
+ * front-of-house conversation that is running a turn on the deployment that is calling, right now.
+ *
+ * The caller is a TOOL, so nothing about the destination can come off the wire — the bearer proves
+ * a deployment and eve hands a tool no session id. "Most recently updated FOH session of this
+ * agent" was the first shape of this and it was a confidentiality bug, not a placement bug: FOH
+ * sessions are per-creator visible, one deployment serves EVERY member's conversation with the
+ * agent, and `updatedAt` is bumped by any message, drain event or unarchive — so member A's row
+ * could be the newest while member B's turn published, and B's screenshot would render (and
+ * download) inside A's transcript instead.
+ *
+ * So the destination is derived from the live turn instead, which is the fact the publish actually
+ * carries: the tool runs INSIDE a turn, and a turn is claimed atomically
+ * (`claimPlaygroundSessionForTurn`) onto exactly one session row with `status = 'running'`, a
+ * fencing token, and this deployment/environment stamped on it. Staleness uses the claim's own
+ * cutoff, so an abandoned `running` row cannot be published into forever.
+ *
+ * Two live turns on one deployment is possible (two members talking to the same agent at once), and
+ * there is nothing in a publish that could tell them apart — so that is REFUSED (`ambiguous`)
+ * rather than guessed. Refusing loses an image; guessing leaks one.
+ */
+export type FohPublishTargetResult =
+  | { ok: true; session: PlaygroundSession }
+  | { ok: false; reason: "no_live_turn" | "ambiguous" };
+
+export async function liveFohTurnForDeployment(input: {
+  projectId: string;
+  agentId: string;
+  /** The publishing deployment's environment — a staging container cannot publish into prod. */
+  environmentId: string | null;
+  deploymentId: string;
+  /** Claim staleness cutoff; callers pass TURN_IDLE_TIMEOUT_MS, as the turn claim does. */
+  staleAfterMs: number;
+  now?: Date;
+}): Promise<FohPublishTargetResult> {
+  const now = input.now ?? new Date();
+  const staleBefore = new Date(now.getTime() - input.staleAfterMs);
+  const rows = await db
+    .select()
+    .from(playgroundSessions)
+    .where(
+      and(
+        eq(playgroundSessions.projectId, input.projectId),
+        eq(playgroundSessions.agentId, input.agentId),
+        surfaceScope("foh"),
+        isNull(playgroundSessions.archivedAt),
+        input.environmentId
+          ? eq(playgroundSessions.environmentId, input.environmentId)
+          : isNull(playgroundSessions.environmentId),
+        eq(playgroundSessions.lastDeploymentId, input.deploymentId),
+        eq(playgroundSessions.status, "running"),
+        isNotNull(playgroundSessions.turnClaimId),
+        gt(playgroundSessions.updatedAt, staleBefore),
+      ),
+    )
+    // Two is all that matters: one row is the answer, two is a refusal.
+    .limit(2);
+  if (rows.length === 0) return { ok: false, reason: "no_live_turn" };
+  if (rows.length > 1) return { ok: false, reason: "ambiguous" };
+  return { ok: true, session: rows[0] };
 }
 
 /**
@@ -1259,6 +1327,7 @@ export async function loadPlaygroundEntriesFromCache(
 ): Promise<ChatEntry[]> {
   const rows = await db
     .select({
+      streamIndex: playgroundEvents.streamIndex,
       type: playgroundEvents.type,
       data: playgroundEvents.data,
       meta: playgroundEvents.meta,
@@ -1266,13 +1335,27 @@ export async function loadPlaygroundEntriesFromCache(
     .from(playgroundEvents)
     .where(eq(playgroundEvents.sessionId, session.id))
     .orderBy(playgroundEvents.streamIndex);
-  if (rows.length === 0) return [];
+  // Artifacts (#290) are transcript elements that never travelled through eve, so they are folded
+  // in AFTER the projection — the event pipeline is untouched. Read even for an empty cache: an
+  // artifact published before the first event still has to appear.
+  const published = await listArtifactsForSession(session.id);
+  if (rows.length === 0) {
+    return mergeArtifactEntries([], published, []);
+  }
   const events: EveStreamEvent[] = rows.map((r) => ({
     type: r.type,
     data: (r.data ?? {}) as Record<string, unknown>,
     meta: (r.meta ?? undefined) as { at?: string } | undefined,
   }));
-  return projectEventsToEntries(events, session);
+  const entries = projectEventsToEntries(events, session);
+  const anchors = turnAnchorsFromEvents(
+    rows.map((r) => ({
+      streamIndex: r.streamIndex,
+      type: r.type,
+      data: (r.data ?? {}) as Record<string, unknown>,
+    })),
+  );
+  return mergeArtifactEntries(entries, published, anchors);
 }
 
 export async function markPlaygroundSessionStopped(input: {

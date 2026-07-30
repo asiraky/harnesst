@@ -279,6 +279,25 @@ export function channelIdsForEntry(entry: InstallEntry): string[] {
   return ids;
 }
 
+/**
+ * Is the TOOL template `id` present for this member — installed directly, OR carried by a bundle?
+ * Same bundle-blindness fix as `hasChannelInstalled` (a composite install drops its parts' own lock
+ * rows), and the same insistence on the type: this decides who receives a publish URL and a
+ * delegation token (#290), so a channel or hook that merely shares the name gets nothing.
+ */
+export function hasToolInstalled(
+  lock: HarnesstLock,
+  id: string,
+  member: string | null,
+): boolean {
+  return lock.installs.some(
+    (e) =>
+      e.member === member &&
+      ((e.type === "tool" && e.id === id) ||
+        (e.includes ?? []).some((i) => i.type === "tool" && i.id === id)),
+  );
+}
+
 /** The install providing channel `id` for `member` — directly or bundle-carried — if any. */
 export function findChannelInstall(
   lock: HarnesstLock,

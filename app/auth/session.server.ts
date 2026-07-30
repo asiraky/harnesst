@@ -65,6 +65,10 @@ const SIGNED_OR_BEARER_ENDPOINTS = new Set([
   // Channel park (WS1): an agent container POSTs its parked question with the same delegation
   // bearer the relay uses. No browser Origin exists on a server-to-server call, and the route
   // verifies the token itself — listing it here bypasses the CSRF check, not authentication.
+  // Artifact publishing (#290): the agent's `publish-artifact` tool POSTs the path of an image on
+  // its home volume with the same delegation bearer. Node's fetch sends no Origin, and the route
+  // verifies the token itself — listing it here bypasses the CSRF check, not authentication.
+  "/api/foh/artifacts",
   "/api/foh/park",
   "/api/gateway/v1/chat/completions",
   "/api/github/webhook",

@@ -1,5 +1,6 @@
 interface EntryWithRole {
-  role: "user" | "assistant";
+  /** Structural, and widened for `artifact` cards (#290): only `"assistant"` is tested for. */
+  role: string;
 }
 
 interface VisibleLiveTurn {

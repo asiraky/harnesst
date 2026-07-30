@@ -28,11 +28,19 @@ export default [
   // (HARNESST_TEAM_TOKEN) auth, no browser session — kept above the :projectId routes so the
   // static segment can't be swallowed by them.
   route("api/foh/park", "routes/api.foh.park.ts"),
+  // Artifact publish (#290): an agent files an image it produced. Same bearer story as park, and
+  // likewise kept above the :projectId routes so the static segment can't be swallowed.
+  route("api/foh/artifacts", "routes/api.foh.artifacts.ts"),
   route("api/foh/:projectId/stream", "routes/api.foh.stream.ts"),
   route("api/foh/:projectId/stop", "routes/api.foh.stop.ts"),
   route("api/foh/:projectId/read", "routes/api.foh.read.ts"),
   // Archive / undo for one FOH session (#278). Reversible; never destructive.
   route("api/foh/:projectId/archive", "routes/api.foh.archive.ts"),
+  // The bytes behind an artifact card (#290) — browser-session auth, out-of-scope is 404.
+  route(
+    "api/foh/:projectId/artifact/:artifactId",
+    "routes/api.foh.artifact.ts",
+  ),
   // Marketing surface. The landing lives inside the FOH index route (host split, D11:
   // MARKETING_HOST serves it; every other host serves FOH). Case studies + sitemap +
   // robots stay pathname-routed with per-host behavior in their loaders.
