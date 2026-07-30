@@ -13,6 +13,7 @@ import {
   openInboxQuestion,
   recordInboxFinished,
   resolveFinishedOnRead,
+  resolveInboxForArchivedSession,
   resolveInboxForSession,
 } from "~/foh/inbox.server";
 import { makeFakeStore, type FakeStore } from "../fakes/store";
@@ -148,6 +149,29 @@ describe("resolveInboxForSession", () => {
       store,
     );
     await resolveInboxForSession(SESSION, store);
+    expect(store.getInboxItem(otherSession.id)?.status).toBe("pending");
+  });
+});
+
+describe("resolveInboxForArchivedSession (#278)", () => {
+  it("resolves finished items too — an archived session can never be opened to read them", async () => {
+    const q = await openInboxQuestion(
+      { projectId: PROJECT, sessionId: SESSION, userId: USER, request: request() },
+      store,
+    );
+    const fin = await recordInboxFinished(
+      { projectId: PROJECT, sessionId: SESSION, userId: USER },
+      store,
+    );
+    const otherSession = await recordInboxFinished(
+      { projectId: PROJECT, sessionId: "sess_2", userId: USER },
+      store,
+    );
+
+    await resolveInboxForArchivedSession(SESSION, store);
+
+    expect(store.getInboxItem(q.id)?.status).toBe("resolved");
+    expect(store.getInboxItem(fin.id)?.status).toBe("resolved");
     expect(store.getInboxItem(otherSession.id)?.status).toBe("pending");
   });
 });

@@ -4,26 +4,35 @@ import {
   eq,
   gt,
   inArray,
+  isNotNull,
   isNull,
   lt,
   max,
   min,
   ne,
   or,
+  sql,
+  type SQL,
 } from "drizzle-orm";
 
 import { inputRequestsOf, type RawEveEvent } from "~/agent/talk.server";
 import { normalizeTurnError } from "~/chat/stream-error";
 import type { ChatEntry, ChatInputRequest, ChatStep } from "~/chat/types";
+import { user } from "~/db/auth-schema";
 import { db } from "~/db/client.server";
 import {
+  agents,
   conversationReads,
   playgroundEvents,
   playgroundSessions,
   type SessionResumeVia,
 } from "~/db/schema";
 import { channelLabelFor } from "~/foh/channel-resume";
-import { openInboxQuestion, resolveInboxForSession } from "~/foh/inbox.server";
+import {
+  openInboxQuestion,
+  resolveInboxForArchivedSession,
+  resolveInboxForSession,
+} from "~/foh/inbox.server";
 import { reconcileNeedsYouFromTail } from "~/foh/needs-you";
 import { fohSessionStatus, sortSessionsForList } from "~/foh/status";
 import type { FohSessionStatus } from "~/foh/status";
@@ -55,6 +64,24 @@ function surfaceScope(surface: SessionSurface) {
   return eq(playgroundSessions.surface, surface);
 }
 
+/**
+ * The front-of-house row predicate (§6 roles): a member sees their own conversations plus
+ * agent-opened ones (`created_by IS NULL`, team-wide by design); an admin/owner sees
+ * everything on the agent. Written once and shared so that the list, the single-row read, and
+ * the archive mutations can never drift apart — and() drops the `undefined`.
+ */
+function fohViewerScope(
+  viewerId: string,
+  includeAll?: boolean,
+): SQL | undefined {
+  return includeAll
+    ? undefined
+    : or(
+        eq(playgroundSessions.createdBy, viewerId),
+        isNull(playgroundSessions.createdBy),
+      );
+}
+
 export interface PlaygroundSessionSummary {
   id: string;
   title: string;
@@ -68,6 +95,8 @@ export interface PlaygroundSessionSummary {
   pendingInputAt: string | null;
   /** D4 presentation status (working / needs_you / done / error). */
   fohStatus: FohSessionStatus;
+  /** When the conversation was archived out of the FOH list (#278); null while it is live. */
+  archivedAt: string | null;
   /** D3 unread flag; present only when the caller computed it for a viewer. */
   unread?: boolean;
 }
@@ -87,6 +116,7 @@ export function summarizePlaygroundSession(
     surface: session.surface,
     pendingInputAt: session.pendingInputAt?.toISOString() ?? null,
     fohStatus: fohSessionStatus(session),
+    archivedAt: session.archivedAt?.toISOString() ?? null,
     ...(opts?.unread !== undefined ? { unread: opts.unread } : {}),
   };
 }
@@ -141,6 +171,10 @@ export async function getPlaygroundSession(input: {
  * FOH middle-pane list (§6 roles): members see their own sessions plus agent-opened ones
  * (`created_by IS NULL`); admins/owners (`includeAll`) see every FOH session for the agent.
  * Rows carry the viewer's unread flag (D3) and come back needs-you first.
+ *
+ * Archived rows are absent (#278). That also re-aims the caller's row-spam guard — it counts
+ * what this returns — at UNARCHIVED conversations, which is the intent: tidying up must make
+ * room for new work.
  */
 export async function listFohSessionsForAgent(input: {
   projectId: string;
@@ -166,12 +200,8 @@ export async function listFohSessionsForAgent(input: {
         eq(playgroundSessions.projectId, input.projectId),
         eq(playgroundSessions.agentId, input.agentId),
         surfaceScope("foh"),
-        input.includeAll
-          ? undefined
-          : or(
-              eq(playgroundSessions.createdBy, input.viewerId),
-              isNull(playgroundSessions.createdBy),
-            ),
+        isNull(playgroundSessions.archivedAt),
+        fohViewerScope(input.viewerId, input.includeAll),
       ),
     );
   return sortSessionsForList(
@@ -188,6 +218,11 @@ export async function listFohSessionsForAgent(input: {
  * One FOH session under the viewer's scope — the same visibility rule as
  * `listFohSessionsForAgent` (members: own + agent-opened rows; admins/owners: all). The FOH
  * session view, stream, and stop routes all resolve their row through this.
+ *
+ * Archived rows are invisible here by default (#278), which is what makes a bookmarked URL and
+ * every stream/stop/read post 404 on an archived conversation without a single extra check.
+ * Only the archive mutations themselves pass `includeArchived` — undo and idempotent re-archive
+ * must still be able to find the row.
  */
 export async function getFohSessionForViewer(input: {
   id: string;
@@ -196,6 +231,7 @@ export async function getFohSessionForViewer(input: {
   agentId?: string;
   viewerId: string;
   includeAll?: boolean;
+  includeArchived?: boolean;
 }): Promise<PlaygroundSession | null> {
   const [row] = await db
     .select()
@@ -206,16 +242,290 @@ export async function getFohSessionForViewer(input: {
         eq(playgroundSessions.projectId, input.projectId),
         input.agentId ? eq(playgroundSessions.agentId, input.agentId) : undefined,
         surfaceScope("foh"),
-        input.includeAll
+        input.includeArchived
           ? undefined
-          : or(
-              eq(playgroundSessions.createdBy, input.viewerId),
-              isNull(playgroundSessions.createdBy),
-            ),
+          : isNull(playgroundSessions.archivedAt),
+        fohViewerScope(input.viewerId, input.includeAll),
       ),
     )
     .limit(1);
   return row ?? null;
+}
+
+/**
+ * Outcome of a front-of-house archive (#278). A refusal is a VALUE, not a throw: "still
+ * working — stop it first" is ordinary UI copy, not an error condition.
+ */
+export type ArchiveFohSessionResult =
+  | { ok: true; session: PlaygroundSession }
+  | { ok: false; reason: "not_found" | "working" };
+
+/**
+ * Archive one FOH session — the front-of-house tidy-up (#278). Reversible and cheap: the
+ * transcript is untouched and undo is a single column clear. Nothing in FOH can destroy a
+ * conversation; only the back-of-house `deleteFohSessionPermanently` does.
+ *
+ * Visibility is the viewer's own (`getFohSessionForViewer`): a member archives what they can
+ * see, an admin/owner anything on the agent.
+ */
+export async function archiveFohSession(input: {
+  id: string;
+  projectId: string;
+  viewerId: string;
+  includeAll?: boolean;
+  now?: Date;
+}): Promise<ArchiveFohSessionResult> {
+  const session = await getFohSessionForViewer({
+    id: input.id,
+    projectId: input.projectId,
+    viewerId: input.viewerId,
+    includeAll: input.includeAll,
+    includeArchived: true,
+  });
+  if (!session) return { ok: false, reason: "not_found" };
+  // Idempotent: a double-click, or a stale tab acting on a row someone already tidied away.
+  if (session.archivedAt) return { ok: true, session };
+  // A live turn has to be stopped deliberately first — archiving mid-turn would hide a
+  // conversation that is still writing events into itself (D4 status mapping).
+  if (fohSessionStatus(session) === "working") {
+    return { ok: false, reason: "working" };
+  }
+
+  const now = input.now ?? new Date();
+  const [row] = await db
+    .update(playgroundSessions)
+    .set({
+      archivedAt: now,
+      archivedBy: input.viewerId,
+      // Archiving retracts the conversation's claim on the team's attention, so the needs-you
+      // park goes with it; leaving it set would resurrect a phantom question on restore.
+      pendingInputAt: null,
+      updatedAt: now,
+    })
+    .where(
+      and(
+        eq(playgroundSessions.id, session.id),
+        isNull(playgroundSessions.archivedAt),
+        // Closes the read-then-write race: a turn claimed since the read above wins, and the
+        // caller gets the same refusal it would have got a moment earlier.
+        ne(playgroundSessions.status, "running"),
+      ),
+    )
+    .returning();
+  if (!row) return { ok: false, reason: "working" };
+  // The bell items go with the park — ALL of them, unlike a deliberate stop (api.foh.stop),
+  // which leaves `finished` to be acknowledged by opening the session. Nobody can open this one
+  // any more, so an unresolved item would be a permanent bell entry pointing at a 404.
+  await resolveInboxForArchivedSession(session.id);
+  return { ok: true, session: row };
+}
+
+/** The archive-clearing update, shared by the FOH undo and the back-of-house restore. */
+async function clearArchiveMarks(
+  where: SQL | undefined,
+): Promise<PlaygroundSession | null> {
+  const [row] = await db
+    .update(playgroundSessions)
+    .set({ archivedAt: null, archivedBy: null, updatedAt: new Date() })
+    .where(where)
+    .returning();
+  return row ?? null;
+}
+
+/**
+ * Un-archive from the front of house — the "Undo" on the archived strip (#278). Same state
+ * transition as `restoreFohSession`, but scoped to the FOH viewer rather than gated on
+ * back-of-house: the person who just archived a conversation must be able to take it back
+ * without an admin.
+ */
+export async function unarchiveFohSessionForViewer(input: {
+  id: string;
+  projectId: string;
+  viewerId: string;
+  includeAll?: boolean;
+}): Promise<
+  { ok: true; session: PlaygroundSession } | { ok: false; reason: "not_found" }
+> {
+  const row = await clearArchiveMarks(
+    and(
+      eq(playgroundSessions.id, input.id),
+      eq(playgroundSessions.projectId, input.projectId),
+      surfaceScope("foh"),
+      isNotNull(playgroundSessions.archivedAt),
+      fohViewerScope(input.viewerId, input.includeAll),
+    ),
+  );
+  return row ? { ok: true, session: row } : { ok: false, reason: "not_found" };
+}
+
+/**
+ * Restore an archived session from the back of house. `backOfHouse` is asserted rather than
+ * assumed: every caller already passes the route guard's flag, and a future caller that
+ * forgets should fail loudly here instead of quietly granting a member admin reach.
+ */
+export async function restoreFohSession(input: {
+  id: string;
+  projectId: string;
+  backOfHouse: boolean;
+}): Promise<PlaygroundSession | null> {
+  if (!input.backOfHouse) {
+    throw new Error("restoreFohSession requires back-of-house access");
+  }
+  return clearArchiveMarks(
+    and(
+      eq(playgroundSessions.id, input.id),
+      eq(playgroundSessions.projectId, input.projectId),
+      surfaceScope("foh"),
+      isNotNull(playgroundSessions.archivedAt),
+    ),
+  );
+}
+
+/**
+ * Delete an archived FOH session for good — the only destructive path over conversations, and
+ * the only `db.delete(playgroundSessions)` in the app. `archived_at IS NOT NULL` is part of the
+ * predicate, so a live conversation can never be deleted through here: archiving first is the
+ * mandatory, reversible step. Events, reads, inbox items and checkouts go with the row via the
+ * existing ON DELETE cascades — there is deliberately no manual cleanup to keep in sync.
+ */
+export async function deleteFohSessionPermanently(input: {
+  id: string;
+  projectId: string;
+  backOfHouse: boolean;
+}): Promise<boolean> {
+  if (!input.backOfHouse) {
+    throw new Error("deleteFohSessionPermanently requires back-of-house access");
+  }
+  const deleted = await db
+    .delete(playgroundSessions)
+    .where(
+      and(
+        eq(playgroundSessions.id, input.id),
+        eq(playgroundSessions.projectId, input.projectId),
+        surfaceScope("foh"),
+        isNotNull(playgroundSessions.archivedAt),
+      ),
+    )
+    .returning({ id: playgroundSessions.id });
+  return deleted.length > 0;
+}
+
+/** One row of the back-of-house archived listing — metadata only, no transcript. */
+export interface ArchivedFohSessionRow {
+  id: string;
+  title: string;
+  agentName: string;
+  /** Who opened it: the person's name/email, or the peer agent for agent-opened rows. */
+  openedBy: string;
+  openedByAgent: boolean;
+  /** ISO strings: this crosses the loader boundary straight into the BOH table. */
+  archivedAt: string;
+  /** Display name of the archiver; null when the account has since been removed. */
+  archivedBy: string | null;
+  lastEventAt: string | null;
+  updatedAt: string;
+}
+
+/**
+ * Archived FOH sessions for one repo, newest-archived first (#278). Back-of-house only — the
+ * caller is behind `requireProject`, so there is no viewer scope here by design: an admin
+ * restoring or deleting must see every archived conversation, including other members'.
+ *
+ * The two people columns (opener, archiver) and the opening agent are resolved with follow-up
+ * lookups rather than repeated self-joins on `user`/`agents`, which drizzle can only express
+ * with table aliases this codebase does not otherwise use.
+ */
+export async function listArchivedFohSessions(
+  projectId: string,
+): Promise<ArchivedFohSessionRow[]> {
+  const rows = await db
+    .select({
+      session: playgroundSessions,
+      agentName: agents.name,
+    })
+    .from(playgroundSessions)
+    .innerJoin(agents, eq(agents.id, playgroundSessions.agentId))
+    .where(
+      and(
+        eq(playgroundSessions.projectId, projectId),
+        surfaceScope("foh"),
+        isNotNull(playgroundSessions.archivedAt),
+      ),
+    )
+    .orderBy(desc(playgroundSessions.archivedAt));
+  if (rows.length === 0) return [];
+
+  const userIds = [
+    ...new Set(
+      rows.flatMap((row) =>
+        [row.session.createdBy, row.session.archivedBy].filter(
+          (id): id is string => id != null,
+        ),
+      ),
+    ),
+  ];
+  const openerAgentIds = [
+    ...new Set(
+      rows
+        .map((row) => row.session.openedByAgentId)
+        .filter((id): id is string => id != null),
+    ),
+  ];
+  const [people, openerAgents] = await Promise.all([
+    userIds.length
+      ? db
+          .select({ id: user.id, name: user.name, email: user.email })
+          .from(user)
+          .where(inArray(user.id, userIds))
+      : [],
+    openerAgentIds.length
+      ? db
+          .select({ id: agents.id, name: agents.name })
+          .from(agents)
+          .where(inArray(agents.id, openerAgentIds))
+      : [],
+  ]);
+  const personLabel = new Map(
+    people.map((row) => [row.id, row.name || row.email] as const),
+  );
+  const agentLabel = new Map(openerAgents.map((row) => [row.id, row.name]));
+
+  return rows.map(({ session, agentName }) => ({
+    id: session.id,
+    title: session.title ?? "New conversation",
+    agentName,
+    openedBy:
+      (session.createdBy ? personLabel.get(session.createdBy) : null) ??
+      (session.openedByAgentId
+        ? (agentLabel.get(session.openedByAgentId) ?? "an agent")
+        : null) ??
+      // created_by IS NULL with no opening agent: a channel park (WS1) nobody in harnesst started.
+      "the team",
+    openedByAgent: session.createdBy == null,
+    archivedAt: (session.archivedAt ?? session.updatedAt).toISOString(),
+    archivedBy: session.archivedBy
+      ? (personLabel.get(session.archivedBy) ?? null)
+      : null,
+    lastEventAt: session.lastEventAt?.toISOString() ?? null,
+    updatedAt: session.updatedAt.toISOString(),
+  }));
+}
+
+/** How many archived FOH sessions a repo holds — the "N archived" footer link (#278). */
+export async function countArchivedFohSessions(
+  projectId: string,
+): Promise<number> {
+  const [row] = await db
+    .select({ c: sql<number>`count(*)::int` })
+    .from(playgroundSessions)
+    .where(
+      and(
+        eq(playgroundSessions.projectId, projectId),
+        surfaceScope("foh"),
+        isNotNull(playgroundSessions.archivedAt),
+      ),
+    );
+  return row?.c ?? 0;
 }
 
 /** FOH sessions by id — inbox flyout enrichment (titles + jump targets). FOH-scoped only. */
@@ -411,6 +721,11 @@ export async function adoptChannelHomedSession(input: {
         pendingInputAt: input.now,
         lastEventAt: input.now,
         updatedAt: input.now,
+        // A fresh question RESURFACES an archived conversation (#278). Archiving says "I'm
+        // done with this", not "hide anything this session ever asks again" — leaving it
+        // archived would file a question into a row no FOH read can see, and lose it.
+        archivedAt: null,
+        archivedBy: null,
         ...(input.title ? { title: input.title } : {}),
       },
       setWhere: and(
@@ -440,13 +755,17 @@ export async function adoptChannelHomedSession(input: {
     return { ok: false, reason: "session_not_owned" };
   }
 
-  // A live turn holds the claim. Refresh only what the turn does not own — the resume handles —
-  // and leave `status`/`pendingInputAt`/`turn_claim_id` to the claim holder.
+  // A live turn holds the claim. Refresh only what the turn does not own — the resume handles,
+  // and the archive marks (#278: no turn owns those, and a park landing mid-turn must still
+  // resurface the conversation) — leaving `status`/`pendingInputAt`/`turn_claim_id` to the
+  // claim holder.
   const [refreshed] = await db
     .update(playgroundSessions)
     .set({
       continuationToken: input.continuationToken,
       resumeVia: input.resumeVia,
+      archivedAt: null,
+      archivedBy: null,
     })
     .where(eq(playgroundSessions.id, existing.id))
     .returning();
@@ -485,8 +804,9 @@ export async function setPlaygroundSessionModel(input: {
 
 /**
  * Park the session on a human question (needs-you, D4). Written only at the drain/reconcile/
- * relay chokepoints. Guarded `status <> 'stopped'`: a deliberately stopped session must not be
- * resurrected into the inbox by a late drain write. Returns whether the park claim WON (a row
+ * relay chokepoints. Guarded on `status <> 'stopped'` and not archived: a session a human
+ * deliberately retired must not be resurrected into the inbox by a late drain write. Returns
+ * whether the park claim WON (a row
  * was updated) — callers must skip their inbox inserts on false, or a stop that raced the park
  * would still file items for a stopped session (issue #221 finding 4).
  */
@@ -501,6 +821,10 @@ export async function markSessionPendingInput(
       and(
         eq(playgroundSessions.id, sessionId),
         ne(playgroundSessions.status, "stopped"),
+        // Archiving retracted the same claim on attention (#278), so a drain or reattach that
+        // settles a moment after the archive must lose the way a stop makes it lose above —
+        // otherwise the park flag and its inbox items land on a row no FOH read can see.
+        isNull(playgroundSessions.archivedAt),
       ),
     )
     .returning({ id: playgroundSessions.id });

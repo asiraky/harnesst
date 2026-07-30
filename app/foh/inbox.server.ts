@@ -74,6 +74,20 @@ export async function resolveInboxForSession(
   await store.inboxItems.resolveBySession(sessionId, ["question", "approval"]);
 }
 
+/**
+ * Resolve EVERY pending item for a session — archiving (#278) retracts the conversation's whole
+ * claim on the team's attention, `finished` (D13) included. The narrower variant above is right
+ * for stop/send/reconcile, where the row stays visible and a `finished` item is acknowledged by
+ * opening it; an archived row is invisible to every FOH read, so an item left pending would be a
+ * bell entry whose link 404s and which nothing can ever resolve.
+ */
+export async function resolveInboxForArchivedSession(
+  sessionId: string,
+  store: DataStore = getRuntime().data,
+): Promise<void> {
+  await store.inboxItems.resolveBySession(sessionId);
+}
+
 /** Record a terminal-success `finished` item (D13) for a FOH session's recipient. */
 export async function recordInboxFinished(
   input: {

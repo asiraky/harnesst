@@ -14,6 +14,7 @@
 import { getSessionAuth, sessionLoader } from "~/auth/session.server";
 import {
   AlertTriangle,
+  Archive,
   Boxes,
   Cpu,
   FolderGit2,
@@ -1235,6 +1236,7 @@ export default function Settings({
             pendingName={pendingName}
           />
         )}
+        {showRepo && <ArchivedSessionsSection projectId={project.id} />}
         {showRepo && <GeneralSection project={project} />}
         {showRepo && (
           <IngestSection loaderData={loaderData} newToken={newToken} />
@@ -1514,6 +1516,36 @@ function GeneralSection({
             <span className="text-muted-foreground">Default branch:</span>{" "}
             <span className="font-mono">{project.defaultBranch}</span>
           </p>
+        </CardContent>
+      </Card>
+    </section>
+  );
+}
+
+/**
+ * Archived front-of-house conversations (#278). The page is deliberately off the tab row, so
+ * this row (and the FOH list's "N archived" link) is how anyone finds it.
+ */
+function ArchivedSessionsSection({ projectId }: { projectId: string }) {
+  return (
+    <section>
+      <SectionHeader icon={Archive} accent="sky" title="Conversations" />
+      <Card>
+        <CardContent className="divide-y py-0">
+          <div className="flex flex-wrap items-center justify-between gap-3 py-4">
+            <div>
+              <p className="text-sm font-medium">Archived conversations</p>
+              <p className="text-sm text-muted-foreground">
+                Conversations archived from the front of house. Restore one, or
+                delete it — and its transcript — permanently.
+              </p>
+            </div>
+            <Button variant="outline" asChild>
+              <Link to={`/repos/${projectId}/sessions/archived`}>
+                View archived
+              </Link>
+            </Button>
+          </div>
         </CardContent>
       </Card>
     </section>

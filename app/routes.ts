@@ -31,6 +31,8 @@ export default [
   route("api/foh/:projectId/stream", "routes/api.foh.stream.ts"),
   route("api/foh/:projectId/stop", "routes/api.foh.stop.ts"),
   route("api/foh/:projectId/read", "routes/api.foh.read.ts"),
+  // Archive / undo for one FOH session (#278). Reversible; never destructive.
+  route("api/foh/:projectId/archive", "routes/api.foh.archive.ts"),
   // Marketing surface. The landing lives inside the FOH index route (host split, D11:
   // MARKETING_HOST serves it; every other host serves FOH). Case studies + sitemap +
   // robots stay pathname-routed with per-host behavior in their loaders.
@@ -85,6 +87,13 @@ export default [
     "/playground",
     "routes/projects.$projectId.playground.tsx",
     "member-playground",
+  ),
+  // Archived FOH conversations (#278) — repo-scoped, back-of-house only, and deliberately NOT a
+  // section tab: it is reached from the FOH session list's "N archived" link and from one row on
+  // the Settings tab. Single registration; there is no member-level twin.
+  route(
+    "repos/:projectId/sessions/archived",
+    "routes/projects.$projectId.sessions.archived.tsx",
   ),
   route("repos/:projectId/runs", "routes/projects.$projectId.runs.tsx"),
   memberRoute("/runs", "routes/projects.$projectId.runs.tsx", "member-runs"),

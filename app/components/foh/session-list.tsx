@@ -4,6 +4,7 @@
  * "opened by agent" hint for delegation-parked sessions. Minimal keyboard nav: focus the
  * list, j/k (or arrows) to move, Enter to open.
  */
+import { Archive, Loader2 } from "lucide-react";
 import { useState } from "react";
 import { NavLink, useNavigate } from "react-router";
 
@@ -49,11 +50,19 @@ export function SessionList({
   sessions,
   basePath,
   selectedId,
+  onArchive,
+  archivingId,
+  refusal,
 }: {
   sessions: FohSessionRow[];
   /** `/t/:projectId/:agentId` — rows link under it (D14). */
   basePath: string;
   selectedId?: string | null;
+  /** #278: absent = no archive affordance at all (the control is opt-in per surface). */
+  onArchive?: (session: FohSessionRow) => void;
+  archivingId?: string | null;
+  /** A server refusal ("still working"), rendered under its own row — never as a dialog. */
+  refusal?: { sessionId: string; message: string } | null;
 }) {
   const navigate = useNavigate();
   const [cursor, setCursor] = useState(() =>
@@ -87,13 +96,16 @@ export function SessionList({
       }}
     >
       {sessions.map((session, i) => (
-        <li key={session.id}>
+        <li key={session.id} className="group/session relative">
           <NavLink
             to={`${basePath}/s/${session.id}`}
             prefetch="intent"
             className={({ isActive }) =>
               cn(
-                "flex items-start gap-2 px-3 py-2.5 transition-colors hover:bg-muted/60",
+                "flex items-start gap-2 py-2.5 pl-3 transition-colors hover:bg-muted/60",
+                // Reserve the archive control's gutter even when it is invisible, so a long
+                // title never runs under it on hover.
+                onArchive ? "pr-9" : "pr-3",
                 isActive && "bg-muted",
                 i === cursor && "ring-1 ring-inset ring-ring/40",
               )
@@ -122,6 +134,39 @@ export function SessionList({
               </span>
             </span>
           </NavLink>
+          {/* Sibling of the NavLink, never inside it — a button nested in an anchor is invalid
+              markup and eats the row's keyboard focus. Hidden at rest (#246 cross-link idiom)
+              so the list stays a calm column of conversations. */}
+          {onArchive && (
+            <button
+              type="button"
+              aria-label={`Archive ${session.title}`}
+              title="Archive"
+              disabled={archivingId === session.id}
+              className={cn(
+                "absolute right-1 top-2 rounded-sm p-1 text-muted-foreground transition-opacity focus-visible:opacity-100 group-hover/session:opacity-100 hover:text-foreground",
+                archivingId === session.id ? "opacity-100" : "opacity-0",
+              )}
+              onClick={(e) => {
+                e.stopPropagation();
+                onArchive(session);
+              }}
+              // The list's j/k/Enter handler sits on the <ul>; without this, Enter on the
+              // archive button would also navigate to the cursor row.
+              onKeyDown={(e) => e.stopPropagation()}
+            >
+              {archivingId === session.id ? (
+                <Loader2 className="size-3.5 animate-spin" aria-hidden />
+              ) : (
+                <Archive className="size-3.5" aria-hidden />
+              )}
+            </button>
+          )}
+          {refusal?.sessionId === session.id && (
+            <p className="px-3 pb-2 text-xs text-destructive">
+              {refusal.message}
+            </p>
+          )}
         </li>
       ))}
     </ul>
