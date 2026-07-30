@@ -1178,7 +1178,14 @@ export default function Settings({
                 : `${justUninstalled} uninstall saved`}
           </AlertTitle>
           <AlertDescription>
-            Review and publish it from the Deployment tab.
+            These changes are saved with your other changes — nothing goes live
+            until you publish.{" "}
+            <Link
+              to={publishHref}
+              className="font-medium underline underline-offset-4"
+            >
+              Review &amp; publish →
+            </Link>
           </AlertDescription>
         </Alert>
       )}

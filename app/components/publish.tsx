@@ -103,10 +103,18 @@ export function PublishControl() {
   const running = !!data?.running;
   const runningRef = useRef(running);
   runningRef.current = running;
+  // A completed navigation can have staged repo drafts without remounting this global control
+  // (marketplace update/repair/uninstall redirects back to the same Settings route). Refresh on
+  // every committed location so the publish nudge appears with the confirmation instead of at
+  // the next idle poll.
+  useEffect(() => {
+    if (!projectId) return;
+    load(`/repos/${projectId}/publish`);
+  }, [projectId, location.key, load]);
+
   useEffect(() => {
     if (!projectId) return;
     const url = `/repos/${projectId}/publish`;
-    load(url);
     let timer: ReturnType<typeof setInterval>;
     const schedule = () => {
       const ms = runningRef.current ? ACTIVE_POLL_MS : IDLE_POLL_MS;
@@ -117,7 +125,8 @@ export function PublishControl() {
     };
     schedule();
     return () => clearInterval(timer);
-    // Re-run when the running state flips so the cadence switches between 3s and 10s.
+    // Re-run when the running state flips so the cadence switches between 3s and 10s. Immediate
+    // loads are owned by the location effect above; this effect only maintains the poll.
   }, [projectId, load, running]);
 
   const [open, setOpen] = useState(false);
@@ -138,11 +147,19 @@ export function PublishControl() {
 
   if (!projectId || !data || !data.connected) return null;
   const state = publishControlState(data);
+  // Count alone is not a change-set identity: updating an existing draft can replace its content
+  // without adding a row. Include each draft's save timestamp so a new save revives a nudge that
+  // was dismissed for the previous revision, even when the count stays the same.
+  const changeRevision = data.groups
+    .flatMap((group) => group.files.map((file) => `${file.path}:${file.savedAt}`))
+    .sort()
+    .join("|");
   return (
     <>
       <PublishNudgeBanner
         state={state}
         projectId={projectId}
+        changeRevision={changeRevision}
         onOpen={() => handleOpenChange(true)}
       />
       <PublishPanel
@@ -208,8 +225,8 @@ function nudgeDismissKey(projectId: string): string {
 }
 
 /** The signature a dismissal is remembered against — changes when the nudge's substance changes. */
-function nudgeSignature(state: PublishControlState): string {
-  return state.kind === "ready" ? `ready:${state.count}` : state.kind;
+function nudgeSignature(state: PublishControlState, changeRevision: string): string {
+  return state.kind === "ready" ? `ready:${state.count}:${changeRevision}` : state.kind;
 }
 
 /**
@@ -219,13 +236,15 @@ function nudgeSignature(state: PublishControlState): string {
 export function PublishNudgeBanner({
   state,
   projectId,
+  changeRevision,
   onOpen,
 }: {
   state: PublishControlState;
   projectId: string;
+  changeRevision: string;
   onOpen: () => void;
 }) {
-  const signature = nudgeSignature(state);
+  const signature = nudgeSignature(state, changeRevision);
   const [dismissed, setDismissed] = useState<string | null>(() => {
     if (typeof sessionStorage === "undefined") return null;
     return sessionStorage.getItem(nudgeDismissKey(projectId));
