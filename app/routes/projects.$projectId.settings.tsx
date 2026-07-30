@@ -1178,14 +1178,21 @@ export default function Settings({
                 : `${justUninstalled} uninstall saved`}
           </AlertTitle>
           <AlertDescription>
-            Review and publish it from the Deployment tab.
+            These changes are saved with your other changes — nothing goes live
+            until you publish.{" "}
+            <Link
+              to={publishHref}
+              className="font-medium underline underline-offset-4"
+            >
+              Review &amp; publish →
+            </Link>
           </AlertDescription>
         </Alert>
       )}
 
       {isTeam && roster.length === 0 && (
         <div className="mb-10">
-          <EmptyTeamState overviewHref={`/repos/${project.id}`} />
+          <EmptyTeamState agentsHref={`/repos/${project.id}`} />
         </div>
       )}
 

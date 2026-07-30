@@ -282,7 +282,7 @@ export function lockSecretsForMember(
 
 /**
  * A member's required-secret state, from the DB: computeRequiredSecrets over its set names,
- * attachments, and dismissals. The Overview badge ("N secrets missing") and the deploy guard
+ * attachments, and dismissals. The agent-page badge ("N secrets missing") and the deploy guard
  * (§9) both read this, so they can never disagree with Settings.
  */
 export async function agentRequiredSecretState(input: {

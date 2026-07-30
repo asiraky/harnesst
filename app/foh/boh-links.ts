@@ -6,7 +6,7 @@
  */
 import type { Project } from "~/data/ports";
 
-/** The team's BOH landing — the repo overview / agent list. */
+/** The team's BOH landing — the Agents page / agent list. */
 export function bohTeamHref(projectId: string): string {
   return `/repos/${projectId}`;
 }

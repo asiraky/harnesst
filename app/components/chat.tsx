@@ -824,6 +824,7 @@ export function ChatComposer({
   busyHint,
   disabled = false,
   initialValue,
+  focusKey,
   onSend,
   controls,
 }: {
@@ -835,12 +836,21 @@ export function ChatComposer({
   disabled?: boolean;
   /** Seed the composer's text (e.g. a publish failure handed off as context to fix). */
   initialValue?: string;
+  /** Refocus the composer when the surrounding conversation changes. */
+  focusKey?: unknown;
   onSend: (message: string) => void;
   /** Optional controls rendered in the toolbar, left of the send button (e.g. a picker). */
   controls?: ReactNode;
 }) {
   const ref = useRef<HTMLTextAreaElement>(null);
   const unavailable = busy || disabled;
+
+  // A disabled textarea loses focus when a turn starts. Focus on first availability,
+  // restore it when the turn finishes, and let conversation surfaces request the same
+  // behavior when they switch the conversation without remounting this component.
+  useEffect(() => {
+    if (!unavailable) ref.current?.focus();
+  }, [focusKey, unavailable]);
 
   // The textarea is uncontrolled, so defaultValue only applies on mount: size a pre-seeded
   // composer to its content immediately, and re-seed when a new handoff arrives while mounted.

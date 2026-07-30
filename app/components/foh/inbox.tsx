@@ -15,7 +15,7 @@ import {
 import { useEffect, useRef, useState } from "react";
 import { useFetcher, useNavigate } from "react-router";
 
-import { relativeTimeLabel } from "~/components/foh/relative-time";
+import { FohRelativeTime } from "~/components/foh/relative-time";
 import { Button } from "~/components/ui/button";
 import {
   Popover,
@@ -115,7 +115,8 @@ export function InboxIndicator() {
                       </span>
                     )}
                     <span className="block truncate text-xs text-muted-foreground/70">
-                      {item.sessionTitle} · {relativeTimeLabel(item.createdAt)}
+                      {item.sessionTitle} ·{" "}
+                      <FohRelativeTime value={item.createdAt} />
                     </span>
                   </span>
                 </button>

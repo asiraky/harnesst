@@ -526,7 +526,7 @@ const TABS: Record<NavLevel, { path: string; label: string }[]> = {
   // Team landing: the repo-wide surfaces. Assistant is project-level (one per repo), so it lives
   // here at the repo level for teams, NOT on each member.
   repo: [
-    { path: "", label: "Overview" },
+    { path: "", label: "Agents" },
     { path: "/deployment", label: "Deployment" },
     { path: "/assistant", label: "Assistant" },
     { path: "/settings", label: "Settings" },
