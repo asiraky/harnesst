@@ -32,16 +32,15 @@ import {
 } from "~/foh/inbox.server";
 import { finalizeDelegationOnResume } from "~/team/resume.server";
 import {
+  bindSuccessorSessionHandles,
+  clearSessionHandles,
   clearSessionPendingInput,
   markSessionPendingInput,
   releaseRefusedTurnClaim,
-  savePlaygroundEvents,
   savePlaygroundSessionCursor,
   savePlaygroundSessionProgress,
-  unbindPlaygroundSessionForReseed,
   type PlaygroundSession,
 } from "~/playground/sessions.server";
-import type { RawEveEvent } from "~/agent/talk.server";
 import {
   recordSyncFailure,
   syncConversationCheckout,
@@ -179,6 +178,15 @@ export function streamTurnResponse(input: {
    * whose sends can never be refused pre-delivery (builder, playground) omit it.
    */
   preClaimStatus?: string | null;
+  /**
+   * Succession send (#288 3b): run this turn as a FIRST-turn POST /eve/v1/session — no
+   * sessionId, no continuation token, no channel delivery — even though the row still
+   * carries the predecessor's handles. The drain rebinds the row to the successor in ONE
+   * write on the `session` event (`bindSuccessorSessionHandles`: predecessor pointer,
+   * successor handles, descriptor drop, cursor reset); any failure before that event leaves
+   * the row bound to the predecessor, so a retry re-runs the succession with nothing lost.
+   */
+  succession?: boolean;
 }): Response {
   const {
     projectId,
@@ -196,11 +204,17 @@ export function streamTurnResponse(input: {
   // Needs-you writes happen only for FOH conversations (D4) — the builder surfaces must be
   // byte-for-byte unaffected by this chokepoint.
   const isFoh = activeSession.surface === "foh";
+  const succession = input.succession === true;
+  // The cursor baseline this turn advances from: a succession starts the successor's stream
+  // at 0 — the row's stored cursor belongs to the predecessor.
+  const baseStreamIndex = succession ? 0 : activeSession.streamIndex;
   // Named when this session is homed on a channel — a transient failure there is not retryable
   // from harnesst, so the error we render must not offer a button that only leads to a refusal.
-  const channelLabel = activeSession.resumeVia
-    ? channelLabelFor(activeSession.resumeVia.channel)
-    : null;
+  // A succession turn delivers over plain HTTP, so its errors are ordinary retryable ones.
+  const channelLabel =
+    activeSession.resumeVia && !succession
+      ? channelLabelFor(activeSession.resumeVia.channel)
+      : null;
   const startedAt = new Date();
   const encoder = new TextEncoder();
 
@@ -217,50 +231,24 @@ export function streamTurnResponse(input: {
       };
 
       void (async () => {
-        let sessionId: string | null = activeSession.externalSessionId;
-        let continuationToken: string | null = activeSession.continuationToken;
-        let streamIndex = activeSession.streamIndex;
-        let savedSessionId: string | null = activeSession.externalSessionId;
-        let savedStreamIndex = activeSession.streamIndex;
+        // A succession turn ignores the row's stored handles: they name the predecessor, and
+        // the successor doesn't exist until eve's `session` event answers the first POST.
+        let sessionId: string | null = succession
+          ? null
+          : activeSession.externalSessionId;
+        let continuationToken: string | null = succession
+          ? null
+          : activeSession.continuationToken;
+        let streamIndex = baseStreamIndex;
+        let savedSessionId: string | null = sessionId;
+        let savedStreamIndex = baseStreamIndex;
+        // Flips when `bindSuccessorSessionHandles` lands. Until then NO drain write may
+        // carry the successor's handles — the atomicity of the succession lives here: a
+        // plain progress save would leak them onto a row that still claims the
+        // predecessor's stream, descriptor, and cursor.
+        let successorBound = !succession;
         let lastProgressSavedAt = 0;
         let progressSave: Promise<void> = Promise.resolve();
-        // Durable transcript cache: buffer raw events and flush in batches on the same ~1s cadence
-        // as the cursor save, so reconnect reads the transcript from harnesst's DB instead of replaying
-        // Eve from index 0 (and a crash mid-turn still leaves a durable partial transcript).
-        //
-        // Invariant: the persisted cursor must never advance past events that aren't durably in
-        // `playground_events` — the loader treats the cache as the transcript's source of truth,
-        // and the next turn drains Eve from the cursor, so an event the cursor skips is lost for
-        // good. Hence a failed batch is re-queued for the next flush (retry is a safe no-op via
-        // the PK + ON CONFLICT DO NOTHING), and every cursor save caps itself at
-        // `persistedEventIndex`, the highest index a batch insert has actually confirmed.
-        const pendingEvents: Array<{ streamIndex: number } & RawEveEvent> = [];
-        let persistedEventIndex = activeSession.streamIndex;
-        let eventSave: Promise<void> = Promise.resolve();
-        const flushEvents = () => {
-          if (pendingEvents.length === 0) return;
-          const batch = pendingEvents.splice(0, pendingEvents.length);
-          eventSave = eventSave.then(async () => {
-            try {
-              // `batch` indices are eve-space (the cursor scheme); the reseed offset is applied
-              // at the persist boundary so cursor bookkeeping below stays eve-space (#71).
-              await savePlaygroundEvents(
-                activeSession.id,
-                batch,
-                activeSession.cacheIndexOffset,
-              );
-              persistedEventIndex = Math.max(
-                persistedEventIndex,
-                batch[batch.length - 1].streamIndex,
-              );
-            } catch (e) {
-              // Put the batch back so a later flush retries it; the cursor cap (above) keeps the
-              // not-yet-persisted indices replayable from Eve in the meantime.
-              pendingEvents.unshift(...batch);
-              console.error(`${tag} persist transcript events failed`, e);
-            }
-          });
-        };
         let recorded = false;
         let startRecording: Promise<void> = Promise.resolve();
         let result: TurnResult | null = null;
@@ -268,17 +256,16 @@ export function streamTurnResponse(input: {
         // pre-turn `beginFohTurn` for them, because clearing the parked ask before delivery
         // is known to happen is exactly how a refused send used to erase the needs-you
         // question. The first streamed event that isn't a pre-delivery refusal proves the
-        // agent was contacted — the park resolves there instead.
+        // agent was contacted — the park resolves there instead. Succession turns (#288 3b)
+        // ride the same deferral: their row is still channel-homed until the rebind, and a
+        // send that dies before reaching eve must leave the parked ask answerable.
         let deferredFohBegin = isFoh && activeSession.resumeVia != null;
         const turnController = new AbortController();
         activeTurnControllers.set(activeSession.id, turnController);
 
         const queueProgressSave = (force = false) => {
-          if (!sessionId) return;
-          const nextStreamIndex = Math.max(
-            streamIndex,
-            activeSession.streamIndex,
-          );
+          if (!sessionId || !successorBound) return;
+          const nextStreamIndex = Math.max(streamIndex, baseStreamIndex);
           const now = Date.now();
           const sessionChanged = sessionId !== savedSessionId;
           const advanced = nextStreamIndex > savedStreamIndex;
@@ -294,22 +281,15 @@ export function streamTurnResponse(input: {
           savedSessionId = externalSessionId;
           savedStreamIndex = nextStreamIndex;
           lastProgressSavedAt = now;
-          flushEvents();
-          // Order matters: the cursor save runs after the event batch it covers has settled, and
-          // caps at `persistedEventIndex` so a failed batch (re-queued above) is never skipped
-          // over. `savedStreamIndex` stays optimistic — a retried batch that later lands lets the
-          // next save catch the cursor up.
-          const coveringEventSave = eventSave;
           progressSave = progressSave
             .catch(() => {})
-            .then(() => coveringEventSave)
             .then(() =>
               savePlaygroundSessionProgress({
                 id: activeSession.id,
                 target,
                 externalSessionId,
                 continuationToken: nextContinuationToken,
-                streamIndex: Math.min(nextStreamIndex, persistedEventIndex),
+                streamIndex: nextStreamIndex,
                 title,
                 claimId: input.claimId ?? undefined,
               }).catch((e) =>
@@ -320,8 +300,12 @@ export function streamTurnResponse(input: {
 
         try {
           // Channel-homed rows (WS1) deliver through the channel that owns the eve session, and
-          // NEVER fall back to the HTTP session route when that cannot be arranged.
-          const delivery = resolveChannelDelivery(activeSession, target);
+          // NEVER fall back to the HTTP session route when that cannot be arranged. A
+          // succession turn is an ordinary first-turn HTTP send by construction — the row's
+          // descriptor belongs to the predecessor and must not route this turn.
+          const delivery = succession
+            ? ({ kind: "http" } as const)
+            : resolveChannelDelivery(activeSession, target);
           if (delivery.kind === "unavailable") {
             result = {
               ok: false,
@@ -361,9 +345,11 @@ export function streamTurnResponse(input: {
             message: sentMessage,
             inputResponses: input.inputResponses,
             sessionId,
-            continuationToken: activeSession.continuationToken,
+            continuationToken: succession
+              ? null
+              : activeSession.continuationToken,
             deliverVia: delivery.kind === "channel" ? delivery.via : null,
-            streamIndex: activeSession.streamIndex,
+            streamIndex: baseStreamIndex,
             signal: turnController.signal,
             timeoutMs: TURN_IDLE_TIMEOUT_MS,
           })) {
@@ -382,7 +368,30 @@ export function streamTurnResponse(input: {
               case "session":
                 sessionId = event.sessionId;
                 continuationToken = event.continuationToken;
-                queueProgressSave(true);
+                if (!successorBound) {
+                  // The successor provably exists NOW — rebind the row in one atomic write
+                  // (#288 3b). On failure the row stays bound to the predecessor and every
+                  // later save stays suppressed: the eve turn may still run, but the
+                  // conversation record is never left half-moved, and a retry re-runs the
+                  // succession.
+                  try {
+                    await bindSuccessorSessionHandles({
+                      id: activeSession.id,
+                      target,
+                      externalSessionId: event.sessionId,
+                      continuationToken: event.continuationToken,
+                      claimId: input.claimId ?? undefined,
+                    });
+                    successorBound = true;
+                    savedSessionId = event.sessionId;
+                    savedStreamIndex = 0;
+                    lastProgressSavedAt = Date.now();
+                  } catch (e) {
+                    console.error(`${tag} succession rebind failed`, e);
+                  }
+                } else {
+                  queueProgressSave(true);
+                }
                 send({
                   type: "session",
                   playgroundSessionId: activeSession.id,
@@ -392,10 +401,6 @@ export function streamTurnResponse(input: {
                 sessionId = event.sessionId;
                 continuationToken = event.continuationToken;
                 streamIndex = event.streamIndex;
-                pendingEvents.push({
-                  streamIndex: event.streamIndex,
-                  ...event.rawEvent,
-                });
                 queueProgressSave();
                 break;
               case "turn":
@@ -536,14 +541,6 @@ export function streamTurnResponse(input: {
           if (activeTurnControllers.get(activeSession.id) === turnController) {
             activeTurnControllers.delete(activeSession.id);
           }
-          flushEvents();
-          await eventSave;
-          if (pendingEvents.length > 0) {
-            // A batch insert failed mid-turn and was re-queued — this is the drain's last chance
-            // to land it before exiting, so retry once more.
-            flushEvents();
-            await eventSave;
-          }
           await progressSave;
           if (result) {
             const settled: TurnResult = result;
@@ -563,22 +560,35 @@ export function streamTurnResponse(input: {
                   claimId: input.claimId ?? undefined,
                   status: input.preClaimStatus ?? "waiting",
                 });
+              } else if (!successorBound) {
+                // Succession whose successor never provably existed (or whose rebind write
+                // failed): the row keeps the predecessor's handles, descriptor, and cursor
+                // intact — only the status settles — so a retry re-runs the succession.
+                await savePlaygroundSessionCursor({
+                  id: activeSession.id,
+                  target,
+                  externalSessionId: activeSession.externalSessionId,
+                  continuationToken: activeSession.continuationToken,
+                  streamIndex: activeSession.streamIndex,
+                  title,
+                  status: settled.ok ? "waiting" : "failed",
+                  claimId: input.claimId ?? undefined,
+                });
               } else {
                 await savePlaygroundSessionCursor({
                   id: activeSession.id,
                   target,
+                  // For a rebound succession the fallbacks are the successor's handles
+                  // (the drain's locals) — the row's stored ones name the predecessor.
                   externalSessionId:
-                    settled.sessionId ?? activeSession.externalSessionId,
+                    settled.sessionId ??
+                    (succession ? sessionId : activeSession.externalSessionId),
                   continuationToken:
-                    settled.continuationToken ?? activeSession.continuationToken,
-                  // Capped at what's durably cached (see the invariant above): if the final event
-                  // batch never landed, leaving the cursor behind means the missing events are
-                  // re-read from Eve later (the next turn's drain, or the loader's reconcile for a
-                  // failed session) and cached then — instead of being skipped forever.
-                  streamIndex: Math.min(
-                    Math.max(settled.streamIndex, activeSession.streamIndex),
-                    persistedEventIndex,
-                  ),
+                    settled.continuationToken ??
+                    (succession
+                      ? continuationToken
+                      : activeSession.continuationToken),
+                  streamIndex: Math.max(settled.streamIndex, baseStreamIndex),
                   title,
                   status: settled.ok ? "waiting" : "failed",
                   claimId: input.claimId ?? undefined,
@@ -588,16 +598,15 @@ export function streamTurnResponse(input: {
               console.error(`${tag} persist session cursor failed`, e);
             }
             // WS1 recovery. The channel route told us the eve session this row resumes into is
-            // gone — the container was replaced. The descriptor can never resolve again, so
-            // unbind it here (and ONLY here: a GitHub outage or a bad token must leave the row
-            // bound so a retry still works). The next message on this conversation then takes
-            // the ordinary #71 reseed path — a fresh eve session seeded from the durable
-            // transcript — instead of failing with the same message forever.
+            // gone. The descriptor can never resolve again, so clear the handles here (and ONLY
+            // here: a GitHub outage or a bad token must leave the row bound so a retry still
+            // works). The next message on this conversation then starts a fresh HTTP-homed eve
+            // session instead of failing with the same message forever.
             if (activeSession.resumeVia && settled.resumeExpired) {
               try {
-                await unbindPlaygroundSessionForReseed(activeSession);
+                await clearSessionHandles(activeSession.id);
               } catch (e) {
-                console.error(`${tag} channel resume unbind failed`, e);
+                console.error(`${tag} channel resume handle clear failed`, e);
               }
             }
             // FOH needs-you chokepoint #1, terminal half (D4/D13): a parked turn keeps its

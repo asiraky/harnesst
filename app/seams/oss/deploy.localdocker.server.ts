@@ -126,6 +126,30 @@ export const homeVolumeName = (worldKey: string): string => {
   return `harnesst-home-${sanitized}-${slug}`;
 };
 
+/**
+ * Container path of eve's world-local data dir (session history, run state, event streams).
+ * eve 0.22.x resolves `WORKFLOW_LOCAL_DATA_DIR || ".workflow-data"` against cwd (/app) and
+ * honours the env var; newer eve hardcodes `<appRoot>/.eve/.workflow-data` and ignores it.
+ * Mounting the volume HERE and also exporting WORKFLOW_LOCAL_DATA_DIR pointed at it makes
+ * both versions land on the same mounted path.
+ */
+export const WORLD_DATA_DIR = "/app/.eve/.workflow-data";
+
+/**
+ * Docker named-volume for an environment's eve World data dir (mounted at WORLD_DATA_DIR).
+ * Same keying and shape as homeVolumeName: one volume per environment, reattached by every
+ * redeploy so eve sessions survive container replacement, removed only by destroyWorld.
+ * Docker auto-creates it on first use — no provisioning step.
+ */
+export const worldDataVolumeName = (worldKey: string): string => {
+  const sanitized = worldKey
+    .toLowerCase()
+    .replace(/[^a-z0-9_.-]/g, "")
+    .slice(0, 24);
+  const slug = createHash("sha1").update(worldKey).digest("hex").slice(0, 8);
+  return `harnesst-world-${sanitized}-${slug}`;
+};
+
 async function docker(args: string[]): Promise<string> {
   try {
     const { stdout } = await exec("docker", args, {
@@ -500,8 +524,10 @@ export const localDockerTarget: DeployTarget = {
 
     // Keyed by environment (req.worldKey), so a redeploy reuses the same world — sessions and
     // their sandbox containers survive. During a cutover the old-live and new deployments
-    // briefly share this world DB; that is eve's normal multi-instance mode (Vercel runs many
-    // function instances against one world), so concurrent access here is expected, not a race.
+    // briefly share this world DB; for the POSTGRES world (the assistant) that is eve's
+    // normal multi-instance mode (Vercel runs many function instances against one world).
+    // The world-local FILE store shared via the volume below has no such guarantee — see the
+    // known-limitation note on the volume mount.
     const dbUrl = await provisionWorldDb(req.worldKey);
     await runWorldMigrations(req.imageRef, dbUrl);
     // The Postgres World reads WORKFLOW_POSTGRES_URL; DATABASE_URL kept for authored tools.
@@ -514,6 +540,9 @@ export const localDockerTarget: DeployTarget = {
       // environment's agent home. AFTER the req.env spread so user secrets can never shadow them.
       EVE_DOCKER_PATH: "/usr/local/bin/eve-docker",
       HARNESST_HOME_VOLUME: homeVolumeName(req.worldKey),
+      // Point world-local at the mounted per-env volume (see WORLD_DATA_DIR for the version
+      // split this papers over).
+      WORKFLOW_LOCAL_DATA_DIR: WORLD_DATA_DIR,
       // The assistant checkout sidecar binds this port inside the container; the published mapping
       // below uses the same value, so `auxEndpoint` can find it. Ignored by non-assistant images.
       HARNESST_AUX_PORT: String(AUX_PORT),
@@ -540,6 +569,15 @@ export const localDockerTarget: DeployTarget = {
       // tree. Benign for non-assistant instances (nothing writes there).
       "-v",
       `${homeVolumeName(req.worldKey)}:/workspace/home`,
+      // Per-environment eve World store: sessions (history, run state, parked asks) live on this
+      // volume, not the container FS, so they survive redeploys and rollbacks. KNOWN
+      // LIMITATION (#288): @workflow/world-local is single-instance, and during a cutover the
+      // draining old container and the new one briefly share this volume — the new instance's
+      // active-run recovery can re-enqueue a run the old one is still executing, duplicating
+      // its side effects. Documented in docs/ARCHITECTURE.md §1.4; accepted until the
+      // Postgres world is adopted for scaffolded agents.
+      "-v",
+      `${worldDataVolumeName(req.worldKey)}:${WORLD_DATA_DIR}`,
       "-p",
       `127.0.0.1:0:${INSTANCE_PORT}`,
       // Second published port for the assistant checkout sidecar (loopback-bound on the host).
@@ -651,33 +689,37 @@ export const localDockerTarget: DeployTarget = {
     // Environment/repository teardown, after every deployment's `destroy`: no instance of this
     // environment survives to need its sessions, so tear the whole world down.
     //   1. drop the shared world database (the sessions);
-    //   2. reap this env's sibling sandbox containers — they are exactly the ones mounting this
-    //      env's home volume, so a `volume=` filter finds them (also a slice of the M6.1 sandbox-GC
-    //      punt: those stopped containers were otherwise orphaned);
-    //   3. remove the home volume itself.
+    //   2. reap the containers still mounting this env's volumes — the home volume finds its
+    //      sandbox containers (also a slice of the M6.1 sandbox-GC punt: those stopped containers
+    //      were otherwise orphaned), the world-data volume finds any straggler instances;
+    //   3. remove both volumes.
     // Each step is best-effort and independent — a failure in one must not strand the others.
     await dropWorldDb(worldKey);
-    const volume = homeVolumeName(worldKey);
-    try {
-      const ids = await docker(["ps", "-aq", "--filter", `volume=${volume}`]);
-      const containers = ids
-        .split("\n")
-        .map((s) => s.trim())
-        .filter(Boolean);
-      if (containers.length > 0) {
-        try {
-          await docker(["rm", "-f", ...containers]);
-        } catch {
-          // best-effort: leave the volume rm to still try
+    const volumes = [homeVolumeName(worldKey), worldDataVolumeName(worldKey)];
+    for (const volume of volumes) {
+      try {
+        const ids = await docker(["ps", "-aq", "--filter", `volume=${volume}`]);
+        const containers = ids
+          .split("\n")
+          .map((s) => s.trim())
+          .filter(Boolean);
+        if (containers.length > 0) {
+          try {
+            await docker(["rm", "-f", ...containers]);
+          } catch {
+            // best-effort: leave the volume rm to still try
+          }
         }
+      } catch {
+        // best-effort: docker unavailable or no matches
       }
-    } catch {
-      // best-effort: docker unavailable or no matches
     }
-    try {
-      await docker(["volume", "rm", volume]);
-    } catch {
-      // best-effort: volume may never have been created, or still referenced
+    for (const volume of volumes) {
+      try {
+        await docker(["volume", "rm", volume]);
+      } catch {
+        // best-effort: volume may never have been created, or still referenced
+      }
     }
   },
 };

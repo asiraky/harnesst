@@ -320,7 +320,6 @@ describe.runIf(LIVE)("FOH session substrate against real Postgres", () => {
       projects,
       agents,
       playgroundSessions,
-      playgroundEvents,
       assistantCheckouts,
       inboxItems,
       conversationReads,
@@ -552,8 +551,6 @@ describe.runIf(LIVE)("FOH session substrate against real Postgres", () => {
       projectId: project.id,
       agentId: agent.id,
       environmentId: null,
-      deploymentId: null,
-      releaseId: null,
       version: null,
       externalSessionId: agentOpened.externalSessionId ?? "eve_archive_1",
       continuationToken: "tok_archive_1",
@@ -692,18 +689,12 @@ describe.runIf(LIVE)("FOH session substrate against real Postgres", () => {
       .where(eq(playgroundSessions.id, mine.id));
     expect(survivor).toBeDefined();
 
-    // 11. …and takes every child row with it once the session IS archived: transcript events,
-    //     read cursors, inbox items and the assistant checkout, all by ON DELETE cascade.
+    // 11. …and takes every child row with it once the session IS archived: read cursors,
+    //     inbox items and the assistant checkout, all by ON DELETE cascade.
     await archiveFohSession({
       id: mine.id,
       projectId: project.id,
       viewerId: USER,
-    });
-    await db.insert(playgroundEvents).values({
-      sessionId: mine.id,
-      streamIndex: 0,
-      type: "message.appended",
-      data: { text: "hi" },
     });
     await drizzleDataStore.conversationReads.upsert(mine.id, USER, new Date());
     const doomedItem = await drizzleDataStore.inboxItems.insert({
@@ -734,12 +725,6 @@ describe.runIf(LIVE)("FOH session substrate against real Postgres", () => {
         .select()
         .from(playgroundSessions)
         .where(eq(playgroundSessions.id, mine.id)),
-    ).toHaveLength(0);
-    expect(
-      await db
-        .select()
-        .from(playgroundEvents)
-        .where(eq(playgroundEvents.sessionId, mine.id)),
     ).toHaveLength(0);
     expect(
       await db

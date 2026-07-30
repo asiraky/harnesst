@@ -26,11 +26,21 @@ box. They are what keep the managed service and the OSS product **one codebase**
    - _Sandbox boundary_ — isolates model-generated code from the instance it runs in.
 
 4. **Compute ⟂ state (this is the money-saver).** eve sessions are durable via the Workflow SDK; a
-   parked agent (waiting on a message, an approval, or a cron) consumes **zero compute**. The durable
-   event log lives in **Postgres**, fully decoupled from the compute. So idle instances can be
-   **stopped**, and on the next event they **replay from Postgres and resume**. Most agents are idle
-   almost always → density comes from packing _stopped_ instances, and cost is driven by _concurrent
-   active_ turns, not total agents.
+   parked agent (waiting on a message, an approval, or a cron) consumes **zero compute**. For
+   scaffolded agents the durable event log is eve's **world-local file store** on a per-environment
+   Docker volume mounted at `/app/.eve/.workflow-data` (with `WORKFLOW_LOCAL_DATA_DIR` pointed at
+   it), fully decoupled from the container. So idle instances can be **stopped**, and on the next
+   event they **replay from the volume and resume** — sessions survive redeploys and rollbacks, and
+   die only with the environment (`destroyWorld`). The assistant instance is the one Postgres user:
+   its template pins `@workflow/world-postgres` against the per-environment world DB. Most agents
+   are idle almost always → density comes from packing _stopped_ instances, and cost is driven by
+   _concurrent active_ turns, not total agents.
+
+   _Known limitation (#288):_ `@workflow/world-local` is single-instance, but a redeploy cutover
+   briefly runs the draining old container and its replacement against the same world-data volume
+   (the drain window is up to 15 minutes). The new instance's active-run recovery can re-enqueue a
+   run the old instance is still executing, duplicating that run's side effects. Accepted for now;
+   goes away when scaffolded agents adopt the Postgres World.
 
 5. **Managed = OSS + provider implementations.** Everything below hangs off interfaces the OSS
    product already defines: `DeployTarget`, `SecretsProvider`, `ModelGateway`, `MeteringSink`,
@@ -280,23 +290,33 @@ is inherited: git commits + content-addressed images, nothing engineered.
   secrets/env (they live outside git). Version secret _metadata/generation_ only — never values — for
   faithful "what ran then".
 
-### 3.10 Playground conversation persistence (across redeploys)
+### 3.10 Conversation persistence (eve owns storage, harnesst owns the conversation)
 
-A playground conversation has two homes. The **eve session** lives inside the agent container — it
-holds the runtime context (the agent's working memory for the thread) and is owned by the exact
-deployment that created it (`playground_sessions.last_deployment_id`). harnesst's **`playground_events`**
-table is the durable transcript cache in Postgres: the turn-stream drain persists every raw eve
-event as it arrives, and it is the source of truth for rendering the conversation.
+**eve's World store is the transcript** (#288). Session history, run state, and parked asks live in
+eve's durable event stream on the per-environment world-data volume (§1.4), so a session survives
+container replacement: after a redeploy the _same_ eve session resumes on the replacement deployment
+— no transcript copy, no reseed, no ownership check. harnesst renders a conversation by reading
+`GET /eve/v1/session/:id/stream` from index 0, proxied through the control plane; opening a session
+whose instance is scaled to zero wakes it first (the same machinery as wake-on-send). Live turns
+stream exactly as before; reconnects re-read from eve instead of from Postgres.
 
-A redeploy destroys the container and with it the eve session; the cache survives untouched. So a
-follow-up to a conversation whose owning deployment was replaced can't reach the original eve
-session. Instead of dead-ending, harnesst **reseeds** (#71): the next turn transparently starts a fresh
-eve session on the replacement deployment, seeded from the cached transcript via a strippable
-`harnesst:context` block prepended to the sent message (invisible in the rendered transcript, like the
-model directive). `playground_sessions.cache_index_offset` shifts the fresh session's stream indices
-(which restart at 1) above the preserved history so its events append after it on the
-`(session, stream_index)` PK instead of colliding. The assistant surface keeps its 409 block instead
-— its checkout-bound coding sessions can't be reseeded from a transcript alone.
+**`playground_sessions` is the index and the stitch, not storage.** The row holds the handles
+(`external_session_id`, `continuation_token`, `resume_via`), status, `pending_input_at`, the turn
+claim, `stream_index` (harnesst's cursor into eve's stream), and `last_event_at` (drives unread).
+There is no `playground_events` table, no `cache_index_offset`, no `last_deployment_id` — the #71
+reseed machinery and the assistant's 409-on-replaced-instance are gone with them (the assistant's
+checkouts live on the per-env home volume and were never the blocker; note a resumed assistant
+session may continue on a newer template image or model — the accepted
+rollback-carries-state-forward semantics).
+
+**Channel-homed rows converge via succession.** A session started by a channel (e.g. a GitHub
+webhook run) accepts only `inputResponses` from outside its channel — eve's channel wall, which
+stays. Answers to a parked ask flow through the channel answer route as before; the moment the user
+sends free text with nothing pending, harnesst **succeeds** the session: it reads the prologue from
+the old session's durable stream, starts a fresh HTTP-homed eve session with that transcript riding
+as the strippable seed block, and rebinds the row's handles (dropping `resume_via`). The old eve
+session is never converted — it sits completed-but-readable in the world store. One FOH conversation,
+at most two eve sessions under it; channels need zero code to participate.
 
 ---
 
@@ -304,7 +324,7 @@ model directive). `playground_sessions.cache_index_offset` shifts the fresh sess
 
 | Dependency          | Managed implementation                                                                                                                                                                                          |
 | ------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Workflow World**  | **Self-run Postgres** on the box (or a dedicated DB box), **database-per-instance** for hard data isolation. Postgres is eve's reference World; running our own is cheap and removes the Neon/cloud dependency. |
+| **Workflow World**  | **Local-file World** (`@workflow/world-local`) on a **per-environment named volume** mounted at `/app/.eve/.workflow-data` — durable across redeploys, isolated per environment, zero extra infrastructure. Per-environment world DBs (`harnesst_env_*`) are still provisioned but only the assistant instance uses them (`@workflow/world-postgres`); adopting Postgres as the World for scaffolded agents is explicitly out of scope until that beta line stabilises (#288). |
 | **Sandbox backend** | gVisor (v1) / Kata-Firecracker (hardened) ephemeral containers, per §2.2.                                                                                                                                       |
 | **Secrets**         | Injected env from §3.5.                                                                                                                                                                                         |
 | **Model access**    | Routed through the model gateway §3.2 (direct provider keys, no AI Gateway).                                                                                                                                    |

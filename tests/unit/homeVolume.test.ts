@@ -1,13 +1,17 @@
 /**
- * homeVolume — the environment-keyed agent-home Docker volume (M6.2). Verifies the naming contract
- * (stability / legal charset / collision-safety, mirroring worldDbName) and that the shim the
- * runtime image embeds survives the base64 round-trip the Dockerfile does it through. The shim's
- * runtime behaviour is proven in eve-docker-shim.test.ts, which executes it.
+ * homeVolume — the environment-keyed Docker volumes (agent home, M6.2; eve world data, #288).
+ * Verifies the naming contract (stability / legal charset / collision-safety, mirroring
+ * worldDbName) and that the shim the runtime image embeds survives the base64 round-trip the
+ * Dockerfile does it through. The shim's runtime behaviour is proven in eve-docker-shim.test.ts,
+ * which executes it.
  */
 import { describe, expect, it } from "vitest";
 
 import { HARNESST_EVE_DOCKERFILE, EVE_DOCKER_SHIM } from "~/deploy/eve-image.server";
-import { homeVolumeName } from "~/seams/oss/deploy.localdocker.server";
+import {
+  homeVolumeName,
+  worldDataVolumeName,
+} from "~/seams/oss/deploy.localdocker.server";
 
 describe("homeVolumeName", () => {
   it("is stable for a given worldKey (a redeploy reuses the same home)", () => {
@@ -25,6 +29,27 @@ describe("homeVolumeName", () => {
   it("keeps keys that sanitize identically on DISTINCT volumes (sha1 of the raw key)", () => {
     // Both sanitize to "enva" — only the raw-key hash slug keeps them apart.
     expect(homeVolumeName("env*a")).not.toBe(homeVolumeName("env%a"));
+  });
+});
+
+describe("worldDataVolumeName", () => {
+  it("is stable for a given worldKey (a redeploy reattaches the same world store)", () => {
+    expect(worldDataVolumeName("env_abc123")).toBe(worldDataVolumeName("env_abc123"));
+  });
+
+  it("produces a legal docker volume name prefixed harnesst-world-", () => {
+    const name = worldDataVolumeName("Env-With/Weird*Chars");
+    expect(name).toMatch(/^harnesst-world-[a-z0-9_.-]*-[0-9a-f]{8}$/);
+    expect(name).toBe(name.toLowerCase());
+    expect(name).not.toMatch(/[^a-z0-9_.-]/);
+  });
+
+  it("keeps keys that sanitize identically on DISTINCT volumes (sha1 of the raw key)", () => {
+    expect(worldDataVolumeName("env*a")).not.toBe(worldDataVolumeName("env%a"));
+  });
+
+  it("never collides with the same environment's home volume", () => {
+    expect(worldDataVolumeName("env_abc123")).not.toBe(homeVolumeName("env_abc123"));
   });
 });
 

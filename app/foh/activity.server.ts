@@ -56,7 +56,8 @@ import {
   type ActivityPage,
   type ExchangeStep,
 } from "~/foh/activity";
-import { loadPlaygroundEntriesFromCache } from "~/playground/sessions.server";
+import { liveTargets } from "~/chat/playground.server";
+import { loadPlaygroundEntriesFromEve } from "~/playground/sessions.server";
 
 const DEFAULT_LIMIT = 50;
 const MAX_LIMIT = 200;
@@ -327,9 +328,9 @@ export interface DelegationExchange {
   ask: string | null;
   /**
    * The exchange transcript. Relay-parked delegations read the agent-opened FOH session's
-   * cached events (the delegate's real transcript); others fall back to the linked run's
-   * steps. Empty when neither source exists. The leading user message is deduped against
-   * `ask` (the header already quotes it).
+   * eve stream (the delegate's real transcript, live targets only); others fall back to the
+   * linked run's steps. Empty when neither source is reachable. The leading user message is
+   * deduped against `ask` (the header already quotes it).
    */
   steps: ExchangeStep[];
 }
@@ -372,10 +373,13 @@ export async function getDelegationExchange(
     ask = typeof run.metadata?.input === "string" ? run.metadata.input : null;
   }
 
-  // Relay parking opens an agent-side FOH session for the delegate; when it exists, ITS
-  // cached events are the real exchange (parked question, human answer, final reply) — the
-  // linked run's steps then only hold the inbound ask + an empty model beat. Non-parking
-  // delegations have no such session and their run_steps do carry the exchange.
+  // Relay parking opens an agent-side FOH session for the delegate; when it exists, ITS eve
+  // stream is the real exchange (parked question, human answer, final reply) — the linked
+  // run's steps then only hold the inbound ask + an empty model beat. Non-parking delegations
+  // have no such session and their run_steps do carry the exchange. The read is best-effort
+  // against a live target in the SESSION'S environment only (a cross-environment eve never
+  // saw the session and hangs, not 404s, on unknown ids) — an activity trace never wakes a
+  // container, so with nothing live there (or eve unreachable) the steps are simply omitted.
   const [fohSession] = await db
     .select()
     .from(playgroundSessions)
@@ -387,7 +391,22 @@ export async function getDelegationExchange(
     )
     .limit(1);
   if (fohSession) {
-    steps = exchangeStepsFromEntries(await loadPlaygroundEntriesFromCache(fohSession));
+    const targets = await liveTargets(fohSession.agentId);
+    const target =
+      targets.find((t) => t.environmentId === fohSession.environmentId) ?? null;
+    if (target) {
+      try {
+        steps = exchangeStepsFromEntries(
+          await loadPlaygroundEntriesFromEve({
+            session: fohSession,
+            target,
+            timeoutMs: 5_000,
+          }),
+        );
+      } catch {
+        steps = [];
+      }
+    }
   } else if (run) {
     const stepRows = await db
       .select({

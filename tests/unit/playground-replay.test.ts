@@ -1,5 +1,11 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+// The eve replay folds published artifacts (#290) in after projection; these tests exercise the
+// projection, so the store read is stubbed empty rather than standing up a database.
+vi.mock("~/foh/artifact-store.server", () => ({
+  listArtifactsForSession: async () => [],
+}));
+
 import {
   loadPlaygroundEntriesFromEve,
   projectEventsToEntries,
@@ -644,6 +650,109 @@ describe("loadPlaygroundEntriesFromEve", () => {
     expect(entries[1].role).toBe("assistant");
     expect(entries[1].error).toContain("not found");
     expect(entries[1].errorRetryable).toBe(false);
+  });
+
+  // Succession stitch (#288 3b): a succeeded conversation spans two eve sessions; the row's
+  // predecessor pointer makes the replay concatenate them into one projection.
+  function sessionTurn(sessionModel: string, question: string, reply: string) {
+    const at = new Date().toISOString();
+    return [
+      {
+        type: "session.started",
+        data: { runtime: { modelId: sessionModel } },
+        meta: { at },
+      },
+      { type: "turn.started", data: { turnId: "turn_0" }, meta: { at } },
+      {
+        type: "message.received",
+        data: { turnId: "turn_0", message: question },
+        meta: { at },
+      },
+      {
+        type: "message.completed",
+        data: { turnId: "turn_0", message: reply },
+        meta: { at },
+      },
+    ];
+  }
+
+  it("stitches the predecessor's events ahead of the successor's (#288 3b)", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn<typeof fetch>().mockImplementation(async (url) => {
+        // The successor is read at its cursor; the predecessor under the fixed cap. Both
+        // eve sessions restart at turn_0 — the epoch machinery must keep them apart.
+        return String(url).includes("/session/sess_0/")
+          ? streamResponse(sessionTurn("m/x", "Issue #2: 404s", "Which branch?"))
+          : streamResponse(sessionTurn("m/x", "let's continue here", "On it."));
+      }),
+    );
+
+    const entries = await loadPlaygroundEntriesFromEve({
+      session: session({
+        externalSessionId: "sess_1",
+        predecessorExternalSessionId: "sess_0",
+        streamIndex: 4,
+      }),
+      target,
+    });
+
+    expect(entries).toMatchObject([
+      { role: "user", text: "Issue #2: 404s" },
+      { role: "assistant", text: "Which branch?" },
+      { role: "user", text: "let's continue here" },
+      { role: "assistant", text: "On it." },
+    ]);
+  });
+
+  it("renders the successor alone when the predecessor read fails (best-effort stitch)", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn<typeof fetch>().mockImplementation(async (url) => {
+        if (String(url).includes("/session/sess_0/")) {
+          throw new Error("connect timeout");
+        }
+        return streamResponse(sessionTurn("m/x", "let's continue here", "On it."));
+      }),
+    );
+
+    const entries = await loadPlaygroundEntriesFromEve({
+      session: session({
+        externalSessionId: "sess_1",
+        predecessorExternalSessionId: "sess_0",
+        streamIndex: 4,
+      }),
+      target,
+    });
+
+    expect(entries).toMatchObject([
+      { role: "user", text: "let's continue here" },
+      { role: "assistant", text: "On it." },
+    ]);
+  });
+
+  it("reads under an explicit cap when the caller's cursor is untrusted (streamIndex 0)", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn<typeof fetch>()
+        .mockResolvedValueOnce(
+          streamResponse(sessionTurn("m/x", "Issue #2: 404s", "Which branch?")),
+        ),
+    );
+
+    // Without the override this returned [] without a read — the succession prologue then
+    // silently seeded nothing even though the old session was alive and readable.
+    const entries = await loadPlaygroundEntriesFromEve({
+      session: session({ externalSessionId: "sess_1", streamIndex: 0 }),
+      target,
+      limit: 1_000,
+    });
+
+    expect(entries).toMatchObject([
+      { role: "user", text: "Issue #2: 404s" },
+      { role: "assistant", text: "Which branch?" },
+    ]);
   });
 });
 

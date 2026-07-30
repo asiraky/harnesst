@@ -3,9 +3,9 @@
  *
  * A real eve instance, not an in-process loop: the composer POSTs to the
  * streaming resource route (api.projects.$projectId.assistant.stream) and this component reads the
- * same NDJSON turn feed the playground uses. harnesst's durable event cache is the transcript source;
- * the owning Eve instance is consulted only for bounded recovery and legacy backfill. First use
- * shows a provisioning state while the instance builds/deploys.
+ * same NDJSON turn feed the playground uses. Eve's durable stream is the transcript source
+ * (#288); the loader wakes a resumable instance to render it. First use shows a provisioning
+ * state while the instance builds/deploys.
  */
 import { getSessionAuth, sessionLoader } from "~/auth/session.server";
 import {
@@ -69,19 +69,13 @@ import {
   shouldPollRemoteSession,
 } from "~/playground/handoff";
 import {
-  backfillPlaygroundEventsFromEve,
   createPlaygroundSession,
   listPlaygroundSessions,
-  loadPlaygroundEntriesFromCache,
-  playgroundCacheIsComplete,
+  loadPlaygroundEntriesFromEve,
   reconcilePlaygroundSessionFromEve,
   settleAbandonedPlaygroundSession,
   summarizePlaygroundSession,
 } from "~/playground/sessions.server";
-import {
-  findSessionOwnerTarget,
-  sessionContinuationIsBlocked,
-} from "~/playground/ownership";
 import { shouldSettleAbandonedSession } from "~/playground/settle";
 import { requireProject, requireRepo } from "~/project/guard.server";
 import { getRuntime } from "~/seams/index.server";
@@ -107,7 +101,6 @@ export const loader = (args: LoaderFunctionArgs) =>
       let currentSessionId: string | null = null;
       let currentSessionStatus: string | null = null;
       let currentSessionOwnerLive: boolean | null = null;
-      let currentSessionContinuationBlocked = false;
       let sessions: ReturnType<typeof summarizePlaygroundSession>[] = [];
       let syncWarnings: string[] = [];
 
@@ -124,19 +117,41 @@ export const loader = (args: LoaderFunctionArgs) =>
           rows[0] ??
           null;
         if (currentSession) {
-          const historyTarget = findSessionOwnerTarget(
-            currentSession,
-            snapshot.target ? [snapshot.target] : [],
-          );
+          let historyTarget = snapshot.target ?? null;
+          // Wake-on-view (#288): the transcript lives in eve's durable stream on the
+          // instance, and the assistant scales to zero — a resumable instance is woken (or
+          // transparently re-provisioned) so the history can render. Best-effort: while it
+          // provisions, the history affordance below explains the gap.
+          if (
+            !historyTarget &&
+            snapshot.status === "resumable" &&
+            currentSession.externalSessionId &&
+            currentSession.streamIndex > 0
+          ) {
+            const instance = await ensureAssistantInstance(project.id).catch(
+              () => null,
+            );
+            if (
+              instance?.status === "live" &&
+              instance.url &&
+              instance.deploymentId
+            ) {
+              historyTarget = {
+                deploymentId: instance.deploymentId,
+                environmentId: instance.environmentId,
+                releaseId: instance.releaseId ?? "",
+                url: instance.url,
+                version: instance.version ?? "assistant",
+                environmentName: "assistant",
+                gitSha: instance.gitSha ?? "",
+              };
+            }
+          }
           const ownerDeploymentLive = historyTarget !== null;
           currentSessionOwnerLive = ownerDeploymentLive;
-          currentSessionContinuationBlocked = sessionContinuationIsBlocked(
-            currentSession,
-            snapshot.target ? [snapshot.target] : [],
-          );
 
-          // Recover a drain that died with harnesst only from the exact assistant instance that owns
-          // the Eve session. A replacement instance does not know the old external session id.
+          // Recover a drain that died with harnesst from the live assistant instance — the
+          // durable session store is shared across the environment's deployments.
           if (
             (currentSession.status === "running" ||
               currentSession.status === "failed") &&
@@ -167,30 +182,25 @@ export const loader = (args: LoaderFunctionArgs) =>
               await settleAbandonedPlaygroundSession(currentSession);
           }
 
-          // Sessions created before the durable event cache may be missing their oldest rows.
-          // Backfill once, but only from the exact owning instance; never ask a replacement about
-          // an unknown Eve session because that endpoint can hang indefinitely.
+          // The transcript renders from eve's durable stream (#288) — harnesst keeps no copy.
           if (
             currentSession.externalSessionId &&
-            !(await playgroundCacheIsComplete(currentSession))
+            currentSession.streamIndex > 0
           ) {
             if (historyTarget) {
               try {
-                await backfillPlaygroundEventsFromEve({
+                entries = await loadPlaygroundEntriesFromEve({
                   session: currentSession,
                   target: historyTarget,
                 });
               } catch (error) {
-                historyError = `Couldn't recover all of the assistant's older history: ${(error as Error).message}`;
+                historyError = `Couldn't load the conversation history: ${(error as Error).message}`;
               }
             } else {
               historyError =
-                "harnesst is showing the history it cached, but some older messages may be missing while the original assistant instance is unavailable.";
+                "The conversation history lives on the assistant's instance, which isn't reachable right now — it will load once the assistant is running.";
             }
           }
-
-          // Cached rows render regardless of instance health, including when the owner is gone.
-          entries = await loadPlaygroundEntriesFromCache(currentSession);
           currentSessionId = currentSession.id;
           currentSessionStatus = currentSession.status;
           // Last sync's policy notes / failure — shown as a banner so a sync problem is visible
@@ -237,7 +247,6 @@ export const loader = (args: LoaderFunctionArgs) =>
         currentSessionId,
         currentSessionStatus,
         currentSessionOwnerLive,
-        currentSessionContinuationBlocked,
         entries,
         historyError,
         syncWarnings,
@@ -314,7 +323,6 @@ export default function Assistant({ loaderData }: Route.ComponentProps) {
     currentSessionId,
     currentSessionStatus,
     currentSessionOwnerLive,
-    currentSessionContinuationBlocked,
     entries,
     historyError,
     syncWarnings,
@@ -388,7 +396,7 @@ export default function Assistant({ loaderData }: Route.ComponentProps) {
     return (
       <Select
         value={currentSessionId}
-        disabled={busy && !currentSessionContinuationBlocked}
+        disabled={busy}
         onValueChange={(id) =>
           navigate(`${base}/assistant?session=${encodeURIComponent(id)}`)
         }
@@ -412,14 +420,7 @@ export default function Assistant({ loaderData }: Route.ComponentProps) {
         </SelectContent>
       </Select>
     );
-  }, [
-    base,
-    busy,
-    currentSessionContinuationBlocked,
-    currentSessionId,
-    navigate,
-    sessions,
-  ]);
+  }, [base, busy, currentSessionId, navigate, sessions]);
 
   // The cache can include the in-flight turn before its browser stream has handed off. Hide only
   // the entries appended after send time while the live view renders that same turn.
@@ -567,10 +568,7 @@ export default function Assistant({ loaderData }: Route.ComponentProps) {
             type="submit"
             variant="outline"
             size="sm"
-            disabled={
-              (busy && !currentSessionContinuationBlocked) ||
-              newSessionFetcher.state !== "idle"
-            }
+            disabled={busy || newSessionFetcher.state !== "idle"}
           >
             <Plus aria-hidden />
             New chat
@@ -581,14 +579,7 @@ export default function Assistant({ loaderData }: Route.ComponentProps) {
         </Button>
       </div>
     ),
-    [
-      NewSessionForm,
-      base,
-      busy,
-      currentSessionContinuationBlocked,
-      newSessionFetcher.state,
-      sessionPicker,
-    ],
+    [NewSessionForm, base, busy, newSessionFetcher.state, sessionPicker],
   );
 
   // One slim status area with strict precedence (error > blocked > send feedback > sync note)
@@ -598,31 +589,6 @@ export default function Assistant({ loaderData }: Route.ComponentProps) {
   const statusStrip = useMemo(() => {
     if (historyError) {
       return <StatusStrip tone="error">{historyError}</StatusStrip>;
-    }
-    if (currentSessionContinuationBlocked) {
-      return (
-        <StatusStrip
-          tone="error"
-          title="This conversation can't be continued"
-          action={
-            <NewSessionForm method="post">
-              <input type="hidden" name="intent" value="new-session" />
-              <Button
-                type="submit"
-                variant="outline"
-                size="sm"
-                disabled={newSessionFetcher.state !== "idle"}
-              >
-                <Plus aria-hidden />
-                New chat
-              </Button>
-            </NewSessionForm>
-          }
-        >
-          Its assistant instance was replaced, so the old session can&apos;t
-          resume. The history stays visible — start a new chat to keep going.
-        </StatusStrip>
-      );
     }
     if (sendError) {
       return <StatusStrip tone="info">{sendError}</StatusStrip>;
@@ -637,14 +603,7 @@ export default function Assistant({ loaderData }: Route.ComponentProps) {
       );
     }
     return null;
-  }, [
-    NewSessionForm,
-    currentSessionContinuationBlocked,
-    historyError,
-    newSessionFetcher.state,
-    sendError,
-    syncWarnings,
-  ]);
+  }, [historyError, sendError, syncWarnings]);
 
   const transcriptLead = useMemo(
     () => (
@@ -775,16 +734,13 @@ export default function Assistant({ loaderData }: Route.ComponentProps) {
               key={e.id}
               entry={e}
               onAnswer={
-                i === shownEntries.length - 1 &&
-                !visibleLive &&
-                !currentSessionContinuationBlocked
+                i === shownEntries.length - 1 && !visibleLive
                   ? send
                   : undefined
               }
               onRetry={
                 i === shownEntries.length - 1 &&
                 !visibleLive &&
-                !currentSessionContinuationBlocked &&
                 e.errorRetryable
                   ? () => {
                       const userText = [...shownEntries.slice(0, i)]
@@ -814,11 +770,9 @@ export default function Assistant({ loaderData }: Route.ComponentProps) {
           shownEntries.at(-1)?.role === "user" && (
             <AssistantTurn>
               <p className="text-muted-foreground">
-                {currentSessionContinuationBlocked
-                  ? "This turn was interrupted when its assistant instance was replaced. Start a new conversation to continue."
-                  : currentSessionOwnerLive
-                    ? "This turn was interrupted before it finished. Send the message again to retry."
-                    : "This turn was interrupted before it finished while the assistant was unavailable. Restart the assistant before retrying."}
+                {currentSessionOwnerLive
+                  ? "This turn was interrupted before it finished. Send the message again to retry."
+                  : "This turn was interrupted before it finished while the assistant was unavailable. Restart the assistant before retrying."}
               </p>
             </AssistantTurn>
           )}
@@ -827,11 +781,7 @@ export default function Assistant({ loaderData }: Route.ComponentProps) {
             <UserBubble text={visibleLive.userText} />
             <LiveBubble
               live={visibleLive}
-              onRetry={
-                currentSessionContinuationBlocked
-                  ? undefined
-                  : () => send(visibleLive.userText)
-              }
+              onRetry={() => send(visibleLive.userText)}
               busy={busy}
             />
           </>
@@ -841,13 +791,11 @@ export default function Assistant({ loaderData }: Route.ComponentProps) {
       <div className="mx-auto w-full max-w-5xl px-4 pb-4 pt-3 sm:px-6">
         <ChatComposer
           placeholder={
-            currentSessionContinuationBlocked
-              ? "Start a new chat to continue…"
-              : idle || failed
-                ? "Set up the assistant to start…"
-                : provisioning
-                  ? "Setting up your assistant…"
-                  : "What should your agent be able to do?"
+            idle || failed
+              ? "Set up the assistant to start…"
+              : provisioning
+                ? "Setting up your assistant…"
+                : "What should your agent be able to do?"
           }
           busy={busy}
           busyHint={
@@ -856,7 +804,7 @@ export default function Assistant({ loaderData }: Route.ComponentProps) {
               : "The assistant is working…"
           }
           // Not-yet-provisioned reads as unavailable (setup card explains), not as in-flight work.
-          disabled={currentSessionContinuationBlocked || idle || failed}
+          disabled={idle || failed}
           initialValue={fixPrefill ?? undefined}
           onSend={send}
         />

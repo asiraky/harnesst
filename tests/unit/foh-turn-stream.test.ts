@@ -14,7 +14,6 @@ import type { PlaygroundSession } from "~/playground/sessions.server";
 
 const mocks = vi.hoisted(() => ({
   streamTurn: vi.fn(),
-  savePlaygroundEvents: vi.fn(async () => {}),
   savePlaygroundSessionProgress: vi.fn(async () => {}),
   savePlaygroundSessionCursor: vi.fn(async () => {}),
   markSessionPendingInput: vi.fn(async () => true),
@@ -27,20 +26,21 @@ const mocks = vi.hoisted(() => ({
   recordTurnStart: vi.fn(async () => {}),
   recordTurnFinish: vi.fn(async () => {}),
   finalizeDelegationOnResume: vi.fn(async () => {}),
-  unbindPlaygroundSessionForReseed: vi.fn(async (s: PlaygroundSession) => s),
+  clearSessionHandles: vi.fn(async () => {}),
+  bindSuccessorSessionHandles: vi.fn(async () => {}),
 }));
 
 vi.mock("~/agent/talk.server", () => ({
   streamTurn: mocks.streamTurn,
 }));
 vi.mock("~/playground/sessions.server", () => ({
-  savePlaygroundEvents: mocks.savePlaygroundEvents,
   savePlaygroundSessionProgress: mocks.savePlaygroundSessionProgress,
   savePlaygroundSessionCursor: mocks.savePlaygroundSessionCursor,
   markSessionPendingInput: mocks.markSessionPendingInput,
   clearSessionPendingInput: mocks.clearSessionPendingInput,
   releaseRefusedTurnClaim: mocks.releaseRefusedTurnClaim,
-  unbindPlaygroundSessionForReseed: mocks.unbindPlaygroundSessionForReseed,
+  clearSessionHandles: mocks.clearSessionHandles,
+  bindSuccessorSessionHandles: mocks.bindSuccessorSessionHandles,
 }));
 vi.mock("~/foh/inbox.server", () => ({
   beginFohTurn: mocks.beginFohTurn,
@@ -91,11 +91,8 @@ function session(over: Partial<PlaygroundSession> = {}): PlaygroundSession {
     externalSessionId: null,
     continuationToken: null,
     streamIndex: 0,
-    cacheIndexOffset: 0,
     title: null,
     status: "running",
-    lastDeploymentId: null,
-    lastReleaseId: null,
     lastVersion: null,
     modelId: null,
     effort: null,
@@ -532,7 +529,7 @@ describe("streamTurnResponse — channel-homed delivery", () => {
     expect(done).toMatchObject({ type: "done", ok: false });
     expect(String(done.error)).toContain("HARNESST_SECRETS_KEY");
     // The row is left bound — the thread is still alive, only this server is misconfigured.
-    expect(mocks.unbindPlaygroundSessionForReseed).not.toHaveBeenCalled();
+    expect(mocks.clearSessionHandles).not.toHaveBeenCalled();
     // Issue #282: nothing was sent, so nothing settles — the claim is released (status put
     // back, no cursor movement, no lastEventAt bump) and the park state stays untouched.
     expect(mocks.releaseRefusedTurnClaim).toHaveBeenCalledWith(
@@ -545,10 +542,10 @@ describe("streamTurnResponse — channel-homed delivery", () => {
     error.mockRestore();
   });
 
-  it("unbinds the row when the channel reports the resume handle is spent", async () => {
-    // A 409 `session_gone` means the container was replaced and took its in-process session with
-    // it. Leaving the descriptor in place would fail every future message the same way; unbinding
-    // lets the NEXT one take the ordinary #71 reseed path and carry the transcript forward.
+  it("clears the handles when the channel reports the resume handle is spent", async () => {
+    // A 409 `session_gone` means the eve session this row resumes into is gone. Leaving the
+    // descriptor in place would fail every future message the same way; clearing the handles
+    // lets the NEXT one start a fresh HTTP-homed session.
     script([
       {
         kind: "done",
@@ -563,9 +560,7 @@ describe("streamTurnResponse — channel-homed delivery", () => {
     } as Partial<PlaygroundSession>);
     await run({ session: row, channel: "foh" });
 
-    expect(mocks.unbindPlaygroundSessionForReseed).toHaveBeenCalledWith(
-      expect.objectContaining({ id: "ps_1" }),
-    );
+    expect(mocks.clearSessionHandles).toHaveBeenCalledWith("ps_1");
   });
 
   it("keeps the descriptor for an ordinary channel delivery failure", async () => {
@@ -582,7 +577,7 @@ describe("streamTurnResponse — channel-homed delivery", () => {
       channel: "foh",
     });
 
-    expect(mocks.unbindPlaygroundSessionForReseed).not.toHaveBeenCalled();
+    expect(mocks.clearSessionHandles).not.toHaveBeenCalled();
   });
 
   it("a refused send leaves session status, cursor, and pending flag unchanged (issue #282)", async () => {
@@ -641,11 +636,10 @@ describe("streamTurnResponse — channel-homed delivery", () => {
     expect(mocks.markSessionPendingInput).not.toHaveBeenCalled();
     expect(mocks.resolveInboxForSession).not.toHaveBeenCalled();
     expect(mocks.recordInboxFinished).not.toHaveBeenCalled();
-    expect(mocks.savePlaygroundEvents).not.toHaveBeenCalled();
     expect(mocks.savePlaygroundSessionProgress).not.toHaveBeenCalled();
     expect(mocks.recordTurnStart).not.toHaveBeenCalled();
     expect(mocks.recordTurnFinish).not.toHaveBeenCalled();
-    expect(mocks.unbindPlaygroundSessionForReseed).not.toHaveBeenCalled();
+    expect(mocks.clearSessionHandles).not.toHaveBeenCalled();
   });
 
   it("a refused send never finalizes a waiting delegation (issue #282)", async () => {
@@ -691,9 +685,183 @@ describe("streamTurnResponse — channel-homed delivery", () => {
     expect(mocks.resolveInboxForSession).toHaveBeenCalledWith("ps_1");
   });
 
-  it("survives an unbind that throws — the cursor save has already happened", async () => {
+  it("succession runs as a first-turn HTTP send and rebinds atomically on the session event (#288 3b)", async () => {
+    // The row is still channel-homed with the PREDECESSOR's handles; the succession flag —
+    // not a pre-cleared row — is what makes the drain start a fresh eve session. No bearer
+    // is minted for it, so a missing key must not refuse the send (delete it to prove so).
+    delete process.env.HARNESST_SECRETS_KEY;
+    const row = session({
+      externalSessionId: "sess_old",
+      continuationToken: "github:repo:1310524517:issue:7",
+      streamIndex: 6,
+      resumeVia: RESUME_VIA,
+    } as Partial<PlaygroundSession>);
+    script([
+      { kind: "session", sessionId: "sess_new", continuationToken: "tok_new" },
+      { kind: "turn", turnId: "turn_0" },
+      {
+        kind: "done",
+        result: result({
+          sessionId: "sess_new",
+          continuationToken: "tok_new",
+          streamIndex: 3,
+          turnId: "turn_0",
+          reply: "Picking this up here.",
+        }),
+      },
+    ]);
+
+    await readAll(
+      streamTurnResponse({
+        projectId: "proj_1",
+        target: TARGET,
+        session: row,
+        message: "let's continue here",
+        channel: "foh",
+        title: null,
+        claimId: "claim_1",
+        succession: true,
+      }),
+    );
+
+    // First-turn POST: no session id, no continuation token, no channel delivery, cursor 0 —
+    // and no bearer was ever needed (HARNESST_SECRETS_KEY is irrelevant to a succession).
+    expect(mocks.streamTurn.mock.calls[0][0]).toMatchObject({
+      sessionId: null,
+      continuationToken: null,
+      deliverVia: null,
+      streamIndex: 0,
+    });
+    // The one atomic rebind: predecessor pointer + successor handles + descriptor drop +
+    // cursor reset, fenced by the route's claim.
+    expect(mocks.bindSuccessorSessionHandles).toHaveBeenCalledTimes(1);
+    expect(mocks.bindSuccessorSessionHandles).toHaveBeenCalledWith({
+      id: "ps_1",
+      target: TARGET,
+      externalSessionId: "sess_new",
+      continuationToken: "tok_new",
+      claimId: "claim_1",
+    });
+    expect(mocks.clearSessionHandles).not.toHaveBeenCalled();
+    // The terminal save carries the SUCCESSOR's cursor, never the predecessor's.
+    expect(mocks.savePlaygroundSessionCursor).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: "ps_1",
+        externalSessionId: "sess_new",
+        continuationToken: "tok_new",
+        streamIndex: 3,
+        status: "waiting",
+        claimId: "claim_1",
+      }),
+    );
+  });
+
+  it("a succession that fails before the session event leaves the predecessor fully bound", async () => {
+    const row = session({
+      externalSessionId: "sess_old",
+      continuationToken: "github:repo:1310524517:issue:7",
+      streamIndex: 6,
+      resumeVia: RESUME_VIA,
+    } as Partial<PlaygroundSession>);
+    // The successor's first POST died before eve created anything: no session event, no ids.
+    script([
+      {
+        kind: "done",
+        result: result({
+          ok: false,
+          sessionId: null,
+          continuationToken: null,
+          streamIndex: 0,
+          turnId: null,
+          error: "fetch failed: connect ECONNREFUSED",
+        }),
+      },
+    ]);
+
+    await readAll(
+      streamTurnResponse({
+        projectId: "proj_1",
+        target: TARGET,
+        session: row,
+        message: "let's continue here",
+        channel: "foh",
+        title: null,
+        claimId: "claim_1",
+        succession: true,
+      }),
+    );
+
+    // Nothing rebound, nothing cleared: the row keeps the predecessor's handles, descriptor,
+    // and cursor — a retry re-runs the succession with the prologue intact.
+    expect(mocks.bindSuccessorSessionHandles).not.toHaveBeenCalled();
+    expect(mocks.clearSessionHandles).not.toHaveBeenCalled();
+    expect(mocks.savePlaygroundSessionProgress).not.toHaveBeenCalled();
+    expect(mocks.savePlaygroundSessionCursor).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: "ps_1",
+        externalSessionId: "sess_old",
+        continuationToken: "github:repo:1310524517:issue:7",
+        streamIndex: 6,
+        status: "failed",
+      }),
+    );
+  });
+
+  it("suppresses every successor-handle write when the rebind itself fails", async () => {
     const error = vi.spyOn(console, "error").mockImplementation(() => {});
-    mocks.unbindPlaygroundSessionForReseed.mockRejectedValueOnce(
+    mocks.bindSuccessorSessionHandles.mockRejectedValueOnce(
+      new Error("db down") as never,
+    );
+    const row = session({
+      externalSessionId: "sess_old",
+      continuationToken: "github:repo:1310524517:issue:7",
+      streamIndex: 6,
+      resumeVia: RESUME_VIA,
+    } as Partial<PlaygroundSession>);
+    script([
+      { kind: "session", sessionId: "sess_new", continuationToken: "tok_new" },
+      { kind: "turn", turnId: "turn_0" },
+      {
+        kind: "done",
+        result: result({
+          sessionId: "sess_new",
+          continuationToken: "tok_new",
+          streamIndex: 3,
+          turnId: "turn_0",
+          reply: "ok",
+        }),
+      },
+    ]);
+
+    await readAll(
+      streamTurnResponse({
+        projectId: "proj_1",
+        target: TARGET,
+        session: row,
+        message: "let's continue here",
+        channel: "foh",
+        title: null,
+        claimId: "claim_1",
+        succession: true,
+      }),
+    );
+
+    // Half-moved rows are the failure mode this guards: with the rebind lost, no progress
+    // or cursor write may leak the successor's handles — the row stays on the predecessor.
+    expect(mocks.savePlaygroundSessionProgress).not.toHaveBeenCalled();
+    expect(mocks.savePlaygroundSessionCursor).toHaveBeenCalledWith(
+      expect.objectContaining({
+        externalSessionId: "sess_old",
+        continuationToken: "github:repo:1310524517:issue:7",
+        streamIndex: 6,
+      }),
+    );
+    error.mockRestore();
+  });
+
+  it("survives a handle clear that throws — the cursor save has already happened", async () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    mocks.clearSessionHandles.mockRejectedValueOnce(
       new Error("db down") as never,
     );
     script([

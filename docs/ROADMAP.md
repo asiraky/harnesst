@@ -94,7 +94,7 @@ The post-M8.5 work leading to the public open-source release:
 
 - ✅ Team is the unit of deployment — repo-level ship + rollup (#5).
 - ✅ Rename agents in place, preserving every artifact (environments, releases, secrets, drafts,
-  containers, world DBs, home volumes) (#2).
+  containers, world DBs, home and world-data volumes) (#2).
 - ✅ Deployment freshness — "Latest" vs. behind badges across deploy views (#3).
 - ✅ Superseded-container cleanup after cutover — closes part of the M6.1 sandbox-GC punt (#8).
 - ✅ Playground long-run recovery + clean stop control (#4).

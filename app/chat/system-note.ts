@@ -14,7 +14,7 @@
  *
  *     make the button blue
  *
- * The two prefixes that predate this one (the model directive and the #71 reseed block) each solved
+ * The two prefixes that predate this one (the model directive and the seed-context block) each solved
  * that with strippable markers; this is the same trick for the free-text notes, in one place any
  * surface can reach. Wrapping is at SEND, stripping is at RENDER: the recorded event keeps the note
  * (it is genuinely what the model was given, and the observability record should not lie about it),

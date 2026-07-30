@@ -89,7 +89,6 @@ function makeDeps(over: Partial<AskDeps> = {}): AskDeps {
     ensureLiveDeployment: async () => null,
     createSession: async (input) =>
       ({ id: "ps_1", ...input }) as unknown as PlaygroundSession,
-    backfillSession: async () => {},
     scheduleReattach: async () => {},
     now: () => NOW,
     timeoutMs: 600_000,

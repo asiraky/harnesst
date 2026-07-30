@@ -7,7 +7,6 @@ import {
   getPlaygroundSession,
   markPlaygroundSessionStopped,
 } from "~/playground/sessions.server";
-import { findSessionOwnerTarget } from "~/playground/ownership";
 import {
   agentFromParams,
   requireActiveAgent,
@@ -46,12 +45,13 @@ export async function action(args: ActionFunctionArgs) {
   }
 
   const targets = await liveTargets(active.id);
-  const target = findSessionOwnerTarget(session, targets);
+  // The eve session lives in its environment's world store, so any live deployment of that
+  // environment can cancel it. A cross-environment target never knew the session — Eve hangs
+  // (not 404s) requests about unknown sessions, so a cancel there can only time out and used
+  // to make Stop fail on exactly the sessions that most need it (#73).
+  const target =
+    targets.find((t) => t.environmentId === session.environmentId) ?? null;
 
-  // Only ask Eve to cancel while the deployment that RAN the turn is still live. After a
-  // redeploy the turn died with its instance, and the replacement instance never saw the
-  // session — Eve hangs (not 404s) requests about unknown sessions, so a cancel there can only
-  // time out and used to make Stop fail on exactly the sessions that most need it (#73).
   const eveCancel =
     session.externalSessionId && target
       ? await cancelEveTurn({

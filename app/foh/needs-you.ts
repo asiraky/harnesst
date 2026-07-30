@@ -227,9 +227,11 @@ export function freeformAnswerable(
 }
 
 /**
- * The request-correlated answer a plain composer send carries (issue #282). Channel-homed
- * sessions (`resumeVia` set) can ONLY deliver answers, so typed text correlates to the newest
- * pending request — the freeform half of the HITL contract. HTTP-homed sessions return null:
+ * The request-correlated answer a plain composer send carries (issue #282). On a channel-homed
+ * session (`resumeVia` set) with a pending request, typed text correlates to that newest
+ * request — the freeform half of the HITL contract, delivered through the channel answer
+ * route. With nothing pending the send carries no correlation, which the stream route reads
+ * as succession into a fresh HTTP-homed session (#288 3b). HTTP-homed sessions return null:
  * their composer text stays the intentional continue/supersede path with no correlation
  * attached (a clicked option card passes its own explicit answer and never comes through
  * here).

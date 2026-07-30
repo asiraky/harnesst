@@ -124,9 +124,9 @@ describe.runIf(LIVE)("channel park against real Postgres", () => {
         },
         {
           ...defaultParkDeps(),
-          // The instance behind `url` is fake; the transcript copy is best-effort by design and
-          // this test is about the park, not the backfill.
-          backfillTranscript: async () => {},
+          // The instance behind `url` is fake; the cursor advance is best-effort by design and
+          // this test is about the park, not the cursor.
+          advanceCursor: async () => {},
         },
       );
 
@@ -232,8 +232,6 @@ describe.runIf(LIVE)("channel park against real Postgres", () => {
         projectId: project.id,
         agentId,
         environmentId: null,
-        deploymentId: null,
-        releaseId: null,
         version: null,
         externalSessionId: "sess_eve_owned",
         continuationToken: "github:repo:1:issue:7",
@@ -272,8 +270,6 @@ describe.runIf(LIVE)("channel park against real Postgres", () => {
       projectId: project.id,
       agentId: owner.id,
       environmentId: null,
-      deploymentId: null,
-      releaseId: null,
       version: null,
       externalSessionId: "sess_eve_owned",
       continuationToken: "github:repo:1:issue:8",
@@ -316,11 +312,11 @@ describe.runIf(LIVE)("channel park against real Postgres", () => {
     await db.delete(organization).where(eq(organization.id, ORG));
   });
 
-  it("clears resume_via when the owning deployment is reseeded (#71)", async () => {
+  it("clears resume_via with the handles when a dead channel binding is cleared (#288)", async () => {
     const { db } = await import("~/db/client.server");
     const { organization } = await import("~/db/auth-schema");
     const { agents, playgroundSessions, projects } = await import("~/db/schema");
-    const { createPlaygroundSession, unbindPlaygroundSessionForReseed } =
+    const { clearSessionHandles, createPlaygroundSession } =
       await import("~/playground/sessions.server");
 
     const ORG = "org_foh_park_reseed";
@@ -356,17 +352,18 @@ describe.runIf(LIVE)("channel park against real Postgres", () => {
       },
     });
 
-    await unbindPlaygroundSessionForReseed(session);
+    await clearSessionHandles(session.id);
 
     const [row] = await db
       .select()
       .from(playgroundSessions)
       .where(eq(playgroundSessions.id, session.id));
-    // A reseeded row starts a NEW eve session on the next turn. Keeping the old descriptor would
+    // A cleared row starts a NEW eve session on the next turn. Keeping the old descriptor would
     // aim that turn at a channel route holding a token for a session that no longer exists.
     expect(row.externalSessionId).toBeNull();
     expect(row.continuationToken).toBeNull();
     expect(row.resumeVia).toBeNull();
+    expect(row.streamIndex).toBe(0);
 
     await db.delete(organization).where(eq(organization.id, ORG));
   });

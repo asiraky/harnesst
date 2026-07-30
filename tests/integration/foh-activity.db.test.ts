@@ -28,7 +28,6 @@ describe.runIf(LIVE)("FOH activity projection against real Postgres", () => {
       releases,
       deployments,
       playgroundSessions,
-      playgroundEvents,
       delegations,
       runs,
       runSteps,
@@ -251,9 +250,8 @@ describe.runIf(LIVE)("FOH activity projection against real Postgres", () => {
     ]);
 
     // 10:45 — a second delegation parks on a human and opens ivy's agent-side session.
-    // The relayed ask lands in the linked run's metadata, but the REAL exchange lives in
-    // the FOH session's cached events (relay parking): parked question, human answer,
-    // final reply.
+    // The relayed ask lands in the linked run's metadata; the REAL exchange lives in the
+    // FOH session's eve stream (relay parking), read best-effort against a live target.
     const PARKED_ASK = 'From your teammate "sam": which registrar for harnesst.dev?';
     const [parkedRun] = await db
       .insert(runs)
@@ -304,62 +302,6 @@ describe.runIf(LIVE)("FOH activity projection against real Postgres", () => {
         createdAt: t(46),
       })
       .returning();
-    await db.insert(playgroundEvents).values([
-      {
-        sessionId: agentSession.id,
-        streamIndex: 1,
-        type: "turn.started",
-        data: { turnId: "turn_0", sequence: 0 },
-      },
-      {
-        sessionId: agentSession.id,
-        streamIndex: 2,
-        type: "message.received",
-        data: { turnId: "turn_0", message: PARKED_ASK, sequence: 0 },
-      },
-      {
-        sessionId: agentSession.id,
-        streamIndex: 3,
-        type: "input.requested",
-        data: {
-          turnId: "turn_0",
-          requests: [
-            { requestId: "req_1", prompt: "Which registrar account should I use?" },
-          ],
-        },
-      },
-      {
-        sessionId: agentSession.id,
-        streamIndex: 4,
-        type: "turn.completed",
-        data: { turnId: "turn_0", sequence: 0 },
-      },
-      {
-        sessionId: agentSession.id,
-        streamIndex: 5,
-        type: "turn.started",
-        data: { turnId: "turn_1", sequence: 1 },
-      },
-      {
-        sessionId: agentSession.id,
-        streamIndex: 6,
-        type: "message.received",
-        data: { turnId: "turn_1", message: "Use the Cloudflare account", sequence: 1 },
-      },
-      {
-        sessionId: agentSession.id,
-        streamIndex: 7,
-        type: "message.completed",
-        data: { turnId: "turn_1", message: "Done — transferred via Cloudflare." },
-      },
-      {
-        sessionId: agentSession.id,
-        streamIndex: 8,
-        type: "turn.completed",
-        data: { turnId: "turn_1", sequence: 1 },
-      },
-    ]);
-
     // A third delegation whose run recording never landed (runId null — best-effort)
     // and that opened no session: the expansion must degrade cleanly.
     const [bareDelegation] = await db
@@ -534,29 +476,12 @@ describe.runIf(LIVE)("FOH activity projection against real Postgres", () => {
       },
     ]);
 
-    // A relay-parked delegation's exchange is built from the agent-opened FOH session's
-    // cached events, not the linked run's steps: parked question and final reply are the
-    // delegate's, the answer is the human's, and the ask appears only in the header.
+    // A relay-parked delegation's exchange reads the agent-opened FOH session's eve stream
+    // against a live target (#288). None is reachable in this DB-only test, so the steps are
+    // omitted — best-effort by design; the header still carries the ask.
     const parked = await getDelegationExchange(project.id, waitingDelegation.id);
     expect(parked).toMatchObject({ status: "waiting", ask: PARKED_ASK });
-    expect(parked?.steps).toEqual([
-      {
-        kind: "message",
-        role: "assistant",
-        text: "Which registrar account should I use?",
-      },
-      {
-        kind: "message",
-        role: "user",
-        text: "Use the Cloudflare account",
-        speaker: "human",
-      },
-      {
-        kind: "message",
-        role: "assistant",
-        text: "Done — transferred via Cloudflare.",
-      },
-    ]);
+    expect(parked?.steps).toEqual([]);
 
     // Null-runId expansion degrades cleanly; other projects' delegations are invisible.
     const bare = await getDelegationExchange(project.id, bareDelegation.id);

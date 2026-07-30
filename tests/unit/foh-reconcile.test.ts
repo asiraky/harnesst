@@ -73,7 +73,6 @@ function session(over: Partial<PlaygroundSession> = {}): PlaygroundSession {
     externalSessionId: "sess_ext",
     continuationToken: "tok_1",
     streamIndex: 0,
-    cacheIndexOffset: 0,
     status: "running",
     title: null,
     lastEventAt: null,
@@ -222,8 +221,7 @@ describe("reconcilePlaygroundSessionFromEve — FOH needs-you recovery", () => {
     expect(pendingWrites()).toHaveLength(0);
     expect(inbox.openInboxQuestion).not.toHaveBeenCalled();
     expect(inbox.resolveInboxForSession).not.toHaveBeenCalled();
-    // The ordinary reconcile writes still happen: events cached + cursor saved.
-    expect(dbState.inserts).toHaveLength(1);
+    // The ordinary reconcile write still happens: the cursor is saved.
     expect(
       dbState.updates.filter((values) => Object.hasOwn(values, "status")),
     ).toHaveLength(1);

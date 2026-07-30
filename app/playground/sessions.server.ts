@@ -7,15 +7,13 @@ import {
   isNotNull,
   isNull,
   lt,
-  max,
-  min,
   ne,
   or,
   sql,
   type SQL,
 } from "drizzle-orm";
 
-import { inputRequestsOf, type RawEveEvent } from "~/agent/talk.server";
+import { inputRequestsOf } from "~/agent/talk.server";
 import { normalizeTurnError } from "~/chat/stream-error";
 import type { ChatEntry, ChatInputRequest, ChatStep } from "~/chat/types";
 import { user } from "~/db/auth-schema";
@@ -23,7 +21,6 @@ import { db } from "~/db/client.server";
 import {
   agents,
   conversationReads,
-  playgroundEvents,
   playgroundSessions,
   type SessionResumeVia,
 } from "~/db/schema";
@@ -272,8 +269,10 @@ export async function getFohSessionForViewer(input: {
  * So the destination is derived from the live turn instead, which is the fact the publish actually
  * carries: the tool runs INSIDE a turn, and a turn is claimed atomically
  * (`claimPlaygroundSessionForTurn`) onto exactly one session row with `status = 'running'`, a
- * fencing token, and this deployment/environment stamped on it. Staleness uses the claim's own
- * cutoff, so an abandoned `running` row cannot be published into forever.
+ * fencing token, and this environment stamped on it (#288 dropped `last_deployment_id`, so the
+ * environment — whose world store is shared by every deployment serving it — is the scope).
+ * Staleness uses the claim's own cutoff, so an abandoned `running` row cannot be published into
+ * forever.
  *
  * Two live turns on one deployment is possible (two members talking to the same agent at once), and
  * there is nothing in a publish that could tell them apart — so that is REFUSED (`ambiguous`)
@@ -288,7 +287,6 @@ export async function liveFohTurnForDeployment(input: {
   agentId: string;
   /** The publishing deployment's environment — a staging container cannot publish into prod. */
   environmentId: string | null;
-  deploymentId: string;
   /** Claim staleness cutoff; callers pass TURN_IDLE_TIMEOUT_MS, as the turn claim does. */
   staleAfterMs: number;
   now?: Date;
@@ -307,7 +305,6 @@ export async function liveFohTurnForDeployment(input: {
         input.environmentId
           ? eq(playgroundSessions.environmentId, input.environmentId)
           : isNull(playgroundSessions.environmentId),
-        eq(playgroundSessions.lastDeploymentId, input.deploymentId),
         eq(playgroundSessions.status, "running"),
         isNotNull(playgroundSessions.turnClaimId),
         gt(playgroundSessions.updatedAt, staleBefore),
@@ -472,11 +469,12 @@ export async function restoreFohSession(input: {
 }
 
 /**
- * Delete an archived FOH session for good — the only destructive path over conversations, and
- * the only `db.delete(playgroundSessions)` in the app. `archived_at IS NOT NULL` is part of the
- * predicate, so a live conversation can never be deleted through here: archiving first is the
- * mandatory, reversible step. Events, reads, inbox items and checkouts go with the row via the
- * existing ON DELETE cascades — there is deliberately no manual cleanup to keep in sync.
+ * Delete an archived FOH session for good — the only user-reachable destructive path over
+ * conversations (`deleteBareNotificationSession` is the one other `db.delete`, a server-side
+ * compensation scoped to seconds-old bare notification rows). `archived_at IS NOT NULL` is part
+ * of the predicate, so a live conversation can never be deleted through here: archiving first
+ * is the mandatory, reversible step. Events, reads, inbox items and checkouts go with the row
+ * via the existing ON DELETE cascades — there is deliberately no manual cleanup to keep in sync.
  */
 export async function deleteFohSessionPermanently(input: {
   id: string;
@@ -664,8 +662,6 @@ export async function createPlaygroundSession(input: {
   userId: string | null;
   surface?: SessionSurface;
   environmentId?: string | null;
-  deploymentId?: string | null;
-  releaseId?: string | null;
   version?: string | null;
   title?: string | null;
   modelId?: string | null;
@@ -688,6 +684,8 @@ export async function createPlaygroundSession(input: {
   status?: "running" | "waiting" | "completed" | "failed";
   pendingInputAt?: Date | null;
   lastEventAt?: Date | null;
+  /** Agent-initiated rows (#288 3c): the contact-user notification that opened the session. */
+  openingMessage?: string | null;
 }): Promise<PlaygroundSession> {
   const [row] = await db
     .insert(playgroundSessions)
@@ -698,8 +696,6 @@ export async function createPlaygroundSession(input: {
       surface: input.surface ?? "playground",
       environmentId: input.environmentId ?? null,
       worldKey: input.environmentId ?? null,
-      lastDeploymentId: input.deploymentId ?? null,
-      lastReleaseId: input.releaseId ?? null,
       lastVersion: input.version ?? null,
       title: input.title ?? null,
       modelId: input.modelId ?? null,
@@ -713,9 +709,63 @@ export async function createPlaygroundSession(input: {
       status: input.status ?? "new",
       pendingInputAt: input.pendingInputAt ?? null,
       lastEventAt: input.lastEventAt ?? null,
+      openingMessage: input.openingMessage ?? null,
     })
     .returning();
   return row;
+}
+
+/**
+ * How many live agent-initiated FOH conversations an agent holds — the notify endpoint's
+ * row-spam ceiling (#288 3c, the `foh.agent.tsx` new-session guard one caller further out).
+ * Counts `created_by IS NULL` rows with no delegation (a delegation-opened row is a peer's
+ * parked ask, not a notification) and, per #278, only unarchived ones — archiving is the way
+ * back under the ceiling. `opening_message IS NOT NULL` is what makes the count NOTIFICATIONS
+ * only: channel-parked conversations share the null creator/delegation shape (a GitHub user
+ * opened them, not a member) but carry no opening message, and a busy channel must not eat the
+ * agent's notification budget.
+ */
+export async function countAgentInitiatedFohSessions(
+  agentId: string,
+): Promise<number> {
+  const [row] = await db
+    .select({ c: sql<number>`count(*)::int` })
+    .from(playgroundSessions)
+    .where(
+      and(
+        eq(playgroundSessions.agentId, agentId),
+        surfaceScope("foh"),
+        isNull(playgroundSessions.createdBy),
+        isNull(playgroundSessions.delegationId),
+        isNotNull(playgroundSessions.openingMessage),
+        isNull(playgroundSessions.archivedAt),
+      ),
+    );
+  return row?.c ?? 0;
+}
+
+/**
+ * Compensation for a failed notify (#288 3c): the session insert and the notice inbox insert
+ * share no transaction (this layer never opens one — see `parkChannelQuestion`), so a failed
+ * bell write would otherwise strand a team-wide conversation nobody was told about, and the
+ * agent's retry would open a second. The predicate is deliberately narrower than an id match:
+ * only a row that still looks like a bare notification — agent-opened, no creator, no eve
+ * session ever attached, an opening message present — can be reaped, so a mistaken call can
+ * never take a conversation a human has engaged with.
+ */
+export async function deleteBareNotificationSession(id: string): Promise<void> {
+  await db
+    .delete(playgroundSessions)
+    .where(
+      and(
+        eq(playgroundSessions.id, id),
+        surfaceScope("foh"),
+        isNull(playgroundSessions.createdBy),
+        isNull(playgroundSessions.delegationId),
+        isNull(playgroundSessions.externalSessionId),
+        isNotNull(playgroundSessions.openingMessage),
+      ),
+    );
 }
 
 /**
@@ -763,8 +813,6 @@ export async function adoptChannelHomedSession(input: {
   projectId: string;
   agentId: string;
   environmentId: string | null;
-  deploymentId: string | null;
-  releaseId: string | null;
   version: string | null;
   /** The eve session id the channel homed the work on. */
   externalSessionId: string;
@@ -787,8 +835,6 @@ export async function adoptChannelHomedSession(input: {
       surface: "foh",
       environmentId: input.environmentId,
       worldKey: input.environmentId,
-      lastDeploymentId: input.deploymentId,
-      lastReleaseId: input.releaseId,
       lastVersion: input.version,
       title: input.title ?? null,
       externalSessionId: input.externalSessionId,
@@ -807,8 +853,6 @@ export async function adoptChannelHomedSession(input: {
       set: {
         continuationToken: input.continuationToken,
         resumeVia: input.resumeVia,
-        lastDeploymentId: input.deploymentId,
-        lastReleaseId: input.releaseId,
         lastVersion: input.version,
         status: "waiting",
         pendingInputAt: input.now,
@@ -971,8 +1015,6 @@ export async function markPlaygroundSessionRunning(input: {
     .set({
       environmentId: input.target.environmentId,
       worldKey: input.target.environmentId,
-      lastDeploymentId: input.target.deploymentId,
-      lastReleaseId: input.target.releaseId,
       lastVersion: input.target.version,
       title: input.title ?? undefined,
       status: "running",
@@ -1003,10 +1045,12 @@ export async function claimPlaygroundSessionForTurn(input: {
   const [row] = await db
     .update(playgroundSessions)
     .set({
-      environmentId: input.target.environmentId,
-      worldKey: input.target.environmentId,
-      lastDeploymentId: input.target.deploymentId,
-      lastReleaseId: input.target.releaseId,
+      // A BOUND row (externalSessionId set) keeps its home: environmentId/worldKey name the
+      // one world store that holds the eve session, so only the first claim of an UNBOUND
+      // row may bind them to the target — rewriting them on a bound row would point every
+      // later env-match at an environment that never saw the session (#288).
+      environmentId: sql`CASE WHEN ${playgroundSessions.externalSessionId} IS NULL THEN ${input.target.environmentId} ELSE ${playgroundSessions.environmentId} END`,
+      worldKey: sql`CASE WHEN ${playgroundSessions.externalSessionId} IS NULL THEN ${input.target.environmentId} ELSE ${playgroundSessions.worldKey} END`,
       lastVersion: input.target.version,
       title: input.title ?? undefined,
       status: "running",
@@ -1018,7 +1062,7 @@ export async function claimPlaygroundSessionForTurn(input: {
         eq(playgroundSessions.id, input.id),
         // Archive and claim are mutually exclusive transitions (#278). The archive predicate
         // refuses a `running` row; this refuses an archived one. Without both halves, a stream
-        // route that resolved a live row and then spent time waking/reseeding could claim a row
+        // route that resolved a live row and then spent time waking could claim a row
         // archived in the meantime — a running turn on a conversation no FOH read can reach, so
         // it cannot be opened or stopped, and BOH would offer to delete it outright.
         isNull(playgroundSessions.archivedAt),
@@ -1050,8 +1094,6 @@ export async function savePlaygroundSessionProgress(input: {
       externalSessionId: input.externalSessionId,
       continuationToken: input.continuationToken,
       streamIndex: input.streamIndex,
-      lastDeploymentId: input.target.deploymentId,
-      lastReleaseId: input.target.releaseId,
       lastVersion: input.target.version,
       title: input.title ?? undefined,
       status: "running",
@@ -1123,8 +1165,6 @@ export async function savePlaygroundSessionCursor(input: {
       externalSessionId: input.externalSessionId,
       continuationToken: input.continuationToken,
       streamIndex: input.streamIndex,
-      lastDeploymentId: input.target.deploymentId,
-      lastReleaseId: input.target.releaseId,
       lastVersion: input.target.version,
       title: input.title ?? undefined,
       status: input.status,
@@ -1152,160 +1192,97 @@ export async function savePlaygroundSessionCursor(input: {
 }
 
 /**
- * Append raw Eve stream events to the durable transcript cache. Called by the turn-stream drain as
- * events arrive, so the transcript survives client disconnect AND instance death. The (session,
- * streamIndex) PK makes this idempotent: a re-drained index (e.g. a retried turn) is a no-op, so
- * callers can flush optimistically without tracking exactly what's already stored.
- *
- * `indexOffset` shifts the passed (eve-space) indices into cache space. It is 0 normally and
- * `session.cacheIndexOffset` after a cross-redeploy reseed (#71): a fresh eve session re-indexes
- * from 1, so without the offset its events would collide with the preserved history on the PK and
- * silently vanish (ON CONFLICT DO NOTHING). The offset lands them after the preserved rows.
+ * Clear a session's eve handles so the next send starts a FRESH HTTP-homed eve session. Used
+ * when a channel-homed resume descriptor is proven dead (the channel route answered "that
+ * session is gone"): the descriptor can never resolve again, so the handles clear together —
+ * leaving `resume_via` behind would aim the next turn at a channel answer route holding a
+ * token for a session that no longer exists. The cursor resets with them; the fresh session's
+ * stream starts over at index 0. Succession (#288 3b) does NOT come through here — it keeps
+ * the handles until the successor provably exists (`bindSuccessorSessionHandles`).
  */
-export async function savePlaygroundEvents(
-  sessionId: string,
-  events: Array<{ streamIndex: number } & RawEveEvent>,
-  indexOffset = 0,
-): Promise<void> {
-  if (events.length === 0) return;
+export async function clearSessionHandles(sessionId: string): Promise<void> {
   await db
-    .insert(playgroundEvents)
-    .values(
-      events.map((e) => ({
-        sessionId,
-        streamIndex: e.streamIndex + indexOffset,
-        type: e.type,
-        data: e.data,
-        meta: e.meta ?? null,
-      })),
-    )
-    .onConflictDoNothing();
-}
-
-/**
- * Unbind a session from its dead eve session so the next turn seeds a FRESH eve session on the
- * replacement deployment (#71). The cached transcript is untouched; `cacheIndexOffset` moves to
- * the top of the cache so the new session's events (indexed from 1 by the drain) append after
- * the preserved history instead of colliding with it on the (session, streamIndex) PK.
- *
- * `resume_via` clears with the handles it describes (WS1). The reseeded session is an ordinary
- * HTTP-homed eve session on the new deployment — leaving a channel descriptor behind would aim
- * the NEXT turn at a channel answer route holding a continuation token for a session that died
- * with the old container.
- */
-export async function unbindPlaygroundSessionForReseed(
-  session: PlaygroundSession,
-): Promise<PlaygroundSession> {
-  const offset = await cachedStreamIndex(session.id);
-  const [row] = await db
     .update(playgroundSessions)
     .set({
       externalSessionId: null,
       continuationToken: null,
       resumeVia: null,
       streamIndex: 0,
-      cacheIndexOffset: offset,
       updatedAt: new Date(),
     })
-    .where(eq(playgroundSessions.id, session.id))
-    .returning();
-  return row;
+    .where(eq(playgroundSessions.id, sessionId));
 }
 
 /**
- * Highest streamIndex already in the transcript cache for a session (0 if none). Used by
- * `unbindPlaygroundSessionForReseed` (#71) to compute the reseed offset — the top of the preserved
- * history the fresh eve session's events must append after — and by the DB integration test to
- * assert what the cache covers.
+ * Rebind a channel-homed row to its SUCCESSOR eve session in one atomic write (#288 3b).
+ * Called by the drain on the succession turn's `session` event — the first moment the
+ * successor provably exists. Records the predecessor id for the render stitch (first
+ * succession wins: a conversation spans at most two eve sessions, so the pointer never
+ * moves once set), swaps in the successor's handles, drops the channel descriptor, and
+ * restarts the cursor for the successor's stream. Claim-fenced and stop-wins like every
+ * other drain write. Until this lands the row still holds the predecessor untouched, so a
+ * succession that fails earlier retries with nothing lost.
  */
-export async function cachedStreamIndex(sessionId: string): Promise<number> {
-  const [row] = await db
-    .select({ value: max(playgroundEvents.streamIndex) })
-    .from(playgroundEvents)
-    .where(eq(playgroundEvents.sessionId, sessionId));
-  return row?.value ?? 0;
+export async function bindSuccessorSessionHandles(input: {
+  id: string;
+  target: Target;
+  externalSessionId: string;
+  continuationToken: string | null;
+  /** Fencing token (issue #221 finding 5): when set, only the claim-holding drain writes. */
+  claimId?: string;
+}): Promise<void> {
+  await db
+    .update(playgroundSessions)
+    .set({
+      predecessorExternalSessionId: sql`CASE WHEN ${playgroundSessions.predecessorExternalSessionId} IS NULL AND ${playgroundSessions.externalSessionId} IS DISTINCT FROM ${input.externalSessionId} THEN ${playgroundSessions.externalSessionId} ELSE ${playgroundSessions.predecessorExternalSessionId} END`,
+      externalSessionId: input.externalSessionId,
+      continuationToken: input.continuationToken,
+      resumeVia: null,
+      streamIndex: 0,
+      environmentId: input.target.environmentId,
+      worldKey: input.target.environmentId,
+      lastVersion: input.target.version,
+      status: "running",
+      lastEventAt: new Date(),
+      updatedAt: new Date(),
+    })
+    .where(
+      and(
+        eq(playgroundSessions.id, input.id),
+        ne(playgroundSessions.status, "stopped"),
+        isNull(playgroundSessions.archivedAt),
+        input.claimId
+          ? eq(playgroundSessions.turnClaimId, input.claimId)
+          : undefined,
+      ),
+    );
 }
 
 /**
- * Whether the transcript cache covers this session's history from its FIRST event. False for a
- * legacy session whose cursor advanced before the cache existed: its earliest cached row (if any)
- * starts past index 1, so everything before it is missing — merely "cache non-empty" is not
- * enough, or one new turn on a legacy session would permanently hide all pre-cache history.
+ * Advance a CHANNEL-HOMED session's cursor to the end of what eve already holds (WS1 park).
+ * Nothing on harnesst's side ran those turns, so the cursor starts at 0 — but the human's
+ * answer opens eve's stream at `startIndex = streamIndex`, so leaving it there would replay
+ * the whole channel conversation into the browser as if it were part of the answering turn,
+ * and the eve render (`loadPlaygroundEntriesFromEve` reads events 1..cursor) would show
+ * nothing. Reads the tail from index 0 — it stops at the terminal event (`session.waiting`,
+ * which is what a parked session emits) or on idle — and advances the cursor to what it saw,
+ * guarded `stream_index < events.length` so a concurrent drain's larger cursor always wins.
  */
-export async function playgroundCacheIsComplete(
-  session: PlaygroundSession,
-): Promise<boolean> {
-  // No history consumed yet — nothing the cache could be missing.
-  if (session.streamIndex <= 0) return true;
-  const [row] = await db
-    .select({ value: min(playgroundEvents.streamIndex) })
-    .from(playgroundEvents)
-    .where(eq(playgroundEvents.sessionId, session.id));
-  // The drain assigns index 1 to a session's first event, so coverage-from-the-start means the
-  // cache's lowest index is exactly 1 (contiguity above it is the drain's invariant).
-  return row?.value === 1;
-}
-
-/**
- * One-time backfill for a legacy session (created before the transcript cache): replay every
- * event the cursor has consumed from Eve's durable log and persist it into `playground_events`,
- * making the cache complete from index 1. Idempotent — indices are positional (Eve's log starts
- * at our index 1) and the (session, streamIndex) PK turns re-inserted rows into no-ops — so
- * overlapping with rows the drain already cached is safe.
- */
-export async function backfillPlaygroundEventsFromEve(input: {
+export async function advanceChannelHomedSessionCursor(input: {
   session: PlaygroundSession;
   target: Target;
   timeoutMs?: number;
-}): Promise<void> {
-  if (!input.session.externalSessionId || input.session.streamIndex <= 0) {
-    return;
-  }
-  const events = await readEveSessionEvents({
-    baseUrl: input.target.url,
-    limit: input.session.streamIndex,
-    sessionId: input.session.externalSessionId,
-    timeoutMs: input.timeoutMs,
-  });
-  await savePlaygroundEvents(
-    input.session.id,
-    events.map((event, i) => ({ streamIndex: i + 1, ...event })),
-    input.session.cacheIndexOffset,
-  );
-}
-
-/**
- * Copy a CHANNEL-HOMED session's transcript into the cache at park time (WS1). Unlike the relay
- * park, nothing on harnesst's side ran the turn, so there is no cursor to bound the read:
- * `backfillPlaygroundEventsFromEve` needs `streamIndex > 0` and would no-op forever. Read the
- * tail from index 0 instead — it stops at the terminal event (`session.waiting`, which is what a
- * parked session emits) or on idle — then advance the cursor to what landed.
- *
- * Advancing the cursor is not cosmetic: the human's answer opens eve's stream at
- * `startIndex = streamIndex`, so leaving it at 0 would replay the whole GitHub conversation into
- * the browser as if it were part of the answering turn. Guarded `stream_index < events.length`
- * so a concurrent drain's larger cursor always wins.
- */
-export async function backfillChannelHomedSessionTranscript(input: {
-  session: PlaygroundSession;
-  target: Target;
-  timeoutMs?: number;
-}): Promise<void> {
-  if (!input.session.externalSessionId) return;
-  // Already cached by an earlier park or a drain — the cursor is authoritative.
-  if (input.session.streamIndex > 0) return;
+}): Promise<PlaygroundSession> {
+  if (!input.session.externalSessionId) return input.session;
+  // A non-zero cursor is authoritative — an earlier park or a drain already advanced it.
+  if (input.session.streamIndex > 0) return input.session;
   const { events } = await readEveSessionTail({
     baseUrl: input.target.url,
     sessionId: input.session.externalSessionId,
     startIndex: 0,
     timeoutMs: input.timeoutMs ?? 5_000,
   });
-  if (events.length === 0) return;
-  await savePlaygroundEvents(
-    input.session.id,
-    events.map((event, i) => ({ streamIndex: i + 1, ...event })),
-    input.session.cacheIndexOffset,
-  );
+  if (events.length === 0) return input.session;
   await db
     .update(playgroundSessions)
     .set({ streamIndex: events.length, updatedAt: new Date() })
@@ -1315,47 +1292,10 @@ export async function backfillChannelHomedSessionTranscript(input: {
         lt(playgroundSessions.streamIndex, events.length),
       ),
     );
-}
-
-/**
- * Rebuild a session's transcript from harnesst's durable cache — no Eve replay. The cached rows are the
- * raw Eve events, so the same `projectEventsToEntries` used by the Eve-replay path reconstructs
- * identical `ChatEntry[]`.
- */
-export async function loadPlaygroundEntriesFromCache(
-  session: PlaygroundSession,
-): Promise<ChatEntry[]> {
-  const rows = await db
-    .select({
-      streamIndex: playgroundEvents.streamIndex,
-      type: playgroundEvents.type,
-      data: playgroundEvents.data,
-      meta: playgroundEvents.meta,
-    })
-    .from(playgroundEvents)
-    .where(eq(playgroundEvents.sessionId, session.id))
-    .orderBy(playgroundEvents.streamIndex);
-  // Artifacts (#290) are transcript elements that never travelled through eve, so they are folded
-  // in AFTER the projection — the event pipeline is untouched. Read even for an empty cache: an
-  // artifact published before the first event still has to appear.
-  const published = await listArtifactsForSession(session.id);
-  if (rows.length === 0) {
-    return mergeArtifactEntries([], published, []);
-  }
-  const events: EveStreamEvent[] = rows.map((r) => ({
-    type: r.type,
-    data: (r.data ?? {}) as Record<string, unknown>,
-    meta: (r.meta ?? undefined) as { at?: string } | undefined,
-  }));
-  const entries = projectEventsToEntries(events, session);
-  const anchors = turnAnchorsFromEvents(
-    rows.map((r) => ({
-      streamIndex: r.streamIndex,
-      type: r.type,
-      data: (r.data ?? {}) as Record<string, unknown>,
-    })),
-  );
-  return mergeArtifactEntries(entries, published, anchors);
+  return {
+    ...input.session,
+    streamIndex: Math.max(input.session.streamIndex, events.length),
+  };
 }
 
 export async function markPlaygroundSessionStopped(input: {
@@ -1366,13 +1306,10 @@ export async function markPlaygroundSessionStopped(input: {
   await db
     .update(playgroundSessions)
     .set({
-      // A stopped session may outlive the deployment that owns its Eve session. In that case,
-      // settle harnesst's row without assigning the replacement deployment as the owner: doing so
-      // would make a later continuation send the old external session id to the wrong Eve.
+      // A stopped session may be settled with no reachable target; the row's stored
+      // environment/version then stay as they were.
       environmentId: input.target?.environmentId,
       worldKey: input.target?.environmentId,
-      lastDeploymentId: input.target?.deploymentId,
-      lastReleaseId: input.target?.releaseId,
       lastVersion: input.target?.version,
       title: input.title ?? undefined,
       // Distinct from "failed": a deliberate stop shouldn't get the timed-out
@@ -1416,21 +1353,87 @@ export function titleFromMessage(message: string): string {
   return `${collapsed.slice(0, 79)}…`;
 }
 
+/**
+ * Cap for replay reads that cannot trust a cursor: the succession prologue of a channel row
+ * whose fire-and-forget heal never ran (stream_index still 0), and the predecessor half of
+ * the succession stitch (the predecessor's cursor was reset when the row rebound).
+ */
+const UNCURSORED_EVENT_CAP = 1_000;
+/**
+ * A capped read asks for more events than eve holds, and eve never closes a session stream —
+ * it just goes silent at the end. Stop after this much silence; a healthy instance streams
+ * its whole log in milliseconds (see `tailBudgetsMs`), so this is an end-of-log detector,
+ * not a latency allowance.
+ */
+const CAPPED_READ_IDLE_STOP_MS = 1_000;
+
 export async function loadPlaygroundEntriesFromEve(input: {
   session: PlaygroundSession;
   target: Target;
   timeoutMs?: number;
+  /**
+   * Overrides the cursor as the read limit — for callers whose cursor is known-stale (a
+   * channel row whose heal never ran reads under `UNCURSORED_EVENT_CAP` instead of trusting
+   * a zero). Capped reads idle-stop at end-of-log rather than run out the full budget.
+   */
+  limit?: number;
 }): Promise<ChatEntry[]> {
-  if (!input.session.externalSessionId || input.session.streamIndex <= 0) {
-    return [];
+  if (!input.session.externalSessionId) return [];
+  const limit = input.limit ?? input.session.streamIndex;
+  const events =
+    limit > 0
+      ? await readEveSessionEvents({
+          baseUrl: input.target.url,
+          limit,
+          sessionId: input.session.externalSessionId,
+          timeoutMs: input.timeoutMs,
+          idleStopMs:
+            input.limit !== undefined ? CAPPED_READ_IDLE_STOP_MS : undefined,
+        })
+      : [];
+  // Artifacts (#290) are transcript elements that never travelled through eve, so they are
+  // folded in AFTER the projection — the event pipeline is untouched. Read even when there
+  // are no events: an artifact published before the first event still has to appear.
+  const published = await listArtifactsForSession(input.session.id);
+  // Succession stitch (#288 3b): a succeeded conversation spans two eve sessions in the
+  // same world store — prepend the predecessor's RAW events and project once; the
+  // `session.started` epoch keeps the two sessions' turn keys apart (#261). Best-effort:
+  // an unreadable predecessor renders the successor alone. Artifact anchors are ambiguous
+  // across the two sessions' index spaces, so cards on a succeeded conversation trail the
+  // transcript instead of risking a wrong inline placement.
+  const predecessorId = input.session.predecessorExternalSessionId;
+  if (predecessorId && predecessorId !== input.session.externalSessionId) {
+    try {
+      const prologue = await readEveSessionEvents({
+        baseUrl: input.target.url,
+        limit: UNCURSORED_EVENT_CAP,
+        sessionId: predecessorId,
+        timeoutMs: input.timeoutMs,
+        idleStopMs: CAPPED_READ_IDLE_STOP_MS,
+      });
+      return mergeArtifactEntries(
+        projectEventsToEntries([...prologue, ...events], input.session),
+        published,
+        [],
+      );
+    } catch {
+      // Fall through to the successor-only render.
+    }
   }
-  const events = await readEveSessionEvents({
-    baseUrl: input.target.url,
-    limit: input.session.streamIndex,
-    sessionId: input.session.externalSessionId,
-    timeoutMs: input.timeoutMs,
-  });
-  return projectEventsToEntries(events, input.session);
+  // Eve's log is 1-based ("our index 1 is eve's first event"), and with the durable cache
+  // gone artifact rows record plain eve-space indices — position+1 reconstructs them.
+  const anchors = turnAnchorsFromEvents(
+    events.map((event, index) => ({
+      streamIndex: index + 1,
+      type: event.type,
+      data: event.data,
+    })),
+  );
+  return mergeArtifactEntries(
+    projectEventsToEntries(events, input.session),
+    published,
+    anchors,
+  );
 }
 
 /**
@@ -1480,21 +1483,6 @@ export async function reconcilePlaygroundSessionFromEve(input: {
     connectTimeoutMs: input.timeoutMs ?? budgets.connectMs,
   });
   if (tail.events.length === 0) return input.session;
-
-  // Persist the tail into the durable transcript cache BEFORE advancing the cursor. The cache is
-  // the transcript's source of truth, and the next turn drains Eve starting at the advanced
-  // cursor — so any event the cursor passes without being cached here would never be seen again
-  // (the recovered final reply would silently vanish). Indices continue the drain's scheme
-  // (cursor N ⇒ next event is N+1), so an overlapping drain or a re-reconcile is an idempotent
-  // no-op via the (session, streamIndex) PK.
-  await savePlaygroundEvents(
-    input.session.id,
-    tail.events.map((event, i) => ({
-      streamIndex: input.session.streamIndex + 1 + i,
-      ...event,
-    })),
-    input.session.cacheIndexOffset,
-  );
 
   const nextStreamIndex = input.session.streamIndex + tail.events.length;
   const nextStatus =
@@ -1557,8 +1545,6 @@ export async function reconcilePlaygroundSessionFromEve(input: {
     pendingInputAt,
     environmentId: input.target.environmentId,
     worldKey: input.target.environmentId,
-    lastDeploymentId: input.target.deploymentId,
-    lastReleaseId: input.target.releaseId,
     lastVersion: input.target.version,
     streamIndex: nextStreamIndex,
     status: nextStatus,
@@ -1587,6 +1573,12 @@ async function readEveSessionEvents(input: {
   sessionId: string;
   limit: number;
   timeoutMs?: number;
+  /**
+   * When set, a read that goes this long without a fresh chunk returns what it has. A
+   * cursor-exact read is ended by `limit` itself; a CAPPED read (limit above the real event
+   * count) would otherwise hold eve's never-closing stream open for the whole `timeoutMs`.
+   */
+  idleStopMs?: number;
 }): Promise<EveStreamEvent[]> {
   const base = input.baseUrl.replace(/\/+$/, "");
   const timeoutMs = input.timeoutMs ?? 15_000;
@@ -1620,7 +1612,29 @@ async function readEveSessionEvents(input: {
   let buf = "";
   try {
     while (events.length < input.limit) {
-      const { done, value } = await reader.read();
+      let chunk: ReadableStreamReadResult<Uint8Array>;
+      if (input.idleStopMs) {
+        let idleTimer: ReturnType<typeof setTimeout> | null = null;
+        try {
+          chunk = await Promise.race([
+            reader.read(),
+            new Promise<never>((_, reject) => {
+              idleTimer = setTimeout(
+                () => reject(new Error("idle")),
+                input.idleStopMs,
+              );
+            }),
+          ]);
+        } catch (error) {
+          if ((error as Error).message === "idle") break;
+          throw error;
+        } finally {
+          if (idleTimer) clearTimeout(idleTimer);
+        }
+      } else {
+        chunk = await reader.read();
+      }
+      const { done, value } = chunk;
       if (done) break;
       buf += decoder.decode(value, { stream: true });
       const lines = buf.split("\n");
@@ -1810,15 +1824,15 @@ interface TurnAction {
 }
 
 /**
- * Projects a cached/replayed eve event stream into the transcript entries the chat UI renders,
+ * Projects a replayed eve event stream into the transcript entries the chat UI renders,
  * grouping every event of a turn (user message, assistant messages, tool steps, errors) into one
  * user + one assistant entry, in first-sighting order.
  *
  * Turn ids are only unique WITHIN the eve session that emitted them — eve restarts at `turn_0` per
- * session — while a cross-redeploy reseed (#71) concatenates several eve sessions' logs into one
- * cached stream. So the projection scopes turn identity by an epoch bumped on each
- * `session.started`; without it the later session's `turn_0` overwrites the first turn's user text
- * and glues its reply onto the opening exchange (#261).
+ * session. A single replay normally holds one eve session, but the projection still scopes turn
+ * identity by an epoch bumped on each `session.started`: it is free, and it keeps a stream that
+ * does concatenate sessions from letting a later `turn_0` overwrite the first turn's user text
+ * and glue its reply onto the opening exchange (#261).
  *
  * Exported for the projection unit tests.
  */
@@ -1865,7 +1879,7 @@ export function projectEventsToEntries(
   for (const event of events) {
     const data = event.data;
     // `session.started` is an eve session's first event — verified in prod: it appears exactly once
-    // per eve session in the cached stream and never lands mid-turn — so bumping the epoch here,
+    // per eve session in the stream and never lands mid-turn — so bumping the epoch here,
     // before the turn is resolved, scopes the buckets with no schema change.
     if (event.type === "session.started") epoch += 1;
     const turnId = typeof data.turnId === "string" ? data.turnId : null;
@@ -1901,12 +1915,12 @@ export function projectEventsToEntries(
             turn.effort = directive.effort ?? null;
           }
         }
-        // Strip all four wrappers: the model directive; for a cross-redeploy reseed turn (#71),
-        // the leading harnesst:context block seeded from the cached transcript; harnesst's own
-        // per-turn notes (the assistant's checkout path and last sync's warnings); and, for a
-        // channel-homed turn, eve's `<github_context>` envelope — the human opening a parked
-        // GitHub question from the inbox should not have to read past delivery ids to find the
-        // sentence they were sent here for.
+        // Strip all four wrappers: the model directive; a leading harnesst:context block (the
+        // seeded prologue of a successor session); harnesst's own per-turn notes (the
+        // assistant's checkout path and last sync's warnings); and, for a channel-homed turn,
+        // eve's `<github_context>` envelope — the human opening a parked GitHub question from
+        // the inbox should not have to read past delivery ids to find the sentence they were
+        // sent here for.
         turn.userText = stripChannelContext(
           stripSystemNotes(stripSeedContext(stripModelDirective(raw))),
         );

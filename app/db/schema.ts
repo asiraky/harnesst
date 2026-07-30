@@ -1200,6 +1200,14 @@ export const playgroundSessions = pgTable(
     ),
     /** Eve runtime-owned stream/inspect handle. */
     externalSessionId: text("external_session_id"),
+    /**
+     * The eve session this conversation SUCCEEDED (#288 3b): set exactly once, when a
+     * channel-homed row is rebound to its fresh HTTP-homed successor, to the predecessor's
+     * `external_session_id`. Read-only stitch for rendering — the replay concatenates the
+     * predecessor's events ahead of the successor's. A conversation spans at most two eve
+     * sessions, so the first succession wins and the pointer never moves again.
+     */
+    predecessorExternalSessionId: text("predecessor_external_session_id"),
     /** Eve channel-owned resume handle. */
     continuationToken: text("continuation_token"),
     /**
@@ -1217,26 +1225,16 @@ export const playgroundSessions = pgTable(
     /** Number of Eve stream events consumed from the durable event stream. */
     streamIndex: integer("stream_index").notNull().default(0),
     /**
-     * Offset added to the CURRENT eve session's stream indices when persisting rows to
-     * `playground_events`. Non-zero after a cross-redeploy reseed (#71): indices 1..offset hold
-     * the transcript of the replaced deployment's eve session(s); the replacement session's
-     * events append after them. `stream_index` itself stays in eve-space (it is the eve stream
-     * cursor for the CURRENT external session).
+     * Agent-initiated conversations (#288 3c): the `contact-user` notification that opened this
+     * row. Such a row has NO eve session until a human replies — the transcript renders this
+     * message as the agent's opening entry, and the first reply seeds the fresh HTTP-homed
+     * session with it as strippable context. Null for every other row.
      */
-    cacheIndexOffset: integer("cache_index_offset").notNull().default(0),
+    openingMessage: text("opening_message"),
     title: text("title"),
     /** new | running | waiting | completed | failed */
     status: text("status").notNull().default("new"),
-    lastDeploymentId: varchar("last_deployment_id", { length: 12 }).references(
-      () => deployments.id,
-      { onDelete: "set null" },
-    ),
-    lastReleaseId: varchar("last_release_id", { length: 12 }).references(
-      () => releases.id,
-      {
-        onDelete: "set null",
-      },
-    ),
+    /** Version label of the release that last served this conversation (turn-meta display). */
     lastVersion: text("last_version"),
     /**
      * Per-conversation connection-qualified model override applied to subsequent turns via the
@@ -1290,34 +1288,6 @@ export const playgroundSessions = pgTable(
     // on rows the scope key already narrowed.
     index("playground_sessions_archived_idx").on(t.projectId, t.archivedAt),
   ],
-);
-
-/**
- * Durable transcript cache for a playground/assistant session. One row per Eve durable stream
- * event, keyed by (session, streamIndex) — the same monotonic cursor `playground_sessions.stream_index`
- * counts. The turn-stream drain writes rows as events arrive (disconnect-safe), so reconnecting
- * reads the transcript straight from here — no replay of Eve's whole log from index 0 — and a crash
- * mid-turn still leaves a durable partial transcript. `type`/`data`/`meta` are the raw Eve event
- * shape, so the existing `projectEventsToEntries` reconstructs `ChatEntry[]` unchanged. The PK makes
- * writes idempotent (re-drained index = no-op via ON CONFLICT DO NOTHING).
- */
-export const playgroundEvents = pgTable(
-  "playground_events",
-  {
-    sessionId: varchar("session_id", { length: 12 })
-      .notNull()
-      .references(() => playgroundSessions.id, { onDelete: "cascade" }),
-    /** Eve durable-stream cursor for this event; monotonic per session, the natural order key. */
-    streamIndex: integer("stream_index").notNull(),
-    /** Raw Eve event type, e.g. "message.appended" / "actions.requested" / "action.result". */
-    type: text("type").notNull(),
-    /** Raw Eve event `data` payload (full — tool outputs included). */
-    data: jsonb("data").notNull(),
-    /** Raw Eve event `meta` (carries `at` timestamp), when present. */
-    meta: jsonb("meta"),
-    createdAt: createdAt(),
-  },
-  (t) => [primaryKey({ columns: [t.sessionId, t.streamIndex] })],
 );
 
 /**
@@ -1435,8 +1405,8 @@ export const delegations = pgTable(
 /**
  * Per-viewer read cursor for FOH conversations (D3). Unread is a timestamp comparison —
  * `playground_sessions.last_event_at > last_read_at` — never a `stream_index` comparison:
- * cached event indices are cache-space and shift on every cross-redeploy reseed
- * (`cache_index_offset`), while `last_event_at` is bumped by every drain flush.
+ * the cursor counts eve-stream consumption and resets when a session's handles are cleared,
+ * while `last_event_at` is bumped by every drain flush.
  */
 export const conversationReads = pgTable(
   "conversation_reads",
@@ -1480,7 +1450,7 @@ export const inboxItems = pgTable(
     }),
     /** Recipient; NULL = anyone with access to the project (agent-opened sessions, D5). */
     userId: text("user_id").references(() => user.id, { onDelete: "cascade" }),
-    // question | approval | finished
+    // question | approval | finished | notice
     kind: text("kind").notNull(),
     /** The question text / finish summary shown in the inbox flyout. */
     prompt: text("prompt"),

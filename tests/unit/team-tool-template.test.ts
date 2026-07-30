@@ -17,6 +17,7 @@ import { z } from "zod";
 
 import {
   ASK_TEAMMATE_TOOL_SOURCE,
+  CONTACT_USER_TOOL_SOURCE,
   TELL_TEAMMATE_TOOL_SOURCE,
 } from "~/team/tool-template";
 
@@ -172,5 +173,109 @@ describe("ask/tell description routing", () => {
       "context they need.";
     expect(ask.description).toContain(caveat);
     expect(tell.description).toContain(caveat);
+  });
+});
+
+/**
+ * #288 3c: contact-user is baked into EVERY image (not just team members) and upholds the
+ * same source contract — imports only eve/tools + zod, crash-proof module load, execute never
+ * throws. Its description is the dispatch logic between a fire-and-forget notification and
+ * the blocking ask_question, so the discriminating prose is pinned like ask/tell's.
+ */
+describe("contact-user tool template", () => {
+  interface ContactConfig {
+    description: string;
+    inputSchema: z.ZodTypeAny;
+    execute: (args: { message: string; title?: string }) => Promise<unknown>;
+  }
+  const evalContact = (env: Record<string, string>) =>
+    evalTool(CONTACT_USER_TOOL_SOURCE, env) as unknown as ContactConfig;
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("imports only eve/tools and zod", () => {
+    const imports = [
+      ...CONTACT_USER_TOOL_SOURCE.matchAll(/^import .* from "([^"]+)";/gm),
+    ].map((m) => m[1]);
+    expect(imports.sort()).toEqual(["eve/tools", "zod"]);
+  });
+
+  it("states the fire-and-forget consequence and routes answers to ask_question", () => {
+    const config = evalContact({});
+    expect(config.description).toContain("Fire-and-forget");
+    expect(config.description).toContain("will NOT get a reply");
+    expect(config.description).toContain("never wait");
+    expect(config.description).toContain("ask_question");
+  });
+
+  it("requires a message; the title is optional", () => {
+    const config = evalContact({});
+    expect(config.inputSchema.safeParse({ message: "hi" }).success).toBe(true);
+    expect(
+      config.inputSchema.safeParse({ message: "hi", title: "t" }).success,
+    ).toBe(true);
+    expect(config.inputSchema.safeParse({ title: "t" }).success).toBe(false);
+  });
+
+  it("execute returns { ok:false } when the notify env is missing (never throws)", async () => {
+    const config = evalContact({});
+    const out = (await config.execute({ message: "hi" })) as {
+      ok: boolean;
+      error: string;
+    };
+    expect(out.ok).toBe(false);
+    expect(out.error).toMatch(/not configured/i);
+  });
+
+  it("POSTs {message, title?} to HARNESST_FOH_NOTIFY_URL with the bearer", async () => {
+    let url = "";
+    let body: Record<string, unknown> = {};
+    let authorization = "";
+    vi.stubGlobal(
+      "fetch",
+      async (
+        input: string,
+        init: { body: string; headers: Record<string, string> },
+      ) => {
+        url = String(input);
+        body = JSON.parse(init.body) as Record<string, unknown>;
+        authorization = init.headers.authorization;
+        return { ok: true, json: async () => ({ ok: true, sessionId: "ps_1" }) };
+      },
+    );
+    const config = evalContact({
+      HARNESST_FOH_NOTIFY_URL: "http://cp.local/api/foh/notify",
+      HARNESST_TEAM_TOKEN: "tkn",
+    });
+
+    const out = await config.execute({ message: "done", title: "report" });
+
+    expect(url).toBe("http://cp.local/api/foh/notify");
+    expect(authorization).toBe("Bearer tkn");
+    expect(body).toEqual({ message: "done", title: "report" });
+    expect(out).toEqual({ ok: true, sessionId: "ps_1" });
+
+    await config.execute({ message: "no title" });
+    expect(body).toEqual({ message: "no title" });
+  });
+
+  it("returns { ok:false } when the fetch itself throws (never throws)", async () => {
+    vi.stubGlobal("fetch", async () => {
+      throw new Error("boom");
+    });
+    const config = evalContact({
+      HARNESST_FOH_NOTIFY_URL: "http://cp.local/api/foh/notify",
+      HARNESST_TEAM_TOKEN: "tkn",
+    });
+
+    const out = (await config.execute({ message: "hi" })) as {
+      ok: boolean;
+      error: string;
+    };
+
+    expect(out.ok).toBe(false);
+    expect(out.error).toMatch(/boom/);
   });
 });

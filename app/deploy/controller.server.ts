@@ -616,6 +616,16 @@ export async function deployRelease(
       envVars.HARNESST_TEAM_TOKEN ??= mintDelegationToken(dep.id);
     }
 
+    // Agent-initiated conversations (#288 3c): where the baked `agent/tools/contact-user.ts`
+    // posts its notifications. Set for EVERY deployment, no gate — the tool is baked into
+    // every image (like the run hook) and messaging the humans who run you is not a per-agent
+    // feature. Same delegation bearer as the relays above; the notify endpoint re-derives
+    // project/agent/environment from the token's deployment id, so it grants no team powers.
+    // Harnesst-owned, so anti-shadowing (delete, then set) as above.
+    delete envVars.HARNESST_FOH_NOTIFY_URL;
+    envVars.HARNESST_FOH_NOTIFY_URL = `${controlPlaneBase}/api/foh/notify`;
+    envVars.HARNESST_TEAM_TOKEN ??= mintDelegationToken(dep.id);
+
     // Channel settings (issue #254): what the operator configured on the Deployment tab — which
     // repositories a channel watches, which labels wake the agent — projected out of the lock at
     // THIS release's commit. This is how the settings panel reaches the running container at all:

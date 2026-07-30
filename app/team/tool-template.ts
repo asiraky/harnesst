@@ -1,12 +1,14 @@
 /**
  * The generated teammate delegation tools (Team delegation — D2/§5, fire-and-forget — #269). This
- * exports the SOURCE TEXT of two static eve tools that harnesst bakes into a team member's image at
- * build time (never the repo): `ask-teammate` (blocking — the caller needs the answer) and
- * `tell-teammate` (fire-and-forget — the caller hands work off and moves on). Both are generated
- * from ONE template and both POST to `/api/team/ask`, differing only in the `mode` they put on the
- * wire and the prose that routes the model between them. Each file is identical for every member
- * and every roster — all variability arrives via env (`HARNESST_TEAMMATES`, `HARNESST_TEAM_URL`,
- * `HARNESST_TEAM_TOKEN`) — so images stay reusable across redeploys and roster changes.
+ * exports the SOURCE TEXT of static eve tools that harnesst bakes into an agent's image at
+ * build time (never the repo): `ask-teammate` (blocking — the caller needs the answer),
+ * `tell-teammate` (fire-and-forget — the caller hands work off and moves on), and `contact-user`
+ * (#288 3c — fire-and-forget notification to the humans who run the agent). The two delegation
+ * tools are generated from ONE template and both POST to `/api/team/ask`, differing only in the
+ * `mode` they put on the wire and the prose that routes the model between them. Each file is
+ * identical for every member and every roster — all variability arrives via env
+ * (`HARNESST_TEAMMATES`, `HARNESST_TEAM_URL`, `HARNESST_TEAM_TOKEN`) — so images stay reusable
+ * across redeploys and roster changes.
  *
  * The DESCRIPTIONS ARE THE FEATURE: they are the only thing that decides whether an intent becomes
  * a blocking ask or a handoff, so their wording is dispatch logic, not documentation. The shared
@@ -24,6 +26,8 @@
 /** Repo-relative paths the tools are written to inside a member's build context. */
 export const ASK_TEAMMATE_TOOL_PATH = "agent/tools/ask-teammate.ts";
 export const TELL_TEAMMATE_TOOL_PATH = "agent/tools/tell-teammate.ts";
+/** Baked into EVERY image (not just team members) — see CONTACT_USER_TOOL_SOURCE below. */
+export const CONTACT_USER_TOOL_PATH = "agent/tools/contact-user.ts";
 
 /**
  * The one shared caveat both descriptions carry, verbatim — a single constant so the two tools
@@ -179,3 +183,73 @@ ${spec.timeoutSource}
 /** The full source text of the generated tool files. */
 export const ASK_TEAMMATE_TOOL_SOURCE = buildToolSource(ASK_SPEC);
 export const TELL_TEAMMATE_TOOL_SOURCE = buildToolSource(TELL_SPEC);
+
+/**
+ * `contact-user` (#288 3c) — the agent-initiated conversation opener, baked into EVERY image
+ * (like the run-report hook, not just team members). Fire-and-forget: it POSTs `{message,
+ * title?}` to `HARNESST_FOH_NOTIFY_URL` with the same per-deployment bearer as the relays, and
+ * harnesst opens a Front of House conversation the humans pick up from the bell. Same contract
+ * as the delegation tools: imports only `eve/tools` + `zod`, module load cannot crash, and
+ * `execute` never throws. The description is the dispatch logic between this and the blocking
+ * `ask_question` — tests pin it.
+ */
+export const CONTACT_USER_TOOL_SOURCE = `import { defineTool } from "eve/tools";
+import { z } from "zod";
+
+// harnesst bakes this file into every agent image (see app/team/tool-template.ts). All
+// variability arrives via env — do not edit; a repo file at this path overrides it.
+
+export default defineTool({
+  description:
+    "Send a message to the humans who run you. It opens a conversation in their harnesst " +
+    "inbox; they read it whenever they next look, and may reply there later. Fire-and-forget: " +
+    "this returns as soon as the message is filed — you will NOT get a reply, so never wait " +
+    "for one or invent one. Use it to report a result, surface a finding, or flag something " +
+    "a human should know about. When you need an ANSWER before you can continue, use the " +
+    "ask_question tool instead.",
+  inputSchema: z.object({
+    message: z
+      .string()
+      .describe(
+        "The message for the humans: complete and self-contained — they cannot see this " +
+          "conversation, so include all the context they need.",
+      ),
+    title: z
+      .string()
+      .optional()
+      .describe("Optional short title for the conversation this opens."),
+  }),
+  async execute({ message, title }) {
+    const url = process.env.HARNESST_FOH_NOTIFY_URL;
+    const token = process.env.HARNESST_TEAM_TOKEN;
+    if (!url || !token) {
+      return { ok: false, error: "Contacting your humans is not configured for this agent." };
+    }
+    try {
+      const res = await fetch(url, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          authorization: "Bearer " + token,
+        },
+        body: JSON.stringify(title ? { message, title } : { message }),
+        signal: AbortSignal.timeout(30000),
+      });
+      const body = await res.json().catch(() => null);
+      if (!res.ok) {
+        const error =
+          body && typeof body.error === "string"
+            ? body.error
+            : "The notification failed (HTTP " + res.status + ").";
+        return { ok: false, error };
+      }
+      return body || { ok: false, error: "harnesst returned an empty response." };
+    } catch (error) {
+      return {
+        ok: false,
+        error: "Couldn't reach harnesst: " + (error && error.message ? error.message : String(error)),
+      };
+    }
+  },
+});
+`;

@@ -5,7 +5,13 @@
  * session; opening the session resolves question/finished items through the normal read/send
  * paths, so the flyout only ever *navigates* — resolution is server-owned.
  */
-import { Bell, CircleCheck, CircleHelp, ShieldQuestion } from "lucide-react";
+import {
+  Bell,
+  CircleCheck,
+  CircleHelp,
+  MessageSquare,
+  ShieldQuestion,
+} from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { useFetcher, useNavigate } from "react-router";
 
@@ -125,6 +131,8 @@ export function InboxIndicator() {
 function inboxKindLabel(kind: string): string {
   if (kind === "approval") return "needs an approval";
   if (kind === "finished") return "finished";
+  // Agent-initiated conversation (#288 3c) — nothing is blocked on the reader.
+  if (kind === "notice") return "sent you a message";
   return "needs an answer";
 }
 
@@ -134,14 +142,18 @@ function InboxKindIcon({ kind }: { kind: string }) {
       ? ShieldQuestion
       : kind === "finished"
         ? CircleCheck
-        : CircleHelp;
+        : kind === "notice"
+          ? MessageSquare
+          : CircleHelp;
   return (
     <Icon
       className={cn(
         "mt-0.5 size-4 shrink-0",
         kind === "finished"
           ? "text-emerald-600 dark:text-emerald-400"
-          : "text-amber-600 dark:text-amber-400",
+          : kind === "notice"
+            ? "text-sky-600 dark:text-sky-400"
+            : "text-amber-600 dark:text-amber-400",
       )}
       aria-hidden
     />

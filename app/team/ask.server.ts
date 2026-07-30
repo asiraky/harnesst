@@ -30,7 +30,6 @@ import {
 import { getRunIdByExternal } from "~/observability/store.server";
 import type { PlaygroundSession } from "~/playground/sessions.server";
 import {
-  backfillPlaygroundEventsFromEve,
   createPlaygroundSession,
   titleFromMessage,
 } from "~/playground/sessions.server";
@@ -73,7 +72,6 @@ export interface AskDeps {
   ) => Promise<DeploymentWithRelease | null>;
   /** FOH session substrate for relay parking (D6/D8) — injected: unit tests stay zero-I/O. */
   createSession: typeof createPlaygroundSession;
-  backfillSession: typeof backfillPlaygroundEventsFromEve;
   /** #267: hand a severed-stream turn to the background reattach watcher. */
   scheduleReattach: typeof scheduleDelegationReattach;
   now: () => Date;
@@ -91,7 +89,6 @@ export function defaultAskDeps(): AskDeps {
     ensureLiveDeployment: (environmentId) =>
       ensureLiveDeploymentForEnvironment(environmentId),
     createSession: createPlaygroundSession,
-    backfillSession: backfillPlaygroundEventsFromEve,
     scheduleReattach: scheduleDelegationReattach,
     now: () => new Date(),
     timeoutMs: delegationTimeoutMs(),
@@ -418,8 +415,6 @@ export async function runAsk(
         userId: null,
         surface: "foh",
         environmentId: targetEnv.id,
-        deploymentId: live.id,
-        releaseId: live.releaseId,
         version: live.version,
         // D6: never the delegated ask text — it can carry the caller's private context and the
         // list title is visible to every team member. Nothing has been said yet to title this by.
@@ -434,11 +429,6 @@ export async function runAsk(
         status: "running",
         lastEventAt: deps.now(),
       });
-      try {
-        await deps.backfillSession({ session, target: peerTarget });
-      } catch (error) {
-        console.error("[team] handed-off transcript backfill failed:", error);
-      }
       await deps.scheduleReattach(store, {
         sessionId: session.id,
         delegationId: delegation.id,
@@ -491,8 +481,8 @@ export async function runAsk(
   //     delegation `waiting` (it exits the concurrency caps by construction: caps count only
   //     `running` — D7), open an agent-opened FOH session over the SAME eve session (real
   //     handles, so the ordinary FOH continuation send resumes the peer — never a second eve
-  //     stream consumer), backfill its transcript (D8), file the team-wide inbox item (D5),
-  //     and hand the calling model a structured waiting result. Matches the drain's park rule
+  //     stream consumer; the transcript renders from eve's durable stream), file the team-wide
+  //     inbox item (D5), and hand the calling model a structured waiting result. Matches the drain's park rule
   //     (settleFohTurn): assistant text before the ask does NOT negate the park — eve still
   //     holds the request.
   if (result.inputRequests.length > 0 && result.sessionId) {
@@ -509,8 +499,6 @@ export async function runAsk(
         userId: null,
         surface: "foh",
         environmentId: targetEnv.id,
-        deploymentId: live.id,
-        releaseId: live.releaseId,
         version: live.version,
         // D6: title from the QUESTION, never from the delegated ask text — the ask can carry
         // the caller's private context, and the list title leaks to every team member.
@@ -524,15 +512,6 @@ export async function runAsk(
         pendingInputAt: deps.now(),
         lastEventAt: deps.now(),
       });
-      // D8: copy the peer's transcript from eve's durable log into the session cache.
-      // Best-effort: the row's cursor already sits at the turn's end, and the FOH loader
-      // re-backfills an incomplete cache (playgroundCacheIsComplete), so a miss here only
-      // defers the copy — it can never lose events.
-      try {
-        await deps.backfillSession({ session, target: peerTarget });
-      } catch (error) {
-        console.error("[team] parked-peer transcript backfill failed:", error);
-      }
       for (const request of result.inputRequests) {
         await openInboxQuestion(
           {
@@ -657,7 +636,7 @@ async function runTell(ctx: TellContext, deps: AskDeps): Promise<AskResult> {
   // Arm the watcher FIRST — before any best-effort bookkeeping. The dispatch above put the turn
   // beyond recall, and until the reattach job is enqueued a control-plane crash would orphan the
   // delegation with nobody watching; every await between the POST and the enqueue widens that
-  // window, so the run recording and the transcript backfill wait until the hand-off is durable.
+  // window, so the run recording waits until the hand-off is durable.
   let session: PlaygroundSession;
   try {
     session = await deps.createSession({
@@ -666,8 +645,6 @@ async function runTell(ctx: TellContext, deps: AskDeps): Promise<AskResult> {
       userId: null,
       surface: "foh",
       environmentId: ctx.peerTarget.environmentId,
-      deploymentId: ctx.peerTarget.deploymentId,
-      releaseId: ctx.peerTarget.releaseId,
       version: ctx.peerTarget.version,
       // D6: never the delegated ask text — it can carry the caller's private context and the
       // list title is visible to every team member.
@@ -742,12 +719,6 @@ async function runTell(ctx: TellContext, deps: AskDeps): Promise<AskResult> {
   const runPath = runId
     ? runPathFor(ctx.projectId, ctx.target.name, runId)
     : null;
-
-  try {
-    await deps.backfillSession({ session, target: ctx.peerTarget });
-  } catch (error) {
-    console.error("[team] dispatched transcript backfill failed:", error);
-  }
 
   return {
     ok: true,

@@ -16,7 +16,6 @@ import {
   getFohSessionForViewer,
   markPlaygroundSessionStopped,
 } from "~/playground/sessions.server";
-import { findSessionOwnerTarget } from "~/playground/ownership";
 
 export async function action(args: ActionFunctionArgs) {
   const auth = await getSessionAuth(args);
@@ -39,8 +38,12 @@ export async function action(args: ActionFunctionArgs) {
     throw data({ error: "That conversation was not found." }, { status: 404 });
   }
 
+  // The eve session lives in its environment's world store, so any live deployment of that
+  // environment can cancel it. A cross-environment target never knew the session (and eve
+  // hangs, not 404s, on unknown ids), so nothing outside the session's environment is asked.
   const targets = await liveTargets(session.agentId);
-  const target = findSessionOwnerTarget(session, targets);
+  const target =
+    targets.find((t) => t.environmentId === session.environmentId) ?? null;
 
   const eveCancel =
     session.externalSessionId && target

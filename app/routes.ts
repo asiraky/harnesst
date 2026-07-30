@@ -31,6 +31,9 @@ export default [
   // Artifact publish (#290): an agent files an image it produced. Same bearer story as park, and
   // likewise kept above the :projectId routes so the static segment can't be swallowed.
   route("api/foh/artifacts", "routes/api.foh.artifacts.ts"),
+  // Agent-initiated conversations (#288 3c): the baked contact-user tool posts here. Same
+  // bearer auth and the same static-segment placement rule as the park route above.
+  route("api/foh/notify", "routes/api.foh.notify.ts"),
   route("api/foh/:projectId/stream", "routes/api.foh.stream.ts"),
   route("api/foh/:projectId/stop", "routes/api.foh.stop.ts"),
   route("api/foh/:projectId/read", "routes/api.foh.read.ts"),

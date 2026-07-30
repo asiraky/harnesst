@@ -34,7 +34,6 @@ function session(over: Partial<PlaygroundSession> = {}): PlaygroundSession {
     streamIndex: 28,
     status: "failed",
     surface: "foh",
-    cacheIndexOffset: 0,
     ...over,
   } as PlaygroundSession;
 }

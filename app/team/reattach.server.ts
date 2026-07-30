@@ -42,7 +42,6 @@ import {
   clearSessionPendingInput,
   listFohSessionsByIds,
   markSessionPendingInput,
-  savePlaygroundEvents,
   savePlaygroundSessionCursor,
   settleAbandonedPlaygroundSession,
 } from "~/playground/sessions.server";
@@ -102,7 +101,6 @@ export interface ReattachDeps {
   store: DataStore;
   resume: typeof resumeTurnStream;
   loadSession: (id: string) => Promise<PlaygroundSession | null>;
-  saveEvents: typeof savePlaygroundEvents;
   saveCursor: typeof savePlaygroundSessionCursor;
   failSession: typeof settleAbandonedPlaygroundSession;
   markPending: typeof markSessionPendingInput;
@@ -124,7 +122,6 @@ export function defaultReattachDeps(): ReattachDeps {
     store: getRuntime().data,
     resume: resumeTurnStream,
     loadSession: async (id) => (await listFohSessionsByIds([id]))[0] ?? null,
-    saveEvents: savePlaygroundEvents,
     saveCursor: savePlaygroundSessionCursor,
     failSession: settleAbandonedPlaygroundSession,
     markPending: markSessionPendingInput,
@@ -172,20 +169,21 @@ export async function scheduleDelegationReattach(
 }
 
 /**
- * Rebuild the peer target from the session row + the deployment that still hosts its eve session.
- * Deliberately the SESSION's deployment, not the environment's current live one: the turn we are
- * chasing lives inside that specific container (a redeploy leaves it `draining` but running).
+ * Rebuild the peer target from the session row's environment. The eve session lives in the
+ * environment's world store, so any deployment still serving that environment can resume its
+ * stream — prefer the live row; a `draining` container (redeploy mid-turn) still answers on
+ * its url, so anything with a url is a usable fallback.
  */
 async function peerTarget(
   store: DataStore,
   session: PlaygroundSession,
 ): Promise<Target | null> {
-  if (!session.lastDeploymentId || !session.environmentId) return null;
+  if (!session.environmentId) return null;
   // listByEnvironment (not findById) — it is the query that carries the release join, and the
   // run recorder needs the releaseId/version the turn actually ran on.
-  const deployment = (
-    await store.deployments.listByEnvironment(session.environmentId)
-  ).find((d) => d.id === session.lastDeploymentId);
+  const rows = await store.deployments.listByEnvironment(session.environmentId);
+  const deployment =
+    rows.find((d) => d.status === "live" && d.url) ?? rows.find((d) => d.url);
   if (!deployment?.url) return null;
   const environment = await store.environments.findById(session.environmentId);
   return {
@@ -200,7 +198,8 @@ async function peerTarget(
 }
 
 /**
- * Read one bounded slice of the peer's stream, caching every event it shows us.
+ * Read one bounded slice of the peer's stream. The events themselves need no persistence —
+ * eve's durable stream is the transcript store — the slice only watches for the turn to settle.
  *
  * Bounded by WALL CLOCK, not just by the idle budget: a busy turn emitting an event every few
  * seconds would reset the idle timer forever, and with the worker at concurrency 1 that one turn
@@ -216,12 +215,6 @@ async function drainSlice(
 ): Promise<TurnResult | null> {
   const externalSessionId = session.externalSessionId;
   if (!externalSessionId) return null;
-  const fresh: Array<{
-    streamIndex: number;
-    type: string;
-    data: Record<string, unknown>;
-    meta?: { at?: string };
-  }> = [];
   let result: TurnResult | null = null;
   const sliceEndsAt = deps.now().getTime() + REATTACH_SLICE_MAX_MS;
   for await (const event of deps.resume({
@@ -233,20 +226,10 @@ async function drainSlice(
     timeoutMs: REATTACH_SLICE_IDLE_MS,
     connectTimeoutMs: REATTACH_CONNECT_TIMEOUT_MS,
   })) {
-    if (event.kind === "progress") {
-      // Only what the cache does not already hold: the replay from 0 re-shows everything the
-      // relay's backfill already wrote, and re-inserting it would be pure churn.
-      if (event.streamIndex > session.streamIndex) {
-        fresh.push({ streamIndex: event.streamIndex, ...event.rawEvent });
-      }
-    } else if (event.kind === "done") {
+    if (event.kind === "done") {
       result = event.result;
     }
     if (deps.now().getTime() >= sliceEndsAt) break;
-  }
-  if (fresh.length > 0) {
-    // Events land BEFORE the cursor moves — the cursor must never point past what is cached.
-    await deps.saveEvents(session.id, fresh, session.cacheIndexOffset ?? 0);
   }
   return result;
 }

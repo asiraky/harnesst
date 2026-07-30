@@ -1,8 +1,8 @@
 /**
  * Playground — persistent Eve sessions with a live deployment of this agent.
  *
- * harnesst's durable event cache is the transcript source. Eve is consulted only for a bounded
- * reconcile or one-time legacy backfill, and only on the deployment that owns the session.
+ * Eve's durable stream is the transcript source (#288): the loader renders the conversation
+ * from `GET /eve/v1/session/:id/stream`, waking a scaled-to-zero instance when it must.
  *
  * Turns STREAM: the composer POSTs to the streaming resource route
  * (api.projects.$projectId.playground.stream) and this component reads back an NDJSON feed of
@@ -58,21 +58,16 @@ import {
   shouldPollRemoteSession,
 } from "~/playground/handoff";
 import {
-  backfillPlaygroundEventsFromEve,
   createPlaygroundSession,
-  loadPlaygroundEntriesFromCache,
+  loadPlaygroundEntriesFromEve,
   listPlaygroundSessions,
-  playgroundCacheIsComplete,
   reconcilePlaygroundSessionFromEve,
   setPlaygroundSessionModel,
   settleAbandonedPlaygroundSession,
   summarizePlaygroundSession,
 } from "~/playground/sessions.server";
 import { shouldSettleAbandonedSession } from "~/playground/settle";
-import {
-  findSessionOwnerTarget,
-  sessionContinuationIsBlocked,
-} from "~/playground/ownership";
+import { ensureLiveDeploymentForEnvironment } from "~/deploy/wake.server";
 import { newPlaygroundSessionPath } from "~/playground/url";
 import { hasActiveTurn, TURN_IDLE_TIMEOUT_MS } from "~/chat/turn-stream.server";
 import {
@@ -106,7 +101,7 @@ export const loader = (args: LoaderFunctionArgs) =>
       // Teams have no repo-level Playground — the tab exists only at the member level.
       if (isTeam && !agentName) throw redirect(`/repos/${project.id}`);
 
-      const [targets, sessions, defaultSelection] = await Promise.all([
+      const [initialTargets, sessions, defaultSelection] = await Promise.all([
         liveTargets(active.id),
         listPlaygroundSessions({
           projectId: project.id,
@@ -127,37 +122,42 @@ export const loader = (args: LoaderFunctionArgs) =>
           : null) ??
         sessions[0] ??
         null;
-      const historyTarget = currentSession
-        ? findSessionOwnerTarget(currentSession, targets)
-        : null;
+      let targets = initialTargets;
       let entries: ChatEntry[] = [];
       let historyError: string | null = null;
       let currentSessionOwnerLive: boolean | null = null;
-      let currentSessionWillReseed = false;
       if (currentSession) {
-        // Recover a session whose drain died with the harnesst process (restart/redeploy mid-turn):
-        // stuck "running", or marked "failed" even though Eve actually finished. Reconciling
-        // settles the status from Eve AND persists the tail events into the transcript cache, so
-        // the recovered final reply is part of the cache read below — not just a status flip.
-        // A turn actively streaming in this process is skipped, so the 2s reconnect poll never
-        // re-opens an Eve stream for a healthy running session.
-        //
-        // Only worth asking Eve while the deployment that RAN the turn is still live: a fresh
-        // instance never saw the session, and Eve hangs (not 404s) session-stream requests for
-        // unknown sessions, so the read would just burn its timeout every load (#73).
+        // Wake-on-view (#288): the transcript lives in eve's durable stream, so viewing a
+        // conversation whose HOME environment is scaled to zero starts it. A bound session is
+        // served only by its own environment's world store (a cross-environment eve never saw
+        // the session and hangs, not 404s, on unknown ids), so the home environment is woken
+        // even while siblings are live, and nothing else is ever asked for the history.
+        const sessionEnvironmentId = currentSession.environmentId;
+        if (
+          currentSession.externalSessionId &&
+          sessionEnvironmentId &&
+          !targets.some((t) => t.environmentId === sessionEnvironmentId)
+        ) {
+          if (await ensureLiveDeploymentForEnvironment(sessionEnvironmentId)) {
+            targets = await liveTargets(active.id);
+          }
+        }
+        const historyTarget = currentSession.externalSessionId
+          ? (targets.find((t) => t.environmentId === sessionEnvironmentId) ??
+            null)
+          : (targets[0] ?? null);
         const ownerDeploymentLive = historyTarget !== null;
         currentSessionOwnerLive = ownerDeploymentLive;
-        // Not a block: the playground reseeds a fresh eve session from the cache on the next turn
-        // (#71). Used only to show an informational "will reseed" notice.
-        currentSessionWillReseed = sessionContinuationIsBlocked(
-          currentSession,
-          targets,
-        );
+        // Recover a session whose drain died with the harnesst process (restart/redeploy mid-turn):
+        // stuck "running", or marked "failed" even though Eve actually finished. Reconciling
+        // settles the status from Eve and advances the cursor, so the recovered final reply is
+        // part of the eve render below — not just a status flip. A turn actively streaming in
+        // this process is skipped, so the 2s reconnect poll never re-opens an Eve stream for a
+        // healthy running session.
         if (
           (currentSession.status === "running" ||
             currentSession.status === "failed") &&
           historyTarget &&
-          ownerDeploymentLive &&
           !hasActiveTurn(currentSession.id)
         ) {
           try {
@@ -170,7 +170,7 @@ export const loader = (args: LoaderFunctionArgs) =>
           }
         }
 
-        // Still `running` with no drain that could ever finish it (the owning deployment is gone,
+        // Still `running` with no drain that could ever finish it (nothing live to serve it,
         // or Eve has been silent past the drain's own idle budget)? Settle it to `failed` so the
         // session stops reading as busy and the 2s reconnect poll ends — otherwise a redeploy
         // mid-turn leaves the playground "thinking" forever with no way to stop it (#73).
@@ -188,36 +188,25 @@ export const loader = (args: LoaderFunctionArgs) =>
             await settleAbandonedPlaygroundSession(currentSession);
         }
 
-        // Legacy backfill: a session that predates the cache has consumed events (its cursor
-        // advanced) that the cache doesn't cover from the first index. Replay them from Eve once
-        // and PERSIST them, so the cache becomes complete and stays the transcript's sole source.
-        // (Merely "cache non-empty" isn't a safe gate — one new turn on a legacy session would
-        // cache only the new events and hide all pre-cache history forever.) New sessions never
-        // take this path.
+        // The transcript renders from eve's durable stream (#288) — harnesst keeps no copy.
         if (
           currentSession.externalSessionId &&
-          !(await playgroundCacheIsComplete(currentSession))
+          currentSession.streamIndex > 0
         ) {
           if (historyTarget) {
             try {
-              await backfillPlaygroundEventsFromEve({
+              entries = await loadPlaygroundEntriesFromEve({
                 session: currentSession,
                 target: historyTarget,
               });
             } catch (error) {
-              historyError = `Couldn't reload Eve session history: ${(error as Error).message}`;
+              historyError = `Couldn't load the conversation history: ${(error as Error).message}`;
             }
           } else {
             historyError =
-              "harnesst is showing the history it cached, but some older messages may be missing because the original deployment is unavailable.";
+              "The conversation history lives on the agent's instance, which harnesst couldn't reach or wake — it will load once the agent is reachable.";
           }
         }
-
-        // The transcript comes from harnesst's durable cache — a DB read, not a replay of Eve's whole
-        // event log from index 0. It's complete (the drain persists every event as it arrives,
-        // plus the reconcile/backfill above), fast regardless of length, and works even when the
-        // instance is gone.
-        entries = await loadPlaygroundEntriesFromCache(currentSession);
       }
       return {
         project,
@@ -229,7 +218,6 @@ export const loader = (args: LoaderFunctionArgs) =>
         currentSessionEnvironmentId: currentSession?.environmentId ?? null,
         currentSessionStatus: currentSession?.status ?? null,
         currentSessionOwnerLive,
-        currentSessionWillReseed,
         currentSessionModelId: currentSession?.modelId ?? null,
         currentSessionEffort:
           (currentSession?.effort as ReasoningEffort | null) ?? null,
@@ -237,7 +225,6 @@ export const loader = (args: LoaderFunctionArgs) =>
         defaultEffort: defaultSelection.effort,
         entries,
         historyError,
-        lastDeploymentId: currentSession?.lastDeploymentId ?? null,
         roster: roster.map((a) => ({ name: a.name })),
         activeAgent: active.name,
         isTeam,
@@ -349,14 +336,12 @@ export default function Playground({ loaderData }: Route.ComponentProps) {
     currentSessionEnvironmentId,
     currentSessionStatus,
     currentSessionOwnerLive,
-    currentSessionWillReseed,
     currentSessionModelId,
     currentSessionEffort,
     defaultModelId,
     defaultEffort,
     entries,
     historyError,
-    lastDeploymentId,
     roster,
     activeAgent,
     isTeam,
@@ -424,7 +409,6 @@ export default function Playground({ loaderData }: Route.ComponentProps) {
   }, [pollRemoteSession, revalidator]);
 
   const defaultTarget =
-    targets.find((t) => t.deploymentId === lastDeploymentId) ??
     targets.find((t) => t.environmentId === currentSessionEnvironmentId) ??
     targets[0];
   const requestedDeploymentId = searchParams.get("deployment");
@@ -831,25 +815,14 @@ export default function Playground({ loaderData }: Route.ComponentProps) {
           icon={FlaskConical}
           accent="blue"
           title={isTeam ? `Playground — ${activeAgent}` : "Playground"}
-          description="Talk to a live deployment of this agent. Conversation history is saved in harnesst and survives instance replacement."
+          description="Talk to a live deployment of this agent. Conversation history lives in the agent's durable session store and survives redeploys."
           actions={headerActions}
         />
         {targets.length === 0 && (
           <Alert className="mb-4">
             <AlertTitle>No live deployment to talk to</AlertTitle>
             <AlertDescription>
-              Cached conversation history is still available. Deploy from the
-              Deployment tab to start a new conversation.
-            </AlertDescription>
-          </Alert>
-        )}
-        {currentSessionWillReseed && (
-          <Alert className="mb-4">
-            <AlertTitle>Deployment replaced</AlertTitle>
-            <AlertDescription>
-              This conversation started on a deployment that has been replaced.
-              Your next message continues it on the current deployment —
-              harnesst restores the saved history automatically.
+              Deploy from the Deployment tab to start a new conversation.
             </AlertDescription>
           </Alert>
         )}
@@ -867,7 +840,6 @@ export default function Playground({ loaderData }: Route.ComponentProps) {
     ),
     [
       activeAgent,
-      currentSessionWillReseed,
       headerActions,
       historyError,
       isTeam,
@@ -952,7 +924,7 @@ export default function Playground({ loaderData }: Route.ComponentProps) {
               <p className="text-sm text-muted-foreground">
                 {currentSessionOwnerLive
                   ? "This turn was interrupted before it finished. Send the message again to retry."
-                  : "This turn was interrupted before it finished — the deployment that was running it has been replaced. Send your message again to continue on the current deployment."}
+                  : "This turn was interrupted before it finished while the agent was unreachable. Send your message again to retry."}
               </p>
             </AssistantBubble>
           )}

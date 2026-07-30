@@ -3,8 +3,8 @@
  * sends a message through the REAL /api/foh/:projectId/stream action into a fresh FOH
  * session against a protocol-faithful fake eve — then ABANDONS the response reader mid-turn
  * (the away-mid-turn criterion). The detached drain must still consume eve to `done`,
- * persist the durable transcript (playground_events), land the session `waiting`, and file
- * the `finished` inbox item, with no client attached.
+ * advance the session cursor (the transcript itself lives in eve's durable stream, #288),
+ * land the session `waiting`, and file the `finished` inbox item, with no client attached.
  *
  * Opt-in: HARNESST_DB_SMOKE=1 with DATABASE_URL pointing at the live dev database
  * (`set -a; source .env.local; set +a; HARNESST_DB_SMOKE=1 npm run test:e2e`).
@@ -30,7 +30,7 @@ describe.runIf(LIVE)("FOH core loop (real routes + drain + fake eve)", () => {
   it("streams a turn, survives mid-turn abandonment, and settles everything in the DB", async () => {
     const { db } = await import("~/db/client.server");
     const { eq } = await import("drizzle-orm");
-    const { playgroundEvents, playgroundSessions } = await import("~/db/schema");
+    const { playgroundSessions } = await import("~/db/schema");
     const { drizzleDataStore } = await import("~/data/drizzle.server");
     const { action } = await import("~/routes/api.foh.stream");
 
@@ -122,14 +122,6 @@ describe.runIf(LIVE)("FOH core loop (real routes + drain + fake eve)", () => {
       expect(settled.pendingInputAt).toBeNull();
       expect(settled.title).toBe("Ship the release notes");
       expect(settled.lastEventAt).not.toBeNull();
-
-      // Durable transcript: every eve event landed in playground_events.
-      const events = await db
-        .select()
-        .from(playgroundEvents)
-        .where(eq(playgroundEvents.sessionId, playgroundSessionId));
-      expect(events).toHaveLength(8);
-      expect(events.map((event) => event.type)).toContain("message.completed");
 
       // The finished turn filed the viewer's inbox pointer (D13).
       const inbox = await until(async () => {

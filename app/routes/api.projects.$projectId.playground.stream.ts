@@ -9,6 +9,7 @@ import { data, redirect, type ActionFunctionArgs } from "react-router";
 
 import { liveTargets } from "~/chat/playground.server";
 import { asString, streamTurnResponse } from "~/chat/turn-stream.server";
+import { listAgentEnvironments } from "~/db/queries.server";
 import { signModelDirective } from "~/models/model-directive.server";
 import { parseRequestedModelSelection } from "~/models/playground-selection";
 import { type ReasoningEffort } from "~/models/reasoning";
@@ -19,15 +20,11 @@ import {
 import {
   createPlaygroundSession,
   getPlaygroundSession,
-  loadPlaygroundEntriesFromCache,
   markPlaygroundSessionRunning,
   setPlaygroundSessionModel,
   titleFromMessage,
-  unbindPlaygroundSessionForReseed,
   type PlaygroundSession,
 } from "~/playground/sessions.server";
-import { canContinueSessionOnTarget } from "~/playground/ownership";
-import { buildSeedContext } from "~/playground/seed";
 import {
   resolveAgentContext,
   agentFromParams,
@@ -131,22 +128,25 @@ export async function action(args: ActionFunctionArgs) {
       { status: 400 },
     );
   }
-  // #71: continue a conversation whose owning eve session lives on a deployment that was replaced
-  // (or was explicitly de-selected for a different live one). That eve session can't be migrated —
-  // it died with the old container's runtime — so instead of 409ing, seed a FRESH eve session on
-  // this target transparently from harnesst's durable transcript cache (the complete history), unbind
-  // the dead binding, and continue. This also covers the "owner still live but a different
-  // deployment was selected" case: continuing on any non-owner target reseeds from the cache.
-  let seedContext: string | null = null;
+  // A BOUND session's history lives in exactly one environment's world store (#288): a
+  // cross-environment target never saw the session (eve hangs, not 404s, on unknown ids), so
+  // a mismatched pick is refused outright — no reseed path exists any more, and silently
+  // starting fresh (or rebinding the row) would lose the conversation's context for good.
   if (
-    playgroundSession &&
-    !canContinueSessionOnTarget(playgroundSession, target.deploymentId)
+    playgroundSession?.externalSessionId &&
+    playgroundSession.environmentId &&
+    target.environmentId !== playgroundSession.environmentId
   ) {
-    seedContext = buildSeedContext(
-      await loadPlaygroundEntriesFromCache(playgroundSession),
+    const environments = await listAgentEnvironments(active.id);
+    const home = environments.find(
+      (env) => env.id === playgroundSession?.environmentId,
     );
-    playgroundSession =
-      await unbindPlaygroundSessionForReseed(playgroundSession);
+    throw data(
+      {
+        error: `This conversation lives in the "${home?.name ?? "original"}" environment — pick a deployment there, or start a new session to talk to this one.`,
+      },
+      { status: 409 },
+    );
   }
   const title = playgroundSession?.title ? null : titleFromMessage(message);
   if (!playgroundSession) {
@@ -156,8 +156,6 @@ export async function action(args: ActionFunctionArgs) {
       userId: auth.user.id,
       surface: "playground",
       environmentId: target.environmentId,
-      deploymentId: target.deploymentId,
-      releaseId: target.releaseId,
       version: target.version,
       title,
       modelId: requestedModelId,
@@ -193,7 +191,6 @@ export async function action(args: ActionFunctionArgs) {
   // session API has no per-turn model field); the deployed agent's dynamic-model resolver reads
   // it, and every display surface strips it. The catalog lookup supplies the model's context
   // window; when the catalog is unreachable the directive simply omits it.
-  const directiveBody = [seedContext, message].filter(Boolean).join("\n\n");
   const directive = effectiveModel
     ? signModelDirective(
         {
@@ -204,14 +201,12 @@ export async function action(args: ActionFunctionArgs) {
           effort: effectiveEffort ?? undefined,
         },
         target.deploymentId,
-        directiveBody,
+        message,
       )
     : null;
-  // Order matters: the model directive MUST stay the first line of the sent message (both the
-  // agent-side resolver and `stripModelDirective` anchor to start-of-string); the reseed context
-  // block (#71), when present, follows it.
-  const messagePrefix =
-    [directive, seedContext].filter(Boolean).join("\n\n") || null;
+  // The model directive stays the first line of the sent message (both the agent-side resolver
+  // and `stripModelDirective` anchor to start-of-string).
+  const messagePrefix = directive || null;
 
   return streamTurnResponse({
     projectId: project.id,

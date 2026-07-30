@@ -62,6 +62,11 @@ const SIGNED_OR_BEARER_ENDPOINTS = new Set([
   "/api/connections/token",
   "/api/discord/interactions",
   "/api/discord/send",
+  // Agent-initiated conversations (#288 3c): the baked `contact-user` tool POSTs its
+  // notification with the same delegation bearer the park uses. No browser Origin exists on a
+  // server-to-server call, and the route verifies the token itself — listing it here bypasses
+  // the CSRF check, not authentication.
+  "/api/foh/notify",
   // Channel park (WS1): an agent container POSTs its parked question with the same delegation
   // bearer the relay uses. No browser Origin exists on a server-to-server call, and the route
   // verifies the token itself — listing it here bypasses the CSRF check, not authentication.

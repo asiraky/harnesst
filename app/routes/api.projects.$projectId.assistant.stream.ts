@@ -29,7 +29,6 @@ import {
   titleFromMessage,
   type PlaygroundSession,
 } from "~/playground/sessions.server";
-import { canContinueSessionOnTarget } from "~/playground/ownership";
 import { requireProject, requireRepo } from "~/project/guard.server";
 
 export async function action(args: ActionFunctionArgs) {
@@ -83,15 +82,6 @@ export async function action(args: ActionFunctionArgs) {
   if (playgroundSessionId && !session) {
     throw data({ error: "That conversation was not found." }, { status: 404 });
   }
-  if (session && !canContinueSessionOnTarget(session, target.deploymentId)) {
-    throw data(
-      {
-        error:
-          "This conversation belongs to an assistant instance that was replaced. Start a new conversation to continue.",
-      },
-      { status: 409 },
-    );
-  }
   const title = session?.title ? null : titleFromMessage(message);
   if (!session) {
     session = await createPlaygroundSession({
@@ -100,8 +90,6 @@ export async function action(args: ActionFunctionArgs) {
       userId: auth.user.id,
       surface: "assistant",
       environmentId: target.environmentId,
-      deploymentId: target.deploymentId,
-      releaseId: target.releaseId,
       version: target.version,
       title,
     });
