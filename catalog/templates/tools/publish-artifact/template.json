@@ -2,8 +2,8 @@
   "id": "publish-artifact",
   "type": "tool",
   "name": "Publish Artifact",
-  "description": "Publish an image the agent produced (a screenshot, a chart, a diagram) into the Front of House conversation, where it renders as a card the user can see. harnesst copies the file out of the agent's home directory and serves it back behind the user's own sign-in.",
-  "version": "0.1.0",
+  "description": "Publish something the agent produced into the Front of House conversation, where it renders as a card the user can see: an image (screenshot, chart, diagram) or a static HTML page (a single file, or a directory of index.html plus its css/js/image siblings). harnesst copies the files out of the agent's home directory and serves them back behind the user's own sign-in — pages inside a sandboxed preview panel.",
+  "version": "0.2.0",
   "eve": ">=0.20.0",
   "files": [
     "tools/publish-artifact.ts"
