@@ -505,6 +505,16 @@ describe("streamTurnResponse — channel-homed delivery", () => {
     expect(String(done.error)).toContain("HARNESST_SECRETS_KEY");
     // The row is left bound — the thread is still alive, only this server is misconfigured.
     expect(mocks.unbindPlaygroundSessionForReseed).not.toHaveBeenCalled();
+    // Issue #282: nothing was sent, so nothing settles — the row goes back to `waiting`
+    // (undoing the caller's pre-turn `running` claim) and the park state stays untouched.
+    expect(mocks.savePlaygroundSessionCursor).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "ps_1", status: "waiting" }),
+    );
+    expect(mocks.savePlaygroundSessionCursor).not.toHaveBeenCalledWith(
+      expect.objectContaining({ status: "failed" }),
+    );
+    expect(mocks.clearSessionPendingInput).not.toHaveBeenCalled();
+    expect(mocks.resolveInboxForSession).not.toHaveBeenCalled();
     error.mockRestore();
   });
 
@@ -546,6 +556,113 @@ describe("streamTurnResponse — channel-homed delivery", () => {
     });
 
     expect(mocks.unbindPlaygroundSessionForReseed).not.toHaveBeenCalled();
+  });
+
+  it("a refused send leaves session status, cursor, and pending flag unchanged (issue #282)", async () => {
+    // The `talk.server.ts` guard refused the send before contacting the agent (`notDelivered`).
+    // Eve is still parked on its question, so the drain must not settle anything: no `failed`
+    // status, no cursor/handle movement, no needs-you clear, no inbox resolve, no run recording.
+    // The one write puts the status back to `waiting` — the pre-turn claim flipped it `running`.
+    const row = session({
+      externalSessionId: "sess_ext",
+      continuationToken: "github:repo:1310524517:issue:7",
+      streamIndex: 12,
+      pendingInputAt: new Date(),
+      resumeVia: RESUME_VIA,
+    } as Partial<PlaygroundSession>);
+    script([
+      {
+        kind: "done",
+        result: result({
+          ok: false,
+          error: "refused before delivery",
+          turnId: null,
+          continuationToken: "github:repo:1310524517:issue:7",
+          streamIndex: 12,
+          notDelivered: true,
+        }),
+      },
+    ]);
+
+    const events = await readAll(
+      streamTurnResponse({
+        projectId: "proj_1",
+        target: TARGET,
+        session: row,
+        message: "actually, use develop",
+        channel: "foh",
+        title: null,
+        claimId: "claim_1",
+      }),
+    );
+
+    // The client is still told what happened.
+    expect(events.at(-1)).toMatchObject({ type: "done", ok: false });
+    // Exactly one row write: the status restore, carrying the row's own handles and the claim.
+    expect(mocks.savePlaygroundSessionCursor).toHaveBeenCalledTimes(1);
+    expect(mocks.savePlaygroundSessionCursor).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: "ps_1",
+        externalSessionId: "sess_ext",
+        continuationToken: "github:repo:1310524517:issue:7",
+        streamIndex: 12,
+        status: "waiting",
+        claimId: "claim_1",
+      }),
+    );
+    // The park state, inbox, transcript cache, recorder, and resume binding are untouched.
+    expect(mocks.clearSessionPendingInput).not.toHaveBeenCalled();
+    expect(mocks.markSessionPendingInput).not.toHaveBeenCalled();
+    expect(mocks.resolveInboxForSession).not.toHaveBeenCalled();
+    expect(mocks.recordInboxFinished).not.toHaveBeenCalled();
+    expect(mocks.savePlaygroundEvents).not.toHaveBeenCalled();
+    expect(mocks.savePlaygroundSessionProgress).not.toHaveBeenCalled();
+    expect(mocks.recordTurnStart).not.toHaveBeenCalled();
+    expect(mocks.recordTurnFinish).not.toHaveBeenCalled();
+    expect(mocks.unbindPlaygroundSessionForReseed).not.toHaveBeenCalled();
+  });
+
+  it("a refused send never finalizes a waiting delegation (issue #282)", async () => {
+    script([
+      {
+        kind: "done",
+        result: result({
+          ok: false,
+          error: "refused before delivery",
+          turnId: null,
+          notDelivered: true,
+        }),
+      },
+    ]);
+
+    await run({
+      session: session({
+        createdBy: null,
+        delegationId: "deleg_1",
+        openedByAgentId: "agent_1",
+        externalSessionId: "sess_ext",
+        continuationToken: "github:repo:1310524517:issue:7",
+        resumeVia: RESUME_VIA,
+      } as Partial<PlaygroundSession>),
+      channel: "foh",
+    });
+
+    expect(mocks.finalizeDelegationOnResume).not.toHaveBeenCalled();
+  });
+
+  it("an ordinary failed turn still settles as failed (the #282 carve-out is narrow)", async () => {
+    script([
+      { kind: "session", sessionId: "sess_ext", continuationToken: "tok_1" },
+      { kind: "done", result: result({ ok: false, error: "boom" }) },
+    ]);
+
+    await run({ session: session(), channel: "foh" });
+
+    expect(mocks.savePlaygroundSessionCursor).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "ps_1", status: "failed" }),
+    );
+    expect(mocks.clearSessionPendingInput).toHaveBeenCalledWith("ps_1");
+    expect(mocks.resolveInboxForSession).toHaveBeenCalledWith("ps_1");
   });
 
   it("survives an unbind that throws — the cursor save has already happened", async () => {

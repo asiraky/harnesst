@@ -91,6 +91,16 @@ export interface TurnResult {
    */
   resumeExpired?: boolean;
   /**
+   * Issue #282: the send was REFUSED BEFORE THE AGENT WAS EVER CONTACTED (e.g. a channel-homed
+   * follow-up carrying no `inputResponses`, or a channel delivery harnesst could not build).
+   * Nothing was sent, so nothing about the turn changed: eve is exactly where it was — usually
+   * still parked on its pending question. The drain reads this to leave the session row's
+   * status/cursor/park state alone instead of settling a "failed turn" that never existed
+   * (which used to mark the row failed and delete the needs-you question while eve kept
+   * waiting). Absent on every path that actually reached the agent.
+   */
+  notDelivered?: boolean;
+  /**
    * #267: the turn did not fail — HARNESST STOPPED WATCHING IT. The reply stream dropped, went
    * idle past the budget, or ended before a terminal event, while the container kept running the
    * turn to completion (that is by design; a turn legitimately runs 15+ minutes). The three
@@ -404,6 +414,8 @@ export async function* streamTurn(input: {
       continuationToken?: string | null;
       /** See `TurnResult.resumeExpired` — set ONLY when the channel session is provably gone. */
       resumeExpired?: boolean;
+      /** See `TurnResult.notDelivered` — set ONLY when the agent was never contacted. */
+      notDelivered?: boolean;
     },
   ): TalkEvent => ({
     kind: "done",
@@ -421,6 +433,7 @@ export async function* streamTurn(input: {
       messages: [],
       error,
       ...(ids?.resumeExpired ? { resumeExpired: true } : {}),
+      ...(ids?.notDelivered ? { notDelivered: true } : {}),
     },
   });
 
@@ -451,6 +464,8 @@ export async function* streamTurn(input: {
       {
         sessionId: input.sessionId,
         continuationToken: input.continuationToken,
+        // The agent was never contacted — the drain must not settle this as a failed turn.
+        notDelivered: true,
       },
     );
     return;

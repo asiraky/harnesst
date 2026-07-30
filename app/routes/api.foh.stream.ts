@@ -258,6 +258,28 @@ export async function action(args: ActionFunctionArgs) {
     };
   }
 
+  // A channel-homed row only ever accepts an answer to a pending request (the drain's
+  // `deliverVia` guard would refuse this send anyway — see talk.server.ts). Refusing it
+  // HERE, before the claim and `beginFohTurn`, is what keeps a refusal from mutating any
+  // state (issue #282): the route-level `beginFohTurn` below clears the needs-you park and
+  // inbox items before delivery is known to succeed, which is exactly the poison the issue
+  // describes. The composer UI no longer offers this path; this guards stale tabs.
+  if (
+    !isNewSession &&
+    session.resumeVia &&
+    session.externalSessionId &&
+    session.continuationToken &&
+    !inputResponses
+  ) {
+    throw data(
+      {
+        error:
+          "This conversation lives on the agent's own channel thread, so harnesst can only send it an answer to a question it is waiting on — not a new message.",
+      },
+      { status: 409 },
+    );
+  }
+
   // Atomic turn claim (issue #221 finding 5): compare-and-swap the session to `running` with
   // this request's fencing token — two tabs (or two members, or two harnesst replicas) posting to
   // one session race here, and exactly one wins. Runs after target resolution/reseed (the

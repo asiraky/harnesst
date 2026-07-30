@@ -507,6 +507,28 @@ export async function markSessionPendingInput(
   return updated.length > 0;
 }
 
+/**
+ * Put a `failed` row back to `waiting` after a park repair proved the failure never reached
+ * the agent (issue #282: a send refused before delivery wrote `failed` while eve stayed
+ * parked on its ask). Guarded on `status = 'failed'` so it can never stomp a running claim
+ * or resurrect a stopped session. Returns whether a row was updated.
+ */
+export async function restoreRepairedSessionToWaiting(
+  sessionId: string,
+): Promise<boolean> {
+  const updated = await db
+    .update(playgroundSessions)
+    .set({ status: "waiting", updatedAt: new Date() })
+    .where(
+      and(
+        eq(playgroundSessions.id, sessionId),
+        eq(playgroundSessions.status, "failed"),
+      ),
+    )
+    .returning({ id: playgroundSessions.id });
+  return updated.length > 0;
+}
+
 /** Clear the needs-you park (turn completed/failed, or a continuation send superseded it). */
 export async function clearSessionPendingInput(
   sessionId: string,

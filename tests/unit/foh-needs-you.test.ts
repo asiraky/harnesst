@@ -7,6 +7,8 @@ import { describe, expect, it } from "vitest";
 
 import type { ChatInputRequest } from "~/chat/types";
 import {
+  composerAnswerFor,
+  newestPendingRequest,
   reconcileNeedsYouFromTail,
   repairFohSessionState,
   settleFohTurn,
@@ -184,6 +186,12 @@ describe("repairFohSessionState (loader-side durable retry, issue #221 finding 4
   it.each([
     // Park-repair: the drain's park write failed — the transcript proves the ask.
     ["waiting + pending ask + flag unset", "waiting", null, asked(), "park"],
+    // Poisoned-row repair (issue #282): a refused send wrote `failed` and cleared the park,
+    // but the transcript's newest entry is still the un-errored ask — eve is still parked.
+    ["failed + pending ask + flag unset", "failed", null, asked(), "park"],
+    // A REAL failed turn's newest entry carries the error — never re-parked.
+    ["failed + errored ask + flag unset", "failed", null, asked({ error: "boom" }), "none"],
+    ["failed + user last entry + flag unset", "failed", null, { role: "user" }, "none"],
     // Settle-repair: the drain's clear write failed — the badge lies.
     ["waiting + no ask + flag set", "waiting", at, answered, "settle"],
     ["failed + no ask + flag set", "failed", at, answered, "settle"],
@@ -223,6 +231,82 @@ describe("repairFohSessionState (loader-side durable retry, issue #221 finding 4
       pendingInputAt: null,
       lastEntry: { role: "assistant", inputRequests: requests, error: null },
     });
-    expect(decision).toEqual({ action: "park", requests });
+    expect(decision).toEqual({ action: "park", requests, restoreStatus: false });
+  });
+
+  it("asks the caller to restore a poisoned failed row to waiting (issue #282)", () => {
+    const decision = repairFohSessionState({
+      status: "failed",
+      pendingInputAt: null,
+      lastEntry: asked(),
+    });
+    expect(decision).toEqual({
+      action: "park",
+      requests: [ask()],
+      restoreStatus: true,
+    });
+  });
+});
+
+describe("newestPendingRequest (composer answer target, issue #282)", () => {
+  it("picks the newest request of an un-errored assistant ask", () => {
+    expect(
+      newestPendingRequest({
+        role: "assistant",
+        inputRequests: [ask("r1"), ask("r2")],
+        error: null,
+      }),
+    ).toEqual(ask("r2"));
+  });
+
+  it.each([
+    ["empty transcript", null],
+    ["user entry", { role: "user" }],
+    ["assistant reply without asks", { role: "assistant", inputRequests: [] }],
+    ["assistant entry with no requests field", { role: "assistant" }],
+    [
+      "errored assistant entry (its asks are stale)",
+      { role: "assistant", inputRequests: [ask()], error: "boom" },
+    ],
+  ] as const)("nothing pending for %s", (_name, lastEntry) => {
+    expect(
+      newestPendingRequest(
+        lastEntry as Parameters<typeof newestPendingRequest>[0],
+      ),
+    ).toBeNull();
+  });
+});
+
+describe("composerAnswerFor (issue #282)", () => {
+  it("correlates channel-homed composer text to the pending request", () => {
+    expect(
+      composerAnswerFor({
+        channelHomed: true,
+        pendingRequest: ask("call_1"),
+        text: "1. /pricing should show the new tiers",
+      }),
+    ).toEqual({
+      requestId: "call_1",
+      text: "1. /pricing should show the new tiers",
+    });
+  });
+
+  it("attaches nothing on an HTTP-homed session, pending request or not", () => {
+    expect(
+      composerAnswerFor({
+        channelHomed: false,
+        pendingRequest: ask("call_1"),
+        text: "hello",
+      }),
+    ).toBeNull();
+    expect(
+      composerAnswerFor({ channelHomed: false, pendingRequest: null, text: "hi" }),
+    ).toBeNull();
+  });
+
+  it("attaches nothing when a channel-homed session has no pending request", () => {
+    expect(
+      composerAnswerFor({ channelHomed: true, pendingRequest: null, text: "hi" }),
+    ).toBeNull();
   });
 });

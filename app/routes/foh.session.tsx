@@ -43,8 +43,13 @@ import { TurnError } from "~/components/turn-error";
 import { Button } from "~/components/ui/button";
 import { sessionLoader } from "~/auth/session.server";
 import { requireFohProject } from "~/foh/guard.server";
+import { channelLabelFor } from "~/foh/channel-resume";
 import { openInboxQuestion, resolveInboxForSession } from "~/foh/inbox.server";
-import { repairFohSessionState } from "~/foh/needs-you";
+import {
+  composerAnswerFor,
+  newestPendingRequest,
+  repairFohSessionState,
+} from "~/foh/needs-you";
 import { fohSessionStatus } from "~/foh/status";
 import {
   cacheCoversCompletedLiveTurn,
@@ -60,6 +65,7 @@ import {
   markSessionPendingInput,
   playgroundCacheIsComplete,
   reconcilePlaygroundSessionFromEve,
+  restoreRepairedSessionToWaiting,
   settleAbandonedPlaygroundSession,
 } from "~/playground/sessions.server";
 import { shouldSettleAbandonedSession } from "~/playground/settle";
@@ -187,6 +193,15 @@ export const loader = (args: LoaderFunctionArgs) =>
               });
             }
             currentSession = { ...currentSession, pendingInputAt: at };
+            // A `failed` row whose transcript proves an un-errored pending ask was poisoned
+            // by a send refused before delivery (issue #282) — the turn never failed, eve is
+            // still parked. Put the row back to `waiting` so the header stops lying.
+            if (
+              repair.restoreStatus &&
+              (await restoreRepairedSessionToWaiting(currentSession.id))
+            ) {
+              currentSession = { ...currentSession, status: "waiting" };
+            }
           }
         } else if (repair.action === "settle") {
           await clearSessionPendingInput(currentSession.id);
@@ -237,6 +252,12 @@ export const loader = (args: LoaderFunctionArgs) =>
         sessionStatus: currentSession.status,
         sessionFohStatus: fohSessionStatus(currentSession),
         openedByAgent: currentSession.openedByAgentId != null,
+        // Channel-homed rows (resumeVia set) live on that channel's thread and only take
+        // answers — the UI must say so. The label is the only thing exposed; nothing
+        // channel-specific leaks to the client.
+        channelLabel: currentSession.resumeVia
+          ? channelLabelFor(currentSession.resumeVia.channel)
+          : null,
         lastEventAt: currentSession.lastEventAt?.toISOString() ?? null,
         entries,
         historyError,
@@ -277,6 +298,7 @@ export default function FohSession({ loaderData }: Route.ComponentProps) {
     sessionStatus,
     sessionFohStatus,
     openedByAgent,
+    channelLabel,
     lastEventAt,
     entries,
     historyError,
@@ -359,6 +381,18 @@ export default function FohSession({ loaderData }: Route.ComponentProps) {
       : entries;
   }, [entries, sessionId, visibleLive]);
 
+  // The one request a typed composer answer would resolve (issue #282): the newest pending
+  // ask of the newest turn — from the live turn once it settles, else from the cached
+  // transcript. Mirrors the onAnswer wiring below (newest entry only).
+  const pendingRequest = useMemo<ChatInputRequest | null>(() => {
+    if (visibleLive) {
+      return visibleLive.done && !visibleLive.error
+        ? (visibleLive.inputRequests.at(-1) ?? null)
+        : null;
+    }
+    return newestPendingRequest(entries.at(-1) ?? null);
+  }, [entries, visibleLive]);
+
   const send = useCallback(
     async (message: string, answer?: ChatInputAnswer) => {
       // This closure outlives navigation (the reader keeps draining the fetch), so every
@@ -397,8 +431,17 @@ export default function FohSession({ loaderData }: Route.ComponentProps) {
       form.set("agentId", agentId);
       form.set("playgroundSessionId", forSession);
       // A clicked question/approval card answers exactly ITS request (issue #221 finding
-      // 2); composer text stays the intentional continue/supersede path.
-      if (answer) form.set("inputResponses", JSON.stringify([answer]));
+      // 2). On an HTTP-homed session, composer text stays the intentional continue/
+      // supersede path; on a channel-homed one it correlates to the newest pending ask —
+      // the only thing such a session can deliver (issue #282).
+      const correlated =
+        answer ??
+        composerAnswerFor({
+          channelHomed: channelLabel != null,
+          pendingRequest,
+          text: message,
+        });
+      if (correlated) form.set("inputResponses", JSON.stringify([correlated]));
 
       const controller = new AbortController();
       streamAbortRef.current = controller;
@@ -474,7 +517,15 @@ export default function FohSession({ loaderData }: Route.ComponentProps) {
         await revalidator.revalidate();
       }
     },
-    [agentId, entries.length, projectId, revalidator, sessionId],
+    [
+      agentId,
+      channelLabel,
+      entries.length,
+      pendingRequest,
+      projectId,
+      revalidator,
+      sessionId,
+    ],
   );
 
   const stopTurn = useCallback(async () => {
@@ -550,6 +601,13 @@ export default function FohSession({ loaderData }: Route.ComponentProps) {
           // than shove the title to zero width and the status off-screen.
           <span className="min-w-0 max-w-[45%] truncate rounded-full bg-muted px-2 py-0.5 text-[11px] text-muted-foreground">
             opened by {agentName}
+          </span>
+        )}
+        {channelLabel && (
+          // Channel-homed (issue #282): the conversation lives on the channel's thread and
+          // this page can only deliver answers — say so where the status chips live.
+          <span className="min-w-0 max-w-[45%] truncate rounded-full bg-muted px-2 py-0.5 text-[11px] text-muted-foreground">
+            on {channelLabel} · answers only
           </span>
         )}
         <span className="shrink-0 text-xs text-muted-foreground">
@@ -638,18 +696,40 @@ export default function FohSession({ loaderData }: Route.ComponentProps) {
       </ChatTranscript>
 
       <div className="mx-auto w-full max-w-5xl px-4 pb-4 pt-3 sm:px-6">
-        {!online && (
-          <p className="mb-2 pl-1 text-xs text-muted-foreground">
-            {agentName} is asleep — your next message wakes them (this can take
-            a couple of minutes).
+        {channelLabel && !pendingRequest && !busy ? (
+          // Channel-homed with nothing to answer (issue #282): no free-text box the user
+          // isn't allowed to use — the conversation continues on the channel's thread.
+          <p className="rounded-2xl border bg-muted/30 px-4 py-3 text-sm text-muted-foreground">
+            This conversation continues on {agentName}&rsquo;s {channelLabel}{" "}
+            thread. When {agentName} asks a question here, you can answer it —
+            to say anything else, reply on the {channelLabel} thread.
           </p>
+        ) : (
+          <>
+            {!online && (
+              <p className="mb-2 pl-1 text-xs text-muted-foreground">
+                {agentName} is asleep — your next message wakes them (this can
+                take a couple of minutes).
+              </p>
+            )}
+            {channelLabel && pendingRequest && !busy && (
+              <p className="mb-2 pl-1 text-xs text-muted-foreground">
+                Your reply answers {agentName}&rsquo;s question above and goes
+                back to the {channelLabel} thread.
+              </p>
+            )}
+            <ChatComposer
+              placeholder={
+                channelLabel
+                  ? `Answer ${agentName}’s question…`
+                  : `Message ${agentName}…`
+              }
+              busy={busy}
+              onSend={send}
+              controls={composerControls}
+            />
+          </>
         )}
-        <ChatComposer
-          placeholder={`Message ${agentName}…`}
-          busy={busy}
-          onSend={send}
-          controls={composerControls}
-        />
       </div>
     </section>
   );

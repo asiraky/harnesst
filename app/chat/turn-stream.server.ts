@@ -322,6 +322,9 @@ export function streamTurnResponse(input: {
               steps: [],
               messages: [],
               error: delivery.error,
+              // "Nothing was sent" (see the messages above) — the agent was never contacted,
+              // so the finally below must not settle this as a failed turn.
+              notDelivered: true,
             };
             send({
               type: "done",
@@ -336,8 +339,7 @@ export function streamTurnResponse(input: {
               modelId: null,
               version: target.version,
             });
-            // `finally` still runs: the cursor save, the FOH settle and the inbox bookkeeping
-            // all happen exactly as they do for any other failed turn.
+            // `finally` still runs, and its `notDelivered` branch leaves the row untouched.
             return;
           }
           for await (const event of streamTurn({
@@ -520,26 +522,47 @@ export function streamTurnResponse(input: {
           await progressSave;
           if (result) {
             const settled: TurnResult = result;
+            // Issue #282: a `notDelivered` result means the send was refused BEFORE the agent
+            // was contacted — failing to send is not a failed turn. Eve is exactly where it was
+            // (a channel-homed row is by definition parked at `session.waiting`), so the row
+            // must not be settled: no `failed` status, no cursor/handle movement, no needs-you
+            // clear, no inbox resolve, no delegation finalize, no run recording. The only write
+            // is restoring the status the pre-turn claim flipped to `running` — leaving that
+            // would strand the row "running" with nothing draining it. `waiting` is the truthful
+            // pre-turn state; everything else on the row is passed back unchanged.
+            const notDelivered = settled.notDelivered === true;
             try {
-              await savePlaygroundSessionCursor({
-                id: activeSession.id,
-                target,
-                externalSessionId:
-                  settled.sessionId ?? activeSession.externalSessionId,
-                continuationToken:
-                  settled.continuationToken ?? activeSession.continuationToken,
-                // Capped at what's durably cached (see the invariant above): if the final event
-                // batch never landed, leaving the cursor behind means the missing events are
-                // re-read from Eve later (the next turn's drain, or the loader's reconcile for a
-                // failed session) and cached then — instead of being skipped forever.
-                streamIndex: Math.min(
-                  Math.max(settled.streamIndex, activeSession.streamIndex),
-                  persistedEventIndex,
-                ),
-                title,
-                status: settled.ok ? "waiting" : "failed",
-                claimId: input.claimId ?? undefined,
-              });
+              if (notDelivered) {
+                await savePlaygroundSessionCursor({
+                  id: activeSession.id,
+                  target,
+                  externalSessionId: activeSession.externalSessionId,
+                  continuationToken: activeSession.continuationToken,
+                  streamIndex: activeSession.streamIndex,
+                  status: "waiting",
+                  claimId: input.claimId ?? undefined,
+                });
+              } else {
+                await savePlaygroundSessionCursor({
+                  id: activeSession.id,
+                  target,
+                  externalSessionId:
+                    settled.sessionId ?? activeSession.externalSessionId,
+                  continuationToken:
+                    settled.continuationToken ?? activeSession.continuationToken,
+                  // Capped at what's durably cached (see the invariant above): if the final event
+                  // batch never landed, leaving the cursor behind means the missing events are
+                  // re-read from Eve later (the next turn's drain, or the loader's reconcile for a
+                  // failed session) and cached then — instead of being skipped forever.
+                  streamIndex: Math.min(
+                    Math.max(settled.streamIndex, activeSession.streamIndex),
+                    persistedEventIndex,
+                  ),
+                  title,
+                  status: settled.ok ? "waiting" : "failed",
+                  claimId: input.claimId ?? undefined,
+                });
+              }
             } catch (e) {
               console.error(`${tag} persist session cursor failed`, e);
             }
@@ -560,7 +583,9 @@ export function streamTurnResponse(input: {
             // pending flag and inbox items; a completed turn clears them and files the
             // `finished` item; a failed turn clears them (the session itself shows
             // done-with-error). Exception-swallowed like every other post-turn write.
-            if (isFoh) {
+            // A refused send (`notDelivered`) is none of these: eve still holds the pending
+            // question, so the park state and any delegation stay exactly as they were.
+            if (isFoh && !notDelivered) {
               const decision = settleFohTurn(settled);
               try {
                 if (decision.clearPending) {
@@ -599,7 +624,9 @@ export function streamTurnResponse(input: {
                 }
               }
             }
-            if (settled.sessionId && settled.turnId) {
+            // (`turnId` is always null on a `notDelivered` result — there was no turn to
+            // record; the guard keeps that invariant explicit.)
+            if (settled.sessionId && settled.turnId && !notDelivered) {
               try {
                 await startRecording;
                 await recordTurnFinish({
