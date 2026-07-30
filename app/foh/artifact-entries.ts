@@ -19,6 +19,7 @@ export interface ArtifactRow {
   projectId: string;
   name: string;
   title: string | null;
+  kind: string;
   contentType: string;
   byteSize: number;
   streamIndex: number;
@@ -55,15 +56,21 @@ export function turnAnchorsFromEvents(
   return anchors;
 }
 
-/** The transcript entry one artifact row renders as. */
+/**
+ * The transcript entry one artifact row renders as. A page bundle (#291) carries NO url: its bytes
+ * are only reachable through a preview token the app mints per panel-open, and the image route
+ * refuses bundle rows, so there is no path that would work here even if one were baked in.
+ */
 export function artifactEntry(row: ArtifactRow): ChatEntry {
+  const html = row.kind === "html";
   const artifact: ChatArtifact = {
     id: row.id,
     name: row.name,
     title: row.title,
+    kind: html ? "html" : "image",
     contentType: row.contentType,
     byteSize: row.byteSize,
-    url: artifactUrl(row.projectId, row.id),
+    url: html ? null : artifactUrl(row.projectId, row.id),
   };
   return { id: `artifact:${row.id}`, role: "artifact", text: "", artifact };
 }
