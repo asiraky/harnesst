@@ -11,7 +11,9 @@
  * shape as the workspace task strip, and ONLY for the states that have no task backing them —
  * saved-but-unpublished changes, and a never-deployed repo. Running/failed/succeeded publishes
  * are already task rows in WorkspaceTasksIndicator, so surfacing them here too would double them
- * up. (2) PublishPanel, always mounted, so any `?publish=1` link on any page opens it.
+ * up. (2) PublishPanel, always mounted, so any `?publish=1` link on any page opens it. A completed
+ * task's result link uses `?publish=<taskId>` so a fresh Overview load can render that exact
+ * success instead of relying on in-memory knowledge of the publish it watched.
  *
  * The permanent, never-dismissible entry point is PublishDeploymentButton on the repo-level
  * Deployment tab. The header carries no Publish button at all: it was competing with the
@@ -44,7 +46,7 @@ import {
   X,
   XCircle,
 } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useEffectEvent, useRef, useState } from "react";
 import { Link, useFetcher, useLocation, useSearchParams } from "react-router";
 
 import { ConfirmDialog } from "~/components/confirm-dialog";
@@ -103,9 +105,14 @@ export function PublishControl() {
   const running = !!data?.running;
   const runningRef = useRef(running);
   runningRef.current = running;
+  const [searchParams, setSearchParams] = useSearchParams();
+  const publishParam = searchParams.get("publish");
+  const resultTaskId = publishParam && publishParam !== "1" ? publishParam : null;
   useEffect(() => {
     if (!projectId) return;
-    const url = `/repos/${projectId}/publish`;
+    const url = `/repos/${projectId}/publish${
+      resultTaskId ? `?result=${encodeURIComponent(resultTaskId)}` : ""
+    }`;
     load(url);
     let timer: ReturnType<typeof setInterval>;
     const schedule = () => {
@@ -118,12 +125,11 @@ export function PublishControl() {
     schedule();
     return () => clearInterval(timer);
     // Re-run when the running state flips so the cadence switches between 3s and 10s.
-  }, [projectId, load, running]);
+  }, [projectId, resultTaskId, load, running]);
 
   const [open, setOpen] = useState(false);
-  // The assistant page's "review and publish" link opens the panel via ?publish=1 (§4.6).
-  const [searchParams, setSearchParams] = useSearchParams();
-  const wantsOpen = searchParams.get("publish") === "1";
+  // `1` opens review; a task id opens that publish's completed result.
+  const wantsOpen = publishParam !== null;
   useEffect(() => {
     if (wantsOpen) setOpen(true);
   }, [wantsOpen]);
@@ -150,6 +156,7 @@ export function PublishControl() {
         data={data}
         open={open}
         onOpenChange={handleOpenChange}
+        resultTaskId={resultTaskId}
       />
     </>
   );
@@ -351,11 +358,14 @@ export function PublishPanel({
   data,
   open,
   onOpenChange,
+  resultTaskId = null,
 }: {
   projectId: string;
   data: PublishStatePayload;
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  /** An explicit completed task requested by a `?publish=<taskId>` result link. */
+  resultTaskId?: string | null;
 }) {
   const action = `/repos/${projectId}/publish`;
   const publish = useFetcher<{ ok?: boolean; taskId?: string; error?: string }>();
@@ -393,9 +403,18 @@ export function PublishPanel({
   // final all-green steps, then auto-dismiss. Watched = the running task we polled (or the one
   // our POST returned) — a succeeded task lingering in the 24h window never re-celebrates.
   const watchedTaskId = useRef<string | null>(null);
+  const prevOpen = useRef(open);
   useEffect(() => {
-    if (data.running) watchedTaskId.current = data.running.taskId;
-  }, [data.running]);
+    if (resultTaskId) {
+      watchedTaskId.current = resultTaskId;
+      // A result URL can arrive while this mounted panel is closed. Mark that transition as
+      // already handled so the ordinary reopen reset below cannot erase the requested result.
+      prevOpen.current = true;
+    }
+  }, [resultTaskId]);
+  useEffect(() => {
+    if (data.running && !resultTaskId) watchedTaskId.current = data.running.taskId;
+  }, [data.running, resultTaskId]);
   useEffect(() => {
     if (publish.data?.taskId) watchedTaskId.current = publish.data.taskId;
   }, [publish.data]);
@@ -404,22 +423,27 @@ export function PublishPanel({
     version: string | null;
   } | null>(null);
   useEffect(() => {
-    if (!open || data.running) return;
+    // A different publish may already be running when an older result row is opened. Only the
+    // ordinary watched-publish flow waits for `running` to clear; an explicit result selects
+    // its own succeeded payload independently.
+    if (!open || (data.running && !resultTaskId)) return;
     const done = data.succeeded;
     if (done && watchedTaskId.current === done.taskId) {
       watchedTaskId.current = null;
       setAwaitingStart(false);
       setSuccess({ steps: done.steps ?? [], version: publishedVersion(done.steps) });
     }
-  }, [open, data.running, data.succeeded]);
+  }, [open, data.running, data.succeeded, resultTaskId]);
+  const closeAfterSuccess = useEffectEvent(() => onOpenChange(false));
   useEffect(() => {
-    if (!success || !open) return;
-    const timer = setTimeout(() => onOpenChange(false), SUCCESS_DISMISS_MS);
+    // An explicitly requested result is a destination, not a transient celebration. Leave it
+    // open until the user closes it so a fresh navigation cannot make the result disappear.
+    if (!success || !open || resultTaskId) return;
+    const timer = setTimeout(closeAfterSuccess, SUCCESS_DISMISS_MS);
     return () => clearTimeout(timer);
-  }, [success, open, onOpenChange]);
+  }, [success, open, resultTaskId]);
   // Reset the celebration on the next open (not on close — the dialog's exit animation would
   // flash review mode) so a reopened panel starts from the live state.
-  const prevOpen = useRef(open);
   useEffect(() => {
     if (open && !prevOpen.current) setSuccess(null);
     prevOpen.current = open;
