@@ -64,9 +64,17 @@ export async function loader({ params, request }: LoaderFunctionArgs) {
   const bytes = await readArtifactBytes(file.storagePath);
   if (!bytes) throw notFound();
 
-  // `new Uint8Array(...)`: a Node Buffer is not a `BodyInit` as far as the DOM lib is concerned,
-  // and the copy is a view, not a duplicate of the bytes.
-  return new Response(new Uint8Array(bytes), {
+  // A Node Buffer is not a `BodyInit` as far as the DOM lib is concerned. The three-argument
+  // constructor is the one that makes a VIEW over the same memory — `new Uint8Array(buffer)` on a
+  // Buffer takes the typed-array-copy overload and would duplicate up to 25 MB per subresource.
+  // The cast is what tells TypeScript this is not a SharedArrayBuffer, which `fs` never returns;
+  // the offset and length are what keep the view to THIS file's bytes when Buffer pooled them.
+  const body = new Uint8Array(
+    bytes.buffer as ArrayBuffer,
+    bytes.byteOffset,
+    bytes.length,
+  );
+  return new Response(body, {
     headers: artifactPreviewHeaders({
       contentType: file.contentType,
       byteSize: bytes.length,

@@ -23,11 +23,13 @@ export default defineTool({
     "the same thing. The path must already exist under /workspace/home (anything you wrote to " +
     "/workspace/home/artifacts/, and browser screenshots in " +
     "/workspace/home/agent-browser/screenshots/, both qualify). Images: PNG, JPEG, WebP or SVG. " +
-    "Pages: a single .html file, or a DIRECTORY holding index.html plus its css/js/json/font/image " +
-    "siblings (at most 40 files, plain names, no symlinks). 25 MB in total either way. An image " +
+    "Pages: a single .html file, or a DIRECTORY holding index.html plus the css/js/font/image files " +
+    "it loads (at most 40 files, plain names, no symlinks). 25 MB in total either way. An image " +
     "returns its URL inside harnesst; a page returns no URL by design — it is opened from the card " +
     "in a sandboxed preview panel, where it cannot reach the network, submit forms or read " +
-    "anything of the user's. Either way the artifact appears as its own card, so mention in your " +
+    "anything of the user's. fetch()/XHR are dead there even for the page's own sibling files, so " +
+    "inline any data into the page rather than fetching a .json next to it. Either way the " +
+    "artifact appears as its own card, so mention in your " +
     "reply that you published it rather than trying to embed it in markdown. Call it while you are " +
     "answering the person in harnesst: the card goes to the conversation whose turn is running, so " +
     "publishing from a background run has nowhere to land and is refused.",

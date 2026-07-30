@@ -302,7 +302,11 @@ interface PublishHalfInput {
 const BUSY = "harnesst is already copying as many files as it can at once. Try publishing again in a moment.";
 const RECORD_FAILED = "harnesst could not record the artifact. Try publishing again.";
 
-/** One sniffed image file (#290) — unchanged behaviour, lifted out of the branch. */
+/**
+ * Publish one image (#290): copy the file under a concurrency slot, read its real type out of its
+ * own bytes, content-address the bytes into the store and record the row. The type is sniffed rather
+ * than claimed because the image route serves same-origin behind the operator's own cookie.
+ */
 async function publishImage(
   { deployment, source, common }: PublishHalfInput,
   deps: PublishArtifactDeps,

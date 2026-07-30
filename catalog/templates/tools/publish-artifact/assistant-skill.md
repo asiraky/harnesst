@@ -15,8 +15,8 @@ scaling to zero or redeploying.
 renaming something else to `.png` is refused. Images are served back behind the user's own sign-in
 and render straight into the card.
 
-**Pages** — a single `.html` file, or a directory holding `index.html` plus the css, js, json, font
-and image files it loads (at most 40 files, 25 MB in total). Pass `kind: "html"` when publishing a
+**Pages** — a single `.html` file, or a directory holding `index.html` plus the css, js, font and
+image files it loads (at most 40 files, 25 MB in total). Pass `kind: "html"` when publishing a
 directory; a lone `.html` path is recognised on its own. Every member needs a plain name (letters,
 digits, dots, dashes, no leading dot) and an allowed extension — one unexpected file refuses the
 whole publish rather than silently dropping it, and symlinks are refused, so copy real files in.
@@ -26,9 +26,16 @@ refused.
 A page is opened by the user from its card, in a preview panel that renders it sandboxed: no network
 access, no form submission, no storage, no cookies, no access to anything of the user's. Write it as
 a self-contained page — inline styles and scripts, or local sibling files, and data URIs for small
-assets. Anything fetched from a CDN or an external host will not load. That is also why a page
-publish returns no URL: there is no permanent link to quote, so say in the reply that you published
-the page and let the card open it.
+assets. Anything fetched from a CDN or an external host will not load.
+
+`fetch()` and `XMLHttpRequest` do not work AT ALL in the preview, including against the page's own
+sibling files: a `fetch('./data.json')` returns nothing and the page half-renders with no visible
+reason. Put data in the page — a `<script>` literal, or a `<script type="application/json">` block
+read with `textContent`. Stylesheets, scripts, fonts and images loaded with `<link>`, `<script src>`
+and `<img src>` are fine; only the network APIs are closed.
+
+That is also why a page publish returns no URL: there is no permanent link to quote, so say in the
+reply that you published the page and let the card open it.
 
 Either kind must live under `/workspace/home`: write it to `/workspace/home/artifacts/` (create the
 directory if needed), or publish a browser screenshot straight out of

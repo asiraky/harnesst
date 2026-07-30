@@ -56,10 +56,20 @@ interface ArtifactPreviewPayload {
   projectId: string;
   userId: string;
   /**
-   * Whether the minting viewer was back of house. Carried rather than re-derived because the
-   * preview route has no cookie and so cannot read org/team membership — but the load-bearing
-   * per-CONVERSATION visibility check is still re-run per request against `userId`, so a token
-   * outliving the viewer's access to the conversation stops working inside the TTL.
+   * Whether the minting viewer was back of house — i.e. may see conversations they did not start.
+   * Carried rather than re-derived because the preview route has no cookie and so cannot read
+   * org/team membership. The per-CONVERSATION visibility check is still re-run per request against
+   * `userId`, so a token outliving the viewer's access to the conversation stops working inside the
+   * TTL — but this one bit is a FROZEN verdict, and that is a reviewed, accepted residual:
+   *
+   * a viewer demoted out of back of house keeps, for the remainder of the TTL (≤ 10 minutes), the
+   * cross-conversation reach the token was minted with. The blast radius is one artifact they had
+   * already opened, because the artifact id is inside the signature and the token is not replayable
+   * against another (see `verifyArtifactPreviewToken`). Closing it properly means either a cookie on
+   * this route — which the sandbox's null origin makes unreliable and which is the whole reason for
+   * the path token — or a revocation store consulted on every subresource request. Neither is worth
+   * a ten-minute window on an artifact whose bytes the viewer has already been shown; if the TTL
+   * ever grows, revisit this rather than the TTL alone.
    */
   backOfHouse: boolean;
   /** Unix ms; `verifyState` refuses the token once passed. */

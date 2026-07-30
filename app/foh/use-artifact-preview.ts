@@ -13,7 +13,8 @@
  * "open in new tab"), and a page that pulls an asset late — a lazy image, a font on first hover —
  * would 404 the moment it lapsed. So the hook re-mints ahead of expiry, which reloads the frame:
  * the honest trade, since a stale token shows the user a page that half-renders for no visible
- * reason, while a reload of a static page costs a scroll position.
+ * reason, while a reload of a static page costs a scroll position. A re-mint that fails keeps the
+ * page that is already on screen and tries once more — the token it is replacing has not run out yet.
  */
 import { useCallback, useEffect, useState } from "react";
 
@@ -23,6 +24,11 @@ import type { ChatArtifact } from "~/chat/types";
 const REMINT_MARGIN_MS = 60_000;
 /** Floor on the re-mint timer, so a short-dated or clock-skewed token cannot become a mint loop. */
 const MIN_REMINT_DELAY_MS = 30_000;
+/**
+ * How long a failed RE-mint waits before its one retry. Comfortably inside the margin above, so both
+ * attempts happen while the token on screen is still valid.
+ */
+const REMINT_RETRY_DELAY_MS = 10_000;
 /** Used when the server's `expiresAt` is missing or unparseable — mint again rather than trust it. */
 const FALLBACK_REMINT_DELAY_MS = 60_000;
 
@@ -64,11 +70,18 @@ export function useArtifactPreview(input: {
 }): ArtifactPreview {
   const { projectId, sessionId } = input;
   const [artifact, setArtifact] = useState<ChatArtifact | null>(null);
+  // Bumped on every open so clicking the same card after a failure retries, even when the loader
+  // handed back the very same artifact object and `setArtifact` would therefore be a no-op.
+  const [attempt, setAttempt] = useState(0);
   const [state, setState] = useState<{
     src: string | null;
     error: string | null;
   }>({ src: null, error: null });
 
+  const open = useCallback((next: ChatArtifact) => {
+    setArtifact(next);
+    setAttempt((n) => n + 1);
+  }, []);
   const close = useCallback(() => setArtifact(null), []);
   useEffect(() => setArtifact(null), [sessionId]);
 
@@ -83,7 +96,23 @@ export function useArtifactPreview(input: {
     let timer = 0;
     setState({ src: null, error: null });
 
-    const mint = async () => {
+    /**
+     * A failed mint means different things at the two call sites. The FIRST one has nothing on
+     * screen, so its failure is the error state. A re-mint failure happens while a still-valid token
+     * is rendering a working page — tearing that down for a network blip would lose the user their
+     * page a minute before it was actually due to lapse — so it retries once inside the margin and
+     * only surfaces the error when the capability is genuinely gone.
+     */
+    const failed = (retryable: boolean) => {
+      if (cancelled) return;
+      if (retryable) {
+        timer = window.setTimeout(() => void mint(false), REMINT_RETRY_DELAY_MS);
+        return;
+      }
+      setState({ src: null, error: PREVIEW_FAILED });
+    };
+
+    const mint = async (retryable: boolean) => {
       const form = new FormData();
       form.set("artifactId", artifact.id);
       try {
@@ -100,31 +129,31 @@ export function useArtifactPreview(input: {
           : null;
         if (cancelled) return;
         if (!body?.ok || typeof body.url !== "string") {
-          setState({ src: null, error: PREVIEW_FAILED });
+          failed(retryable);
           return;
         }
         setState({ src: body.url, error: null });
         timer = window.setTimeout(
-          () => void mint(),
+          () => void mint(true),
           nextPreviewRemintDelayMs(body.expiresAt, Date.now()),
         );
       } catch {
-        if (!cancelled) setState({ src: null, error: PREVIEW_FAILED });
+        failed(retryable);
       }
     };
-    void mint();
+    void mint(false);
 
     return () => {
       cancelled = true;
       window.clearTimeout(timer);
     };
-  }, [artifact, projectId]);
+  }, [artifact, attempt, projectId]);
 
   return {
     artifact,
     src: state.src,
     error: state.error,
-    open: setArtifact,
+    open,
     close,
   };
 }

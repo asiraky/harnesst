@@ -77,6 +77,12 @@ export const ARTIFACT_BUNDLE_ENTRY = "index.html";
  * that could carry another (no zip, no pdf, no video). An unlisted extension is refused rather than
  * skipped — silently dropping a font or a stylesheet would show the user a page that renders wrong
  * for no visible reason, and the agent owns the directory it asked us to publish.
+ *
+ * `json` and `map` are here so a data file or a build's sourcemap sitting next to the page does not
+ * refuse the whole publish — NOT because a page can read them at runtime. The preview serves
+ * `connect-src 'none'`, so `fetch()`/XHR of a sibling never resolves; a sourcemap is fetched by
+ * devtools, which is not subject to the page's CSP, and that is the only use `map` has here. The
+ * tool description and the assistant skill therefore tell agents to INLINE their data.
  */
 const BUNDLE_MEMBER_TYPES: Readonly<Record<string, string>> = {
   html: "text/html",

@@ -339,6 +339,34 @@ export type ArtifactBundleCopyResult =
   | { ok: true; files: TarFile[] }
   | { ok: false; error: string };
 
+/**
+ * How many directory-entry headers a bundle's archive may spend. Directories carry no payload, so
+ * they never count against `maxFiles` and their number is otherwise unbounded — but a page bundle is
+ * a page, and 64 blocks is 32 KB of slack on a 25 MB ceiling, which costs nothing and covers any
+ * tree a real page has.
+ */
+const TAR_DIR_ALLOWANCE = 64;
+
+/**
+ * The byte cap the bundle's `docker cp` stream is aborted at: the artifact ceiling plus the tar's
+ * FRAMING, which is not free. Each member costs a 512-byte header AND up to 511 bytes of padding out
+ * to the next block boundary; the archive ends in two zero blocks; and `docker cp` leads with a
+ * directory entry for the copied root, plus one for every subdirectory under it.
+ *
+ * Budgeting only one header per file (the first shape of this) refused a legitimate bundle sitting
+ * just under the ceiling — the padding of 40 members alone is up to ~20 KB — with "larger than the
+ * 25 MB artifact limit", a refusal the post-walk sum below would never have made. The cap is a heap
+ * bound, not the size rule: the real ceiling is `total > maxBytes` over the walked members.
+ */
+export function bundleTarStreamCap(maxBytes: number, maxFiles: number): number {
+  const trailerBlocks = 2;
+  // One header block plus one block of padding slack per member.
+  const perFileBlocks = 2 * Math.max(0, maxFiles);
+  return (
+    maxBytes + TAR_BLOCK * (trailerBlocks + perFileBlocks + TAR_DIR_ALLOWANCE)
+  );
+}
+
 /** MB, for the refusal copy — the caps are bytes, the messages are human. */
 function megabytes(bytes: number): number {
   return Math.floor(bytes / (1024 * 1024));
@@ -373,7 +401,7 @@ export async function copyArtifactBundleFromInstance(
   if (!real.ok) return { ok: false, error: real.error };
   const result = await stream(
     ["cp", `${container}:${real.path}`, "-"],
-    input.maxBytes + TAR_BLOCK * (2 + input.maxFiles),
+    bundleTarStreamCap(input.maxBytes, input.maxFiles),
   );
   if (!result.ok) {
     if ("overflow" in result) {

@@ -166,7 +166,7 @@
       "name": "Publish Artifact",
       "version": "0.2.0",
       "description": "Publish something the agent produced into the Front of House conversation, where it renders as a card the user can see: an image (screenshot, chart, diagram) or a static HTML page (a single file, or a directory of index.html plus its css/js/image siblings). harnesst copies the files out of the agent's home directory and serves them back behind the user's own sign-in — pages inside a sandboxed preview panel.",
-      "hash": "e404520826edd75e8584f62ddf4efd5f45787d43"
+      "hash": "9e0b87539bd4e05e621b9c6be446b718709e83d6"
     }
   ]
 }

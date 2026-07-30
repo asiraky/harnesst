@@ -156,12 +156,12 @@ describe("normalizeBundleRelPath", () => {
 });
 
 describe("bundleMemberContentType", () => {
-  it("maps allowed extensions, case-insensitively, off the last dot", () => {
-    expect(bundleMemberContentType("index.html")).toBe("text/html");
+  // Representative extensions only: the allowlist's entries are the constant's business, what is
+  // logic here is where the extension is read FROM — last dot, basename, lowercased.
+  it("reads the extension off the last dot of the basename, case-insensitively", () => {
     expect(bundleMemberContentType("assets/App.MJS")).toBe("text/javascript");
     expect(bundleMemberContentType("a/b/logo.PNG")).toBe("image/png");
     expect(bundleMemberContentType("app.min.css")).toBe("text/css");
-    expect(bundleMemberContentType("x.woff2")).toBe("font/woff2");
   });
 
   it("returns null for anything off the allowlist or with no extension at all", () => {

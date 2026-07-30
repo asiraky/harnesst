@@ -10,6 +10,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  bundleTarStreamCap,
   copyArtifactBundleFromInstance,
   copyArtifactFromInstance,
   filesInTar,
@@ -255,6 +256,30 @@ describe("filesInTar", () => {
       ok: false,
       reason: "malformed",
     });
+  });
+});
+
+describe("bundleTarStreamCap", () => {
+  it("admits the worst-case archive of a bundle that sits exactly on the byte ceiling", () => {
+    const maxBytes = 25 * 1024 * 1024;
+    const maxFiles = 40;
+    // The archive a legal bundle can be at its largest: every member one byte over a block boundary
+    // (so each pays ~511 bytes of padding), the summed member bytes still under the ceiling that the
+    // post-walk check enforces, plus a root directory entry, a nested tree, and the zero trailer.
+    // Budgeting one header per file and nothing else refused exactly this shape as "too large".
+    const size = maxBytes / maxFiles - TAR_BLOCK + 1;
+    const padded = Math.ceil(size / TAR_BLOCK) * TAR_BLOCK;
+    const archive =
+      maxFiles * (TAR_BLOCK + padded) + TAR_BLOCK * 9 + TAR_BLOCK * 2;
+
+    expect(size * maxFiles).toBeLessThanOrEqual(maxBytes);
+    expect(archive).toBeLessThanOrEqual(bundleTarStreamCap(maxBytes, maxFiles));
+  });
+
+  it("still caps the stream at a bounded multiple of the byte ceiling", () => {
+    const cap = bundleTarStreamCap(1024 * 1024, 40);
+    expect(cap).toBeGreaterThan(1024 * 1024);
+    expect(cap).toBeLessThan(2 * 1024 * 1024);
   });
 });
 

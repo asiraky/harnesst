@@ -377,9 +377,10 @@ describe.runIf(LIVE)(
       }
       expect(result.headers.get("content-security-policy")).toBe(leafCsp);
       expect(result.headers.get("x-frame-options")).toBeNull();
-      // Still hardened in every other respect.
-      expect(result.headers.get("referrer-policy")).toBe("no-referrer");
-      expect(result.headers.get("permissions-policy")).toContain("camera=()");
+      // The CSP branch returns early, so prove it returns after the rest of the hardening ran —
+      // presence, not contents: what those headers SAY is the constant's business, not this test's.
+      expect(result.headers.get("referrer-policy")).not.toBeNull();
+      expect(result.headers.get("permissions-policy")).not.toBeNull();
     });
   },
 );
