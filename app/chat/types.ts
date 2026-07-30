@@ -56,20 +56,34 @@ export interface ChatInputAnswer {
 }
 
 /**
- * An artifact the agent published (issue #290) — an image copied out of its home volume at publish
- * time and served back by harnesst. `url` is ALWAYS a harnesst app path minted from the row id;
- * an agent-supplied URL never reaches this shape, which is what lets the card render an `<img>`
- * while `MarkdownImage` still refuses to load anything the agent wrote in prose.
+ * An artifact the agent published (issues #290, #291) — an image, or a static HTML page, copied out
+ * of its home volume at publish time and served back by harnesst. `url` is ALWAYS a harnesst app
+ * path minted from the row id; an agent-supplied URL never reaches this shape, which is what lets
+ * the card render an `<img>` while `MarkdownImage` still refuses to load anything the agent wrote
+ * in prose.
  */
 export interface ChatArtifact {
   id: string;
   /** File name as the agent published it. */
   name: string;
   title: string | null;
+  /** `image` renders in the card; `html` opens in the sandboxed preview panel (#291). */
+  kind: "image" | "html";
   contentType: string;
   byteSize: number;
-  /** Same-origin, cookie-authenticated app path serving the bytes. */
-  url: string;
+  /**
+   * Same-origin, cookie-authenticated app path serving the bytes — null for an `html` bundle, which
+   * has no stable URL at all: its bytes are reachable only through a short-lived token the app mints
+   * when the user opens the card, so there is nothing safe to bake into transcript data. Scoped to
+   * the latest VERSION (#292), so it stays immutably cacheable across republishes.
+   */
+  url: string | null;
+  /**
+   * Which version the card is showing (#292). Republishing a name updates this card in place, so
+   * anything above 1 is the card's "updated" affordance — the transcript stays quiet and the
+   * agent's own reply is the narrative.
+   */
+  version: number;
 }
 
 export interface ChatEntry {

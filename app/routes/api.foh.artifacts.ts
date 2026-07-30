@@ -1,5 +1,5 @@
 /**
- * Artifact publish endpoint (#290). The `publish-artifact` tool POSTs here with
+ * Artifact publish endpoint (#290, #291). The `publish-artifact` tool POSTs here with
  * `Authorization: Bearer <HARNESST_TEAM_TOKEN>` and harnesst copies the named file out of the
  * agent's home volume into its own store. Transport shell only — the same division as
  * `routes/api.foh.park.ts`: the token authenticates the CALLER DEPLOYMENT and nothing else, a bad

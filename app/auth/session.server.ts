@@ -193,6 +193,40 @@ function appendRefreshHeaders(response: Response, refreshHeaders?: Headers) {
   }
 }
 
+/**
+ * Powerful browser features nothing in harnesst uses, denied app-wide (issue #291). Composition is
+ * an intersection and disabling is one-way — a document can never re-enable what its parent turned
+ * off — so this header is what makes the artifact preview's own `allow="camera 'none'; …"` a floor
+ * rather than the only line of defence. Unknown feature names are ignored by browsers, so listing
+ * generously costs nothing.
+ */
+const PERMISSIONS_POLICY = [
+  "accelerometer=()",
+  "ambient-light-sensor=()",
+  "autoplay=()",
+  "battery=()",
+  "bluetooth=()",
+  "camera=()",
+  "display-capture=()",
+  "document-domain=()",
+  "encrypted-media=()",
+  "gamepad=()",
+  "geolocation=()",
+  "gyroscope=()",
+  "hid=()",
+  "idle-detection=()",
+  "local-fonts=()",
+  "magnetometer=()",
+  "microphone=()",
+  "midi=()",
+  "payment=()",
+  "picture-in-picture=()",
+  "screen-wake-lock=()",
+  "serial=()",
+  "usb=()",
+  "xr-spatial-tracking=()",
+].join(", ");
+
 function hardenDynamicResponse(response: Response): Response {
   // Dynamic routes can serialize users or one-time auth credentials. Default them to private,
   // non-cacheable responses while preserving an explicit policy from a safe leaf route (for
@@ -201,6 +235,20 @@ function hardenDynamicResponse(response: Response): Response {
     response.headers.set("Cache-Control", "private, no-store");
   }
   response.headers.set("Referrer-Policy", "no-referrer");
+  response.headers.set("Permissions-Policy", PERMISSIONS_POLICY);
+  // A leaf route that set its OWN Content-Security-Policy keeps it, on the same principle as
+  // Cache-Control above. This exists for one caller — the sandboxed artifact preview (#291), whose
+  // whole safety story is a header set (`sandbox allow-scripts; default-src 'none'; …
+  // frame-ancestors <app-origin>`) that an unconditional `set` here would erase.
+  //
+  // X-Frame-Options goes with it, and must: XFO has no `frame-ancestors <origin>` equivalent (the
+  // legacy `ALLOW-FROM` is dead in every current browser), so leaving `DENY` on would refuse the
+  // preview iframe outright. The route's own `frame-ancestors` is the stricter replacement — it
+  // names one origin where XFO could only say "nobody" or "same site".
+  if (response.headers.has("Content-Security-Policy")) {
+    response.headers.delete("X-Frame-Options");
+    return response;
+  }
   response.headers.set("Content-Security-Policy", "frame-ancestors 'none'");
   response.headers.set("X-Frame-Options", "DENY");
   return response;

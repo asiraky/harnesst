@@ -349,5 +349,38 @@ describe.runIf(LIVE)(
       );
       expect(result.headers.get("x-frame-options")).toBe("DENY");
     });
+
+    // The one route that owns its own CSP: the sandboxed artifact preview (#291), whose entire
+    // safety story is a header set. Clobbering it would serve agent-authored HTML unsandboxed, and
+    // leaving X-Frame-Options: DENY on would stop the preview iframe from loading at all — XFO has
+    // no `frame-ancestors <origin>` equivalent, so the route's CSP has to replace it, not join it.
+    it("leaves a leaf route's own Content-Security-Policy — and its X-Frame-Options — alone", async () => {
+      const { betterAuthSessionMiddleware } =
+        await import("~/auth/session.server");
+      const leafCsp = `sandbox allow-scripts; default-src 'none'; frame-ancestors ${ORIGIN}`;
+      const request = new Request(`${ORIGIN}/artifacts/preview/tok/art_1/index.html`);
+      const context = new RouterContextProvider();
+      const result = await betterAuthSessionMiddleware(
+        middlewareArgs(request, context),
+        async () =>
+          new Response("<html></html>", {
+            headers: {
+              "Content-Security-Policy": leafCsp,
+              "Cache-Control": "private, no-store",
+            },
+          }),
+      );
+
+      expect(result).toBeInstanceOf(Response);
+      if (!(result instanceof Response)) {
+        throw new Error("Session middleware did not return a response.");
+      }
+      expect(result.headers.get("content-security-policy")).toBe(leafCsp);
+      expect(result.headers.get("x-frame-options")).toBeNull();
+      // The CSP branch returns early, so prove it returns after the rest of the hardening ran —
+      // presence, not contents: what those headers SAY is the constant's business, not this test's.
+      expect(result.headers.get("referrer-policy")).not.toBeNull();
+      expect(result.headers.get("permissions-policy")).not.toBeNull();
+    });
   },
 );

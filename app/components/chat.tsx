@@ -21,6 +21,7 @@ import {
   ChevronRight,
   CircleHelp,
   CornerDownLeft,
+  FileCode2,
   Image as ImageIcon,
   Loader2,
   ShieldAlert,
@@ -643,35 +644,87 @@ function OptionRow({
 }
 
 /**
- * A published artifact (#290) as a card under the turn that produced it: the image itself, then a
- * quiet caption line with the agent's title (or the file name) and the size.
+ * A published artifact (#290, #291) as a card under the turn that produced it, with a quiet caption
+ * line carrying the agent's title (or the file name) and the size.
  *
- * This is the ONE place harnesst loads an image in a transcript, and it is safe for exactly one
- * reason: `artifact.url` is minted by harnesst from a row id, so the browser only ever fetches
- * first-party bytes harnesst already copied and sniffed. `MarkdownImage` still refuses every
- * `<img>` the agent writes in prose — an agent-supplied src is a tracking pixel or a browser-side
- * GET against any host it can reach, and nothing here relaxes that.
+ * An IMAGE renders itself. This is the ONE place harnesst loads an image in a transcript, and it is
+ * safe for exactly one reason: `artifact.url` is minted by harnesst from a row id, so the browser
+ * only ever fetches first-party bytes harnesst already copied and sniffed. `MarkdownImage` still
+ * refuses every `<img>` the agent writes in prose — an agent-supplied src is a tracking pixel or a
+ * browser-side GET against any host it can reach, and nothing here relaxes that.
  *
- * The card links to the same URL so a full-size look (or a download, for SVG) is one click away.
+ * An HTML page does NOT render itself: it has no URL in transcript data at all (a bundle is reached
+ * only through a token the app mints on demand), so the card is a button that asks the page to open
+ * the preview panel. `onOpen` absent means no panel is available on this surface — the playground
+ * reuses these pieces — and the card then simply says what was published.
  */
-export function ArtifactCard({ artifact }: { artifact: ChatArtifact }) {
+export function ArtifactCard({
+  artifact,
+  onOpen,
+}: {
+  artifact: ChatArtifact;
+  /** Opens the sandboxed preview panel. Only meaningful for `kind: "html"`. */
+  onOpen?: (artifact: ChatArtifact) => void;
+}) {
   const label = artifact.title?.trim() || artifact.name;
+  const caption = (
+    <figcaption className="flex items-center gap-2 border-t border-border/60 px-3 py-2 font-mono text-[11px] text-muted-foreground/70">
+      {artifact.kind === "html" ? (
+        <FileCode2 className="size-3.5 shrink-0" aria-hidden />
+      ) : (
+        <ImageIcon className="size-3.5 shrink-0" aria-hidden />
+      )}
+      <span className="min-w-0 flex-1 truncate">{label}</span>
+      {/* The whole "it was republished" signal (#292): the card updated in place, so a version
+          badge is all the transcript needs to say — no second card, no new event. */}
+      {artifact.version > 1 && (
+        <span
+          className="shrink-0 rounded bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground"
+          title={`Updated — version ${artifact.version}`}
+        >
+          v{artifact.version}
+        </span>
+      )}
+      <span className="shrink-0">{formatBytes(artifact.byteSize)}</span>
+    </figcaption>
+  );
+
+  if (artifact.kind === "html") {
+    return (
+      <figure className="w-fit max-w-[85%] overflow-hidden rounded-xl border border-border bg-card shadow-sm">
+        <button
+          type="button"
+          onClick={onOpen ? () => onOpen(artifact) : undefined}
+          disabled={!onOpen}
+          className="flex w-full items-center gap-3 px-4 py-3 text-left enabled:hover:bg-muted/50 disabled:cursor-default"
+        >
+          <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
+            <FileCode2 className="size-4.5" aria-hidden />
+          </span>
+          <span className="min-w-0">
+            <span className="block truncate text-sm font-medium">{label}</span>
+            <span className="block text-xs text-muted-foreground">
+              {onOpen ? "Open preview" : "Published page"}
+            </span>
+          </span>
+        </button>
+        {caption}
+      </figure>
+    );
+  }
+
   return (
     <figure className="w-fit max-w-[85%] overflow-hidden rounded-xl border border-border bg-card shadow-sm">
-      <a href={artifact.url} target="_blank" rel="noreferrer">
+      <a href={artifact.url ?? undefined} target="_blank" rel="noreferrer">
         <img
-          src={artifact.url}
+          src={artifact.url ?? undefined}
           alt={label}
           // Bounded height so a tall screenshot doesn't push the rest of the transcript out of
           // view; the transcript pins to the bottom as images load.
           className="block max-h-96 max-w-full object-contain"
         />
       </a>
-      <figcaption className="flex items-center gap-2 border-t border-border/60 px-3 py-2 font-mono text-[11px] text-muted-foreground/70">
-        <ImageIcon className="size-3.5 shrink-0" aria-hidden />
-        <span className="min-w-0 flex-1 truncate">{label}</span>
-        <span className="shrink-0">{formatBytes(artifact.byteSize)}</span>
-      </figcaption>
+      {caption}
     </figure>
   );
 }

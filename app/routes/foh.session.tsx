@@ -39,11 +39,13 @@ import {
   StepsCard,
   UserBubble,
 } from "~/components/chat";
+import { PreviewPanel } from "~/components/artifact-preview-panel";
 import { SessionStatusDot } from "~/components/foh/session-list";
 import { TurnError } from "~/components/turn-error";
 import { Button } from "~/components/ui/button";
 import { sessionLoader } from "~/auth/session.server";
 import { newestTurnEntry } from "~/foh/artifact-entries";
+import { useArtifactPreview } from "~/foh/use-artifact-preview";
 import { requireFohProject } from "~/foh/guard.server";
 import { channelLabelFor } from "~/foh/channel-resume";
 import { openInboxQuestion, resolveInboxForSession } from "~/foh/inbox.server";
@@ -387,6 +389,9 @@ export default function FohSession({ loaderData }: Route.ComponentProps) {
 
   const [live, setLive] = useState<LiveTurn | null>(null);
   const [sendError, setSendError] = useState<string | null>(null);
+  // Panel state is LOCAL, never loader data: this page revalidates every 2s while a turn runs (and
+  // the shell every 10s), and a preview driven by loader data would be torn down on each poll.
+  const preview = useArtifactPreview({ projectId, sessionId });
   const streamAbortRef = useRef<AbortController | null>(null);
   const stopRequestedRef = useRef(false);
   // The session on screen, readable from inside a long-lived send() closure (issue #221
@@ -474,7 +479,9 @@ export default function FohSession({ loaderData }: Route.ComponentProps) {
   // Only a request that ACCEPTS typed input turns the composer into the answer box — an
   // options-only approval is answered by its buttons, never by free text.
   const typedAnswerRequest =
-    pendingRequest && freeformAnswerable(pendingRequest) ? pendingRequest : null;
+    pendingRequest && freeformAnswerable(pendingRequest)
+      ? pendingRequest
+      : null;
 
   const send = useCallback(
     async (message: string, answer?: ChatInputAnswer) => {
@@ -572,9 +579,11 @@ export default function FohSession({ loaderData }: Route.ComponentProps) {
         if (isCurrent()) await revalidator.revalidate();
         // Only the send that owns the controller may clear the ref — a newer send (or the
         // navigation effect) may have replaced it with its own.
-        if (streamAbortRef.current === controller) streamAbortRef.current = null;
+        if (streamAbortRef.current === controller)
+          streamAbortRef.current = null;
       } catch (error) {
-        if (streamAbortRef.current === controller) streamAbortRef.current = null;
+        if (streamAbortRef.current === controller)
+          streamAbortRef.current = null;
         // A navigation-triggered abort lands here for the stale session — report nothing.
         if (!isCurrent()) return;
         if (stopRequestedRef.current) {
@@ -663,154 +672,202 @@ export default function FohSession({ loaderData }: Route.ComponentProps) {
   );
 
   return (
-    <section className="flex min-w-0 flex-1 flex-col">
-      <header className="flex h-14 shrink-0 items-center gap-2 border-b px-4">
-        <Button
-          asChild
-          variant="ghost"
-          size="sm"
-          className="-ml-2 shrink-0 gap-0.5 px-1.5 md:hidden"
-        >
-          <Link to={`/t/${projectId}/${agentId}`} aria-label="Back to sessions">
-            <ChevronLeft className="size-4" aria-hidden />
-            Sessions
-          </Link>
-        </Button>
-        <SessionStatusDot status={sessionFohStatus} />
-        <h1 className="min-w-0 flex-1 truncate text-sm font-semibold">
-          {sessionTitle}
-        </h1>
-        {openedByAgent && (
-          // Agent names run to 64 chars: the chip has to give way on a phone rather
-          // than shove the title to zero width and the status off-screen.
-          <span className="min-w-0 max-w-[45%] truncate rounded-full bg-muted px-2 py-0.5 text-[11px] text-muted-foreground">
-            opened by {agentName}
-          </span>
-        )}
-        {channelLabel && (
-          // Channel origin (#288 3b): the conversation began on the channel's thread. Free
-          // text is fine — it moves the conversation here — so the chip only names where
-          // it came from.
-          <span className="min-w-0 max-w-[45%] truncate rounded-full bg-muted px-2 py-0.5 text-[11px] text-muted-foreground">
-            from {channelLabel}
-          </span>
-        )}
-        <span className="shrink-0 text-xs text-muted-foreground">
-          {statusLabel(sessionFohStatus)}
-        </span>
-      </header>
-
-      <ChatTranscript
-        dep={`${shownEntries.length}:${shownEntries.at(-1)?.text.length ?? 0}:${shownEntries.at(-1)?.steps?.length ?? 0}:${sessionStatus}:${visibleLive ? visibleLive.text.length + visibleLive.steps.length + visibleLive.inputRequests.length : 0}`}
-        forceScrollDep={visibleLive?.userText}
-        lead={
-          <>
-            {historyError && (
-              <p className="mb-4 rounded-md border border-destructive/40 bg-destructive/5 px-3 py-2 text-sm text-destructive">
-                {historyError}
-              </p>
-            )}
-            {sendError && (
-              <p className="mb-4 rounded-md border border-destructive/40 bg-destructive/5 px-3 py-2 text-sm text-destructive">
-                {sendError}
-              </p>
-            )}
-          </>
-        }
-      >
-        {shownEntries.length === 0 && !visibleLive && !remoteBusy && (
-          <p className="py-8 text-center text-sm text-muted-foreground">
-            Say something to {agentName} — the conversation keeps its context
-            across turns.
-          </p>
-        )}
-        {shownEntries.map((e, i) =>
-          e.role === "user" ? (
-            <UserBubble key={e.id} text={e.text} />
-          ) : e.role === "artifact" ? (
-            // A published image (#290) is not the reply — it sits under the turn that made it as
-            // its own card, and carries no answer/retry affordances.
-            e.artifact && <ArtifactCard key={e.id} artifact={e.artifact} />
-          ) : (
-            <AgentEntry
-              key={e.id}
-              entry={e}
-              // Only the newest turn's pending requests are answerable.
-              onAnswer={
-                i === newestTurn.index && !visibleLive ? send : undefined
-              }
-              onRetry={
-                i === newestTurn.index && !visibleLive && e.errorRetryable
-                  ? () => {
-                      const userText = [...shownEntries.slice(0, i)]
-                        .reverse()
-                        .find((x) => x.role === "user")?.text;
-                      if (userText) send(userText);
-                    }
-                  : undefined
-              }
-              busy={busy}
-              running={replayingRunningSession && i === newestTurn.index}
-            />
-          ),
-        )}
-        {replayingRunningSession && newestTurn.entry?.role !== "assistant" && (
-            <StepsCard
-              steps={[]}
-              idPrefix="running-session"
-              activity="Still working…"
-            />
+    // A fragment, not a wrapper: this route's siblings flatten into the shell's flex row (see
+    // foh.agent.tsx), so the preview pane below becomes a real fourth pane at xl rather than
+    // something layered over the conversation.
+    <>
+      <section className="flex min-w-0 flex-1 flex-col">
+        <header className="flex h-14 shrink-0 items-center gap-2 border-b px-4">
+          <Button
+            asChild
+            variant="ghost"
+            size="sm"
+            className="-ml-2 shrink-0 gap-0.5 px-1.5 md:hidden"
+          >
+            <Link
+              to={`/t/${projectId}/${agentId}`}
+              aria-label="Back to sessions"
+            >
+              <ChevronLeft className="size-4" aria-hidden />
+              Sessions
+            </Link>
+          </Button>
+          <SessionStatusDot status={sessionFohStatus} />
+          <h1 className="min-w-0 flex-1 truncate text-sm font-semibold">
+            {sessionTitle}
+          </h1>
+          {openedByAgent && (
+            // Agent names run to 64 chars: the chip has to give way on a phone rather
+            // than shove the title to zero width and the status off-screen.
+            <span className="min-w-0 max-w-[45%] truncate rounded-full bg-muted px-2 py-0.5 text-[11px] text-muted-foreground">
+              opened by {agentName}
+            </span>
           )}
-        {sessionStatus === "failed" &&
-          !visibleLive &&
-          newestTurn.entry?.role === "user" && (
-            <AssistantBubble>
-              <p className="text-sm text-muted-foreground">
-                This turn was interrupted before it finished. Send the message
-                again to retry.
-              </p>
-            </AssistantBubble>
+          {channelLabel && (
+            // Channel origin (#288 3b): the conversation began on the channel's thread. Free
+            // text is fine — it moves the conversation here — so the chip only names where
+            // it came from.
+            <span className="min-w-0 max-w-[45%] truncate rounded-full bg-muted px-2 py-0.5 text-[11px] text-muted-foreground">
+              from {channelLabel}
+            </span>
           )}
-        {visibleLive && (
-          <>
-            <UserBubble text={visibleLive.userText} />
-            <LiveBubble
-              live={visibleLive}
-              onRetry={() => send(visibleLive.userText)}
-              busy={busy}
-            />
-          </>
-        )}
-      </ChatTranscript>
+          <span className="shrink-0 text-xs text-muted-foreground">
+            {statusLabel(sessionFohStatus)}
+          </span>
+        </header>
 
-      <div className="mx-auto w-full max-w-5xl px-4 pb-4 pt-3 sm:px-6">
-        {!online && (
-          <p className="mb-2 pl-1 text-xs text-muted-foreground">
-            {agentName} is asleep — your next message wakes them (this can take
-            a couple of minutes).
-          </p>
-        )}
-        {channelLabel && typedAnswerRequest && !busy && (
-          <p className="mb-2 pl-1 text-xs text-muted-foreground">
-            Your reply answers {agentName}&rsquo;s question above and goes back
-            to the {channelLabel} thread.
-          </p>
-        )}
-        <ChatComposer
-          placeholder={
-            // A pending channel ask correlates typed text to it (issue #282); with nothing
-            // pending, free text succeeds the conversation here (#288 3b) — plain composer.
-            channelLabel && typedAnswerRequest
-              ? `Answer ${agentName}’s question…`
-              : `Message ${agentName}…`
+        <ChatTranscript
+          dep={`${shownEntries.length}:${shownEntries.at(-1)?.text.length ?? 0}:${shownEntries.at(-1)?.steps?.length ?? 0}:${sessionStatus}:${visibleLive ? visibleLive.text.length + visibleLive.steps.length + visibleLive.inputRequests.length : 0}`}
+          forceScrollDep={visibleLive?.userText}
+          lead={
+            <>
+              {historyError && (
+                <p className="mb-4 rounded-md border border-destructive/40 bg-destructive/5 px-3 py-2 text-sm text-destructive">
+                  {historyError}
+                </p>
+              )}
+              {sendError && (
+                <p className="mb-4 rounded-md border border-destructive/40 bg-destructive/5 px-3 py-2 text-sm text-destructive">
+                  {sendError}
+                </p>
+              )}
+            </>
           }
-          busy={busy}
-          onSend={send}
-          controls={composerControls}
+        >
+          {shownEntries.length === 0 && !visibleLive && !remoteBusy && (
+            <p className="py-8 text-center text-sm text-muted-foreground">
+              Say something to {agentName} — the conversation keeps its context
+              across turns.
+            </p>
+          )}
+          {shownEntries.map((e, i) =>
+            e.role === "user" ? (
+              <UserBubble key={e.id} text={e.text} />
+            ) : e.role === "artifact" ? (
+              // A published image (#290) or page (#291) is not the reply — it sits under the turn
+              // that made it as its own card, and carries no answer/retry affordances. A page card
+              // opens the sandboxed preview panel; an image card ignores `onOpen`.
+              e.artifact && (
+                <ArtifactCard
+                  key={e.id}
+                  artifact={e.artifact}
+                  onOpen={preview.open}
+                />
+              )
+            ) : (
+              <AgentEntry
+                key={e.id}
+                entry={e}
+                // Only the newest turn's pending requests are answerable.
+                onAnswer={
+                  i === newestTurn.index && !visibleLive ? send : undefined
+                }
+                onRetry={
+                  i === newestTurn.index && !visibleLive && e.errorRetryable
+                    ? () => {
+                        const userText = [...shownEntries.slice(0, i)]
+                          .reverse()
+                          .find((x) => x.role === "user")?.text;
+                        if (userText) send(userText);
+                      }
+                    : undefined
+                }
+                busy={busy}
+                running={replayingRunningSession && i === newestTurn.index}
+              />
+            ),
+          )}
+          {replayingRunningSession &&
+            newestTurn.entry?.role !== "assistant" && (
+              <StepsCard
+                steps={[]}
+                idPrefix="running-session"
+                activity="Still working…"
+              />
+            )}
+          {sessionStatus === "failed" &&
+            !visibleLive &&
+            newestTurn.entry?.role === "user" && (
+              <AssistantBubble>
+                <p className="text-sm text-muted-foreground">
+                  This turn was interrupted before it finished. Send the message
+                  again to retry.
+                </p>
+              </AssistantBubble>
+            )}
+          {visibleLive && (
+            <>
+              <UserBubble text={visibleLive.userText} />
+              <LiveBubble
+                live={visibleLive}
+                onRetry={() => send(visibleLive.userText)}
+                busy={busy}
+              />
+            </>
+          )}
+        </ChatTranscript>
+
+        <div className="mx-auto w-full max-w-5xl px-4 pb-4 pt-3 sm:px-6">
+          {!online && (
+            <p className="mb-2 pl-1 text-xs text-muted-foreground">
+              {agentName} is asleep — your next message wakes them (this can
+              take a couple of minutes).
+            </p>
+          )}
+          {channelLabel && typedAnswerRequest && !busy && (
+            <p className="mb-2 pl-1 text-xs text-muted-foreground">
+              Your reply answers {agentName}&rsquo;s question above and goes
+              back to the {channelLabel} thread.
+            </p>
+          )}
+          <ChatComposer
+            placeholder={
+              // A pending channel ask correlates typed text to it (issue #282); with nothing
+              // pending, free text succeeds the conversation here (#288 3b) — plain composer.
+              channelLabel && typedAnswerRequest
+                ? `Answer ${agentName}’s question…`
+                : `Message ${agentName}…`
+            }
+            busy={busy}
+            onSend={send}
+            controls={composerControls}
+          />
+        </div>
+      </section>
+
+      {preview.artifact && (
+        <PreviewPanel
+          title={preview.artifact.title?.trim() || preview.artifact.name}
+          subtitle={
+            preview.artifact.title?.trim() ? preview.artifact.name : null
+          }
+          src={preview.src}
+          error={preview.error}
+          versions={preview.versions.map((version) => ({
+            id: version.id,
+            label: `v${version.version} · ${previewVersionTime(version.createdAt)}`,
+          }))}
+          selectedVersionId={preview.selectedVersionId}
+          onSelectVersion={preview.selectVersion}
+          onClose={preview.close}
         />
-      </div>
-    </section>
+      )}
+    </>
   );
+}
+
+/**
+ * When a version was published, for the picker. A time for today's, a date for anything older —
+ * a refine loop makes several versions inside one conversation, so "14:32" is what distinguishes
+ * them, while a card reopened next week needs the day.
+ */
+function previewVersionTime(iso: string): string {
+  const at = new Date(iso);
+  if (Number.isNaN(at.getTime())) return "";
+  const today = new Date();
+  return at.toDateString() === today.toDateString()
+    ? at.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+    : at.toLocaleDateString([], { month: "short", day: "numeric" });
 }
 
 function statusLabel(status: "working" | "needs_you" | "done" | "error") {
@@ -854,12 +911,18 @@ function reduceLive(prev: LiveTurn, evt: StreamEvent): LiveTurn {
     case "action":
       return {
         ...prev,
-        activity: evt.summary ? `${evt.toolName}: ${evt.summary}` : evt.toolName,
+        activity: evt.summary
+          ? `${evt.toolName}: ${evt.summary}`
+          : evt.toolName,
       };
     case "text":
       return { ...prev, text: evt.text };
     case "step":
-      return { ...prev, steps: [...prev.steps, evt.step], activity: "Thinking…" };
+      return {
+        ...prev,
+        steps: [...prev.steps, evt.step],
+        activity: "Thinking…",
+      };
     case "input":
       return {
         ...prev,
