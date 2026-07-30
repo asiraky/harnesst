@@ -147,11 +147,19 @@ export function PublishControl() {
 
   if (!projectId || !data || !data.connected) return null;
   const state = publishControlState(data);
+  // Count alone is not a change-set identity: updating an existing draft can replace its content
+  // without adding a row. Include each draft's save timestamp so a new save revives a nudge that
+  // was dismissed for the previous revision, even when the count stays the same.
+  const changeRevision = data.groups
+    .flatMap((group) => group.files.map((file) => `${file.path}:${file.savedAt}`))
+    .sort()
+    .join("|");
   return (
     <>
       <PublishNudgeBanner
         state={state}
         projectId={projectId}
+        changeRevision={changeRevision}
         onOpen={() => handleOpenChange(true)}
       />
       <PublishPanel
@@ -217,8 +225,8 @@ function nudgeDismissKey(projectId: string): string {
 }
 
 /** The signature a dismissal is remembered against — changes when the nudge's substance changes. */
-function nudgeSignature(state: PublishControlState): string {
-  return state.kind === "ready" ? `ready:${state.count}` : state.kind;
+function nudgeSignature(state: PublishControlState, changeRevision: string): string {
+  return state.kind === "ready" ? `ready:${state.count}:${changeRevision}` : state.kind;
 }
 
 /**
@@ -228,13 +236,15 @@ function nudgeSignature(state: PublishControlState): string {
 export function PublishNudgeBanner({
   state,
   projectId,
+  changeRevision,
   onOpen,
 }: {
   state: PublishControlState;
   projectId: string;
+  changeRevision: string;
   onOpen: () => void;
 }) {
-  const signature = nudgeSignature(state);
+  const signature = nudgeSignature(state, changeRevision);
   const [dismissed, setDismissed] = useState<string | null>(() => {
     if (typeof sessionStorage === "undefined") return null;
     return sessionStorage.getItem(nudgeDismissKey(projectId));

@@ -7,7 +7,7 @@
  */
 import { renderToString } from "react-dom/server";
 import { createRoutesStub } from "react-router";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   PipelineStepList,
@@ -270,10 +270,16 @@ describe("publishDisabledReason", () => {
 
 describe("PublishNudgeBanner", () => {
   const open = () => {};
-  const render = (state: PublishControlState) =>
+  const render = (state: PublishControlState, changeRevision = "revision-1") =>
     renderInRouter(
-      <PublishNudgeBanner state={state} projectId="p1" onOpen={open} />,
+      <PublishNudgeBanner
+        state={state}
+        projectId="p1"
+        changeRevision={changeRevision}
+        onOpen={open}
+      />,
     );
+  afterEach(() => vi.unstubAllGlobals());
 
   it("nudges about saved changes, with the count and a dismiss", () => {
     const html = render({ kind: "ready", count: 3 });
@@ -295,6 +301,17 @@ describe("PublishNudgeBanner", () => {
     const html = render({ kind: "never-deployed" });
     expect(html).toContain("hasn&#x27;t been deployed yet");
     expect(html).toContain("Publish it →");
+  });
+
+  it("revives a dismissed nudge when saved drafts change without changing count", () => {
+    vi.stubGlobal("sessionStorage", {
+      getItem: () => "ready:3:revision-1",
+      setItem: vi.fn(),
+    });
+    expect(render({ kind: "ready", count: 3 }, "revision-1")).toBe("");
+    expect(render({ kind: "ready", count: 3 }, "revision-2")).toContain(
+      "3 saved changes aren&#x27;t live yet",
+    );
   });
 
   // The banner deliberately covers only the states with no workspace task behind them. A
