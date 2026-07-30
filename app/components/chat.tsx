@@ -6,7 +6,16 @@
  * for a newline) and clears after send. The routes own the data; this owns the
  * conversational feel.
  */
-import { useEffect, useMemo, useRef, type ReactNode } from "react";
+import {
+  createContext,
+  useContext,
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  type ComponentPropsWithoutRef,
+  type ReactNode,
+} from "react";
 import {
   ArrowUp,
   ChevronRight,
@@ -16,6 +25,9 @@ import {
   ShieldAlert,
   Sparkles,
 } from "lucide-react";
+import Markdown, { type Components } from "react-markdown";
+import remarkBreaks from "remark-breaks";
+import remarkGfm from "remark-gfm";
 
 import type {
   ChatInputAnswer,
@@ -130,345 +142,328 @@ export function TurnMeta({
   );
 }
 
-type MarkdownBlock =
-  | { id: string; type: "paragraph"; text: string }
-  | { id: string; type: "heading"; level: 1 | 2 | 3 | 4; text: string }
-  | { id: string; type: "code"; language: string | null; code: string }
-  | { id: string; type: "list"; ordered: boolean; items: MarkdownListItem[] }
-  | { id: string; type: "quote"; text: string }
-  | { id: string; type: "rule" };
-
-type MarkdownListItem = { id: string; text: string };
-
-type InlineToken =
-  | { id: string; type: "text"; text: string }
-  | { id: string; type: "line-break" }
-  | { id: string; type: "code"; text: string }
-  | { id: string; type: "strong"; text: string }
-  | { id: string; type: "emphasis"; text: string }
-  | { id: string; type: "link"; label: string; href: string | null };
+/**
+ * Agent replies are markdown, so they're rendered by a real markdown parser (react-markdown +
+ * remark-gfm) rather than a hand-rolled tokenizer: GFM's literal autolinks are what make the
+ * bare URLs and email addresses agents actually emit clickable, and the parser gets the awkward
+ * link forms (parenthesised URLs, `[label](url "title")`, `<https://…>`) right for free.
+ *
+ * Raw HTML stays unrendered — no `rehype-raw` — so the XSS surface is closed by construction,
+ * and every URL still passes the protocol allowlist below before it becomes an href.
+ */
 
 const SAFE_LINK_PROTOCOLS = new Set(["http:", "https:", "mailto:"]);
 
+type MarkdownNode = {
+  type: string;
+  tagName?: string;
+  value?: string;
+  children?: MarkdownNode[];
+};
+
+/**
+ * Nested containers (`>` and list indentation) are parsed recursively, so a reply nested
+ * thousands deep either blows the stack — a throw during render, which an error boundary can't
+ * contain on the server, so the whole transcript 500s — or takes seconds to parse. An agent reply
+ * is untrusted input, and nothing real nests anywhere near this deep, so past the limit the text
+ * is shown verbatim instead.
+ */
+const MAX_NESTING = 100;
+
 export function MarkdownText({ text }: { text: string }) {
-  const blocks = useMemo(() => parseMarkdownBlocks(text), [text]);
-  return (
-    <div className="space-y-2 break-words">
-      {blocks.map((block) => (
-        <MarkdownBlockView key={block.id} block={block} />
-      ))}
-    </div>
-  );
-}
-
-function parseMarkdownBlocks(markdown: string): MarkdownBlock[] {
-  const lines = markdown.replace(/\r\n?/g, "\n").split("\n");
-  const blocks: MarkdownBlock[] = [];
-  let paragraph: string[] = [];
-  let blockId = 0;
-
-  const nextId = (prefix: string) => `${prefix}-${blockId++}`;
-
-  const flushParagraph = () => {
-    const text = paragraph.join("\n").trim();
-    if (text) blocks.push({ id: nextId("p"), type: "paragraph", text });
-    paragraph = [];
-  };
-
-  for (let i = 0; i < lines.length; i += 1) {
-    const line = lines[i];
-    const trimmed = line.trim();
-
-    if (!trimmed) {
-      flushParagraph();
-      continue;
-    }
-
-    const fence = trimmed.match(/^```([\w-]+)?\s*$/);
-    if (fence) {
-      flushParagraph();
-      const code: string[] = [];
-      i += 1;
-      while (i < lines.length && !lines[i].trim().startsWith("```")) {
-        code.push(lines[i]);
-        i += 1;
-      }
-      blocks.push({
-        id: nextId("code"),
-        type: "code",
-        language: fence[1] ?? null,
-        code: code.join("\n"),
-      });
-      continue;
-    }
-
-    const heading = trimmed.match(/^(#{1,4})\s+(.+)$/);
-    if (heading) {
-      flushParagraph();
-      blocks.push({
-        id: nextId("h"),
-        type: "heading",
-        level: heading[1].length as 1 | 2 | 3 | 4,
-        text: heading[2].trim(),
-      });
-      continue;
-    }
-
-    if (/^([-*_])(?:\s*\1){2,}\s*$/.test(trimmed)) {
-      flushParagraph();
-      blocks.push({ id: nextId("rule"), type: "rule" });
-      continue;
-    }
-
-    const unordered = trimmed.match(/^[-*+]\s+(.+)$/);
-    const ordered = trimmed.match(/^\d+[.)]\s+(.+)$/);
-    if (unordered || ordered) {
-      flushParagraph();
-      const isOrdered = ordered !== null;
-      const items: MarkdownListItem[] = [];
-      while (i < lines.length) {
-        const current = lines[i].trim();
-        const item = isOrdered
-          ? current.match(/^\d+[.)]\s+(.+)$/)
-          : current.match(/^[-*+]\s+(.+)$/);
-        if (!item) break;
-        items.push({ id: nextId("li"), text: item[1] });
-        i += 1;
-      }
-      i -= 1;
-      blocks.push({
-        id: nextId(isOrdered ? "ol" : "ul"),
-        type: "list",
-        ordered: isOrdered,
-        items,
-      });
-      continue;
-    }
-
-    if (trimmed.startsWith(">")) {
-      flushParagraph();
-      const quote: string[] = [];
-      while (i < lines.length) {
-        const current = lines[i].trim();
-        if (!current.startsWith(">")) break;
-        quote.push(current.replace(/^>\s?/, ""));
-        i += 1;
-      }
-      i -= 1;
-      blocks.push({
-        id: nextId("quote"),
-        type: "quote",
-        text: quote.join("\n").trim(),
-      });
-      continue;
-    }
-
-    paragraph.push(line);
-  }
-
-  flushParagraph();
-  return blocks;
-}
-
-function MarkdownBlockView({ block }: { block: MarkdownBlock }) {
-  switch (block.type) {
-    case "heading": {
-      const className =
-        block.level <= 2
-          ? "pt-1 text-base font-semibold leading-snug"
-          : "pt-1 text-sm font-semibold leading-snug";
-      if (block.level === 1)
-        return (
-          <h3 className={className}>
-            <InlineMarkdown text={block.text} idPrefix={block.id} />
-          </h3>
-        );
-      if (block.level === 2)
-        return (
-          <h4 className={className}>
-            <InlineMarkdown text={block.text} idPrefix={block.id} />
-          </h4>
-        );
-      return (
-        <h5 className={className}>
-          <InlineMarkdown text={block.text} idPrefix={block.id} />
-        </h5>
-      );
-    }
-    case "code":
-      return (
-        <pre className="max-w-full overflow-x-auto rounded-lg bg-muted/60 p-3 font-mono text-xs leading-relaxed">
-          <code>{block.code}</code>
-        </pre>
-      );
-    case "list": {
-      const Tag = block.ordered ? "ol" : "ul";
-      return (
-        <Tag
-          className={`${block.ordered ? "list-decimal" : "list-disc"} space-y-1 pl-5 leading-relaxed`}
+  // Footnote ids are page-global, so two replies that both use `[^1]` would emit the same id and
+  // the second one's link would jump to the first one's definition. Scope them to this turn.
+  const instance = useId().replace(/[^a-zA-Z0-9]/g, "");
+  // A live turn re-renders the whole transcript on every streamed token, so keep the element
+  // keyed to its text: settled turns then skip re-parsing while a newer one is still arriving.
+  const rendered = useMemo(
+    () =>
+      nestedTooDeep(text) ? (
+        <p className="leading-relaxed whitespace-pre-wrap">{text}</p>
+      ) : (
+        <Markdown
+          remarkPlugins={REMARK_PLUGINS}
+          rehypePlugins={REHYPE_PLUGINS}
+          remarkRehypeOptions={{ clobberPrefix: `${instance}-` }}
+          urlTransform={markdownUrlTransform}
+          components={MARKDOWN_COMPONENTS}
         >
-          {block.items.map((item) => (
-            <li key={item.id}>
-              <InlineMarkdown text={item.text} idPrefix={item.id} />
-            </li>
-          ))}
-        </Tag>
-      );
-    }
-    case "quote":
-      return (
-        <blockquote className="border-l-2 border-muted-foreground/30 pl-3 text-muted-foreground">
-          <InlineMarkdown text={block.text} idPrefix={block.id} />
-        </blockquote>
-      );
-    case "rule":
-      return <hr className="border-border" />;
-    case "paragraph":
-      return (
-        <p className="whitespace-pre-wrap leading-relaxed">
-          <InlineMarkdown text={block.text} idPrefix={block.id} />
-        </p>
-      );
-  }
-}
-
-function InlineMarkdown({
-  text,
-  idPrefix,
-}: {
-  text: string;
-  idPrefix: string;
-}) {
-  const tokens = useMemo(
-    () => parseInlineMarkdown(text, idPrefix),
-    [idPrefix, text],
+          {text}
+        </Markdown>
+      ),
+    [instance, text],
   );
-  return (
-    <>
-      {tokens.map((token) => (
-        <InlineTokenView key={token.id} token={token} />
-      ))}
-    </>
-  );
+  return <div className="space-y-2 break-words">{rendered}</div>;
 }
 
-function parseInlineMarkdown(text: string, keyPrefix: string): InlineToken[] {
-  const pattern =
-    /(`[^`]+`|\*\*[^*]+\*\*|__[^_]+__|\[[^\]]+\]\([^)]+\)|\*[^*\s][^*]*\*|_[^_\s][^_]*_|\n)/g;
-  const tokens: InlineToken[] = [];
-  let cursor = 0;
-  let part = 0;
+/** Every container the parser recurses into — a `>` marker, a list marker, two columns of
+ * indentation — counted per line, since they all stack on a single line too (`- - - x`). */
+const CONTAINER_MARKER = /(?:[-*+]|\d{1,9}[.)])[ \t]/y;
 
-  const nextId = (prefix: string) => `${keyPrefix}-${prefix}-${part++}`;
-
-  for (const match of text.matchAll(pattern)) {
-    const token = match[0];
-    const start = match.index ?? 0;
-    if (start > cursor) {
-      tokens.push({
-        id: nextId("text"),
-        type: "text",
-        text: text.slice(cursor, start),
-      });
+function nestedTooDeep(markdown: string): boolean {
+  for (const line of markdown.split("\n")) {
+    let depth = 0;
+    let columns = 0;
+    let i = 0;
+    while (i < line.length) {
+      const ch = line[i];
+      if (ch === " ") {
+        columns += 1;
+        i += 1;
+        continue;
+      }
+      if (ch === "\t") {
+        columns += 4;
+        i += 1;
+        continue;
+      }
+      // Indentation only counts within the innermost container, so a marker resets it.
+      if (ch === ">") {
+        depth += 1;
+        columns = 0;
+        i += 1;
+        continue;
+      }
+      CONTAINER_MARKER.lastIndex = i;
+      const marker = CONTAINER_MARKER.exec(line);
+      if (!marker) break;
+      depth += 1;
+      columns = 0;
+      i += marker[0].length;
     }
-
-    if (token === "\n") {
-      tokens.push({ id: nextId("br"), type: "line-break" });
-    } else if (token.startsWith("`")) {
-      tokens.push({
-        id: nextId("code"),
-        type: "code",
-        text: token.slice(1, -1),
-      });
-    } else if (token.startsWith("**") || token.startsWith("__")) {
-      tokens.push({
-        id: nextId("strong"),
-        type: "strong",
-        text: token.slice(2, -2),
-      });
-    } else if (token.startsWith("[")) {
-      tokens.push(parseLinkToken(token, nextId("link")));
-    } else {
-      tokens.push({
-        id: nextId("em"),
-        type: "emphasis",
-        text: token.slice(1, -1),
-      });
-    }
-
-    cursor = start + token.length;
+    if (depth + Math.floor(columns / 2) > MAX_NESTING) return true;
   }
-
-  if (cursor < text.length) {
-    tokens.push({ id: nextId("text"), type: "text", text: text.slice(cursor) });
-  }
-  return tokens;
+  return false;
 }
 
-function InlineTokenView({ token }: { token: InlineToken }) {
-  switch (token.type) {
-    case "text":
-      return <>{token.text}</>;
-    case "line-break":
-      return <br />;
-    case "code":
-      return (
-        <code className="rounded bg-muted px-1 py-0.5 font-mono text-[0.88em]">
-          {token.text}
-        </code>
-      );
-    case "strong":
-      return (
-        <strong>
-          <InlineMarkdown text={token.text} idPrefix={token.id} />
-        </strong>
-      );
-    case "emphasis":
-      return (
-        <em>
-          <InlineMarkdown text={token.text} idPrefix={token.id} />
-        </em>
-      );
-    case "link":
-      return <MarkdownLink token={token} />;
-  }
+/**
+ * Raw HTML isn't rendered, and an unrendered html node would vanish without a trace — but
+ * agents write `<branch-name>` or `Array<string>` in ordinary prose, and the old renderer showed
+ * those verbatim. Turning html nodes into text nodes keeps them visible (React escapes them) and
+ * keeps HTML inert.
+ */
+function remarkHtmlAsText() {
+  return (tree: MarkdownNode) => {
+    const walk = (node: MarkdownNode) => {
+      if (node.type === "html") node.type = "text";
+      for (const child of node.children ?? []) walk(child);
+    };
+    walk(tree);
+  };
 }
 
-function parseLinkToken(token: string, id: string): InlineToken {
-  const match = token.match(/^\[([^\]]+)\]\(([^)]+)\)$/);
-  if (!match) return { id, type: "text", text: token };
-  const label = match[1];
-  const href = safeHref(match[2].trim());
-  return { id, type: "link", label, href };
+/** `remarkBreaks` keeps a single newline a line break, as agents (and the previous renderer)
+ * assume, instead of collapsing it into the surrounding paragraph. */
+const REMARK_PLUGINS = [remarkGfm, remarkBreaks, remarkHtmlAsText];
+
+/**
+ * Every `br` is followed by a source-formatting newline in the generated tree. Normally that's
+ * invisible, but paragraphs keep `whitespace-pre-wrap` (so a reply's aligned plaintext survives,
+ * as it did before), which would render it as a second line break. Drop it.
+ */
+function rehypeDropBreakNewline() {
+  return (tree: MarkdownNode) => {
+    const walk = (node: MarkdownNode) => {
+      const children = node.children ?? [];
+      children.forEach((child, index) => {
+        const next = children[index + 1];
+        if (child.tagName === "br" && next?.type === "text")
+          next.value = next.value?.replace(/^\n/, "");
+        walk(child);
+      });
+    };
+    walk(tree);
+  };
 }
 
-function MarkdownLink({
-  token,
-}: {
-  token: Extract<InlineToken, { type: "link" }>;
-}) {
-  if (!token.href) return <>{token.label}</>;
-  return (
-    <a
-      href={token.href}
-      target={token.href.startsWith("/") ? undefined : "_blank"}
-      rel={token.href.startsWith("/") ? undefined : "noreferrer"}
-      className="font-medium underline underline-offset-4"
-    >
-      <InlineMarkdown text={token.label} idPrefix={token.id} />
-    </a>
-  );
+const REHYPE_PLUGINS = [rehypeDropBreakNewline];
+
+/**
+ * URLs pass through untouched so `MarkdownAnchor` can apply the allowlist itself and still show
+ * the raw target when it rejects one — react-markdown's transform would erase it first. Links and
+ * images are the only URL-bearing output a markdown reply can produce (raw HTML is never
+ * rendered) and both go through that component, so nothing skips the check.
+ */
+function markdownUrlTransform(url: string): string {
+  return url;
 }
 
+/** An app path or same-page fragment stays same-tab; anything else has to parse as an allowlisted
+ * protocol. Returns null when the target isn't safe to turn into a link. */
 function safeHref(value: string): string | null {
-  if (value.startsWith("/")) return value;
+  const trimmed = value.trim();
+  // GFM footnotes link to a fragment on the page being read.
+  if (trimmed.startsWith("#")) return trimmed;
+  // One leading slash is an app path. `//host` is protocol-relative — i.e. external — so let it
+  // fall through to URL parsing (which rejects it) rather than passing as an internal link.
+  if (trimmed.startsWith("/") && !trimmed.startsWith("//")) return trimmed;
   try {
-    const url = new URL(value);
-    return SAFE_LINK_PROTOCOLS.has(url.protocol) ? value : null;
+    const url = new URL(trimmed);
+    return SAFE_LINK_PROTOCOLS.has(url.protocol) ? trimmed : null;
   } catch {
     return null;
   }
 }
+
+/** True inside an anchor's children — a linked image must not nest a second anchor, which is
+ * invalid HTML the browser un-nests into a broken pair of links. */
+const InsideAnchor = createContext(false);
+
+function MarkdownAnchor({
+  href,
+  children,
+  className,
+  // The hast node react-markdown passes alongside the props is not a DOM attribute.
+  node: _node,
+  ...rest
+}: ComponentPropsWithoutRef<"a"> & { node?: unknown }) {
+  const safe = href ? safeHref(href) : null;
+  // A rejected target must never silently swallow the anchor: show the label with the raw URL
+  // beside it so the reader can still see what was linked.
+  if (!safe)
+    return (
+      <>
+        {children}
+        {href ? ` (${href})` : null}
+      </>
+    );
+  // App paths and fragments (a footnote jump) stay in this tab; only offsite targets open one.
+  const internal = safe.startsWith("/") || safe.startsWith("#");
+  return (
+    // `rest` carries what the parser generated — a footnote's `id` and aria metadata, without
+    // which its backlink has nothing to jump to.
+    <a
+      {...rest}
+      href={safe}
+      target={internal ? undefined : "_blank"}
+      rel={internal ? undefined : "noreferrer"}
+      className={cn("font-medium underline underline-offset-4", className)}
+    >
+      <InsideAnchor.Provider value={true}>{children}</InsideAnchor.Provider>
+    </a>
+  );
+}
+
+/**
+ * An `<img>` would fetch an agent-supplied URL automatically — a tracking pixel, or a GET against
+ * any host the browser can reach — just from opening a transcript. The old renderer never loaded
+ * images, so keep it that way and offer the source as a link instead. Inside a link already
+ * (`[![badge](img)](href)`) the label is all that's left to render.
+ */
+function MarkdownImage({
+  src,
+  alt,
+  title,
+}: ComponentPropsWithoutRef<"img"> & { node?: unknown }) {
+  const insideAnchor = useContext(InsideAnchor);
+  const label = alt || (typeof src === "string" ? src : "") || "image";
+  if (insideAnchor) return <>{label}</>;
+  return (
+    <MarkdownAnchor
+      href={typeof src === "string" ? src : undefined}
+      title={title}
+    >
+      {label}
+    </MarkdownAnchor>
+  );
+}
+
+/** Flatten a hast subtree to its text — used to render a fenced block from the `pre` node so the
+ * inner `code` element never reaches the inline-code component. */
+function nodeText(node: MarkdownNode | undefined): string {
+  if (!node) return "";
+  if (typeof node.value === "string") return node.value;
+  return (node.children ?? []).map(nodeText).join("");
+}
+
+const HEADING_CLASS = "pt-1 font-semibold leading-snug";
+
+const MARKDOWN_COMPONENTS: Components = {
+  a: MarkdownAnchor,
+  // `whitespace-pre-wrap` keeps runs of spaces, so a reply that aligns plaintext by hand still
+  // lines up — the previous renderer preserved it and agents lean on it.
+  p: ({ children }) => (
+    <p className="leading-relaxed whitespace-pre-wrap">{children}</p>
+  ),
+  // Chat lives inside a page that owns h1/h2, so markdown headings start at h3 and flatten out
+  // rather than competing with the surface's own hierarchy.
+  h1: ({ children }) => (
+    <h3 className={cn(HEADING_CLASS, "text-base")}>{children}</h3>
+  ),
+  h2: ({ children }) => (
+    <h4 className={cn(HEADING_CLASS, "text-base")}>{children}</h4>
+  ),
+  h3: ({ children }) => (
+    <h5 className={cn(HEADING_CLASS, "text-sm")}>{children}</h5>
+  ),
+  h4: ({ children }) => (
+    <h5 className={cn(HEADING_CLASS, "text-sm")}>{children}</h5>
+  ),
+  h5: ({ children }) => (
+    <h5 className={cn(HEADING_CLASS, "text-sm")}>{children}</h5>
+  ),
+  h6: ({ children }) => (
+    <h5 className={cn(HEADING_CLASS, "text-sm")}>{children}</h5>
+  ),
+  ul: ({ children, className }) => (
+    <ul
+      className={cn(
+        "space-y-1 leading-relaxed",
+        // GFM task lists carry their own checkbox — a bullet as well reads as noise.
+        className?.includes("contains-task-list")
+          ? "list-none pl-0 [&_input]:mr-1.5 [&_input]:align-middle"
+          : "list-disc pl-5",
+      )}
+    >
+      {children}
+    </ul>
+  ),
+  ol: ({ children, start }) => (
+    <ol start={start} className="list-decimal space-y-1 pl-5 leading-relaxed">
+      {children}
+    </ol>
+  ),
+  blockquote: ({ children }) => (
+    <blockquote className="space-y-2 border-l-2 border-muted-foreground/30 pl-3 text-muted-foreground">
+      {children}
+    </blockquote>
+  ),
+  hr: () => <hr className="border-border" />,
+  pre: ({ node }) => (
+    <pre className="max-w-full overflow-x-auto rounded-lg bg-muted/60 p-3 font-mono text-xs leading-relaxed">
+      <code>{nodeText(node).replace(/\n$/, "")}</code>
+    </pre>
+  ),
+  code: ({ children }) => (
+    <code className="rounded bg-muted px-1 py-0.5 font-mono text-[0.88em]">
+      {children}
+    </code>
+  ),
+  table: ({ children }) => (
+    <div className="max-w-full overflow-x-auto">
+      <table className="w-full border-collapse text-left text-xs">
+        {children}
+      </table>
+    </div>
+  ),
+  th: ({ children, style }) => (
+    <th
+      style={style}
+      className="border-b border-border px-2 py-1.5 font-semibold"
+    >
+      {children}
+    </th>
+  ),
+  td: ({ children, style }) => (
+    <td
+      style={style}
+      className="border-b border-border/60 px-2 py-1.5 align-top"
+    >
+      {children}
+    </td>
+  ),
+  img: MarkdownImage,
+};
 
 /**
  * Pending agent input requests (ask_question / tool approvals), rendered inline at the end
