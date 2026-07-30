@@ -2,10 +2,11 @@
  * Front of House inbox — thin helpers over InboxItemRepo (pattern: app/tasks/tasks.server.ts).
  *
  * An inbox item is the durable "a human should look at this" record behind the FOH bell:
- * a parked eve `input.requested` (kind `question`/`approval`, D19) or a finished turn
- * (kind `finished`, D13). Items are written only at the needs-you chokepoints (drain,
- * reconcile, relay) and resolved on continuation send, terminal failure, supersession by a
- * newer turn, or — for `finished` — when the viewer opens the session.
+ * a parked eve `input.requested` (kind `question`/`approval`, D19), a finished turn
+ * (kind `finished`, D13), or an agent-initiated conversation (kind `notice`, #288 3c). Items
+ * are written only at the needs-you chokepoints (drain, reconcile, relay, notify) and resolved
+ * on continuation send, terminal failure, supersession by a newer turn, or — for
+ * `finished`/`notice` — when the viewer opens the session.
  *
  * Every function takes `store: DataStore = getRuntime().data` so chokepoints and route actions
  * inject a fake in unit tests.
@@ -117,6 +118,31 @@ export async function recordInboxFinished(
 }
 
 /**
+ * Record a `notice` item (#288 3c) — an agent opened a conversation via `contact-user` and
+ * the bell is how a human finds it. Team-wide by design (`userId: null`, the D5 rule): a
+ * notification from an agent belongs to whoever is around to read it. Resolves on read, like
+ * `finished` — opening the conversation IS the acknowledgement.
+ */
+export async function recordInboxNotice(
+  input: {
+    projectId: string;
+    sessionId: string;
+    agentId?: string | null;
+    prompt?: string | null;
+  },
+  store: DataStore = getRuntime().data,
+): Promise<InboxItem> {
+  return store.inboxItems.insert({
+    projectId: input.projectId,
+    sessionId: input.sessionId,
+    kind: "notice",
+    prompt: input.prompt ?? null,
+    agentId: input.agentId ?? null,
+    userId: null,
+  });
+}
+
+/**
  * The FOH send-path supersede rule (map gotcha "answering an old question"): before a new
  * turn is streamed into a session, clear the park and resolve its pending question/approval
  * items — whether the message answers the question or just moves on, eve resolves the parked
@@ -211,9 +237,10 @@ export async function listInboxForViewer(
 }
 
 /**
- * Auto-resolve `finished` items when a viewer opens the session (their read cursor passes
- * `last_event_at`, D13). Only items the viewer can see resolve: their own, or team-wide
- * (`userId` null) — an admin opening a member's session must not eat the member's item.
+ * Auto-resolve `finished` and `notice` items when a viewer opens the session (their read
+ * cursor passes `last_event_at`, D13; a `contact-user` notice is acknowledged by reading it,
+ * #288 3c). Only items the viewer can see resolve: their own, or team-wide (`userId` null) —
+ * an admin opening a member's session must not eat the member's item.
  */
 export async function resolveFinishedOnRead(
   sessionId: string,
@@ -222,7 +249,7 @@ export async function resolveFinishedOnRead(
 ): Promise<void> {
   const pending = await store.inboxItems.findPendingBySession(sessionId);
   for (const item of pending) {
-    if (item.kind !== "finished") continue;
+    if (item.kind !== "finished" && item.kind !== "notice") continue;
     if (item.userId !== null && item.userId !== userId) continue;
     await store.inboxItems.resolve(item.id);
   }

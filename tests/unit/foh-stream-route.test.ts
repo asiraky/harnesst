@@ -18,8 +18,8 @@ const mocks = vi.hoisted(() => ({
   createPlaygroundSession: vi.fn(),
   setPlaygroundSessionModel: vi.fn(async () => true),
   claimPlaygroundSessionForTurn: vi.fn(),
-  unbindPlaygroundSessionForReseed: vi.fn(),
-  loadPlaygroundEntriesFromCache: vi.fn(async () => []),
+  clearSessionHandles: vi.fn(),
+  loadPlaygroundEntriesFromEve: vi.fn(),
   streamTurnResponse: vi.fn(() => new Response("ok")),
   findWorkspaceModel: vi.fn(async () => null),
   ownsWorkspaceModelReference: vi.fn(async () => true),
@@ -50,8 +50,8 @@ vi.mock("~/playground/sessions.server", () => ({
   createPlaygroundSession: mocks.createPlaygroundSession,
   setPlaygroundSessionModel: mocks.setPlaygroundSessionModel,
   claimPlaygroundSessionForTurn: mocks.claimPlaygroundSessionForTurn,
-  unbindPlaygroundSessionForReseed: mocks.unbindPlaygroundSessionForReseed,
-  loadPlaygroundEntriesFromCache: mocks.loadPlaygroundEntriesFromCache,
+  clearSessionHandles: mocks.clearSessionHandles,
+  loadPlaygroundEntriesFromEve: mocks.loadPlaygroundEntriesFromEve,
   titleFromMessage: (message: string) => message.slice(0, 80),
 }));
 vi.mock("~/chat/turn-stream.server", () => ({
@@ -95,7 +95,6 @@ function sessionRow(over: Record<string, unknown> = {}) {
     surface: "foh",
     environmentId: "env_1",
     externalSessionId: "eve_1",
-    lastDeploymentId: "dep_1",
     continuationToken: "tok",
     streamIndex: 4,
     status: "waiting",
@@ -137,6 +136,8 @@ beforeEach(() => {
     async (input: { id: string; claimId: string }) =>
       sessionRow({ id: input.id, status: "running", turnClaimId: input.claimId }),
   );
+  mocks.clearSessionHandles.mockResolvedValue(undefined);
+  mocks.loadPlaygroundEntriesFromEve.mockResolvedValue([]);
   mocks.streamTurnResponse.mockReturnValue(new Response("ok"));
 });
 
@@ -220,23 +221,86 @@ describe("FOH stream route", () => {
     );
   });
 
-  it("wakes a stopped agent before the turn (session env first) and proceeds", async () => {
+  it("wakes a stopped agent before the turn (bound session: home env only) and proceeds", async () => {
     mocks.liveTargets
       .mockResolvedValueOnce([]) // before the wake
       .mockResolvedValueOnce([TARGET]); // after the wake
-    mocks.listAgentEnvironments.mockResolvedValue([
-      { id: "env_other" },
-      { id: "env_1" },
-    ]);
     mocks.ensureLiveDeploymentForEnvironment.mockResolvedValue({ id: "dep_1" });
 
     await action(
       args({ agentId: "agent_1", playgroundSessionId: "ps_1", message: "go" }),
     );
-    // The parked session's own environment is tried first.
+    // A bound session wakes ONLY its own environment — no other env could serve it.
+    expect(mocks.ensureLiveDeploymentForEnvironment).toHaveBeenCalledTimes(1);
     expect(mocks.ensureLiveDeploymentForEnvironment).toHaveBeenCalledWith("env_1");
     expect(mocks.streamTurnResponse).toHaveBeenCalledWith(
       expect.objectContaining({ channel: "foh", target: TARGET }),
+    );
+  });
+
+  it("wakes a bound session's home environment even while another environment is live (#288)", async () => {
+    // Session homed on env_1 (asleep), env_2 live: the old "wake only when nothing is live"
+    // gate skipped the wake and fell back to env_2, whose eve never saw the session — the
+    // turn failed and the claim rebound the row to the wrong environment permanently.
+    const OTHER = { ...TARGET, deploymentId: "dep_2", environmentId: "env_2" };
+    mocks.liveTargets
+      .mockResolvedValueOnce([OTHER]) // home env asleep, sibling live
+      .mockResolvedValueOnce([OTHER, TARGET]); // after the home wake
+    mocks.ensureLiveDeploymentForEnvironment.mockResolvedValue({ id: "dep_1" });
+
+    await action(
+      args({ agentId: "agent_1", playgroundSessionId: "ps_1", message: "go" }),
+    );
+    expect(mocks.ensureLiveDeploymentForEnvironment).toHaveBeenCalledTimes(1);
+    expect(mocks.ensureLiveDeploymentForEnvironment).toHaveBeenCalledWith("env_1");
+    // Home target, never the foreign fallback — and the claim carries the home env, so the
+    // row is not rebound.
+    expect(mocks.claimPlaygroundSessionForTurn).toHaveBeenCalledWith(
+      expect.objectContaining({ target: TARGET }),
+    );
+    expect(mocks.streamTurnResponse).toHaveBeenCalledWith(
+      expect.objectContaining({ target: TARGET }),
+    );
+  });
+
+  it("refuses a bound session's send when its home environment can't wake — no foreign fallback, no mutation", async () => {
+    const OTHER = { ...TARGET, deploymentId: "dep_2", environmentId: "env_2" };
+    mocks.liveTargets.mockResolvedValue([OTHER]);
+    mocks.ensureLiveDeploymentForEnvironment.mockResolvedValue(null);
+
+    await expect(
+      action(
+        args({ agentId: "agent_1", playgroundSessionId: "ps_1", message: "go" }),
+      ),
+    ).rejects.toMatchObject({ init: { status: 409 } });
+    expect(mocks.ensureLiveDeploymentForEnvironment).toHaveBeenCalledWith("env_1");
+    // The row must be left exactly as it was: no claim (no env rebind), no park clear.
+    expect(mocks.claimPlaygroundSessionForTurn).not.toHaveBeenCalled();
+    expect(mocks.beginFohTurn).not.toHaveBeenCalled();
+    expect(mocks.clearSessionHandles).not.toHaveBeenCalled();
+    expect(mocks.streamTurnResponse).not.toHaveBeenCalled();
+  });
+
+  it("lets an unbound session use any live target (no eve session to pin it)", async () => {
+    const OTHER = { ...TARGET, deploymentId: "dep_2", environmentId: "env_2" };
+    mocks.liveTargets.mockResolvedValue([OTHER]);
+    mocks.getFohSessionForViewer.mockResolvedValue(
+      sessionRow({ externalSessionId: null, continuationToken: null }),
+    );
+    mocks.claimPlaygroundSessionForTurn.mockResolvedValue(
+      sessionRow({
+        externalSessionId: null,
+        continuationToken: null,
+        status: "running",
+      }),
+    );
+
+    await action(
+      args({ agentId: "agent_1", playgroundSessionId: "ps_1", message: "go" }),
+    );
+    expect(mocks.ensureLiveDeploymentForEnvironment).not.toHaveBeenCalled();
+    expect(mocks.streamTurnResponse).toHaveBeenCalledWith(
+      expect.objectContaining({ target: OTHER }),
     );
   });
 
@@ -274,6 +338,10 @@ describe("FOH stream route", () => {
   });
 
   it("forwards a request-correlated answer on a continuation send", async () => {
+    // Answers only survive the post-claim gate when the CLAIMED row still holds the park.
+    mocks.claimPlaygroundSessionForTurn.mockResolvedValue(
+      sessionRow({ status: "running", pendingInputAt: new Date() }),
+    );
     await action(
       args({
         agentId: "agent_1",
@@ -295,6 +363,9 @@ describe("FOH stream route", () => {
     // The regression this guards (issue #221 finding 2): eve's text resolver matches a bare
     // "Approve" against EVERY pending confirmation. The correlated payload must carry only
     // the clicked card's requestId.
+    mocks.claimPlaygroundSessionForTurn.mockResolvedValue(
+      sessionRow({ status: "running", pendingInputAt: new Date() }),
+    );
     await action(
       args({
         agentId: "agent_1",
@@ -312,16 +383,18 @@ describe("FOH stream route", () => {
     expect(forwarded.inputResponses[0].requestId).toBe("req_2");
   });
 
-  it("drops answers when the session has no eve continuation (fresh/reseeded)", async () => {
+  it("drops answers when the session has no eve continuation (fresh row)", async () => {
     mocks.getFohSessionForViewer.mockResolvedValue(
       sessionRow({ externalSessionId: null, continuationToken: null }),
     );
-    // The claimed row (RETURNING) is what the route reads the continuation from.
+    // The claimed row (RETURNING) is what the route reads the continuation from. The park
+    // is live, so the drop below is the continuation gate, not the stale-answer gate.
     mocks.claimPlaygroundSessionForTurn.mockResolvedValue(
       sessionRow({
         externalSessionId: null,
         continuationToken: null,
         status: "running",
+        pendingInputAt: new Date(),
       }),
     );
     await action(
@@ -339,7 +412,193 @@ describe("FOH stream route", () => {
     );
   });
 
-  it("refuses a channel-homed send with no answer BEFORE any state mutates (issue #282)", async () => {
+  it("succeeds a channel-homed row on free text: prologue seed, handles untouched, succession send (#288 3b)", async () => {
+    const via = {
+      channel: "github",
+      routePath: "/eve/v1/github/harnesst/answer",
+      rawToken: "repo:1:issue:2",
+      state: {},
+    };
+    mocks.getFohSessionForViewer.mockResolvedValue(
+      sessionRow({ resumeVia: via, pendingInputAt: new Date() }),
+    );
+    mocks.claimPlaygroundSessionForTurn.mockResolvedValue(
+      sessionRow({ resumeVia: via, status: "running" }),
+    );
+    mocks.loadPlaygroundEntriesFromEve.mockResolvedValue([
+      { id: "e1", role: "user", text: "Issue #2: pricing page 404s" },
+      {
+        id: "e2",
+        role: "assistant",
+        text: "",
+        inputRequests: [{ requestId: "req_1", prompt: "Which branch?" }],
+      },
+    ]);
+
+    const res = await action(
+      args({ agentId: "agent_1", playgroundSessionId: "ps_1", message: "hi" }),
+    );
+    expect(res).toBeInstanceOf(Response);
+
+    // The prologue is read from the OLD session's stream at its trusted cursor.
+    expect(mocks.loadPlaygroundEntriesFromEve).toHaveBeenCalledWith(
+      expect.objectContaining({
+        session: expect.objectContaining({
+          externalSessionId: "eve_1",
+          streamIndex: 4,
+        }),
+        target: TARGET,
+        limit: undefined,
+      }),
+    );
+    // Atomicity (#288): the route touches NO handles — the drain rebinds the row only once
+    // the successor's `session` event proves it exists.
+    expect(mocks.clearSessionHandles).not.toHaveBeenCalled();
+    // The park survives until delivery is proven: the drain's deferred begin clears it on
+    // the first streamed event, exactly like a channel answer.
+    expect(mocks.beginFohTurn).not.toHaveBeenCalled();
+    const [forwarded] = mocks.streamTurnResponse.mock.calls[0] as unknown as [
+      {
+        session: {
+          externalSessionId: string | null;
+          continuationToken: string | null;
+          resumeVia: unknown;
+          streamIndex: number;
+        };
+        messagePrefix: string | null;
+        inputResponses: unknown;
+        succession: boolean;
+      },
+    ];
+    // The row still holds the predecessor's handles; the succession flag (not a mutation)
+    // makes the drain run a first-turn HTTP send and rebind on the session event.
+    expect(forwarded.succession).toBe(true);
+    expect(forwarded.session.externalSessionId).toBe("eve_1");
+    expect(forwarded.session.continuationToken).toBe("tok");
+    expect(forwarded.session.resumeVia).toEqual(via);
+    // The transcript rides as the strippable seed block on the successor's first message,
+    // and a successor's first send never forwards inputResponses (nothing pending on it).
+    expect(forwarded.messagePrefix).toContain("harnesst:context-start");
+    expect(forwarded.messagePrefix).toContain(
+      "User: Issue #2: pricing page 404s",
+    );
+    expect(forwarded.messagePrefix).toContain("Assistant (asked): Which branch?");
+    expect(forwarded.inputResponses).toBeNull();
+  });
+
+  it("reads the succession prologue under a fixed cap when the cursor heal never ran (streamIndex 0)", async () => {
+    const via = {
+      channel: "github",
+      routePath: "/eve/v1/github/harnesst/answer",
+      rawToken: "repo:1:issue:2",
+      state: {},
+    };
+    mocks.getFohSessionForViewer.mockResolvedValue(
+      sessionRow({ resumeVia: via, streamIndex: 0 }),
+    );
+    mocks.claimPlaygroundSessionForTurn.mockResolvedValue(
+      sessionRow({ resumeVia: via, streamIndex: 0, status: "running" }),
+    );
+
+    await action(
+      args({ agentId: "agent_1", playgroundSessionId: "ps_1", message: "hi" }),
+    );
+
+    // A zero cursor means "nobody counted yet", not "the old session is empty" — the read
+    // must not silently return [] and lose the prologue.
+    expect(mocks.loadPlaygroundEntriesFromEve).toHaveBeenCalledWith(
+      expect.objectContaining({ limit: 1_000 }),
+    );
+  });
+
+  it("falls through to a plain continuation when the CLAIMED row was already succeeded (double-racer)", async () => {
+    const via = {
+      channel: "github",
+      routePath: "/eve/v1/github/harnesst/answer",
+      rawToken: "repo:1:issue:2",
+      state: {},
+    };
+    // The pre-claim snapshot says channel-homed (this racer read the row before another
+    // tab's succession), but the claim RETURNING shows the successor already bound.
+    mocks.getFohSessionForViewer.mockResolvedValue(
+      sessionRow({ resumeVia: via }),
+    );
+    mocks.claimPlaygroundSessionForTurn.mockResolvedValue(
+      sessionRow({
+        resumeVia: null,
+        externalSessionId: "eve_2",
+        continuationToken: "tok_2",
+        status: "running",
+      }),
+    );
+
+    await action(
+      args({ agentId: "agent_1", playgroundSessionId: "ps_1", message: "hi" }),
+    );
+
+    // No second succession: no prologue read, no succession flag — the send continues the
+    // successor session like any ordinary follow-up.
+    expect(mocks.loadPlaygroundEntriesFromEve).not.toHaveBeenCalled();
+    expect(mocks.streamTurnResponse).toHaveBeenCalledWith(
+      expect.objectContaining({
+        succession: false,
+        messagePrefix: null,
+        session: expect.objectContaining({ externalSessionId: "eve_2" }),
+      }),
+    );
+    // An ordinary HTTP continuation supersedes pre-stream as usual.
+    expect(mocks.beginFohTurn).toHaveBeenCalledWith("ps_1");
+  });
+
+  it("drops stale inputResponses when the claimed row has no pending ask", async () => {
+    // Tab B answers a question card that another turn (or a succession) already resolved:
+    // the claimed row's park is gone, so the requestIds reference asks the row's current
+    // eve session never issued — forward nothing, send the text as a plain message.
+    mocks.claimPlaygroundSessionForTurn.mockResolvedValue(
+      sessionRow({ status: "running", pendingInputAt: null }),
+    );
+
+    await action(
+      args({
+        agentId: "agent_1",
+        playgroundSessionId: "ps_1",
+        message: "Approve",
+        inputResponses: JSON.stringify([
+          { requestId: "req_stale", optionId: "approve" },
+        ]),
+      }),
+    );
+
+    expect(mocks.streamTurnResponse).toHaveBeenCalledWith(
+      expect.objectContaining({ inputResponses: null, succession: false }),
+    );
+  });
+
+  it("refuses the succession dispatch when a Stop landed after the claim", async () => {
+    const via = {
+      channel: "github",
+      routePath: "/eve/v1/github/harnesst/answer",
+      rawToken: "repo:1:issue:2",
+      state: {},
+    };
+    // First read resolves the row; the stop-fence re-read just before dispatch sees the
+    // Stop that raced in between (it saw no local controller and marked the row stopped).
+    mocks.getFohSessionForViewer
+      .mockResolvedValueOnce(sessionRow({ resumeVia: via }))
+      .mockResolvedValueOnce(sessionRow({ resumeVia: via, status: "stopped" }));
+    mocks.claimPlaygroundSessionForTurn.mockResolvedValue(
+      sessionRow({ resumeVia: via, status: "running" }),
+    );
+
+    await expect(
+      action(
+        args({ agentId: "agent_1", playgroundSessionId: "ps_1", message: "hi" }),
+      ),
+    ).rejects.toMatchObject({ init: { status: 409 } });
+    expect(mocks.streamTurnResponse).not.toHaveBeenCalled();
+  });
+
+  it("succession proceeds with an empty prologue when the old stream is unreadable (session_gone)", async () => {
     const via = {
       channel: "github",
       routePath: "/eve/v1/github/harnesst/answer",
@@ -349,13 +608,48 @@ describe("FOH stream route", () => {
     mocks.getFohSessionForViewer.mockResolvedValue(
       sessionRow({ resumeVia: via }),
     );
+    mocks.claimPlaygroundSessionForTurn.mockResolvedValue(
+      sessionRow({ resumeVia: via, status: "running" }),
+    );
+    mocks.loadPlaygroundEntriesFromEve.mockRejectedValue(
+      new Error("Eve stream returned 500"),
+    );
+
+    const res = await action(
+      args({ agentId: "agent_1", playgroundSessionId: "ps_1", message: "hi" }),
+    );
+    expect(res).toBeInstanceOf(Response);
+    // The read failure never fails the send — the successor just starts without history.
+    // The handles stay untouched either way; only the drain's rebind moves them.
+    expect(mocks.clearSessionHandles).not.toHaveBeenCalled();
+    expect(mocks.streamTurnResponse).toHaveBeenCalledWith(
+      expect.objectContaining({
+        messagePrefix: null,
+        inputResponses: null,
+        succession: true,
+      }),
+    );
+  });
+
+  it("does not succeed a channel-homed row when the claim is lost", async () => {
+    const via = {
+      channel: "github",
+      routePath: "/eve/v1/github/harnesst/answer",
+      rawToken: "repo:1:issue:2",
+      state: {},
+    };
+    mocks.getFohSessionForViewer.mockResolvedValue(
+      sessionRow({ resumeVia: via }),
+    );
+    mocks.claimPlaygroundSessionForTurn.mockResolvedValue(null);
     await expect(
       action(
         args({ agentId: "agent_1", playgroundSessionId: "ps_1", message: "hi" }),
       ),
     ).rejects.toMatchObject({ init: { status: 409 } });
-    // Nothing was claimed, superseded, or streamed — the park and inbox are untouched.
-    expect(mocks.claimPlaygroundSessionForTurn).not.toHaveBeenCalled();
+    // A losing racer must leave the channel binding (and the park) untouched.
+    expect(mocks.clearSessionHandles).not.toHaveBeenCalled();
+    expect(mocks.loadPlaygroundEntriesFromEve).not.toHaveBeenCalled();
     expect(mocks.beginFohTurn).not.toHaveBeenCalled();
     expect(mocks.streamTurnResponse).not.toHaveBeenCalled();
   });
@@ -368,10 +662,14 @@ describe("FOH stream route", () => {
       state: {},
     };
     mocks.getFohSessionForViewer.mockResolvedValue(
-      sessionRow({ resumeVia: via }),
+      sessionRow({ resumeVia: via, pendingInputAt: new Date() }),
     );
     mocks.claimPlaygroundSessionForTurn.mockResolvedValue(
-      sessionRow({ resumeVia: via, status: "running" }),
+      sessionRow({
+        resumeVia: via,
+        status: "running",
+        pendingInputAt: new Date(),
+      }),
     );
     await action(
       args({
@@ -387,6 +685,9 @@ describe("FOH stream route", () => {
     // The pre-delivery supersede is skipped for channel-homed rows (a refusal must not
     // have cleared the park) — the drain clears it on the first delivered event instead.
     expect(mocks.beginFohTurn).not.toHaveBeenCalled();
+    // An answer is NOT a succession: the channel binding stays for the answer route.
+    expect(mocks.clearSessionHandles).not.toHaveBeenCalled();
+    expect(mocks.loadPlaygroundEntriesFromEve).not.toHaveBeenCalled();
     expect(mocks.streamTurnResponse).toHaveBeenCalledWith(
       expect.objectContaining({
         inputResponses: [
@@ -422,35 +723,40 @@ describe("FOH stream route", () => {
     expect(mocks.streamTurnResponse).not.toHaveBeenCalled();
   });
 
-  it("reseeds an ordinary session whose deployment was replaced (#71)", async () => {
-    mocks.getFohSessionForViewer.mockResolvedValue(
-      sessionRow({ lastDeploymentId: "dep_old" }),
-    );
-    mocks.unbindPlaygroundSessionForReseed.mockResolvedValue(
-      sessionRow({ externalSessionId: null, continuationToken: null }),
+  it("continues on the session's environment when several targets are live (#288)", async () => {
+    // The eve session lives in its environment's world store, so the env-matched live target
+    // serves the continuation — never a cross-environment one, whose eve never saw the session.
+    const OTHER = { ...TARGET, deploymentId: "dep_2", environmentId: "env_2" };
+    mocks.liveTargets.mockResolvedValue([OTHER, TARGET]);
+
+    await action(
+      args({ agentId: "agent_1", playgroundSessionId: "ps_1", message: "go" }),
     );
 
-    await action(args({ agentId: "agent_1", playgroundSessionId: "ps_1", message: "go" }));
-
-    expect(mocks.unbindPlaygroundSessionForReseed).toHaveBeenCalled();
+    expect(mocks.streamTurnResponse).toHaveBeenCalledWith(
+      expect.objectContaining({ target: TARGET }),
+    );
   });
 
-  it("does NOT reseed a channel-homed session when the deployment was replaced", async () => {
+  it("delivers a channel-homed answer on the CURRENT deployment without touching the binding", async () => {
     // A park can sit in the inbox for hours, so a redeploy between the question and the answer
-    // is the LIKELY timing. Reseeding would clear resume_via and quietly turn the human's answer
-    // into a brand-new HTTP conversation: they would read a plausible reply while the GitHub
-    // thread went unanswered and the eve-side session stayed parked forever. The answer is
-    // attempted on the channel route of the CURRENT deployment instead, and only a proven-dead
-    // session unbinds the row (in the drain, after the 409).
+    // is the LIKELY timing. The session survives it (durable world store); the answer goes to
+    // the channel route on whatever deployment is live now, and only a proven-dead session
+    // clears the row's handles (in the drain, after the 409).
+    const via = {
+      channel: "github",
+      routePath: "/eve/v1/github/harnesst/answer",
+      rawToken: "repo:1:issue:7",
+      state: { owner: "acme", repo: "widgets", issueNumber: 7 },
+    };
     mocks.getFohSessionForViewer.mockResolvedValue(
+      sessionRow({ resumeVia: via, pendingInputAt: new Date() }),
+    );
+    mocks.claimPlaygroundSessionForTurn.mockResolvedValue(
       sessionRow({
-        lastDeploymentId: "dep_old",
-        resumeVia: {
-          channel: "github",
-          routePath: "/eve/v1/github/harnesst/answer",
-          rawToken: "repo:1:issue:7",
-          state: { owner: "acme", repo: "widgets", issueNumber: 7 },
-        },
+        resumeVia: via,
+        status: "running",
+        pendingInputAt: new Date(),
       }),
     );
 
@@ -463,8 +769,6 @@ describe("FOH stream route", () => {
       }),
     );
 
-    expect(mocks.unbindPlaygroundSessionForReseed).not.toHaveBeenCalled();
-    expect(mocks.loadPlaygroundEntriesFromCache).not.toHaveBeenCalled();
     expect(mocks.streamTurnResponse).toHaveBeenCalledWith(
       expect.objectContaining({ target: TARGET, messagePrefix: null }),
     );

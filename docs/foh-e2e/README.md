@@ -23,7 +23,7 @@ What it proves, at the HTTP/route layer:
 
 | Spec | Flow |
 | --- | --- |
-| `core-loop.e2e.ts` | Send into a new FOH session, abandon the response reader mid-turn (away-mid-turn); the detached drain still persists the full transcript (`playground_events`), lands the session `waiting`, and files the `finished` inbox item. |
+| `core-loop.e2e.ts` | Send into a new FOH session, abandon the response reader mid-turn (away-mid-turn); the detached drain still consumes eve to `done`, advances the session cursor (the transcript lives in eve's durable stream, #288), lands the session `waiting`, and files the `finished` inbox item. |
 | `park-recovery.e2e.ts` | eve parks on TWO approval requests (`input.requested` → `session.waiting`) with no client attached → `pendingInputAt` + one pending item per requestId; answering ONE via the stream action forwards `inputResponses` with EXACTLY that requestId on the continuation POST, and the supersede rule resolves both items (the un-answered one included). |
 | `concurrent-turns.e2e.ts` | A second stream POST while a fresh turn holds the session `running` → 409 before eve is touched; the fencing token is untouched and the winning drain settles cleanly. |
 | `roles-and-inbox.e2e.ts` | A member's session 404s for a fellow team member but loads for an admin; the inbox loader scopes items per viewer (personal items invisible even to admins); the resolve action refuses question items and dismisses `finished`; the read action resolves the viewer's finished item and advances the read cursor. |

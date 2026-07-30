@@ -66,17 +66,17 @@ async function seedDeployment(over: { agentId?: string } = {}): Promise<string> 
 function makeDeps(): ParkDeps & {
   sessions: Map<string, PlaygroundSession>;
   adopts: Array<Parameters<ParkDeps["adoptSession"]>[0]>;
-  backfills: Array<Parameters<ParkDeps["backfillTranscript"]>[0]>;
+  cursorAdvances: Array<Parameters<ParkDeps["advanceCursor"]>[0]>;
 } {
   const sessions = new Map<string, PlaygroundSession>();
   const adopts: Array<Parameters<ParkDeps["adoptSession"]>[0]> = [];
-  const backfills: Array<Parameters<ParkDeps["backfillTranscript"]>[0]> = [];
+  const cursorAdvances: Array<Parameters<ParkDeps["advanceCursor"]>[0]> = [];
   let seq = 0;
   return {
     store,
     sessions,
     adopts,
-    backfills,
+    cursorAdvances,
     adoptSession: async (input) => {
       adopts.push(input);
       const owner = [...sessions.values()].find(
@@ -90,7 +90,7 @@ function makeDeps(): ParkDeps & {
       const key = `${input.projectId}|${input.externalSessionId}`;
       const existing = sessions.get(key);
       const row = {
-        ...(existing ?? { id: `ps_${++seq}`, streamIndex: 0, cacheIndexOffset: 0 }),
+        ...(existing ?? { id: `ps_${++seq}`, streamIndex: 0 }),
         projectId: input.projectId,
         agentId: input.agentId,
         createdBy: null,
@@ -107,8 +107,8 @@ function makeDeps(): ParkDeps & {
       sessions.set(key, row);
       return { ok: true, session: row, parkDeferred: false };
     },
-    backfillTranscript: async (input) => {
-      backfills.push(input);
+    advanceCursor: async (input) => {
+      cursorAdvances.push(input);
     },
     openQuestion: openInboxQuestion,
     staleAfterMs: 300_000,
@@ -257,20 +257,20 @@ describe("parkChannelQuestion", () => {
     );
   });
 
-  it("backfills the transcript against the deployment's own url", async () => {
+  it("advances the cursor against the deployment's own url", async () => {
     const deploymentId = await seedDeployment();
     const deps = makeDeps();
 
     await parkChannelQuestion(input({ deploymentId }), deps);
 
-    expect(deps.backfills).toHaveLength(1);
-    expect(deps.backfills[0].target.url).toBe("http://inst:4000");
+    expect(deps.cursorAdvances).toHaveLength(1);
+    expect(deps.cursorAdvances[0].target.url).toBe("http://inst:4000");
   });
 
-  it("still parks when the transcript backfill throws — the inbox item is the point", async () => {
+  it("still parks when the cursor advance throws — the inbox item is the point", async () => {
     const deploymentId = await seedDeployment();
     const deps = makeDeps();
-    deps.backfillTranscript = async () => {
+    deps.advanceCursor = async () => {
       throw new Error("instance unreachable");
     };
 
@@ -281,14 +281,14 @@ describe("parkChannelQuestion", () => {
     expect(result.inboxItemIds).toHaveLength(1);
   });
 
-  it("does not WAIT for the backfill — the agent's park fetch has a 10s timeout", async () => {
-    // The backfill reads the tail of the same eve session whose turn is still open, over the
+  it("does not WAIT for the cursor advance — the agent's park fetch has a 10s timeout", async () => {
+    // The advance reads the tail of the same eve session whose turn is still open, over the
     // network. Awaiting it put an unbounded read inside a request the container abandons after
     // 10s, and the abandoned retry then re-ran the whole park.
     const deploymentId = await seedDeployment();
     const deps = makeDeps();
     let release: () => void = () => {};
-    deps.backfillTranscript = () =>
+    deps.advanceCursor = () =>
       new Promise<void>((resolve) => {
         release = resolve;
       });
@@ -301,10 +301,10 @@ describe("parkChannelQuestion", () => {
     release();
   });
 
-  it("survives a backfill that throws SYNCHRONOUSLY, before it ever returns a promise", async () => {
+  it("survives a cursor advance that throws SYNCHRONOUSLY, before it ever returns a promise", async () => {
     const deploymentId = await seedDeployment();
     const deps = makeDeps();
-    deps.backfillTranscript = () => {
+    deps.advanceCursor = () => {
       throw new Error("no target");
     };
 

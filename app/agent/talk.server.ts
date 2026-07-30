@@ -85,9 +85,9 @@ export interface TurnResult {
   error: string | null;
   /**
    * WS1: the turn failed because the CHANNEL-HOMED eve session this row resumes into no longer
-   * exists (the container was redeployed and took its in-process session state with it). The
-   * drain reads this to unbind the row so the next message reseeds a fresh session (#71) —
-   * without it a redeploy dead-ends the conversation permanently. Absent on every other path.
+   * exists. The drain reads this to clear the row's handles so the next message starts a fresh
+   * HTTP-homed session — without it the conversation dead-ends permanently. Absent on every
+   * other path.
    */
   resumeExpired?: boolean;
   /**
@@ -457,10 +457,12 @@ export async function* streamTurn(input: {
   // state a container supplied at park time. So an ordinary follow-up on a channel-homed row is
   // refused here rather than gambling on eve's fallback. It cannot be sent down eve's HTTP
   // session route either: that route cannot resolve a channel-homed session's continuation
-  // token at all (it 500s), which is the whole reason this delivery path exists.
+  // token at all (it 500s), which is the whole reason this delivery path exists. The FOH
+  // route no longer aims non-answers here (free text takes the #288 succession path); this
+  // belt guards stale callers, and resending through the fixed route succeeds normally.
   if (via && !(input.inputResponses && input.inputResponses.length > 0)) {
     yield fail(
-      "This conversation lives on the agent's own channel thread, so harnesst can only send it an answer to a question it is waiting on — not a new message. Reply on the thread itself to say something else.",
+      "This conversation lives on the agent's own channel thread, so harnesst can only send it an answer to a question it is waiting on — not a new message. Send your message again to continue the conversation here.",
       {
         sessionId: input.sessionId,
         continuationToken: input.continuationToken,
@@ -521,7 +523,7 @@ export async function* streamTurn(input: {
         // still work.
         if (res.status === 409 && failure.code !== "send_failed") {
           yield fail(
-            "This conversation is homed on the agent's own channel thread, and the agent has been redeployed since the question was asked — its session no longer exists, so the answer could not be delivered. Send another message to start a fresh conversation with the same history.",
+            "This conversation is homed on the agent's own channel thread, and the agent has been redeployed since the question was asked — its session no longer exists, so the answer could not be delivered. Send another message to continue in a fresh conversation.",
             { resumeExpired: true },
           );
           return;

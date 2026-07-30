@@ -19,7 +19,7 @@ export function shouldSettleAbandonedSession(input: {
   status: string;
   /** A drain for this session is streaming in this process (`hasActiveTurn`). */
   activeTurnInProcess: boolean;
-  /** The deployment that owned the turn (`session.lastDeploymentId`) is still a live target. */
+  /** A live target still serves the session's environment (its world store holds the turn). */
   ownerDeploymentLive: boolean;
   /** Time since the session row last moved (`updatedAt` — progress saves bump it ~1s). */
   msSinceLastActivity: number;

@@ -231,7 +231,7 @@ describe("streamTurn delivery", () => {
     const done = events.at(-1);
     if (done?.kind !== "done") throw new Error("no done event");
     expect(done.result.ok).toBe(false);
-    expect(done.result.error).toContain("Reply on the thread itself");
+    expect(done.result.error).toContain("Send your message again");
     expect(fetchMock).not.toHaveBeenCalled();
     // The row is left exactly as it was — the session is still live on its thread.
     expect(done.result.sessionId).toBe("sess_1");

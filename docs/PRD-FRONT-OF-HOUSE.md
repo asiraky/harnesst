@@ -50,7 +50,12 @@ These are the load-bearing UX decisions and their rationale. Revisit deliberatel
    generalization (other entry points routing questions to harnesst) is the **mayi pattern**: a
    channel that homes the session, files `input.requested` with an external surface, and
    resumes via signed callback (see `~/code/mayi/packages/eve/src/channel.ts`) — the extension
-   path, spiked in §5.
+   path, spiked in §5. _Amended by #288 (succession):_ channel-homed sessions are no longer
+   answer-only forever. Answers to a pending ask still ride the channel answer route, but free
+   text with nothing pending triggers a **succession** — harnesst reads the prologue from the
+   old session's durable stream, starts a fresh HTTP-homed session with it as a strippable seed
+   block, and rebinds the FOH row; the channel session stays completed-but-readable in eve's
+   world store. The channel wall stands; harnesst routes around it, never through it.
 
 4. **The activity feed is a projection.** Per-team, fully automatic timeline of what actually
    happened: sessions opened, messages, delegations (with the real message text passed between
@@ -129,7 +134,7 @@ No eve changes anywhere below (hard constraint — harnesst-side surfaces only).
 
 | Need | Carried by |
 | --- | --- |
-| Session store + transcript | `playground_sessions` / `playground_events` — already generalized once via `portal_id`; FOH adds a surface discriminator the same way. Reseed-across-redeploys (#71) works unchanged. |
+| Session store + transcript | `playground_sessions` is the index/stitch (handles, status, cursors); the transcript is eve's durable stream on the per-environment world volume, rendered via `GET /eve/v1/session/:id/stream` (#288 replaced the `playground_events` cache and the #71 reseed — sessions now outlive redeploys in eve itself). |
 | Live turn streaming, stop, HITL rendering | Existing playground NDJSON stream + drain (`app/chat/*`), `ChatInputRequest` callouts, settle/recovery machinery. |
 | Answering a parked question | Existing continuation path (playground option buttons today), from the session row's handle. |
 | Delegation records + agent↔agent messages | `delegations` + linked peer runs (`runs`/`run_steps` hold the ask text, reply, and tool calls). |

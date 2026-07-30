@@ -3,7 +3,7 @@
  * Pins: a stopped peer is woken through the injected wake dep (and a failed wake denies
  * cleanly); a parked peer flips the delegation `waiting` (exiting the caps — D7), opens the
  * agent-opened FOH session with the peer's REAL eve handles + a question-derived title (D6),
- * backfills the transcript (D8), files team-wide inbox items (D5/D19), and returns the
+ * files team-wide inbox items (D5/D19), and returns the
  * structured `waiting_on_human` result; parking-machinery failures fall back to the M7 deny;
  * and `ensureLiveDeploymentForEnvironment` itself (fresh-url discipline, no stale reuse).
  */
@@ -88,11 +88,9 @@ async function seedTarget(status: "live" | "stopped", url: string | null) {
 /** A deps bundle whose parking collaborators capture their inputs. */
 function makeDeps(over: Partial<AskDeps> = {}): AskDeps & {
   createdSessions: Array<Parameters<AskDeps["createSession"]>[0]>;
-  backfills: Array<Parameters<AskDeps["backfillSession"]>[0]>;
   reattaches: Array<Parameters<AskDeps["scheduleReattach"]>[1]>;
 } {
   const createdSessions: Array<Parameters<AskDeps["createSession"]>[0]> = [];
-  const backfills: Array<Parameters<AskDeps["backfillSession"]>[0]> = [];
   const reattaches: Array<Parameters<AskDeps["scheduleReattach"]>[1]> = [];
   return {
     store,
@@ -115,16 +113,12 @@ function makeDeps(over: Partial<AskDeps> = {}): AskDeps & {
         ...input,
       } as unknown as PlaygroundSession;
     },
-    backfillSession: async (input) => {
-      backfills.push(input);
-    },
     scheduleReattach: async (_store, payload) => {
       reattaches.push(payload);
     },
     now: () => NOW,
     timeoutMs: 600_000,
     createdSessions,
-    backfills,
     reattaches,
     ...over,
   };
@@ -353,7 +347,7 @@ describe("ensureLiveDeploymentForEnvironment", () => {
 });
 
 describe("runAsk — relay parking", () => {
-  it("parks: delegation waiting, agent-opened session with real handles, backfill, inbox, structured result", async () => {
+  it("parks: delegation waiting, agent-opened session with real handles, inbox, structured result", async () => {
     const deploymentId = await seedCallerDeployment();
     const live = await seedTarget("live", "http://deployer.local");
     const deleg = captureDelegationId();
@@ -406,8 +400,6 @@ describe("runAsk — relay parking", () => {
         userId: null,
         surface: "foh",
         environmentId: "env_dep_prod",
-        deploymentId: live.id,
-        releaseId: live.releaseId,
         version: "v1",
         title: "Which environment should I target?",
         openedByAgentId: "deployer",
@@ -420,15 +412,6 @@ describe("runAsk — relay parking", () => {
         lastEventAt: NOW,
       },
     ]);
-
-    // D8: transcript backfilled from eve for the new row, against the live target url.
-    expect(deps.backfills).toHaveLength(1);
-    expect(deps.backfills[0].session).toMatchObject({ id: "ps_agent_opened" });
-    expect(deps.backfills[0].target).toMatchObject({
-      url: "http://deployer.local",
-      deploymentId: live.id,
-      environmentName: "production",
-    });
 
     // Inbox: one team-wide item per request, D19 kind mapping, delegation + run refs.
     const pending =
@@ -512,31 +495,6 @@ describe("runAsk — relay parking", () => {
     expect(await store.delegations.findById(deleg.id())).toMatchObject({
       status: "failed",
     });
-    error.mockRestore();
-  });
-
-  it("keeps a failed backfill best-effort: the park still lands", async () => {
-    const error = vi.spyOn(console, "error").mockImplementation(() => {});
-    const deploymentId = await seedCallerDeployment();
-    await seedTarget("live", "http://deployer.local");
-    const deleg = captureDelegationId();
-    const res = await runAsk(
-      { deploymentId, teammate: "deployer", message: "hi" },
-      makeDeps({
-        sendTurn: async () =>
-          turnResult({ reply: null, inputRequests: [request()] }),
-        backfillSession: async () => {
-          throw new Error("eve unreachable");
-        },
-      }),
-    );
-    expect(res).toMatchObject({ ok: true, status: "waiting_on_human" });
-    expect(await store.delegations.findById(deleg.id())).toMatchObject({
-      status: "waiting",
-    });
-    expect(
-      await store.inboxItems.findPendingBySession("ps_agent_opened"),
-    ).toHaveLength(1);
     error.mockRestore();
   });
 
@@ -629,7 +587,6 @@ describe("runAsk — severed stream hand-off", () => {
     // D6: the title never carries the caller's ask text.
     expect(deps.createdSessions[0].title).toBe('Delegated task from "pm"');
     expect(deps.createdSessions[0].title).not.toContain("build 42");
-    expect(deps.backfills).toHaveLength(1);
     expect(deps.reattaches).toEqual([
       expect.objectContaining({
         sessionId: "ps_agent_opened",

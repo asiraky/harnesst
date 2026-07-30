@@ -50,11 +50,9 @@ function session(over: Partial<PlaygroundSession> = {}): PlaygroundSession {
     createdBy: null,
     surface: "foh",
     environmentId: "env_dep_prod",
-    lastDeploymentId: DEPLOYMENT_ID,
     externalSessionId: "sess_peer",
     continuationToken: "tok_peer",
     streamIndex: 7,
-    cacheIndexOffset: 0,
     status: "running",
     pendingInputAt: null,
     delegationId: "",
@@ -80,7 +78,6 @@ function scriptedResume(result: TurnResult, events: number[] = []) {
 
 interface Captured {
   cursors: Array<Parameters<ReattachDeps["saveCursor"]>[0]>;
-  saved: Array<{ id: string; count: number; offset: number }>;
   enqueued: Array<{ kind: string; payload: Record<string, unknown> }>;
   finishes: Array<Parameters<ReattachDeps["recordFinish"]>[0]>;
   questions: Array<Parameters<ReattachDeps["openQuestion"]>[0]>;
@@ -94,7 +91,6 @@ function makeDeps(
 ): ReattachDeps & Captured {
   const cap: Captured = {
     cursors: [],
-    saved: [],
     enqueued: [],
     finishes: [],
     questions: [],
@@ -108,9 +104,6 @@ function makeDeps(
     store,
     resume: scriptedResume(turnResult()),
     loadSession: async () => row,
-    saveEvents: async (id, events, offset = 0) => {
-      cap.saved.push({ id, count: events.length, offset });
-    },
     saveCursor: async (input) => {
       cap.cursors.push(input);
     },
@@ -253,8 +246,6 @@ describe("reattachDelegation", () => {
       status: "waiting",
       streamIndex: 42,
     });
-    // Only events past the adopted cursor are re-cached, and they land before the cursor moves.
-    expect(deps.saved).toEqual([{ id: SESSION_ID, count: 2, offset: 0 }]);
     expect(deps.cleared).toHaveLength(0);
   });
 
@@ -350,7 +341,6 @@ describe("reattachDelegation", () => {
 
     expect(res.status).toBe("waiting");
     // It gave up well before the endless stream did, and scheduled its own successor.
-    expect(deps.saved[0]!.count).toBeLessThan(120);
     expect(deps.enqueued).toHaveLength(1);
     expect(await store.delegations.findById(delegationId)).toMatchObject({
       status: "running",
@@ -388,7 +378,7 @@ describe("reattachDelegation", () => {
   it("fails the row when the peer's deployment is gone", async () => {
     const delegationId = await seedDelegation();
     const deps = makeDeps({
-      sessionRow: session({ lastDeploymentId: "dep_missing" }),
+      sessionRow: session({ environmentId: "env_missing" }),
     });
     const res = await reattachDelegation(payloadFor(delegationId), deps);
 

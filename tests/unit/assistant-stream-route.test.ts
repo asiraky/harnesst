@@ -71,7 +71,6 @@ const SESSION = {
   id: "conv_1",
   agentId: "agent_1",
   externalSessionId: "sess_1",
-  lastDeploymentId: "dep_1",
   surface: "assistant",
   title: "earlier message",
 };

@@ -118,7 +118,6 @@ function session(over: Partial<PlaygroundSession> = {}): PlaygroundSession {
     externalSessionId: "sess_ext",
     continuationToken: "tok_1",
     streamIndex: 0,
-    cacheIndexOffset: 0,
     title: null,
     lastEventAt: null,
     createdAt: new Date(),

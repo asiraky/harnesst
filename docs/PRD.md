@@ -894,6 +894,12 @@ two-source-of-truth reconciliation problem.
   multi-instance mode (Vercel runs many function instances against one world). Per-deployment
   `destroy` now removes only the container; a new `destroyWorld(worldKey)` drops the shared world
   DB once, on environment/repository teardown, after every per-deployment destroy.
+  _Corrected by #288:_ for scaffolded agents the Postgres world was never real — eve 0.22.x ships
+  no Postgres workflow backend, so `WORKFLOW_POSTGRES_URL` was inert and sessions actually lived
+  (and died) on the container FS. Durability now comes from a per-environment **world-data volume**
+  mounted at `/app/.eve/.workflow-data` (`worldDataVolumeName(worldKey)`, same keying as the home
+  volume). The world DBs stay provisioned: the assistant template pins `@workflow/world-postgres`
+  and genuinely uses them.
 - **Migration:** old `harnesst_inst_<deploymentId>` databases are orphaned by design (sessions were
   never durable before this) — no data migration; they can be dropped manually.
 - **Security surface.** The Docker socket grants the _runtime_ process host-level Docker control;
@@ -937,9 +943,10 @@ two-source-of-truth reconciliation problem.
 - **Volume naming & lifecycle.** One named volume per environment: `homeVolumeName(worldKey)` =
   `harnesst-home-<sanitized>-<sha1slug8>` (same stability/collision-safety shape as `worldDbName`, wider
   volume charset). Docker auto-creates it on first sandbox use — no provisioning. `destroyWorld` now
-  tears the whole environment down: drop the world DB, then (best-effort) reap the sandbox containers
-  mounting that volume — a `docker ps --filter volume=<name>` finds exactly this env's siblings, which
-  also closes part of the 6.1 sandbox-GC punt — then remove the volume.
+  tears the whole environment down: drop the world DB, then (best-effort) reap the containers still
+  mounting this env's volumes (the home volume finds its sandbox siblings — closing part of the 6.1
+  sandbox-GC punt — and, since #288, the world-data volume finds any straggler instances), then
+  remove both volumes.
 - **The agent-visible contract.** Anything an agent keeps under `/workspace/home` — SSH keys, caches,
   notes-to-self — **survives new sessions, redeploys, and instance restarts, and dies with the
   environment.** Everything outside `/workspace/home` remains per-session scratch.

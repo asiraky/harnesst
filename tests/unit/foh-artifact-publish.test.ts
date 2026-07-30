@@ -65,6 +65,7 @@ function session(over: Partial<PlaygroundSession> = {}): PlaygroundSession {
     createdBy: "user_b",
     surface: "foh",
     status: "running",
+    streamIndex: 7,
     ...over,
   } as unknown as PlaygroundSession;
 }
@@ -109,7 +110,6 @@ function makeDeps(
       rows.push(row);
       return row;
     },
-    streamPosition: async () => 7,
     now: () => NOW,
   };
 }
@@ -143,14 +143,13 @@ describe("publishArtifact destination", () => {
       title: "Chart",
       streamIndex: 7,
     });
-    // Both narrowing facts come off the token's deployment, not the body: the environment (a
-    // staging container must not publish into a production conversation) and the deployment
-    // itself (which is what ties the publish to one member's live turn).
+    // The narrowing fact comes off the token's deployment, not the body: the environment (a
+    // staging container must not publish into a production conversation; #288 dropped
+    // last_deployment_id, so the environment's live turn is the scope).
     expect(deps.finds[0]).toMatchObject({
       projectId: PROJECT,
       agentId: "agent_1",
       environmentId: "env_1",
-      deploymentId,
     });
     expect(deps.finds[0].staleAfterMs).toBeGreaterThan(0);
   });

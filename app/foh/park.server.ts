@@ -30,7 +30,7 @@ import { buildResumeVia } from "~/foh/channel-resume";
 import { openInboxQuestion } from "~/foh/inbox.server";
 import {
   adoptChannelHomedSession,
-  backfillChannelHomedSessionTranscript,
+  advanceChannelHomedSessionCursor,
   titleFromMessage,
   type PlaygroundSession,
 } from "~/playground/sessions.server";
@@ -44,11 +44,11 @@ const MAX_STATE_BYTES = 100_000;
 export interface ParkDeps {
   store: DataStore;
   adoptSession: typeof adoptChannelHomedSession;
-  /** Copy the pre-question transcript into the cache. Best-effort — never fails the park. */
-  backfillTranscript: (input: {
+  /** Advance the cursor past the pre-question transcript. Best-effort — never fails the park. */
+  advanceCursor: (input: {
     session: PlaygroundSession;
     target: Target;
-  }) => Promise<void>;
+  }) => Promise<unknown>;
   openQuestion: typeof openInboxQuestion;
   /** Claim staleness cutoff handed to the adopt fence; the turn claim's own constant. */
   staleAfterMs: number;
@@ -59,7 +59,7 @@ export function defaultParkDeps(): ParkDeps {
   return {
     store: getRuntime().data,
     adoptSession: adoptChannelHomedSession,
-    backfillTranscript: backfillChannelHomedSessionTranscript,
+    advanceCursor: advanceChannelHomedSessionCursor,
     openQuestion: openInboxQuestion,
     staleAfterMs: TURN_IDLE_TIMEOUT_MS,
     now: () => new Date(),
@@ -188,8 +188,6 @@ export async function parkChannelQuestion(
     projectId: project.id,
     agentId: agent.id,
     environmentId: environment.id,
-    deploymentId: deployment.id,
-    releaseId: withRelease?.releaseId ?? null,
     version: withRelease?.version ?? null,
     externalSessionId: input.eveSessionId,
     // Store the NAMESPACED token as the session's continuation token — it is what eve reported
@@ -219,23 +217,24 @@ export async function parkChannelQuestion(
     );
   }
 
-  // Show the conversation that led to the question, not a bare prompt.
+  // Advance the cursor past the channel conversation so the human's answer doesn't replay it
+  // as part of the answering turn (the transcript itself renders from eve's durable stream).
   //
-  // NOT AWAITED, deliberately. The backfill reads the tail of the SAME eve session whose
-  // `input.requested` handler is blocked on this very request: the handler is inside the turn,
-  // the turn's stream produces no terminal event until the handler returns, and the container's
-  // fetch aborts at 10s. Awaiting a 5s idle read inside that window is a two-timeout race with
-  // no ordering guarantee — and when the abort wins, the container believes the park failed
-  // while the row is already written. So the row is written, 200 goes back immediately, and the
-  // copy finishes (or does not) in the background. The FOH loader re-backfills an incomplete
-  // cache anyway, so a miss defers the copy, never loses it.
+  // NOT AWAITED, deliberately. The read tails the SAME eve session whose `input.requested`
+  // handler is blocked on this very request: the handler is inside the turn, the turn's stream
+  // produces no terminal event until the handler returns, and the container's fetch aborts at
+  // 10s. Awaiting a 5s idle read inside that window is a two-timeout race with no ordering
+  // guarantee — and when the abort wins, the container believes the park failed while the row
+  // is already written. So the row is written, 200 goes back immediately, and the cursor
+  // advance finishes (or does not) in the background. The FOH loader re-runs it for a
+  // channel-homed row whose cursor is still 0, so a miss defers it, never loses it.
   const url = deployment.url ?? withRelease?.url ?? null;
   if (url) {
-    const onBackfillError = (error: unknown) =>
-      console.error("[foh] channel park transcript backfill failed:", error);
+    const onAdvanceError = (error: unknown) =>
+      console.error("[foh] channel park cursor advance failed:", error);
     try {
       void deps
-        .backfillTranscript({
+        .advanceCursor({
           session,
           target: {
             deploymentId: deployment.id,
@@ -247,9 +246,9 @@ export async function parkChannelQuestion(
             gitSha: withRelease?.gitSha ?? "",
           },
         })
-        .catch(onBackfillError);
+        .catch(onAdvanceError);
     } catch (error) {
-      onBackfillError(error);
+      onAdvanceError(error);
     }
   }
 

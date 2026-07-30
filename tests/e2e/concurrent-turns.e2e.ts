@@ -27,7 +27,7 @@ describe.runIf(LIVE)("FOH concurrent turns on one session", () => {
   it("409s the second sender while a fresh turn runs, then settles the winner", async () => {
     const { db } = await import("~/db/client.server");
     const { eq } = await import("drizzle-orm");
-    const { playgroundEvents, playgroundSessions } = await import("~/db/schema");
+    const { playgroundSessions } = await import("~/db/schema");
     const { drizzleDataStore } = await import("~/data/drizzle.server");
     const { action } = await import("~/routes/api.foh.stream");
 
@@ -135,11 +135,6 @@ describe.runIf(LIVE)("FOH concurrent turns on one session", () => {
       }, "the winning turn to settle");
       expect(settled.turnClaimId).toBe(winningClaimId);
       expect(settled.streamIndex).toBe(6);
-      const events = await db
-        .select()
-        .from(playgroundEvents)
-        .where(eq(playgroundEvents.sessionId, playgroundSessionId));
-      expect(events).toHaveLength(6);
 
       // Exactly one finished pointer — the losing request contributed nothing.
       const pending = await until(async () => {

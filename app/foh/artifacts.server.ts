@@ -44,10 +44,7 @@ import {
   writeArtifactBytes,
   type Artifact,
 } from "~/foh/artifact-store.server";
-import {
-  cachedStreamIndex,
-  liveFohTurnForDeployment,
-} from "~/playground/sessions.server";
+import { liveFohTurnForDeployment } from "~/playground/sessions.server";
 import { getRuntime } from "~/seams/index.server";
 
 /** Longest agent-supplied caption kept — it is one line under a card. */
@@ -110,8 +107,6 @@ export interface PublishArtifactDeps {
   findSession: typeof liveFohTurnForDeployment;
   /** Consumption the publish is held against (see the budgets above). */
   usage: typeof artifactUsage;
-  /** Cache-space transcript position the card is anchored to. */
-  streamPosition: (sessionId: string) => Promise<number>;
   now: () => Date;
 }
 
@@ -123,7 +118,6 @@ export function defaultPublishArtifactDeps(): PublishArtifactDeps {
     insert: insertArtifact,
     findSession: liveFohTurnForDeployment,
     usage: artifactUsage,
-    streamPosition: cachedStreamIndex,
     now: () => new Date(),
   };
 }
@@ -191,7 +185,6 @@ export async function publishArtifact(
     projectId: project.id,
     agentId: agent.id,
     environmentId: deployment.environmentId,
-    deploymentId: deployment.id,
     staleAfterMs: TURN_IDLE_TIMEOUT_MS,
     now: deps.now(),
   });
@@ -250,8 +243,10 @@ export async function publishArtifact(
   const sha256 = createHash("sha256").update(copied.bytes).digest("hex");
   const storagePath = await deps.writeBytes(sha256, copied.bytes);
   // The position the conversation had reached WHEN the publish landed, so the card renders inside
-  // the turn that produced it rather than at the end of the transcript forever after.
-  const streamIndex = await deps.streamPosition(session.id);
+  // the turn that produced it rather than at the end of the transcript forever after. With the
+  // durable cache gone (#288) the row's eve-space cursor IS that position — the live drain's
+  // progress saves keep it within the in-flight turn.
+  const streamIndex = session.streamIndex;
   const title = input.title?.trim() ? input.title.trim().slice(0, MAX_TITLE_LENGTH) : null;
 
   let row: Artifact;

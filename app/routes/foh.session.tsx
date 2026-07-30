@@ -1,7 +1,7 @@
 /**
  * FOH session view (D14: /t/:projectId/:agentId/s/:sessionId) — the right pane: one
  * conversation with a team member. A deliberate COPY of the playground page's loader
- * pipeline (reconcile → settle → backfill → cache read) and client machinery (LiveTurn
+ * pipeline (wake → reconcile → settle → eve render) and client machinery (LiveTurn
  * reducer, NDJSON send/stop, 2s reconnect poll, newest-entry-only onAnswer) per D20 — the
  * regression criterion outweighs DRY.
  *
@@ -61,18 +61,17 @@ import {
   shouldPollRemoteSession,
 } from "~/playground/handoff";
 import {
-  backfillPlaygroundEventsFromEve,
+  advanceChannelHomedSessionCursor,
   clearSessionPendingInput,
   getFohSessionForViewer,
-  loadPlaygroundEntriesFromCache,
+  loadPlaygroundEntriesFromEve,
   markSessionPendingInput,
-  playgroundCacheIsComplete,
   reconcilePlaygroundSessionFromEve,
   restoreRepairedSessionToWaiting,
   settleAbandonedPlaygroundSession,
 } from "~/playground/sessions.server";
 import { shouldSettleAbandonedSession } from "~/playground/settle";
-import { findSessionOwnerTarget } from "~/playground/ownership";
+import { ensureLiveDeploymentForEnvironment } from "~/deploy/wake.server";
 import { finalizeDelegationOnResume } from "~/team/resume.server";
 import { hasActiveTurn, TURN_IDLE_TIMEOUT_MS } from "~/chat/turn-stream.server";
 import { getRuntime } from "~/seams/index.server";
@@ -107,8 +106,28 @@ export const loader = (args: LoaderFunctionArgs) =>
         : null;
       if (!currentSession) throw data("Session not found", { status: 404 });
 
-      const targets = await liveTargets(agent.id);
-      const historyTarget = findSessionOwnerTarget(currentSession, targets);
+      // Wake-on-view (#288): the transcript lives in eve's durable stream, so opening a
+      // conversation whose HOME environment is scaled to zero starts it — the same rule as
+      // the stream route's wake-on-send. A bound session is served only by its own
+      // environment's world store (a cross-environment eve never saw the session and hangs,
+      // not 404s, on unknown ids), so the home environment is woken even while siblings are
+      // live, and nothing else is ever asked for the history. Only worth it when there is an
+      // eve session to read; a handle-less row renders empty either way.
+      let targets = await liveTargets(agent.id);
+      const sessionEnvironmentId = currentSession.environmentId;
+      if (
+        currentSession.externalSessionId &&
+        sessionEnvironmentId &&
+        !targets.some((t) => t.environmentId === sessionEnvironmentId)
+      ) {
+        if (await ensureLiveDeploymentForEnvironment(sessionEnvironmentId)) {
+          targets = await liveTargets(agent.id);
+        }
+      }
+      const historyTarget = currentSession.externalSessionId
+        ? (targets.find((t) => t.environmentId === sessionEnvironmentId) ??
+          null)
+        : (targets[0] ?? null);
       let historyError: string | null = null;
 
       // Dead-drain recovery (chokepoint #2 rides inside): a turn whose drain died with the
@@ -142,46 +161,85 @@ export const loader = (args: LoaderFunctionArgs) =>
         currentSession = await settleAbandonedPlaygroundSession(currentSession);
       }
 
-      // Incomplete-cache backfill: agent-opened (relay-parked) rows start with a best-effort
-      // transcript copy — if the relay's backfill missed, this is where it heals (D8), same
-      // as legacy playground sessions.
+      // Channel-park cursor heal (WS1): the park's fire-and-forget cursor advance can miss
+      // (the container's fetch aborted mid-read). A channel-homed row whose cursor is still 0
+      // would render nothing and replay the whole channel thread into the answering turn, so
+      // re-run the advance here — idempotent, guarded by the cursor itself.
+      if (
+        historyTarget &&
+        currentSession.resumeVia &&
+        currentSession.externalSessionId &&
+        currentSession.streamIndex === 0
+      ) {
+        try {
+          currentSession = await advanceChannelHomedSessionCursor({
+            session: currentSession,
+            target: historyTarget,
+          });
+        } catch {
+          // Best-effort — a later load retries.
+        }
+      }
+
+      // Agent-opened rows (#288 3c): the contact-user notification renders as the agent's
+      // opening entry — before any eve session exists (the whole transcript), and still on
+      // top once a reply has seeded one (the seed block carrying it into eve is stripped
+      // from replay, so without this the notification would vanish from the conversation).
+      const openingEntries: ChatEntry[] = currentSession.openingMessage
+        ? [
+            {
+              id: `notice-${currentSession.id}`,
+              role: "assistant",
+              text: currentSession.openingMessage,
+            },
+          ]
+        : [];
+
+      // The transcript renders from eve's durable stream (#288) — harnesst keeps no copy.
+      // A succeeded conversation (#288 3b) also renders its predecessor's stream, stitched
+      // ahead of the successor's inside `loadPlaygroundEntriesFromEve` — so a just-rebound
+      // row whose successor cursor is still 0 must not short-circuit to empty.
+      let entries: ChatEntry[] = [];
       if (
         currentSession.externalSessionId &&
-        !(await playgroundCacheIsComplete(currentSession))
+        (currentSession.streamIndex > 0 ||
+          currentSession.predecessorExternalSessionId)
       ) {
         if (historyTarget) {
           try {
-            await backfillPlaygroundEventsFromEve({
+            entries = await loadPlaygroundEntriesFromEve({
               session: currentSession,
               target: historyTarget,
             });
           } catch (error) {
-            historyError = `Couldn't reload the conversation history: ${(error as Error).message}`;
+            historyError = `Couldn't load the conversation history: ${(error as Error).message}`;
           }
         } else {
           historyError =
-            "harnesst is showing the history it cached, but some older messages may be missing because the original deployment is unavailable.";
+            "The conversation history lives on the agent's instance, which harnesst couldn't reach or wake — it will load once the agent is reachable.";
         }
       }
 
-      const entries = await loadPlaygroundEntriesFromCache(currentSession);
-
       // Loader-side repair (issue #221 finding 4): the durable retry for a park/settle
-      // write the drain swallowed. The durable transcript cache is the truth; when the
-      // session row disagrees (a lost park, a lying needs-you badge, a stranded waiting
-      // delegation), repair it here. Every write is idempotent, the whole block is
+      // write the drain swallowed. Eve's durable stream is the truth; when the session
+      // row disagrees with its rendered tail (a lost park, a lying needs-you badge, a
+      // stranded waiting delegation), repair it here. Every write is idempotent, the whole block is
       // exception-swallowed (bookkeeping never breaks the page), and the repaired flag is
       // reflected into the returned session so THIS load's UI is already honest.
       try {
         // Artifact cards trail their turn (#290), so the repair reads the newest conversational
-        // entry — a card must never look like "the turn ended without a reply".
+        // entry — a card must never look like "the turn ended without a reply". A failed history
+        // read means `entries` says nothing about the session — judging a repair from that
+        // emptiness would clear a real park just because eve was down.
         const lastEntry = newestTurnEntry(entries);
-        const repair = repairFohSessionState({
-          status: currentSession.status,
-          pendingInputAt: currentSession.pendingInputAt,
-          channelHomed: currentSession.resumeVia != null,
-          lastEntry,
-        });
+        const repair = historyError
+          ? ({ action: "none" } as const)
+          : repairFohSessionState({
+              status: currentSession.status,
+              pendingInputAt: currentSession.pendingInputAt,
+              channelHomed: currentSession.resumeVia != null,
+              lastEntry,
+            });
         if (repair.action === "park") {
           // Status first, park second (issue #282 review): if the park write below fails
           // transiently, a `waiting` row with the flag unset re-enters this branch on the
@@ -259,14 +317,17 @@ export const loader = (args: LoaderFunctionArgs) =>
         sessionStatus: currentSession.status,
         sessionFohStatus: fohSessionStatus(currentSession),
         openedByAgent: currentSession.openedByAgentId != null,
-        // Channel-homed rows (resumeVia set) live on that channel's thread and only take
-        // answers — the UI must say so. The label is the only thing exposed; nothing
-        // channel-specific leaks to the client.
+        // Channel-homed rows (resumeVia set) began on that channel's thread: typed text
+        // answers a pending ask back through the channel, and free text succeeds the
+        // conversation into a fresh HTTP-homed session (#288 3b). The label is the only
+        // thing exposed; nothing channel-specific leaks to the client.
         channelLabel: currentSession.resumeVia
           ? channelLabelFor(currentSession.resumeVia.channel)
           : null,
         lastEventAt: currentSession.lastEventAt?.toISOString() ?? null,
-        entries,
+        // Prepended at return time only: the repair block above judges eve's real tail, and
+        // a synthetic notice entry must never masquerade as it.
+        entries: [...openingEntries, ...entries],
         historyError,
       };
     },
@@ -454,8 +515,9 @@ export default function FohSession({ loaderData }: Route.ComponentProps) {
       form.set("playgroundSessionId", forSession);
       // A clicked question/approval card answers exactly ITS request (issue #221 finding
       // 2). On an HTTP-homed session, composer text stays the intentional continue/
-      // supersede path; on a channel-homed one it correlates to the newest pending ask —
-      // the only thing such a session can deliver (issue #282).
+      // supersede path; on a channel-homed one it correlates to the newest pending ask
+      // (issue #282) — and with nothing pending it carries no correlation, which the
+      // server reads as succession into a fresh HTTP-homed session (#288 3b).
       const correlated =
         answer ??
         composerAnswerFor({
@@ -626,10 +688,11 @@ export default function FohSession({ loaderData }: Route.ComponentProps) {
           </span>
         )}
         {channelLabel && (
-          // Channel-homed (issue #282): the conversation lives on the channel's thread and
-          // this page can only deliver answers — say so where the status chips live.
+          // Channel origin (#288 3b): the conversation began on the channel's thread. Free
+          // text is fine — it moves the conversation here — so the chip only names where
+          // it came from.
           <span className="min-w-0 max-w-[45%] truncate rounded-full bg-muted px-2 py-0.5 text-[11px] text-muted-foreground">
-            on {channelLabel} · answers only
+            from {channelLabel}
           </span>
         )}
         <span className="shrink-0 text-xs text-muted-foreground">
@@ -721,40 +784,30 @@ export default function FohSession({ loaderData }: Route.ComponentProps) {
       </ChatTranscript>
 
       <div className="mx-auto w-full max-w-5xl px-4 pb-4 pt-3 sm:px-6">
-        {channelLabel && !typedAnswerRequest && !busy ? (
-          // Channel-homed with nothing to answer (issue #282): no free-text box the user
-          // isn't allowed to use — the conversation continues on the channel's thread.
-          <p className="rounded-2xl border bg-muted/30 px-4 py-3 text-sm text-muted-foreground">
-            This conversation continues on {agentName}&rsquo;s {channelLabel}{" "}
-            thread. When {agentName} asks a question here, you can answer it —
-            to say anything else, reply on the {channelLabel} thread.
+        {!online && (
+          <p className="mb-2 pl-1 text-xs text-muted-foreground">
+            {agentName} is asleep — your next message wakes them (this can take
+            a couple of minutes).
           </p>
-        ) : (
-          <>
-            {!online && (
-              <p className="mb-2 pl-1 text-xs text-muted-foreground">
-                {agentName} is asleep — your next message wakes them (this can
-                take a couple of minutes).
-              </p>
-            )}
-            {channelLabel && typedAnswerRequest && !busy && (
-              <p className="mb-2 pl-1 text-xs text-muted-foreground">
-                Your reply answers {agentName}&rsquo;s question above and goes
-                back to the {channelLabel} thread.
-              </p>
-            )}
-            <ChatComposer
-              placeholder={
-                channelLabel
-                  ? `Answer ${agentName}’s question…`
-                  : `Message ${agentName}…`
-              }
-              busy={busy}
-              onSend={send}
-              controls={composerControls}
-            />
-          </>
         )}
+        {channelLabel && typedAnswerRequest && !busy && (
+          <p className="mb-2 pl-1 text-xs text-muted-foreground">
+            Your reply answers {agentName}&rsquo;s question above and goes back
+            to the {channelLabel} thread.
+          </p>
+        )}
+        <ChatComposer
+          placeholder={
+            // A pending channel ask correlates typed text to it (issue #282); with nothing
+            // pending, free text succeeds the conversation here (#288 3b) — plain composer.
+            channelLabel && typedAnswerRequest
+              ? `Answer ${agentName}’s question…`
+              : `Message ${agentName}…`
+          }
+          busy={busy}
+          onSend={send}
+          controls={composerControls}
+        />
       </div>
     </section>
   );

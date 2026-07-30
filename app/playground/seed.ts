@@ -1,13 +1,10 @@
 /**
- * Cross-redeploy conversation seed (#71).
+ * Strippable conversation-context seed.
  *
- * When a playground follow-up lands on a deployment that did NOT create the conversation's eve
- * session (the owning container was replaced, or a different deployment was explicitly selected),
- * the eve-side runtime context is gone — it died with the old container and can't be migrated. So
- * instead of dead-ending the user, harnesst seeds a FRESH eve session on the replacement deployment
- * from its own durable transcript cache (`playground_events`): the prior conversation is rendered
- * into a plain-text block and prepended to the first message on the new session, so the agent
- * continues with the history in context.
+ * When harnesst starts a FRESH eve session that continues an existing conversation (the #288
+ * succession of a channel-homed session), the prior conversation is rendered into a plain-text
+ * block and prepended to the first message on the new session, so the agent continues with the
+ * history in context.
  *
  * That block must be invisible to the human transcript. It rides inside the durable
  * `message.received` event (same as the model directive), so it is wrapped in strippable
@@ -26,6 +23,31 @@ const MAX_BODY_CHARS = 24_000;
 const OMITTED_NOTE = "[Earlier messages were omitted to fit.]";
 const INSTRUCTION =
   "[harnesst] This conversation continues from a previous deployment of this agent that has since been replaced, so your runtime context was reset. The transcript so far is below. Continue the conversation naturally; do not mention the reset unless asked.";
+/**
+ * Succession (#288 3b): the prior session was homed on one of the agent's channels (e.g. a
+ * GitHub thread) and is being succeeded by a fresh HTTP-homed session so the human can talk
+ * freely. The old session is not dead — it just stops being where this conversation lives.
+ */
+export const SUCCESSION_INSTRUCTION =
+  "[harnesst] This conversation started on one of your channels (e.g. a GitHub thread) in a previous session; the human is now continuing it here directly, so this fresh session carries the transcript below as context. Continue the conversation naturally; do not mention the handover unless asked.";
+/**
+ * Agent-initiated conversations (#288 3c): the row was opened by the agent's `contact-user`
+ * notification (sent from some other run) and had no eve session until this reply. The
+ * notification rides in as the same strippable block so the fresh session knows what the
+ * human is replying to.
+ */
+const NOTICE_INSTRUCTION =
+  "[harnesst] You previously sent the notification below to the humans who run you (via your contact-user tool, from a different session). A human read it and is now replying, opening this fresh conversation. Continue naturally; do not mention the session boundary unless asked.";
+
+/** Build the strippable seed block that carries a contact-user notification (#288 3c). */
+export function buildNoticeSeedContext(openingMessage: string): string {
+  return [
+    SEED_CONTEXT_START,
+    NOTICE_INSTRUCTION,
+    `Your notification: ${sanitize(openingMessage)}`,
+    SEED_CONTEXT_END,
+  ].join("\n\n");
+}
 
 /** Truncate a single message and de-fang the end marker so content can't break the wrapper. */
 function sanitize(text: string): string {
@@ -41,7 +63,10 @@ function sanitize(text: string): string {
  * agent asked becomes `Assistant (asked): …` (that pending question is exactly the context a
  * "try again" reply needs).
  */
-export function buildSeedContext(entries: ChatEntry[]): string | null {
+export function buildSeedContext(
+  entries: ChatEntry[],
+  instruction: string = INSTRUCTION,
+): string | null {
   const lines: string[] = [];
   for (const entry of entries) {
     const text = sanitize(entry.text ?? "");
@@ -67,7 +92,7 @@ export function buildSeedContext(entries: ChatEntry[]): string | null {
     .filter(Boolean)
     .join("\n\n");
 
-  return [SEED_CONTEXT_START, INSTRUCTION, body, SEED_CONTEXT_END].join("\n\n");
+  return [SEED_CONTEXT_START, instruction, body, SEED_CONTEXT_END].join("\n\n");
 }
 
 /**

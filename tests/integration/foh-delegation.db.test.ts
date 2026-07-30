@@ -161,7 +161,6 @@ describe.runIf(LIVE)("FOH delegation parking against real Postgres", () => {
         resolveRunId: async () => null,
         ensureLiveDeployment: async () => null,
         createSession: createPlaygroundSession,
-        backfillSession: async () => {}, // no eve behind the fake url
         scheduleReattach: async () => {},
         now: () => new Date(),
         timeoutMs: 1_000,
