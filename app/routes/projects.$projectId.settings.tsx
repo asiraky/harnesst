@@ -1185,7 +1185,7 @@ export default function Settings({
 
       {isTeam && roster.length === 0 && (
         <div className="mb-10">
-          <EmptyTeamState overviewHref={`/repos/${project.id}`} />
+          <EmptyTeamState agentsHref={`/repos/${project.id}`} />
         </div>
       )}
 

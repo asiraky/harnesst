@@ -1,5 +1,5 @@
 /**
- * Starter templates for new agent resources ("New tool/skill/…" on the Overview).
+ * Starter templates for new agent resources (the "New tool/skill/…" action on the agent page).
  *
  * Shapes mirror what eve itself scaffolds (eve@0.19 `setup/scaffold` + public definitions):
  * tools are `defineTool` modules from `eve/tools`, skills are markdown frontmatter,
