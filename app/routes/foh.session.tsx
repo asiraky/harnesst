@@ -408,7 +408,7 @@ export default function FohSession({ loaderData }: Route.ComponentProps) {
       // and without this fallback the error would hide the answer box until a reload.
       return newestPendingRequest(newestTurnEntry(entries));
     }
-    return newestPendingRequest(entries.at(-1) ?? null);
+    return newestPendingRequest(newestTurnEntry(entries));
   }, [entries, visibleLive]);
   // Only a request that ACCEPTS typed input turns the composer into the answer box — an
   // options-only approval is answered by its buttons, never by free text.

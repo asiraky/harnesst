@@ -51,6 +51,10 @@ services:
       # Docker-outside-of-docker: harnesst builds agent images and runs agent containers on the
       # host daemon. Root-equivalent on this host — see the README's security note.
       - /var/run/docker.sock:/var/run/docker.sock
+      # Published artifacts (copied out of agent home volumes) live here; must match
+      # HARNESST_ARTIFACTS_DIR in .env or every stored artifact dies with the container layer
+      # on the next `up --build`.
+      - harnesst-artifacts:/var/lib/harnesst/artifacts
     depends_on:
       postgres:
         condition: service_healthy
@@ -96,5 +100,6 @@ services:
 
 volumes:
   harnesst-postgres-data:
+  harnesst-artifacts:
   harnesst-letsencrypt:
   harnesst-certbot-webroot:

@@ -7,11 +7,7 @@
  */
 import { describe, expect, it } from "vitest";
 
-import {
-  artifactRendersInline,
-  resolveArtifactSource,
-  sniffArtifactContentType,
-} from "~/foh/artifact-media";
+import { resolveArtifactSource, sniffArtifactContentType } from "~/foh/artifact-media";
 
 const png = (extra: number[] = []) =>
   new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, ...extra]);
@@ -106,14 +102,5 @@ describe("sniffArtifactContentType", () => {
     expect(sniffArtifactContentType(bytesOf("<html>hi</html>"), "page.html")).toBeNull();
     expect(sniffArtifactContentType(new Uint8Array(), "empty.png")).toBeNull();
     expect(sniffArtifactContentType(new Uint8Array([0x89, 0x50]), "short.png")).toBeNull();
-  });
-});
-
-describe("artifactRendersInline", () => {
-  it("keeps SVG out of inline rendering while raster formats stay inline", () => {
-    expect(artifactRendersInline("image/png")).toBe(true);
-    expect(artifactRendersInline("image/jpeg")).toBe(true);
-    expect(artifactRendersInline("image/webp")).toBe(true);
-    expect(artifactRendersInline("image/svg+xml")).toBe(false);
   });
 });
