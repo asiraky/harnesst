@@ -21,25 +21,11 @@ import { z } from "zod";
 // reported as an ordinary refusal rather than a crash.
 export default defineTool({
   description:
-    "Publish an image or a static HTML page so the person you are talking to can SEE it in this " +
-    "conversation. Use it whenever you have produced a screenshot, chart, diagram, rendered image " +
-    "or a built page and the point is for the user to look at it — describing it in words is not " +
-    "the same thing. The path must already exist under /workspace/home (anything you wrote to " +
-    "/workspace/home/artifacts/, and browser screenshots in " +
-    "/workspace/home/agent-browser/screenshots/, both qualify). Images: PNG, JPEG, WebP or SVG. " +
-    "Pages: a single .html file, or a DIRECTORY holding index.html plus the css/js/font/image files " +
-    "it loads (at most 40 files, plain names, no symlinks). 25 MB in total either way. An image " +
-    "returns its URL inside harnesst; a page returns no URL by design — it is opened from the card " +
-    "in a sandboxed preview panel, where it cannot reach the network, submit forms or read " +
-    "anything of the user's. fetch()/XHR are dead there even for the page's own sibling files, so " +
-    "inline any data into the page rather than fetching a .json next to it. Publishing the SAME " +
-    "file name again updates that card in place as a new version (the reply says which version, " +
-    "and whether anything changed) — so revise the file and publish it under the same name rather " +
-    "than inventing chart-v2.png, which would leave the user with two cards. Either way the " +
-    "artifact appears as its own card, so mention in your " +
-    "reply that you published it rather than trying to embed it in markdown. Call it while you are " +
-    "answering the person in harnesst: the card goes to the conversation whose turn is running, so " +
-    "publishing from a background run has nowhere to land and is refused.",
+    "Show the user a file you produced, as a card in this conversation. What you publish and how " +
+    "it renders is set by `kind`. The path must exist under /workspace/home; 25 MB max. To revise " +
+    "something, publish the same file name again — the existing card updates to a new version " +
+    "instead of adding a second card. Mention in your reply that you published it; only call this " +
+    "while answering the user (a background run has nowhere to land).",
   inputSchema: z.object({
     path: z
       .string()
@@ -59,11 +45,13 @@ export default defineTool({
       ),
     kind: z
       .enum(["image", "html"])
-      .optional()
       .describe(
-        "What is being published: 'image' for a single image file, 'html' for a page (a single " +
-          ".html file or a directory containing index.html). Required when publishing a page " +
-          "DIRECTORY, since the path alone does not say; otherwise inferred from the extension.",
+        "How the artifact renders for the user. 'image': a single PNG, JPEG, WebP or SVG file, " +
+          "displayed directly as a picture in the card. 'html': a page (a single .html file, or a " +
+          "directory with index.html and the css/js/image files it loads), which the user opens " +
+          "from the card in a sandboxed iframe preview — the page runs live with its styles and " +
+          "scripts, but has no network access: fetch() fails even for sibling files, so inline " +
+          "any data into the page.",
       ),
   }),
   async execute({ path, title, kind }) {

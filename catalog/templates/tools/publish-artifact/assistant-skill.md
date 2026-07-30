@@ -16,8 +16,8 @@ renaming something else to `.png` is refused. Images are served back behind the 
 and render straight into the card.
 
 **Pages** — a single `.html` file, or a directory holding `index.html` plus the css, js, font and
-image files it loads (at most 40 files, 25 MB in total). Pass `kind: "html"` when publishing a
-directory; a lone `.html` path is recognised on its own. Every member needs a plain name (letters,
+image files it loads (at most 40 files, 25 MB in total). `kind` is always passed — `"html"` renders
+the page live in a sandboxed preview, `"image"` displays a picture. Every member needs a plain name (letters,
 digits, dots, dashes, no leading dot) and an allowed extension — one unexpected file refuses the
 whole publish rather than silently dropping it, and symlinks are refused, so copy real files in.
 Name the page `index.html`; a directory with two HTML files and no `index.html` is ambiguous and
