@@ -183,6 +183,13 @@
       "when": 1785416418392,
       "tag": "0025_chubby_spiral",
       "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "7",
+      "when": 1785419211676,
+      "tag": "0026_artifact_versions",
+      "breakpoints": true
     }
   ]
 }

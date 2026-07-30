@@ -17,12 +17,17 @@ import {
   MAX_ARTIFACTS_PER_PROJECT_WINDOW,
   MAX_ARTIFACTS_PER_SESSION,
   MAX_ARTIFACT_BYTES_PER_PROJECT_WINDOW,
+  MAX_ARTIFACT_VERSIONS_TOTAL,
   MAX_CONCURRENT_ARTIFACT_COPIES,
   publishArtifact,
   withArtifactCopySlot,
   type PublishArtifactDeps,
 } from "~/foh/artifacts.server";
-import type { Artifact } from "~/foh/artifact-store.server";
+import type {
+  Artifact,
+  ArtifactFileInput,
+  ArtifactVersion,
+} from "~/foh/artifact-store.server";
 import type { PlaygroundSession } from "~/playground/sessions.server";
 import { makeFakeStore, type FakeStore } from "../fakes/store";
 
@@ -80,13 +85,20 @@ function session(over: Partial<PlaygroundSession> = {}): PlaygroundSession {
 type Deps = PublishArtifactDeps & {
   copies: Array<{ deploymentId: string; path: string; bundle?: true }>;
   finds: Array<Parameters<PublishArtifactDeps["findSession"]>[0]>;
+  /** One entry per CARD — a republish appends to `versions`, it does not push here (#292). */
   rows: Artifact[];
-  /** Bundle member rows, as `insertBundle` was asked to write them. */
-  files: Array<Parameters<PublishArtifactDeps["insertBundle"]>[0]["files"]>;
+  versions: ArtifactVersion[];
+  /** Bundle member rows, as the recorder was asked to write them. */
+  files: Array<ArtifactFileInput[]>;
   /** Every `(sha, bytes)` pair handed to the store, in order. */
   written: Array<{ sha256: string; byteSize: number }>;
 };
 
+/**
+ * The store's version semantics, in memory: `(session, name)` resolves to one artifact row, bytes
+ * land on it as a version, and bytes identical to the one already on top append nothing. Modelled
+ * rather than stubbed because the branch under test IS "which of those happened".
+ */
 function makeDeps(
   over: {
     find?: PublishArtifactDeps["findSession"];
@@ -98,22 +110,66 @@ function makeDeps(
   const copies: Deps["copies"] = [];
   const finds: Deps["finds"] = [];
   const rows: Artifact[] = [];
+  const versions: ArtifactVersion[] = [];
   const files: Deps["files"] = [];
   const written: Deps["written"] = [];
-  const insert: PublishArtifactDeps["insert"] = async (input) => {
-    const row = {
-      ...input,
-      id: `art_${rows.length + 1}`,
+
+  const findArtifact: PublishArtifactDeps["findArtifact"] = async (input) =>
+    rows.find(
+      (row) => row.sessionId === input.sessionId && row.name === input.name,
+    ) ?? null;
+
+  const record: PublishArtifactDeps["record"] = async (input) => {
+    const { files: members, keepVersions, ...row } = input;
+    let artifact = await findArtifact({
+      sessionId: row.sessionId,
+      name: row.name,
+    });
+    if (!artifact) {
+      artifact = {
+        ...row,
+        id: `art_${rows.length + 1}`,
+        latestVersionId: null,
+        versionNumber: 0,
+        versionCount: 0,
+        createdAt: NOW,
+      } as Artifact;
+      rows.push(artifact);
+    }
+    const stack = versions.filter((v) => v.artifactId === artifact.id);
+    const latest = stack.at(-1) ?? null;
+    if (latest && latest.sha256 === row.sha256) {
+      return { artifact, version: latest, appended: false };
+    }
+    const version = {
+      ...row,
+      id: `ver_${versions.length + 1}`,
+      artifactId: artifact.id,
+      versionNumber: (latest?.versionNumber ?? 0) + 1,
       createdAt: NOW,
-    } as Artifact;
-    rows.push(row);
-    return row;
+    } as ArtifactVersion;
+    versions.push(version);
+    if (members?.length) files.push(members);
+    Object.assign(artifact, {
+      entryPath: row.entryPath,
+      contentType: row.contentType,
+      byteSize: row.byteSize,
+      sha256: row.sha256,
+      storagePath: row.storagePath,
+      latestVersionId: version.id,
+      versionNumber: version.versionNumber,
+      versionCount: Math.min(version.versionNumber, keepVersions),
+      ...(row.title ? { title: row.title } : {}),
+    });
+    return { artifact, version, appended: true };
   };
+
   return {
     store,
     copies,
     finds,
     rows,
+    versions,
     files,
     written,
     findSession: async (input) => {
@@ -143,11 +199,8 @@ function makeDeps(
       written.push({ sha256, byteSize: bytes.length });
       return `${sha256.slice(0, 2)}/${sha256}`;
     },
-    insert,
-    insertBundle: async (input) => {
-      files.push(input.files);
-      return insert(input.artifact);
-    },
+    findArtifact,
+    record,
     now: () => NOW,
   };
 }
@@ -171,7 +224,10 @@ describe("publishArtifact destination", () => {
       name: "chart.png",
       contentType: "image/png",
       byteSize: PNG.length,
-      url: `/api/foh/${PROJECT}/artifact/art_1`,
+      // Version-scoped: the URL has to keep meaning the same bytes, and an artifact's newest
+      // version does not.
+      url: `/api/foh/${PROJECT}/artifact/art_1/ver_1`,
+      version: 1,
     });
     expect(deps.rows[0]).toMatchObject({
       sessionId: "ps_live",
@@ -426,6 +482,179 @@ describe("publishArtifact kinds", () => {
       // A page is one card and one budget charge, and refused before the copy either way.
       expect(deps.copies).toHaveLength(0);
     }
+  });
+});
+
+/**
+ * VERSIONS (#292). The unit is a NAME in a conversation, so the branch every test here pins is
+ * "did this publish make a card or update one" — a wrong answer either spams the transcript with a
+ * card per refinement, or silently overwrites something the user was still looking at.
+ */
+describe("publishArtifact versions", () => {
+  it("appends a version to the card of the same name instead of publishing a second card", async () => {
+    const deploymentId = await seedDeployment();
+    let bytes = PNG;
+    let streamIndex = 7;
+    const deps = makeDeps({
+      copy: async () => ({ ok: true, bytes }),
+      find: async () => ({ ok: true, session: session({ streamIndex }) }),
+    });
+
+    const first = await publishArtifact(
+      { deploymentId, path: "artifacts/chart.png" },
+      deps,
+    );
+    // Two turns later, the agent redraws the chart and publishes the same name.
+    bytes = Buffer.from([...PNG, 0x03]);
+    streamIndex = 19;
+    const second = await publishArtifact(
+      { deploymentId, path: "artifacts/chart.png", title: "Redrawn" },
+      deps,
+    );
+
+    expect(first).toMatchObject({ ok: true, version: 1, updated: true });
+    expect(second).toMatchObject({
+      ok: true,
+      // The SAME card: the transcript entry id is built from this, which is what makes the update
+      // happen in place rather than as a second card under a later turn.
+      artifactId: first.ok ? first.artifactId : "",
+      version: 2,
+      updated: true,
+    });
+    expect(deps.rows).toHaveLength(1);
+    expect(deps.versions.map((v) => v.versionNumber)).toEqual([1, 2]);
+    // The card keeps the position its FIRST publish gave it, while the version records where the
+    // conversation had actually reached — moving the card would slide it down past the turns in
+    // between, away from the exchange it belongs to.
+    expect(deps.rows[0].streamIndex).toBe(7);
+    expect(deps.versions[1].streamIndex).toBe(19);
+    expect(deps.rows[0]).toMatchObject({
+      versionNumber: 2,
+      byteSize: bytes.length,
+      title: "Redrawn",
+    });
+  });
+
+  it("appends nothing when the bytes match the version already on top", async () => {
+    const deploymentId = await seedDeployment();
+    const deps = makeDeps();
+
+    const first = await publishArtifact(
+      { deploymentId, path: "artifacts/chart.png" },
+      deps,
+    );
+    // The tool's POST is best-effort and gets retried; an agent also republishes files it did not
+    // actually change. Neither may become a version, or the picker fills with identical entries.
+    const again = await publishArtifact(
+      { deploymentId, path: "artifacts/chart.png" },
+      deps,
+    );
+
+    expect(first).toMatchObject({ ok: true, version: 1, updated: true });
+    expect(again).toMatchObject({ ok: true, version: 1, updated: false });
+    expect(deps.rows).toHaveLength(1);
+    expect(deps.versions).toHaveLength(1);
+  });
+
+  it("versions a page the same way an image is, members and all", async () => {
+    const deploymentId = await seedDeployment();
+    let page = PAGE;
+    const deps = makeDeps({ copyBundle: async () => ({ ok: true, files: page }) });
+
+    await publishArtifact(
+      { deploymentId, path: "artifacts/site", kind: "html" },
+      deps,
+    );
+    const restyled = [
+      { name: "index.html", bytes: HTML },
+      { name: "assets/app.css", bytes: Buffer.from("body{color:blue}") },
+    ];
+    page = restyled;
+    const second = await publishArtifact(
+      { deploymentId, path: "artifacts/site", kind: "html" },
+      deps,
+    );
+
+    expect(second).toMatchObject({ ok: true, version: 2, updated: true, fileCount: 2 });
+    expect(deps.rows).toHaveLength(1);
+    // Each version owns its own member rows: keyed to the artifact instead, v2's index.html would
+    // collide with v1's and the preview would go on serving the old page.
+    expect(deps.files).toHaveLength(2);
+    expect(deps.files[1].map((f) => f.sha256)).not.toEqual(
+      deps.files[0].map((f) => f.sha256),
+    );
+    expect(deps.rows[0].byteSize).toBe(
+      HTML.length + restyled[1].bytes.length,
+    );
+  });
+
+  it("refuses to republish a name as the other kind rather than swapping which door serves it", async () => {
+    const deploymentId = await seedDeployment();
+    const deps = makeDeps();
+
+    await publishArtifact({ deploymentId, path: "artifacts/report.png" }, deps);
+    const swapped = await publishArtifact(
+      { deploymentId, path: "artifacts/report.png", kind: "html" },
+      deps,
+    );
+
+    expect(swapped.ok).toBe(false);
+    if (swapped.ok) return;
+    // An image is served same-origin behind the viewer's cookie and a page only through the
+    // sandboxed preview, so a kind that could change would move bytes between two very differently
+    // trusted routes — under a preview token that is already live.
+    expect(swapped.error).toMatch(/already published .* as an image/i);
+    expect(deps.copies).toHaveLength(1);
+  });
+
+  it("refuses once one name has been republished to the limit, before reading a byte", async () => {
+    const deploymentId = await seedDeployment();
+    const deps = makeDeps();
+
+    await publishArtifact({ deploymentId, path: "artifacts/chart.png" }, deps);
+    deps.rows[0].versionNumber = MAX_ARTIFACT_VERSIONS_TOTAL;
+    const capped = await publishArtifact(
+      { deploymentId, path: "artifacts/chart.png" },
+      deps,
+    );
+
+    expect(capped.ok).toBe(false);
+    if (capped.ok) return;
+    // Retention prunes old version ROWS for free, so this ceiling is what actually stops a runaway
+    // refine loop from spending the repo's disk on a single card — and it has to read as an
+    // instruction the agent can act on.
+    expect(capped.error).toMatch(
+      new RegExp(`published ${MAX_ARTIFACT_VERSIONS_TOTAL} times`),
+    );
+    expect(capped.error).toMatch(/different name/i);
+    expect(deps.copies).toHaveLength(1);
+  });
+
+  it("charges a new card to the conversation ceiling, but lets an existing one keep refining", async () => {
+    const deploymentId = await seedDeployment();
+    let sessionCount = 0;
+    let bytes = PNG;
+    const deps = makeDeps({
+      copy: async () => ({ ok: true, bytes }),
+      usage: async () => ({ sessionCount, projectCount: 0, projectBytes: 0 }),
+    });
+
+    await publishArtifact({ deploymentId, path: "artifacts/chart.png" }, deps);
+    sessionCount = MAX_ARTIFACTS_PER_SESSION;
+    bytes = Buffer.from([...PNG, 0x04]);
+    const refined = await publishArtifact(
+      { deploymentId, path: "artifacts/chart.png" },
+      deps,
+    );
+    const fresh = await publishArtifact(
+      { deploymentId, path: "artifacts/other.png" },
+      deps,
+    );
+
+    // That budget bounds how much a TRANSCRIPT holds, and a republish adds no card. Its bytes are
+    // still charged to the daily repo ceiling, which is the one that bounds the disk.
+    expect(refined).toMatchObject({ ok: true, version: 2 });
+    expect(fresh.ok).toBe(false);
   });
 });
 

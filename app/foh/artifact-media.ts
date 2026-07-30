@@ -226,7 +226,12 @@ export function artifactCharsetType(contentType: string): string {
     : contentType;
 }
 
-/** Longest file name kept — the name is display copy, not an identifier. */
+/**
+ * Longest file name kept. Since #292 the name IS an identifier — `(session, name)` is what a
+ * republish resolves to — so this cap is also the cap on that key, and the basename below is used
+ * as published rather than being folded or rewritten: an agent that publishes `Chart.png` and
+ * `chart.png` means two files, and matching them would silently overwrite one card with the other.
+ */
 const MAX_NAME_LENGTH = 200;
 
 export interface ArtifactSource {
@@ -312,9 +317,21 @@ export function artifactRendersInline(contentType: string): boolean {
   return ARTIFACT_INLINE_TYPES.includes(contentType);
 }
 
-/** The app path that serves one IMAGE artifact's bytes. Cookie-authenticated, same-origin. */
-export function artifactUrl(projectId: string, artifactId: string): string {
-  return `/api/foh/${projectId}/artifact/${artifactId}`;
+/**
+ * The app path that serves one IMAGE artifact's bytes. Cookie-authenticated, same-origin.
+ *
+ * The VERSION belongs in the path (#292) rather than being left to default: an artifact's bytes
+ * change when the agent republishes the name, and the response is served `immutable` — a URL that
+ * meant "whatever is newest" would be cached forever as whatever it happened to be first. Omitting
+ * it still resolves to the newest version, for a row whose latest version is somehow unknown.
+ */
+export function artifactUrl(
+  projectId: string,
+  artifactId: string,
+  versionId?: string | null,
+): string {
+  const base = `/api/foh/${projectId}/artifact/${artifactId}`;
+  return versionId ? `${base}/${versionId}` : base;
 }
 
 /**

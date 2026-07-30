@@ -39,9 +39,11 @@ export default [
   route("api/foh/:projectId/read", "routes/api.foh.read.ts"),
   // Archive / undo for one FOH session (#278). Reversible; never destructive.
   route("api/foh/:projectId/archive", "routes/api.foh.archive.ts"),
-  // The bytes behind an artifact card (#290) — browser-session auth, out-of-scope is 404.
+  // The bytes behind an artifact card (#290) — browser-session auth, out-of-scope is 404. The
+  // optional version segment (#292) is what keeps the response honestly `immutable`: an artifact's
+  // bytes change when the agent republishes its name, a single version's never do.
   route(
-    "api/foh/:projectId/artifact/:artifactId",
+    "api/foh/:projectId/artifact/:artifactId/:versionId?",
     "routes/api.foh.artifact.ts",
   ),
   // Mints a short-lived preview capability for one HTML artifact (#291). POST, because minting is a

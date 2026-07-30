@@ -12,6 +12,10 @@ import { z } from "zod";
 // itself (no network, no forms, no storage, no cookies), which is why a page has no permanent link
 // to quote back — the user opens it from the card.
 //
+// The unit is a NAME in a conversation, not a file: publishing the same name again appends a
+// VERSION to the card that is already on screen instead of adding a second one, which is what makes
+// the "show me" → "change it" → "show me again" loop read as one thing being refined.
+//
 // HARNESST_FOH_ARTIFACTS_URL and HARNESST_TEAM_TOKEN are injected at deploy when this tool is
 // installed; both absent means the agent is running somewhere that has no Front of House, which is
 // reported as an ordinary refusal rather than a crash.
@@ -28,7 +32,10 @@ export default defineTool({
     "returns its URL inside harnesst; a page returns no URL by design — it is opened from the card " +
     "in a sandboxed preview panel, where it cannot reach the network, submit forms or read " +
     "anything of the user's. fetch()/XHR are dead there even for the page's own sibling files, so " +
-    "inline any data into the page rather than fetching a .json next to it. Either way the " +
+    "inline any data into the page rather than fetching a .json next to it. Publishing the SAME " +
+    "file name again updates that card in place as a new version (the reply says which version, " +
+    "and whether anything changed) — so revise the file and publish it under the same name rather " +
+    "than inventing chart-v2.png, which would leave the user with two cards. Either way the " +
     "artifact appears as its own card, so mention in your " +
     "reply that you published it rather than trying to embed it in markdown. Call it while you are " +
     "answering the person in harnesst: the card goes to the conversation whose turn is running, so " +
@@ -89,6 +96,10 @@ export default defineTool({
             url: string | null;
             name: string;
             byteSize: number;
+            /** 1 on the first publish of this name; higher when the card was updated in place. */
+            version: number;
+            /** False when the bytes matched the version already on the card, so nothing changed. */
+            updated: boolean;
             /** Page bundles only: how many files were stored. */
             fileCount?: number;
           }

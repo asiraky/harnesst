@@ -7,15 +7,21 @@
  * Bytes are content-addressed (`<sha[0:2]>/<sha>`): republishing identical bytes rewrites the same
  * file, which is what makes a retried publish free. Nothing about the agent's file NAME reaches the
  * filesystem — it stays a column, so a hostile name can never shape a path.
+ *
+ * Since #292 an artifact is a NAMED thing in a conversation with a stack of versions, so recording
+ * a publish is `recordArtifact` — one function for both kinds, because "which row does this land
+ * on" is the same question for an image and for a page and answering it twice would be two chances
+ * to answer it differently.
  */
-import { and, count, eq, gte, sum } from "drizzle-orm";
+import { and, count, desc, eq, gte, lte, sum } from "drizzle-orm";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 import { db } from "~/db/client.server";
-import { artifactFiles, artifacts } from "~/db/schema";
+import { artifactFiles, artifacts, artifactVersions } from "~/db/schema";
 
 export type Artifact = typeof artifacts.$inferSelect;
+export type ArtifactVersion = typeof artifactVersions.$inferSelect;
 export type ArtifactFile = typeof artifactFiles.$inferSelect;
 
 /**
@@ -62,45 +68,6 @@ export async function readArtifactBytes(
   }
 }
 
-/**
- * Record one published artifact. Idempotent on `(session_id, sha256)`: the tool's POST is
- * best-effort and gets retried, and a redelivery must return the FIRST row rather than stack a
- * second card for the same bytes.
- */
-export async function insertArtifact(input: {
-  projectId: string;
-  agentId: string;
-  sessionId: string;
-  deploymentId: string;
-  name: string;
-  title: string | null;
-  kind: string;
-  entryPath: string | null;
-  contentType: string;
-  byteSize: number;
-  sha256: string;
-  storagePath: string;
-  streamIndex: number;
-}): Promise<Artifact> {
-  const [inserted] = await db
-    .insert(artifacts)
-    .values(input)
-    .onConflictDoNothing()
-    .returning();
-  if (inserted) return inserted;
-  const [existing] = await db
-    .select()
-    .from(artifacts)
-    .where(
-      and(
-        eq(artifacts.sessionId, input.sessionId),
-        eq(artifacts.sha256, input.sha256),
-      ),
-    )
-    .limit(1);
-  return existing;
-}
-
 /** One member of a page bundle, as the publish flow stores it. */
 export interface ArtifactFileInput {
   relPath: string;
@@ -110,36 +77,240 @@ export interface ArtifactFileInput {
   storagePath: string;
 }
 
+export interface RecordArtifactInput {
+  projectId: string;
+  agentId: string;
+  sessionId: string;
+  deploymentId: string;
+  /** Identity, with the session: republishing this name appends a version to the same card. */
+  name: string;
+  title: string | null;
+  kind: string;
+  entryPath: string | null;
+  contentType: string;
+  byteSize: number;
+  sha256: string;
+  storagePath: string;
+  /** Where the conversation had reached NOW — the card's place only when this is the first version. */
+  streamIndex: number;
+  /** Page bundles only: the members these bytes are made of. */
+  files?: ArtifactFileInput[];
+  /** How many versions of one artifact stay openable (`MAX_ARTIFACT_VERSIONS_KEPT`). */
+  keepVersions: number;
+}
+
+export interface RecordedArtifact {
+  artifact: Artifact;
+  version: ArtifactVersion;
+  /**
+   * False when the bytes matched the version already on top, so nothing was appended — a retried
+   * tool POST, or an agent republishing a file it did not actually change.
+   */
+  appended: boolean;
+}
+
+/** The newest version of an artifact, or null when it somehow has none. */
+export async function latestArtifactVersion(
+  artifactId: string,
+): Promise<ArtifactVersion | null> {
+  const [row] = await db
+    .select()
+    .from(artifactVersions)
+    .where(eq(artifactVersions.artifactId, artifactId))
+    .orderBy(desc(artifactVersions.versionNumber))
+    .limit(1);
+  return row ?? null;
+}
+
 /**
- * Record a page bundle (#291): the card's row plus one row per member. Idempotent the same way a
- * single image is — a retried publish lands on `artifacts_session_sha_uq`, whose key is the members'
- * manifest, so the first row (and its already-written files) is returned rather than a second card.
+ * Record one publish (#290, #291, #292): resolve `(session, name)` to an artifact and put these
+ * bytes on top of it as a new version, or return the version already holding them.
  *
- * Not a transaction, and deliberately: the failure this could leave behind is an artifact row whose
- * member rows are incomplete, which the preview route reads as a 404 on the missing file — the same
- * outcome as a wiped store, and better than a publish the agent must retry because one INSERT of
- * forty raced. The member insert is itself conflict-tolerant, so a retry completes the set.
+ * IDEMPOTENCY IS THE SHA COMPARISON, not a unique index over content. The tool's POST is
+ * best-effort and gets retried, so a redelivery must be a no-op — but so must an agent republishing
+ * a file it did not change, and a REVERT to bytes an older version already held must NOT be one
+ * (indexing `(artifact, sha)` would have returned the old version while the card went on showing
+ * the newest). Comparing against the top of the stack gets all three right.
+ *
+ * Not a transaction, and deliberately — same reasoning as the bundle insert it replaces: the worst
+ * interleaving leaves an artifact whose newest version's members are incomplete, which the preview
+ * route reads as a 404 on the missing file (the same outcome as a wiped store) and which a retry
+ * completes. What the loop below protects instead is the NUMBERING: two concurrent publishes contend
+ * on `artifact_versions_number_uq`, and the loser re-reads rather than inventing a duplicate
+ * ordinal or silently dropping its bytes.
  */
-export async function insertArtifactBundle(input: {
-  artifact: Parameters<typeof insertArtifact>[0];
-  files: ArtifactFileInput[];
-}): Promise<Artifact> {
-  const row = await insertArtifact(input.artifact);
-  if (!row) return row;
+export async function recordArtifact(
+  input: RecordArtifactInput,
+): Promise<RecordedArtifact | null> {
+  const { files, keepVersions, ...row } = input;
+  const [created] = await db
+    .insert(artifacts)
+    .values(row)
+    .onConflictDoNothing()
+    .returning();
+  const artifact =
+    created ??
+    (await findSessionArtifact({ sessionId: row.sessionId, name: row.name }));
+  if (!artifact) return null;
+
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const latest = await latestArtifactVersion(artifact.id);
+    if (latest && latest.sha256 === row.sha256) {
+      return { artifact, version: latest, appended: false };
+    }
+    const versionNumber = (latest?.versionNumber ?? 0) + 1;
+    const [version] = await db
+      .insert(artifactVersions)
+      .values({
+        artifactId: artifact.id,
+        projectId: row.projectId,
+        versionNumber,
+        entryPath: row.entryPath,
+        contentType: row.contentType,
+        byteSize: row.byteSize,
+        sha256: row.sha256,
+        storagePath: row.storagePath,
+        streamIndex: row.streamIndex,
+        deploymentId: row.deploymentId,
+      })
+      .onConflictDoNothing()
+      .returning();
+    // Lost the ordinal to a concurrent publish: read the stack again and decide afresh — the
+    // winner may even have written these exact bytes, in which case this becomes a no-op.
+    if (!version) continue;
+
+    if (files?.length) {
+      await db
+        .insert(artifactFiles)
+        .values(
+          files.map((file) => ({
+            ...file,
+            artifactId: artifact.id,
+            versionId: version.id,
+          })),
+        )
+        .onConflictDoNothing();
+    }
+
+    // The card follows the newest version — except for `stream_index`, which stays where the FIRST
+    // publish put it so the card updates in place instead of sliding down the transcript.
+    const [updated] = await db
+      .update(artifacts)
+      .set({
+        entryPath: row.entryPath,
+        contentType: row.contentType,
+        byteSize: row.byteSize,
+        sha256: row.sha256,
+        storagePath: row.storagePath,
+        latestVersionId: version.id,
+        versionNumber,
+        // Dense ordinals plus the prune below: this is the count, without a second query.
+        versionCount: Math.min(versionNumber, keepVersions),
+        ...(row.title ? { title: row.title } : {}),
+      })
+      // Only ever forward: a slow v2 update landing after v3's must not point the card back.
+      .where(
+        and(
+          eq(artifacts.id, artifact.id),
+          lte(artifacts.versionNumber, versionNumber),
+        ),
+      )
+      .returning();
+
+    await pruneArtifactVersions(artifact.id, keepVersions);
+    return { artifact: updated ?? artifact, version, appended: true };
+  }
+  return null;
+}
+
+/**
+ * Drop the versions that fell off the bottom of the retention window. Rows only: the BYTES are
+ * content-addressed and shared with every other artifact that published the same file, so deleting
+ * them would need refcounting and could pull the bytes out from under a live card. The daily
+ * per-repo byte budget is what bounds the disk (see `artifactUsage`); this bounds the picker.
+ */
+async function pruneArtifactVersions(
+  artifactId: string,
+  keep: number,
+): Promise<void> {
+  const [newest] = await db
+    .select({ versionNumber: artifactVersions.versionNumber })
+    .from(artifactVersions)
+    .where(eq(artifactVersions.artifactId, artifactId))
+    .orderBy(desc(artifactVersions.versionNumber))
+    .limit(1);
+  if (!newest) return;
+  const cutoff = newest.versionNumber - keep;
+  if (cutoff < 1) return;
   await db
-    .insert(artifactFiles)
-    .values(input.files.map((file) => ({ ...file, artifactId: row.id })))
-    .onConflictDoNothing();
-  return row;
+    .delete(artifactVersions)
+    .where(
+      and(
+        eq(artifactVersions.artifactId, artifactId),
+        lte(artifactVersions.versionNumber, cutoff),
+      ),
+    );
+}
+
+/** The artifact a name resolves to inside one conversation — the identity `recordArtifact` keys on. */
+export async function findSessionArtifact(input: {
+  sessionId: string;
+  name: string;
+}): Promise<Artifact | null> {
+  const [row] = await db
+    .select()
+    .from(artifacts)
+    .where(
+      and(
+        eq(artifacts.sessionId, input.sessionId),
+        eq(artifacts.name, input.name),
+      ),
+    )
+    .limit(1);
+  return row ?? null;
+}
+
+/** Every stored version of one artifact, newest first — what the preview panel's picker lists. */
+export async function listArtifactVersions(
+  artifactId: string,
+): Promise<ArtifactVersion[]> {
+  return db
+    .select()
+    .from(artifactVersions)
+    .where(eq(artifactVersions.artifactId, artifactId))
+    .orderBy(desc(artifactVersions.versionNumber));
+}
+
+/**
+ * One version, constrained to its artifact. The artifact id is in the WHERE rather than compared
+ * afterwards for the same reason `findProjectArtifact` puts the project there: a version id from
+ * another artifact is then simply not found, and cannot become a cross-artifact selector on a
+ * route that only authorized the artifact.
+ */
+export async function findArtifactVersion(input: {
+  artifactId: string;
+  versionId: string;
+}): Promise<ArtifactVersion | null> {
+  const [row] = await db
+    .select()
+    .from(artifactVersions)
+    .where(
+      and(
+        eq(artifactVersions.id, input.versionId),
+        eq(artifactVersions.artifactId, input.artifactId),
+      ),
+    )
+    .limit(1);
+  return row ?? null;
 }
 
 /** What a publish is measured against (see `publishArtifact`'s budgets). */
 export interface ArtifactUsage {
-  /** Artifacts already in this conversation, ever. */
+  /** Distinct artifacts (cards) already in this conversation, ever — NOT their versions. */
   sessionCount: number;
-  /** Artifacts this repo published inside the budget window. */
+  /** Versions this repo published inside the budget window. */
   projectCount: number;
-  /** Bytes this repo published inside the budget window. */
+  /** Bytes this repo published inside the budget window, versions included. */
   projectBytes: number;
 }
 
@@ -147,7 +318,14 @@ export interface ArtifactUsage {
  * Current consumption for the two budgets a publish is held to. Rows are the ledger rather than the
  * filesystem: bytes are content-addressed and shared, so counting files would under-charge a loop
  * that republishes the same image and over-charge nothing, while the rows are exactly what the agent
- * caused. Cheap — both halves are covered by `artifacts_session_idx` / the project column.
+ * caused.
+ *
+ * The two halves count DIFFERENT rows since #292, and both deliberately. The conversation ceiling
+ * counts artifacts, because a refine loop on one page is one card and must not burn a budget meant
+ * to bound how much a transcript holds. The daily repo ceilings count VERSIONS, because they exist
+ * to bound the DISK and every version is bytes on it — counting artifacts there would let an agent
+ * republish a 20 MB page five hundred times for a 20 MB charge. Cheap: `artifacts_session_idx` and
+ * `artifact_versions_project_idx` cover them.
  */
 export async function artifactUsage(input: {
   projectId: string;
@@ -160,12 +338,12 @@ export async function artifactUsage(input: {
     .from(artifacts)
     .where(eq(artifacts.sessionId, input.sessionId));
   const [project] = await db
-    .select({ value: count(), bytes: sum(artifacts.byteSize) })
-    .from(artifacts)
+    .select({ value: count(), bytes: sum(artifactVersions.byteSize) })
+    .from(artifactVersions)
     .where(
       and(
-        eq(artifacts.projectId, input.projectId),
-        gte(artifacts.createdAt, input.since),
+        eq(artifactVersions.projectId, input.projectId),
+        gte(artifactVersions.createdAt, input.since),
       ),
     );
   return {
@@ -220,9 +398,13 @@ export async function findArtifactById(id: string): Promise<Artifact | null> {
   return row ?? null;
 }
 
-/** One member of a bundle, by the normalized relative path a preview request asked for. */
+/**
+ * One member of a bundle VERSION, by the normalized relative path a preview request asked for. The
+ * key is the version rather than the artifact (#292) — the same `assets/app.css` exists once per
+ * version, and a preview showing v1 must read v1's.
+ */
 export async function findArtifactFile(input: {
-  artifactId: string;
+  versionId: string;
   relPath: string;
 }): Promise<ArtifactFile | null> {
   const [row] = await db
@@ -230,7 +412,7 @@ export async function findArtifactFile(input: {
     .from(artifactFiles)
     .where(
       and(
-        eq(artifactFiles.artifactId, input.artifactId),
+        eq(artifactFiles.versionId, input.versionId),
         eq(artifactFiles.relPath, input.relPath),
       ),
     )

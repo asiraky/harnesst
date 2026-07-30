@@ -24,6 +24,7 @@ const mint = (over: Partial<Parameters<typeof mintArtifactPreviewToken>[0]> = {}
   mintArtifactPreviewToken(
     {
       artifactId: "art_1",
+      versionId: "ver_1",
       projectId: "proj_1",
       userId: "user_1",
       backOfHouse: false,
@@ -42,6 +43,7 @@ describe("artifact preview tokens", () => {
       projectId: "proj_1",
       userId: "user_1",
       backOfHouse: true,
+      versionId: "ver_1",
     });
   });
 
@@ -49,6 +51,40 @@ describe("artifact preview tokens", () => {
     // The replay this closes: a page the viewer may see, re-aimed at one they may not.
     const { token } = mint();
     expect(verifyArtifactPreviewToken(token, "art_2", KEY, NOW)).toBeNull();
+  });
+
+  it("names the version it was minted for, so a capability cannot follow a republish", () => {
+    // The scope is (artifact, version) since #292: the panel mints per selection, and the serving
+    // route reads the version off the CLAIM. A v1 capability therefore keeps showing v1 after the
+    // agent republishes, and a user parked on an old version cannot be swapped forward silently.
+    const first = verifyArtifactPreviewToken(mint().token, "art_1", KEY, NOW);
+    const second = verifyArtifactPreviewToken(
+      mint({ versionId: "ver_2" }).token,
+      "art_1",
+      KEY,
+      NOW,
+    );
+    expect(first?.versionId).toBe("ver_1");
+    expect(second?.versionId).toBe("ver_2");
+  });
+
+  it("reads a token minted before versions existed as 'the newest version'", () => {
+    // Ten minutes of in-flight capabilities survive the deploy that adds the claim rather than
+    // turning into dead panels; the route resolves a null version to the artifact's latest.
+    const legacy = signState(
+      {
+        purpose: "foh-artifact-preview",
+        artifactId: "art_1",
+        projectId: "proj_1",
+        userId: "user_1",
+        backOfHouse: false,
+        exp: NOW + 60_000,
+      },
+      KEY,
+    );
+    expect(verifyArtifactPreviewToken(legacy, "art_1", KEY, NOW)).toMatchObject({
+      versionId: null,
+    });
   });
 
   it("refuses the token once it expires, at the boundary", () => {

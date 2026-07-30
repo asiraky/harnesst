@@ -14,8 +14,9 @@
  * is the repo-scope decision (`projectId` + back-of-house), because that needs org/team membership
  * and therefore a cookie this route deliberately does not have.
  *
- * Every failure — garbled token, forged signature, expired token, wrong artifact, an image, a path
- * that is not in the bundle, bytes missing from the store — is the same 404. See
+ * Every failure — garbled token, forged signature, expired token, wrong artifact, a version that is
+ * not this artifact's or has been pruned, an image, a path that is not in the bundle, bytes missing
+ * from the store — is the same 404. See
  * `artifact-preview.server.ts` for the response header set and why each directive is load-bearing.
  */
 import { data, type LoaderFunctionArgs } from "react-router";
@@ -28,6 +29,8 @@ import {
 import {
   findArtifactById,
   findArtifactFile,
+  findArtifactVersion,
+  latestArtifactVersion,
   readArtifactBytes,
 } from "~/foh/artifact-store.server";
 import { getFohSessionForViewer } from "~/playground/sessions.server";
@@ -42,10 +45,18 @@ export async function loader({ params, request }: LoaderFunctionArgs) {
   if (!claim) throw notFound();
 
   const artifact = await findArtifactById(artifactId);
-  if (!artifact || artifact.kind !== "html" || !artifact.entryPath) {
-    throw notFound();
-  }
+  if (!artifact || artifact.kind !== "html") throw notFound();
   if (artifact.projectId !== claim.projectId) throw notFound();
+
+  // WHICH VERSION comes from the signed claim, never from the request (#292): the token is the
+  // scope, so a capability minted for v1 keeps showing v1 after the agent republishes, and cannot
+  // be re-aimed at a version it was not minted for. Constrained to this artifact, so a claim naming
+  // another artifact's version finds nothing. A claim with no version at all is a token minted
+  // before versions shipped; it opens the newest, which is what it meant.
+  const version = claim.versionId
+    ? await findArtifactVersion({ artifactId, versionId: claim.versionId })
+    : await latestArtifactVersion(artifactId);
+  if (!version || !version.entryPath) throw notFound();
 
   const session = await getFohSessionForViewer({
     id: artifact.sessionId,
@@ -55,10 +66,12 @@ export async function loader({ params, request }: LoaderFunctionArgs) {
   });
   if (!session) throw notFound();
 
-  // An empty splat is the entry document, so `/artifacts/preview/<token>/<id>/` opens the page.
-  const relPath = normalizeBundleRelPath(params["*"] || artifact.entryPath);
+  // An empty splat is the entry document, so `/artifacts/preview/<token>/<id>/` opens the page —
+  // the SELECTED version's, which is what makes the panel's picker work with no change to the URL
+  // shape (and therefore none to how the page's own relative URLs resolve).
+  const relPath = normalizeBundleRelPath(params["*"] || version.entryPath);
   if (!relPath) throw notFound();
-  const file = await findArtifactFile({ artifactId, relPath });
+  const file = await findArtifactFile({ versionId: version.id, relPath });
   if (!file) throw notFound();
 
   const bytes = await readArtifactBytes(file.storagePath);

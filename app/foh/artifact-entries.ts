@@ -3,17 +3,27 @@
  * deliberately OUTSIDE `projectEventsToEntries`: an artifact is not an eve event, so nothing about
  * event projection changes — the artifact rows are merged into the projected entries afterwards.
  *
- * Position comes from the cache-space `stream_index` the session had reached when the agent
- * published (see `playground_events.stream_index`). That index identifies the TURN that was in
- * flight, and the card is then placed after that turn's last entry, so an image published in the
- * middle of a long conversation stays where it was made instead of piling up at the bottom. A
+ * Position comes from the cache-space `stream_index` the session had reached when the agent FIRST
+ * published the name (see `playground_events.stream_index`). That index identifies the TURN that
+ * was in flight, and the card is then placed after that turn's last entry, so an image published in
+ * the middle of a long conversation stays where it was made instead of piling up at the bottom. A
  * turn id alone would not do: turn ids repeat across eve sessions, which a cross-redeploy reseed
  * concatenates into one cached stream (#261).
+ *
+ * Republishing (#292) does not move it. The entry id is `artifact:<artifact id>` and the row's
+ * `stream_index` is frozen at first publish, so a new version re-renders THE SAME card in place —
+ * which is the whole reason the card was built as a session-attached row rather than a transcript
+ * event. Moving it to the newest version's position would slide it down past every turn since,
+ * away from the conversation the user is having about it.
  */
 import type { ChatArtifact, ChatEntry } from "~/chat/types";
 import { artifactUrl } from "~/foh/artifact-media";
 
-/** The artifact-row fields the transcript needs — a subset of the `artifacts` table. */
+/**
+ * The artifact-row fields the transcript needs — a subset of the `artifacts` table. The content
+ * fields are the LATEST version's, denormalized onto the row, so the card reflects the newest
+ * publish with no join on a read that runs on every transcript load.
+ */
 export interface ArtifactRow {
   id: string;
   projectId: string;
@@ -23,6 +33,12 @@ export interface ArtifactRow {
   contentType: string;
   byteSize: number;
   streamIndex: number;
+  /** Latest version's ordinal (#292) — 1 until the name is republished. */
+  versionNumber: number;
+  /** How many versions are still stored, i.e. how many the preview panel can offer. */
+  versionCount: number;
+  /** Latest version id, which the image URL is scoped to. */
+  latestVersionId: string | null;
 }
 
 /** Which turn owned the stream at a given cache-space index. */
@@ -70,7 +86,9 @@ export function artifactEntry(row: ArtifactRow): ChatEntry {
     kind: html ? "html" : "image",
     contentType: row.contentType,
     byteSize: row.byteSize,
-    url: html ? null : artifactUrl(row.projectId, row.id),
+    url: html ? null : artifactUrl(row.projectId, row.id, row.latestVersionId),
+    version: row.versionNumber,
+    versionCount: row.versionCount,
   };
   return { id: `artifact:${row.id}`, role: "artifact", text: "", artifact };
 }

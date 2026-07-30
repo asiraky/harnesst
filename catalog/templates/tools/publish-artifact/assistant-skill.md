@@ -37,6 +37,19 @@ and `<img src>` are fine; only the network APIs are closed.
 That is also why a page publish returns no URL: there is no permanent link to quote, so say in the
 reply that you published the page and let the card open it.
 
+**Revising something you already published** — publish it again under the SAME file name. The card
+already in the conversation updates in place to the new version, with a version picker the user can
+look back through; a new name would leave them with two cards and no idea which is current. So
+overwrite `artifacts/chart.png` and publish that path again rather than writing `chart-v2.png`. The
+reply tells you the version number, and tells you when the file was unchanged (`updated: false`) —
+in that case say so instead of claiming you updated it. The card stays where it was first published,
+so mention the update in your reply; the user may be scrolled somewhere else.
+
+A name is fixed to one kind for the life of the conversation: a name published as an image cannot
+later be republished as a page, or the other way round. Publish that under a different name. Around
+fifty publishes of one name is the ceiling, and only the most recent handful stay openable in the
+picker — plenty for refining something, not an archive to write history into.
+
 Either kind must live under `/workspace/home`: write it to `/workspace/home/artifacts/` (create the
 directory if needed), or publish a browser screenshot straight out of
 `/workspace/home/agent-browser/screenshots/` when the agent-browser skill is installed too.

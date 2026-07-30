@@ -843,11 +843,31 @@ export default function FohSession({ loaderData }: Route.ComponentProps) {
           }
           src={preview.src}
           error={preview.error}
+          versions={preview.versions.map((version) => ({
+            id: version.id,
+            label: `v${version.version} · ${previewVersionTime(version.createdAt)}`,
+          }))}
+          selectedVersionId={preview.selectedVersionId}
+          onSelectVersion={preview.selectVersion}
           onClose={preview.close}
         />
       )}
     </>
   );
+}
+
+/**
+ * When a version was published, for the picker. A time for today's, a date for anything older —
+ * a refine loop makes several versions inside one conversation, so "14:32" is what distinguishes
+ * them, while a card reopened next week needs the day.
+ */
+function previewVersionTime(iso: string): string {
+  const at = new Date(iso);
+  if (Number.isNaN(at.getTime())) return "";
+  const today = new Date();
+  return at.toDateString() === today.toDateString()
+    ? at.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+    : at.toLocaleDateString([], { month: "short", day: "numeric" });
 }
 
 function statusLabel(status: "working" | "needs_you" | "done" | "error") {

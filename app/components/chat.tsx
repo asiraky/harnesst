@@ -675,6 +675,16 @@ export function ArtifactCard({
         <ImageIcon className="size-3.5 shrink-0" aria-hidden />
       )}
       <span className="min-w-0 flex-1 truncate">{label}</span>
+      {/* The whole "it was republished" signal (#292): the card updated in place, so a version
+          badge is all the transcript needs to say — no second card, no new event. */}
+      {artifact.version > 1 && (
+        <span
+          className="shrink-0 rounded bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground"
+          title={`Updated — version ${artifact.version}`}
+        >
+          v{artifact.version}
+        </span>
+      )}
       <span className="shrink-0">{formatBytes(artifact.byteSize)}</span>
     </figcaption>
   );

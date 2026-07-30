@@ -27,6 +27,12 @@ import { Button } from "~/components/ui/button";
 import { ARTIFACT_PREVIEW_IFRAME_ALLOW } from "~/foh/artifact-media";
 import { cn } from "~/lib/utils";
 
+/** One entry of the header's version picker — already labelled, so the panel formats nothing. */
+export interface PreviewPanelVersion {
+  id: string;
+  label: string;
+}
+
 export interface PreviewPanelProps {
   /** Header label — the artifact's caption or file name. */
   title: string;
@@ -39,6 +45,13 @@ export interface PreviewPanelProps {
   src: string | null;
   /** Set when the preview could not be opened at all; replaces the frame. */
   error?: string | null;
+  /**
+   * Selectable versions of what is being previewed, newest first (#292). One or none renders no
+   * picker at all — a control that can only pick what is already showing is noise.
+   */
+  versions?: PreviewPanelVersion[];
+  selectedVersionId?: string | null;
+  onSelectVersion?: (versionId: string) => void;
   onClose: () => void;
   className?: string;
 }
@@ -48,9 +61,13 @@ export function PreviewPanel({
   subtitle,
   src,
   error,
+  versions,
+  selectedVersionId,
+  onSelectVersion,
   onClose,
   className,
 }: PreviewPanelProps) {
+  const picker = versions && versions.length > 1 ? versions : null;
   return (
     // A fourth pane at xl (the shell already needs 544px of chrome before the conversation gets
     // anything — see foh.tsx), and a full-screen overlay below that, which is the same sliding
@@ -70,6 +87,22 @@ export function PreviewPanel({
             </p>
           )}
         </div>
+        {picker && (
+          // A plain select: switching versions replaces the whole document (each one needs its own
+          // capability), so the control has to read as a jump rather than as a filter.
+          <select
+            value={selectedVersionId ?? picker[0].id}
+            onChange={(event) => onSelectVersion?.(event.target.value)}
+            aria-label="Version"
+            className="h-7 shrink-0 rounded-md border bg-background px-1.5 text-xs text-muted-foreground"
+          >
+            {picker.map((version) => (
+              <option key={version.id} value={version.id}>
+                {version.label}
+              </option>
+            ))}
+          </select>
+        )}
         {src && (
           // Safe precisely because the sandbox rides on the RESPONSE: a top-level load of this URL
           // applies none of the iframe's flags, and all of the header CSP's.

@@ -27,6 +27,12 @@
  * And because the caller is an agent in a loop, publishing is BUDGETED: per-conversation and daily
  * per-repo ceilings bound the disk (nothing ever deletes stored bytes) and a copy-slot gate bounds
  * the heap (each copy buffers its tar whole). Both are refusals the agent can read.
+ *
+ * Publishing is also VERSIONED (#292). The unit is a NAME in a conversation, not a file: publishing
+ * `report.html` twice refines one card instead of stacking two, because the loop this exists to
+ * serve is "show me" → "make it bolder" → "show me again". That makes the identity resolution a
+ * fourth decision here — and it is why the version ceilings sit beside the other budgets, since a
+ * refine loop is invisible to a per-conversation card count.
  */
 import { createHash } from "node:crypto";
 
@@ -51,11 +57,11 @@ import {
 } from "~/foh/artifact-media";
 import {
   artifactUsage,
-  insertArtifact,
-  insertArtifactBundle,
+  findSessionArtifact,
+  recordArtifact,
   writeArtifactBytes,
-  type Artifact,
   type ArtifactFileInput,
+  type RecordedArtifact,
 } from "~/foh/artifact-store.server";
 import { liveFohTurnForDeployment } from "~/playground/sessions.server";
 import { getRuntime } from "~/seams/index.server";
@@ -78,6 +84,23 @@ export const MAX_ARTIFACTS_PER_SESSION = 100;
 export const ARTIFACT_BUDGET_WINDOW_MS = 24 * 60 * 60 * 1000;
 export const MAX_ARTIFACTS_PER_PROJECT_WINDOW = 500;
 export const MAX_ARTIFACT_BYTES_PER_PROJECT_WINDOW = 2 * 1024 * 1024 * 1024;
+
+/**
+ * VERSIONS (#292). Republishing a name refines one card instead of making another, so the two
+ * ceilings above stop bounding it: the conversation count never moves and the daily repo budget is
+ * a whole day wide. These are the ones a refine loop actually meets.
+ *
+ * KEPT is retention — the versions that stay openable in the picker. Older rows are dropped (the
+ * bytes are not; they are shared and content-addressed, and the daily byte budget is what bounds
+ * the disk). Ten is a conversation's worth of "make it bolder", not an archive: config rather than
+ * schema exactly so it can ship conservative and loosen.
+ *
+ * TOTAL is the refusal, and it is what makes retention safe to be lenient about: pruning rows costs
+ * nothing, so without a ceiling on how many times one name may be republished a runaway agent would
+ * spend the repo's daily disk on a single card while every per-artifact number stayed small.
+ */
+export const MAX_ARTIFACT_VERSIONS_KEPT = 10;
+export const MAX_ARTIFACT_VERSIONS_TOTAL = 50;
 
 /**
  * CONCURRENCY. Each copy buffers a whole tar in this process (up to `ARTIFACT_MAX_BYTES`), so the
@@ -122,8 +145,10 @@ export interface PublishArtifactDeps {
     maxFiles: number;
   }) => Promise<ArtifactBundleCopyResult>;
   writeBytes: (sha256: string, bytes: Buffer) => Promise<string>;
-  insert: typeof insertArtifact;
-  insertBundle: typeof insertArtifactBundle;
+  /** Resolve `(session, name)` to the artifact a republish lands on, or null for a new one. */
+  findArtifact: typeof findSessionArtifact;
+  /** Append these bytes to that artifact as a version (or recognise them as the one on top). */
+  record: typeof recordArtifact;
   /** The conversation an artifact published by this agent belongs to — the live turn's, only. */
   findSession: typeof liveFohTurnForDeployment;
   /** Consumption the publish is held against (see the budgets above). */
@@ -137,8 +162,8 @@ export function defaultPublishArtifactDeps(): PublishArtifactDeps {
     copyFile: copyArtifactFromInstance,
     copyBundle: copyArtifactBundleFromInstance,
     writeBytes: writeArtifactBytes,
-    insert: insertArtifact,
-    insertBundle: insertArtifactBundle,
+    findArtifact: findSessionArtifact,
+    record: recordArtifact,
     findSession: liveFohTurnForDeployment,
     usage: artifactUsage,
     now: () => new Date(),
@@ -168,6 +193,17 @@ export type PublishArtifactResult =
       name: string;
       contentType: string;
       byteSize: number;
+      /**
+       * Which version of this name the publish produced (#292). 1 for a first publish; higher when
+       * the agent republished the same name, which UPDATES the card rather than adding one. The
+       * agent's own reply is the narrative, so it needs to know which it did.
+       */
+      version: number;
+      /**
+       * False when these bytes were already the newest version, so nothing changed — a retried
+       * call, or a republish of a file the agent did not actually edit.
+       */
+      updated: boolean;
       /** Bundle only: how many files were stored, so the agent can see nothing went missing. */
       fileCount?: number;
     }
@@ -180,8 +216,8 @@ function deny(error: string): PublishArtifactResult {
 /**
  * A bundle's content identity: a sha256 over its members' `(rel_path, sha256)` manifest, sorted.
  * The entry document's own sha would not do — a page whose stylesheet changed while `index.html`
- * did not would dedupe onto the stale card via `artifacts_session_sha_uq` and the user would be
- * shown the previous version of the page.
+ * did not would read as "same bytes as the version on top", no version would be appended, and the
+ * user would go on being shown the previous version of the page.
  */
 function bundleSha256(files: readonly ArtifactFileInput[]): string {
   const manifest = [...files]
@@ -242,12 +278,37 @@ export async function publishArtifact(
   }
   const session = found.session;
 
+  // IDENTITY (#292): a name inside a conversation. Republishing it appends a version to the card
+  // that is already on screen, which is the whole refine loop — "make it bolder", publish again,
+  // the same card updates. Resolved before the copy so both refusals below are free.
+  const existing = await deps.findArtifact({
+    sessionId: session.id,
+    name: source.name,
+  });
+  if (existing && existing.kind !== kind) {
+    // The kind is pinned for the artifact's life: the serving routes are chosen by it (an image is
+    // served same-origin behind the viewer's cookie, a page only through the sandboxed preview), so
+    // a row whose kind could change under a live preview token would move bytes between two very
+    // differently trusted doors.
+    return deny(
+      `${source.name} was already published in this conversation as ${existing.kind === "html" ? "a page" : "an image"}, so it cannot be republished as ${kind === "html" ? "a page" : "an image"}. Publish it under a different name.`,
+    );
+  }
+  if (existing && existing.versionNumber >= MAX_ARTIFACT_VERSIONS_TOTAL) {
+    return deny(
+      `${source.name} has been published ${MAX_ARTIFACT_VERSIONS_TOTAL} times in this conversation, which is the limit for one file. Publish the next revision under a different name.`,
+    );
+  }
+
   const usage = await deps.usage({
     projectId: project.id,
     sessionId: session.id,
     since: new Date(deps.now().getTime() - ARTIFACT_BUDGET_WINDOW_MS),
   });
-  if (usage.sessionCount >= MAX_ARTIFACTS_PER_SESSION) {
+  // Only a NEW card is held to the conversation ceiling: that budget bounds how much a transcript
+  // holds, and a republish adds no card. Its bytes are still charged to the daily repo ceiling
+  // below, which is the one that bounds the disk.
+  if (!existing && usage.sessionCount >= MAX_ARTIFACTS_PER_SESSION) {
     return deny(
       `This conversation already holds ${MAX_ARTIFACTS_PER_SESSION} published files, which is the limit. Describe the file instead, or start a new conversation.`,
     );
@@ -264,16 +325,20 @@ export async function publishArtifact(
   // The position the conversation had reached WHEN the publish landed, so the card renders inside
   // the turn that produced it rather than at the end of the transcript forever after. With the
   // durable cache gone (#288) the row's eve-space cursor IS that position — the live drain's
-  // progress saves keep it within the in-flight turn.
+  // progress saves keep it within the in-flight turn. On a republish it is the VERSION's position:
+  // the card keeps the one its first publish gave it, or it would slide down the transcript away
+  // from the conversation the user is having about it.
   const common = {
     projectId: project.id,
     agentId: agent.id,
     sessionId: session.id,
     deploymentId: deployment.id,
+    name: source.name,
     title: input.title?.trim()
       ? input.title.trim().slice(0, MAX_TITLE_LENGTH)
       : null,
     streamIndex: session.streamIndex,
+    keepVersions: MAX_ARTIFACT_VERSIONS_KEPT,
   };
 
   // Budget-checked and destination-resolved before a single byte is read: everything above is a
@@ -289,8 +354,10 @@ interface ArtifactRowCommon {
   agentId: string;
   sessionId: string;
   deploymentId: string;
+  name: string;
   title: string | null;
   streamIndex: number;
+  keepVersions: number;
 }
 
 interface PublishHalfInput {
@@ -332,11 +399,10 @@ async function publishImage(
   const sha256 = createHash("sha256").update(copied.bytes).digest("hex");
   const storagePath = await deps.writeBytes(sha256, copied.bytes);
 
-  let row: Artifact;
+  let recorded: RecordedArtifact | null;
   try {
-    row = await deps.insert({
+    recorded = await deps.record({
       ...common,
-      name: source.name,
       kind: "image",
       entryPath: null,
       contentType,
@@ -348,16 +414,21 @@ async function publishImage(
     console.error("[foh] artifact publish failed to record:", error);
     return deny(RECORD_FAILED);
   }
-  if (!row) return deny(RECORD_FAILED);
+  if (!recorded) return deny(RECORD_FAILED);
+  const { artifact, version, appended } = recorded;
 
   return {
     ok: true,
-    artifactId: row.id,
-    kind: row.kind,
-    url: artifactUrl(row.projectId, row.id),
-    name: row.name,
-    contentType: row.contentType,
-    byteSize: row.byteSize,
+    artifactId: artifact.id,
+    kind: artifact.kind,
+    // Version-scoped, so the URL in transcript data stays immutably cacheable while the card it
+    // sits on goes on changing.
+    url: artifactUrl(artifact.projectId, artifact.id, version.id),
+    name: artifact.name,
+    contentType: version.contentType,
+    byteSize: version.byteSize,
+    version: version.versionNumber,
+    updated: appended,
   };
 }
 
@@ -422,39 +493,39 @@ async function publishBundle(
   }
   const entry = files.find((file) => file.relPath === entryPath)!;
 
-  let row: Artifact;
+  let recorded: RecordedArtifact | null;
   try {
-    row = await deps.insertBundle({
-      artifact: {
-        ...common,
-        name: source.name,
-        kind: "html",
-        entryPath,
-        contentType: entry.contentType,
-        // The SUM, not the entry's size: the daily per-repo byte ceiling reads this column, and
-        // charging one member would let a bundle spend the disk a stylesheet at a time.
-        byteSize: files.reduce((total, file) => total + file.byteSize, 0),
-        sha256: bundleSha256(files),
-        storagePath: entry.storagePath,
-      },
+    recorded = await deps.record({
+      ...common,
+      kind: "html",
+      entryPath,
+      contentType: entry.contentType,
+      // The SUM, not the entry's size: the daily per-repo byte ceiling reads this column, and
+      // charging one member would let a bundle spend the disk a stylesheet at a time.
+      byteSize: files.reduce((total, file) => total + file.byteSize, 0),
+      sha256: bundleSha256(files),
+      storagePath: entry.storagePath,
       files,
     });
   } catch (error) {
     console.error("[foh] artifact bundle publish failed to record:", error);
     return deny(RECORD_FAILED);
   }
-  if (!row) return deny(RECORD_FAILED);
+  if (!recorded) return deny(RECORD_FAILED);
+  const { artifact, version, appended } = recorded;
 
   return {
     ok: true,
-    artifactId: row.id,
-    kind: row.kind,
+    artifactId: artifact.id,
+    kind: artifact.kind,
     // No stable URL by design — a bundle is reachable only through a short-lived preview token the
     // app mints when the user opens the card.
     url: null,
-    name: row.name,
-    contentType: row.contentType,
-    byteSize: row.byteSize,
+    name: artifact.name,
+    contentType: version.contentType,
+    byteSize: version.byteSize,
+    version: version.versionNumber,
+    updated: appended,
     fileCount: files.length,
   };
 }

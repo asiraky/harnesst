@@ -1476,15 +1476,22 @@ export const inboxItems = pgTable(
 );
 
 /**
- * Published artifacts (issue #290) — one row per file an agent published out of its home volume
- * into the control plane's own store. The bytes are COPIED at publish time (`storage_path`, on
- * the control plane's artifact disk) rather than proxied from the instance: a deployment's URL is
- * reallocated on every wake and its container is disposable, so an artifact whose lifetime was
+ * Published artifacts (issue #290) — one row per NAMED artifact an agent published out of its home
+ * volume into the control plane's own store. The bytes are COPIED at publish time (`storage_path`,
+ * on the control plane's artifact disk) rather than proxied from the instance: a deployment's URL
+ * is reallocated on every wake and its container is disposable, so an artifact whose lifetime was
  * tied to either would break the moment the agent scaled to zero.
  *
  * A row is a transcript element, not a file record: it is keyed to the FOH session it was
  * published into plus the `stream_index` position the cache had reached, so the card renders in
  * the turn it belongs to (see `mergeArtifactEntries`) and survives every reload.
+ *
+ * THE UNIT IS "A NAMED ARTIFACT IN A CONVERSATION", NOT A FILE (issue #292). Republishing the same
+ * name appends a row to `artifact_versions` and leaves this row's id — and therefore the card — in
+ * place, which is what makes the refine loop ("make it bolder", republish) update the card the user
+ * is already looking at instead of stacking a second one. The content columns below (`entry_path`,
+ * `content_type`, `byte_size`, `sha256`, `storage_path`) are the LATEST version's, denormalized so
+ * the transcript read stays one indexed select; the versions table is the record.
  *
  * `content_type` is the type SNIFFED from the bytes against the image allowlist, never the
  * agent's claim — it is what the serving route puts on the wire.
@@ -1526,36 +1533,102 @@ export const artifacts = pgTable(
      */
     byteSize: integer("byte_size").notNull(),
     /**
-     * Content identity, and what makes a retried publish a no-op. For an image it is the sha256 of
-     * the bytes; for a bundle it is a sha256 over the members' `(rel_path, sha256)` manifest, so
-     * republishing a page whose stylesheet changed is a NEW artifact even though `index.html` did
-     * not move — the file's own sha would have deduped that into the stale card.
+     * The LATEST version's content identity. For an image it is the sha256 of the bytes; for a
+     * bundle it is a sha256 over the members' `(rel_path, sha256)` manifest, so republishing a page
+     * whose stylesheet changed is a new VERSION even though `index.html` did not move — the entry
+     * file's own sha would have read as "nothing changed" and left the stale bytes on the card.
      */
     sha256: text("sha256").notNull(),
     /**
-     * Where the bytes live, relative to the control plane's artifact directory. For a bundle this
-     * is the ENTRY member's stored path; every member (the entry included) also has its own
-     * `artifact_files` row, which is what the preview route reads.
+     * Where the latest version's bytes live, relative to the control plane's artifact directory.
+     * For a bundle this is the ENTRY member's stored path; every member (the entry included) also
+     * has its own `artifact_files` row, which is what the preview route reads.
      */
     storagePath: text("storage_path").notNull(),
-    /** Cache-space transcript position (see `playground_events.stream_index`) the card sorts after. */
+    /**
+     * Cache-space transcript position (see `playground_events.stream_index`) the card sorts after.
+     * FROZEN at first publish (#292): a republish that moved it would slide the card down past the
+     * turns that happened in between, which is the opposite of updating in place. Each version
+     * keeps its own publish position on its own row.
+     */
     streamIndex: integer("stream_index").notNull(),
+    /**
+     * The latest `artifact_versions` row — a soft ref (no FK; the two tables reference each other
+     * and one direction has to be plain). It is what the image URL in transcript data points at, so
+     * that URL stays immutably cacheable while the artifact itself keeps changing.
+     */
+    latestVersionId: varchar("latest_version_id", { length: 12 }),
+    /** The latest version's ordinal — the card's "v3". Rises forever; retention never rewinds it. */
+    versionNumber: integer("version_number").notNull().default(1),
+    /** How many versions are still STORED (≤ the retention cap) — what the picker can offer. */
+    versionCount: integer("version_count").notNull().default(1),
     createdAt: createdAt(),
   },
   (t) => [
     index("artifacts_session_idx").on(t.sessionId, t.streamIndex),
-    // The tool's POST is best-effort and WILL be retried (same reasoning as the park endpoint):
-    // republishing the same bytes into the same conversation must return the first row rather
-    // than stack duplicate cards. Paired with ON CONFLICT DO NOTHING on the insert.
-    uniqueIndex("artifacts_session_sha_uq").on(t.sessionId, t.sha256),
+    // Identity (#292). Republishing a name resolves to THIS row and appends a version, so the
+    // conversation gets one card per name however many times the agent refines it. It replaced a
+    // unique index on `(session_id, sha256)`: content identity belongs to the version now, and
+    // keeping it here would have collided two versions that reverted to earlier bytes.
+    uniqueIndex("artifacts_session_name_uq").on(t.sessionId, t.name),
   ],
 );
 
 /**
- * The files of one page-bundle artifact (issue #291). A child table rather than more `artifacts`
- * rows for two reasons: a bundle is ONE card in the transcript and one budget charge, and
- * `artifacts_session_sha_uq` would collide the moment two members held identical bytes (two empty
- * files, the same logo twice) — a normal thing in a static page and not an error.
+ * One published version of an artifact (issue #292). Everything that is a property of the BYTES
+ * lives here; the parent row holds what is a property of the artifact's identity (conversation,
+ * name, kind, transcript position).
+ *
+ * `(artifact_id, version_number)` is unique and dense from 1, which is what makes an append safe
+ * without a transaction: two racing publishes contend on the index, the loser re-reads and either
+ * dedupes onto the winner (identical bytes — the retried tool POST) or takes the next number.
+ *
+ * `project_id` and `created_at` are denormalized off the parent so the daily per-repo byte budget
+ * stays one indexed scan. It has to read VERSIONS: with the budget on the parent, an agent
+ * republishing a 20 MB page five hundred times would have been charged 20 MB once.
+ */
+export const artifactVersions = pgTable(
+  "artifact_versions",
+  {
+    id: varchar("id", { length: 12 }).primaryKey().$defaultFn(newId),
+    artifactId: varchar("artifact_id", { length: 12 })
+      .notNull()
+      .references(() => artifacts.id, { onDelete: "cascade" }),
+    /** Denormalized from the parent — the budget aggregate's index key. */
+    projectId: varchar("project_id", { length: 12 })
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    /** 1-based, dense, and never reused: a pruned ordinal stays gone. */
+    versionNumber: integer("version_number").notNull(),
+    /** Bundle only: the member the preview opens at, relative to the bundle root. */
+    entryPath: text("entry_path"),
+    contentType: text("content_type").notNull(),
+    /** This version's cost: the file for an image, the SUM of the members for a page. */
+    byteSize: integer("byte_size").notNull(),
+    /** Content identity — see the parent's column. Equal to the previous version's = no append. */
+    sha256: text("sha256").notNull(),
+    storagePath: text("storage_path").notNull(),
+    /** Where the conversation had reached when THIS version was published (the picker's ordering). */
+    streamIndex: integer("stream_index").notNull(),
+    /** Soft ref (no FK): which deployment published this version. Provenance only. */
+    deploymentId: varchar("deployment_id", { length: 12 }),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    uniqueIndex("artifact_versions_number_uq").on(t.artifactId, t.versionNumber),
+    index("artifact_versions_project_idx").on(t.projectId, t.createdAt),
+  ],
+);
+
+/**
+ * The files of one page-bundle VERSION (issues #291, #292). A child table rather than more
+ * `artifacts` rows for two reasons: a bundle is ONE card in the transcript and one budget charge,
+ * and the artifact-level content index would collide the moment two members held identical bytes
+ * (two empty files, the same logo twice) — a normal thing in a static page and not an error.
+ *
+ * Members hang off the VERSION, not the artifact: keyed to the artifact, v2's `index.html` would
+ * hit `artifact_files_path_uq`, be swallowed by the insert's ON CONFLICT DO NOTHING, and the
+ * preview would go on serving v1's bytes forever with nothing to show for it.
  *
  * Bytes stay in the same flat content-addressed store as an image's: nothing about `rel_path`
  * reaches the filesystem, so an agent-supplied path can never shape one. The path is a lookup key
@@ -1569,6 +1642,10 @@ export const artifactFiles = pgTable(
     artifactId: varchar("artifact_id", { length: 12 })
       .notNull()
       .references(() => artifacts.id, { onDelete: "cascade" }),
+    /** The version these bytes belong to — what the preview route looks a request up by. */
+    versionId: varchar("version_id", { length: 12 })
+      .notNull()
+      .references(() => artifactVersions.id, { onDelete: "cascade" }),
     /** Bundle-relative path (`index.html`, `assets/app.css`) — normalized, never raw. */
     relPath: text("rel_path").notNull(),
     /** The type the member's extension declares, from the bundle allowlist. */
@@ -1580,6 +1657,6 @@ export const artifactFiles = pgTable(
   },
   (t) => [
     // The preview route's only lookup, and the idempotency key a retried publish lands on.
-    uniqueIndex("artifact_files_path_uq").on(t.artifactId, t.relPath),
+    uniqueIndex("artifact_files_path_uq").on(t.versionId, t.relPath),
   ],
 );

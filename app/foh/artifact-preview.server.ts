@@ -53,6 +53,18 @@ export const ARTIFACT_PREVIEW_TTL_MS = 10 * 60 * 1000;
 interface ArtifactPreviewPayload {
   purpose: typeof PURPOSE;
   artifactId: string;
+  /**
+   * WHICH VERSION this capability opens (#292). The scope is `(artifact, version)`, not the
+   * artifact: the panel mints per selection, so a token for the version the user chose must not
+   * silently follow the artifact forward when the agent republishes — and an old-version link must
+   * not outlive the intent it was minted with. It rides in the token rather than in the path
+   * because the path is what every relative `href`/`src` inside the page resolves against, and a
+   * segment more would have to be re-derived correctly by an agent-authored document.
+   *
+   * Optional so a token minted before this shipped still opens the artifact (as its newest
+   * version) for the ten minutes it has left, rather than turning into a dead panel on deploy.
+   */
+  versionId?: string;
   projectId: string;
   userId: string;
   /**
@@ -91,6 +103,8 @@ export interface MintedArtifactPreview {
 export function mintArtifactPreviewToken(
   input: {
     artifactId: string;
+    /** The version the panel asked for — omitted only by callers that predate versions. */
+    versionId?: string;
     projectId: string;
     userId: string;
     backOfHouse: boolean;
@@ -105,6 +119,7 @@ export function mintArtifactPreviewToken(
     {
       purpose: PURPOSE,
       artifactId: input.artifactId,
+      ...(input.versionId ? { versionId: input.versionId } : {}),
       projectId: input.projectId,
       userId: input.userId,
       backOfHouse: input.backOfHouse,
@@ -119,10 +134,13 @@ export interface ArtifactPreviewClaim {
   projectId: string;
   userId: string;
   backOfHouse: boolean;
+  /** The version the capability opens, or null for "whatever is newest" (pre-#292 tokens). */
+  versionId: string | null;
 }
 
 /**
- * The claim a preview token carries for `artifactId`, or null. Null covers every failure the same
+ * The claim a preview token carries for `artifactId` — including WHICH VERSION it opens — or null.
+ * Null covers every failure the same
  * way — malformed, truncated, forged, signed for another purpose, minted for a DIFFERENT artifact,
  * or expired — because distinguishing them for the caller would tell an attacker which of those it
  * got right. `verifyState` compares the signature in constant time and enforces `exp` itself.
@@ -147,6 +165,12 @@ export function verifyArtifactPreviewToken(
     projectId: parsed.projectId,
     userId: parsed.userId,
     backOfHouse: parsed.backOfHouse === true,
+    // The route looks the version up CONSTRAINED to the artifact, so a claim naming a version of
+    // another artifact resolves to nothing rather than to someone else's bytes.
+    versionId:
+      typeof parsed.versionId === "string" && parsed.versionId
+        ? parsed.versionId
+        : null,
   };
 }
 
