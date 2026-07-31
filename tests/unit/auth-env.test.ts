@@ -129,6 +129,50 @@ describe("production auth and email environment", () => {
     ).toThrow("MARKETING_HOST must differ from the BETTER_AUTH_URL host");
   });
 
+  it("accepts a valid optional PREVIEW_ORIGIN and no PREVIEW_ORIGIN at all", () => {
+    expect(() =>
+      assertProductionAuthEnvironment({
+        ...validProductionEnvironment,
+        PREVIEW_ORIGIN: "https://preview.harnesst.example.com",
+      }),
+    ).not.toThrow();
+    expect(() =>
+      assertProductionAuthEnvironment({
+        ...validProductionEnvironment,
+        PREVIEW_ORIGIN: "  ",
+      }),
+    ).not.toThrow();
+  });
+
+  it.each([
+    "preview.harnesst.example.com",
+    "http://preview.harnesst.example.com",
+    "https://preview.harnesst.example.com/previews",
+    "https://user:pw@preview.harnesst.example.com",
+  ])("rejects a PREVIEW_ORIGIN that is not a bare HTTPS origin: %s", (origin) => {
+    expect(() =>
+      assertProductionAuthEnvironment({
+        ...validProductionEnvironment,
+        PREVIEW_ORIGIN: origin,
+      }),
+    ).toThrow("PREVIEW_ORIGIN must be an absolute HTTPS origin");
+  });
+
+  it.each([
+    // The same origin outright: there would be no sandbox at all.
+    "https://harnesst.example.com/",
+    // A different origin, but the same host on another port — cookies ignore ports, so the session
+    // cookie would still reach the "sandbox".
+    "https://harnesst.example.com:8443",
+  ])("rejects a PREVIEW_ORIGIN on the app's own host: %s", (origin) => {
+    expect(() =>
+      assertProductionAuthEnvironment({
+        ...validProductionEnvironment,
+        PREVIEW_ORIGIN: origin,
+      }),
+    ).toThrow("PREVIEW_ORIGIN must be a different host from BETTER_AUTH_URL");
+  });
+
   it("reports every missing production value without exposing values", () => {
     expect(() =>
       assertProductionAuthEnvironment({ NODE_ENV: "production" }),

@@ -107,6 +107,31 @@ export function assertProductionAuthEnvironment(
     }
   }
 
+  // Optional artifact-preview sandbox origin (#296): a full HTTPS origin, and never on the app's
+  // own HOST — not merely a different origin. Cookies are port-blind: `https://app.example.com:8443`
+  // is a distinct origin, so the split would activate, but the browser would still send the session
+  // cookie to it on every request. The sandbox would hold exactly what the whole feature exists to
+  // keep off it, silently. Comparing hostnames also covers the "same origin" case, where the preview
+  // route's host check would bounce a request to the host it arrived on. A typo here would otherwise
+  // degrade silently to "previews serve from the app origin", i.e. the hardening the operator
+  // thought they had turned on is simply absent.
+  const previewOriginValue = env.PREVIEW_ORIGIN?.trim() ?? "";
+  if (previewOriginValue) {
+    if (!isHttpsOrigin(previewOriginValue)) {
+      errors.push(
+        "PREVIEW_ORIGIN must be an absolute HTTPS origin such as https://preview.example.com — no credentials, path, query parameters, or fragment.",
+      );
+    } else if (
+      isHttpsOrigin(authUrl) &&
+      new URL(previewOriginValue).hostname.toLowerCase() ===
+        new URL(authUrl).hostname.toLowerCase()
+    ) {
+      errors.push(
+        "PREVIEW_ORIGIN must be a different host from BETTER_AUTH_URL — a different port on the same host still receives the session cookie.",
+      );
+    }
+  }
+
   if (!env.POSTMARK_SERVER_TOKEN?.trim()) {
     errors.push("POSTMARK_SERVER_TOKEN is required.");
   }

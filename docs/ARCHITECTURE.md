@@ -160,6 +160,23 @@ points at the **control plane** (`/api/discord/interactions`), which verifies th
 relays each interaction to the bound agent instance's Discord channel — the shared bot token
 never reaches an instance.
 
+**Host splits on the control plane (shipped, nginx today).** The single-box topology already
+routes three names to the same container, which branches on the forwarded `Host`:
+`BETTER_AUTH_URL`'s host is the app, the optional `MARKETING_HOST` serves the editorial pages, and
+the optional **`PREVIEW_ORIGIN` (issue #296)** is a *sandbox origin* — the only place
+agent-authored HTML artifacts are served. When it is set, the app origin redirects
+`/artifacts/preview/*` to it and the preview host redirects everything else back to the app, so the
+origin where arbitrary script is expected to run hosts no sign-in form and no session. Preview URLs
+carry a short-lived signed token **in the path**, so authentication is unchanged across the split
+(cross-site iframe cookies are a dead end: `SameSite=Lax` is never sent, `SameSite=None` fights
+ITP), and the preview response's `frame-ancestors` keeps naming the **app** origin so only harnesst
+may embed it. The session cookie is `__Host-`-prefixed unconditionally: a subdomain can otherwise
+write cookies into its parent's jar, which is the residual risk of a sandbox *subdomain* (and
+Google's stated reason for moving user content to `*.usercontent.goog` + the Public Suffix List —
+the same ladder applies here: subdomain now, separate registrable domain plus a PSL entry if a
+hosted offering appears). All three are unset-by-default; a self-host install runs on one name with
+zero DNS configuration.
+
 **Version-aware traffic splitting (§3.9, PRD §7.7 — data plane only since M5.6).** The data model
 admits **multiple Releases live at once** in one environment; the proxy does **weighted,
 session-sticky** routing across their instance containers: a weight per Release (e.g. 90/10 canary

@@ -17,8 +17,10 @@
 import { data, type ActionFunctionArgs } from "react-router";
 
 import { getSessionAuth } from "~/auth/session.server";
-import { artifactPreviewPath } from "~/foh/artifact-media";
-import { mintArtifactPreviewToken } from "~/foh/artifact-preview.server";
+import {
+  artifactPreviewUrl,
+  mintArtifactPreviewToken,
+} from "~/foh/artifact-preview.server";
 import {
   findProjectArtifact,
   listArtifactVersions,
@@ -75,7 +77,10 @@ export async function action(args: ActionFunctionArgs) {
   });
   return data({
     ok: true as const,
-    url: artifactPreviewPath(minted.token, artifact.id, selected.entryPath),
+    // Absolute on the sandbox origin when PREVIEW_ORIGIN is set, root-relative otherwise (#296).
+    // The panel stores this verbatim as the iframe's src, so this is where the origin split
+    // actually happens; the token in the path authenticates identically either way.
+    url: artifactPreviewUrl(minted.token, artifact.id, selected.entryPath),
     expiresAt: minted.expiresAt,
     // Echoed so the panel's re-mint pins the version the user is LOOKING at: re-resolving "newest"
     // every ten minutes would swap a user parked on v1 to v3 with no interaction at all.

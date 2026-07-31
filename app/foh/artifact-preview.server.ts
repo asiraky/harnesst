@@ -29,16 +29,20 @@
  * convenience in the wild turned into an artifact-controlled authenticated capability.
  *
  * ── WHY A PATH TOKEN AND NOT A COOKIE ─────────────────────────────────────────────────────────
- * A sandboxed frame is a null-origin, storage-less context, and the moment this preview moves to a
- * separate origin (the obvious next hardening step) `SameSite=Lax` cookies stop being sent to it
- * altogether while `SameSite=None` fights Safari ITP. A signed token in the PATH authenticates the
+ * A sandboxed frame is a null-origin, storage-less context, and once this preview moves to a
+ * separate origin (`PREVIEW_ORIGIN`, #296) `SameSite=Lax` cookies stop being sent to it
+ * altogether while `SameSite=None` fights Safari ITP. That is why the origin split needed no
+ * change to authentication at all. A signed token in the PATH authenticates the
  * document and every subresource it pulls, identically same-origin or cross-origin, and it expires
  * on its own. Keyed by the same `HARNESST_SECRETS_KEY` as every other signed-state flow — never a
  * new env var — and pure over an injected key so mint/verify unit-test with no env.
  */
-import { appOrigin } from "~/lib/marketing-host.server";
+import {
+  previewFrameAncestors,
+  previewOrigin,
+} from "~/lib/preview-origin.server";
 import { signState, verifyState } from "~/lib/signed-state.server";
-import { artifactCharsetType } from "~/foh/artifact-media";
+import { artifactCharsetType, artifactPreviewPath } from "~/foh/artifact-media";
 import { decodeKey } from "~/seams/oss/secretbox";
 
 const PURPOSE = "foh-artifact-preview";
@@ -175,17 +179,36 @@ export function verifyArtifactPreviewToken(
 }
 
 /**
+ * The absolute-or-root-relative URL a minted preview is opened at (#296).
+ *
+ * With `PREVIEW_ORIGIN` configured this is an ABSOLUTE URL on the sandbox origin, which is the
+ * whole mechanism: the panel stores what it is given verbatim into `iframe[src]`, so prefixing here
+ * is what moves the document off harnesst's origin. Unset, it returns exactly the path #291
+ * shipped — same string, same route, same behaviour.
+ *
+ * Server-only because reading env in `artifact-media.ts` would ship the origin into the client
+ * bundle and evaluate it at module load in the browser, where `process.env` is not the deployment's.
+ */
+export function artifactPreviewUrl(
+  token: string,
+  artifactId: string,
+  relPath: string,
+): string {
+  return `${previewOrigin() ?? ""}${artifactPreviewPath(token, artifactId, relPath)}`;
+}
+
+/**
  * The response headers a preview file is served with. `frame-ancestors` needs a concrete origin
  * (there is no `'self'`-with-sandbox trick that survives the null origin the sandbox creates), and
- * `BETTER_AUTH_URL` is legitimately unset on a self-host install — so the request's own origin is
- * the fallback, exactly as the CSRF origin check already does.
+ * it must stay the APP's origin even when the bytes are served from `PREVIEW_ORIGIN` — see
+ * `previewFrameAncestors`, which owns that rule and the self-host fallback.
  */
 export function artifactPreviewHeaders(input: {
   contentType: string;
   byteSize: number;
   requestUrl: string;
 }): Headers {
-  const origin = appOrigin() ?? new URL(input.requestUrl).origin;
+  const origin = previewFrameAncestors(input.requestUrl);
   const csp = [
     "sandbox allow-scripts",
     "default-src 'none'",

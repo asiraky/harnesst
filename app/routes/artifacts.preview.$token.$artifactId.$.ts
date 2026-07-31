@@ -33,11 +33,20 @@ import {
   latestArtifactVersion,
   readArtifactBytes,
 } from "~/foh/artifact-store.server";
+import { previewHostRedirect } from "~/lib/preview-origin.server";
 import { getFohSessionForViewer } from "~/playground/sessions.server";
 
 const notFound = () => data("Not found", { status: 404 });
 
 export async function loader({ params, request }: LoaderFunctionArgs) {
+  // With PREVIEW_ORIGIN configured (#296) the app origin does not serve agent-authored HTML at
+  // all: it bounces to the sandbox origin, carrying the path token. This runs BEFORE any token or
+  // database work so the app origin's answer never depends on whether the capability was valid —
+  // and so a stale URL minted before the split (or one pasted from history) still opens. Unset,
+  // this is null and the route behaves exactly as it did.
+  const toPreviewOrigin = previewHostRedirect(request);
+  if (toPreviewOrigin) return toPreviewOrigin;
+
   const artifactId = params.artifactId ?? "";
   const claim = artifactId
     ? verifyArtifactPreviewToken(params.token ?? "", artifactId)
