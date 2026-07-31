@@ -12,6 +12,7 @@ import {
   EVE_DOCKER_SHIM,
 } from "~/deploy/eve-image.server";
 import {
+  hasIsolatedSessionHomeMount,
   homeVolumeName,
   supportsVolumeSubpath,
   worldDataVolumeName,
@@ -23,6 +24,31 @@ describe("supportsVolumeSubpath", () => {
     expect(supportsVolumeSubpath("29.1.3")).toBe(true);
     expect(supportsVolumeSubpath("25.0.5")).toBe(false);
     expect(supportsVolumeSubpath("unknown")).toBe(false);
+  });
+});
+
+describe("hasIsolatedSessionHomeMount", () => {
+  it("distinguishes a session subpath mount from the legacy whole-volume bind", () => {
+    const volume = homeVolumeName("env_abc123");
+    expect(
+      hasIsolatedSessionHomeMount(
+        [
+          {
+            Source: volume,
+            Target: "/workspace/home",
+            VolumeOptions: { Subpath: "sessions/eve-sbx-session-a" },
+          },
+        ],
+        volume,
+      ),
+    ).toBe(true);
+    expect(hasIsolatedSessionHomeMount(null, volume)).toBe(false);
+    expect(
+      hasIsolatedSessionHomeMount(
+        [{ Source: volume, Target: "/workspace/home" }],
+        volume,
+      ),
+    ).toBe(false);
   });
 });
 
@@ -79,5 +105,11 @@ describe("runtime image installs the shim", () => {
     );
     expect(m).not.toBeNull();
     expect(Buffer.from(m![1], "base64").toString("utf8")).toBe(EVE_DOCKER_SHIM);
+  });
+
+  it("marks images whose runtime can enforce session workspace isolation", () => {
+    expect(HARNESST_EVE_DOCKERFILE).toContain(
+      'LABEL dev.harnesst.capability.session-workspaces="1"',
+    );
   });
 });

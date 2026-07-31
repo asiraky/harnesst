@@ -958,8 +958,10 @@ two-source-of-truth reconciliation problem.
   there and are absent from every other conversation's container. `/workspace/shared` is the
   explicit environment-level area for setup that should deliberately survive across conversations
   (keys, caches, tool data); it is a separate subpath mount, not a parent of the private roots.
-  Legacy files at the old volume root are not copied into new sessions. The isolated mount requires
-  Docker Engine 26+; deploys fail closed on an older daemon.
+  Legacy files at the old volume root are not copied into new sessions. On the first isolated
+  deploy, cached pre-isolation images are rebuilt and legacy whole-volume sandbox containers are
+  retired; Eve recreates them with private mounts if their durable sessions resume. The isolated
+  mount requires Docker Engine 26+; deploys fail closed on an older daemon.
 
 **Milestone 7 — Teams (peer teams, §7.9) (shipped)**
 

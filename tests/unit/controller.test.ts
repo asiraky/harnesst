@@ -180,9 +180,9 @@ describe("deployRelease", () => {
       },
     );
     expect(deployedEnvs[1].OPENROUTER_API_KEY).toBe("sk-or-project");
-    expect(deployedEnvs[1].HARNESST_PROVIDER_OPENROUTER_ABCDEFGHIJKL_API_KEY).toBe(
-      "sk-or-workspace",
-    );
+    expect(
+      deployedEnvs[1].HARNESST_PROVIDER_OPENROUTER_ABCDEFGHIJKL_API_KEY,
+    ).toBe("sk-or-workspace");
     expect(deployedEnvs[1].ANTHROPIC_API_KEY).toBe("sk-ant-project");
     expect(deployedEnvs[1].HARNESST_SANDBOX_ENV).toBe("SAFE_TOKEN");
     expect(deployedEnvs[1].HARNESST_MODEL_DIRECTIVE_SECRET).toBe(
@@ -475,6 +475,37 @@ describe("deployRelease", () => {
       "img:rebuilt",
     );
     expect(builtRefs).toEqual(["img:first", "img:rebuilt"]);
+  });
+
+  it("rebuilds a cached member image that predates session workspace isolation", async () => {
+    const release = await createRelease(
+      { projectId: PROJECT, agentId: AGENT, gitSha: "ac".repeat(20) },
+      store,
+    );
+    await store.releases.setImageRef(release.id, "img:legacy");
+    const builtRefs: string[] = [];
+    const isolatedWorkspaces: boolean[] = [];
+
+    const deployed = await deployRelease(
+      { environmentId: ENV, releaseId: release.id },
+      {
+        store,
+        deployTarget: fakeDeployTarget({
+          buildImageRef: "img:isolated",
+          builtRefs,
+          imageSupports: false,
+          isolatedWorkspaces,
+        }),
+        secrets: fakeSecrets(),
+      },
+    );
+
+    expect(deployed.status).toBe("live");
+    expect(builtRefs).toEqual(["img:isolated"]);
+    expect(isolatedWorkspaces).toEqual([true]);
+    expect((await store.releases.findById(release.id))?.imageRef).toBe(
+      "img:isolated",
+    );
   });
 
   it("records failed status WITH the reason when the target throws", async () => {
@@ -1264,10 +1295,12 @@ describe("Codex model-gateway env injection (issue #28)", () => {
       },
     );
     const { verifyGatewayToken } = await import("~/gateway/token.server");
-    expect(deployedEnvs[0].HARNESST_MODEL_GATEWAY_URL).toContain("/api/gateway/v1");
-    expect(verifyGatewayToken(deployedEnvs[0].HARNESST_MODEL_GATEWAY_TOKEN)).toBe(
-      ORG,
+    expect(deployedEnvs[0].HARNESST_MODEL_GATEWAY_URL).toContain(
+      "/api/gateway/v1",
     );
+    expect(
+      verifyGatewayToken(deployedEnvs[0].HARNESST_MODEL_GATEWAY_TOKEN),
+    ).toBe(ORG);
   });
 
   it("still fails the credential check for an org with no model source — the always-on gateway token is not a credential", async () => {
@@ -1629,7 +1662,9 @@ describe("Google connection env injection (issue #30)", () => {
     );
     const env = deployedEnvs[0];
     expect(env.MAYI_CALLBACK_STATE_KEY_ID).toBe("k1");
-    expect(env.MAYI_OAUTH_SCOPES).toBe("approval:create approval:read approval:cancel");
+    expect(env.MAYI_OAUTH_SCOPES).toBe(
+      "approval:create approval:read approval:cancel",
+    );
     // The refresh token NEVER ships for brokered providers.
     expect(env).not.toHaveProperty("MAYI_OAUTH_REFRESH_TOKEN");
     expect(env).not.toHaveProperty("MAYI_OAUTH_CLIENT_ID");
@@ -1664,11 +1699,18 @@ describe("Google connection env injection (issue #30)", () => {
           HARNESST_CAPABILITY_PROVIDERS: "user_marker",
         }),
         // Capability delivery (real xero entry): ONLY the harnesst-owned marker, no OAuth vars.
-        connectionGrantEnv: async () => ({ HARNESST_CAPABILITY_PROVIDERS: "xero" }),
+        connectionGrantEnv: async () => ({
+          HARNESST_CAPABILITY_PROVIDERS: "xero",
+        }),
       },
     );
     const env = deployedEnvs[0];
-    for (const suffix of ["CLIENT_ID", "CLIENT_SECRET", "REFRESH_TOKEN", "SCOPES"]) {
+    for (const suffix of [
+      "CLIENT_ID",
+      "CLIENT_SECRET",
+      "REFRESH_TOKEN",
+      "SCOPES",
+    ]) {
       expect(env).not.toHaveProperty(`XERO_OAUTH_${suffix}`);
     }
     expect(env.HARNESST_CAPABILITY_PROVIDERS).toBe("xero");
@@ -1872,8 +1914,14 @@ describe("generated-secret mint-once (issue #163)", () => {
       agentLock: async () => LOCK,
     });
 
-    await deployRelease({ environmentId: ENV, releaseId: release.id }, depsFor());
-    await deployRelease({ environmentId: ENV, releaseId: release.id }, depsFor());
+    await deployRelease(
+      { environmentId: ENV, releaseId: release.id },
+      depsFor(),
+    );
+    await deployRelease(
+      { environmentId: ENV, releaseId: release.id },
+      depsFor(),
+    );
 
     // Exactly one mint: 32 random bytes base64url (43 chars), persisted through the seam.
     expect(setCalls).toHaveLength(1);
@@ -2132,8 +2180,14 @@ describe("channel park env injection (WS1)", () => {
       { environmentId: ENV, releaseId: release.id },
       {
         store,
-        deployTarget: fakeDeployTarget({ health: { status: "live" }, deployedEnvs }),
-        secrets: fakeSecrets({ OPENROUTER_API_KEY: "k", ...(input.secrets ?? {}) }),
+        deployTarget: fakeDeployTarget({
+          health: { status: "live" },
+          deployedEnvs,
+        }),
+        secrets: fakeSecrets({
+          OPENROUTER_API_KEY: "k",
+          ...(input.secrets ?? {}),
+        }),
         ...(input.lock ? { agentLock: async () => input.lock! } : {}),
       },
     );
@@ -2144,7 +2198,9 @@ describe("channel park env injection (WS1)", () => {
   it("wires the park URL and a delegation token when the lock installs the github channel", async () => {
     const env = await deployWith({ lock: lockWith("github") });
 
-    expect(env.HARNESST_FOH_PARK_URL).toBe("https://harnesst.example/api/foh/park");
+    expect(env.HARNESST_FOH_PARK_URL).toBe(
+      "https://harnesst.example/api/foh/park",
+    );
     // The channel's answer route is otherwise unauthenticated: it compares the presented bearer
     // against this baked token, so the two MUST be the same value.
     expect(verifyDelegationToken(env.HARNESST_TEAM_TOKEN)).toBe(
@@ -2181,14 +2237,18 @@ describe("channel park env injection (WS1)", () => {
     // silently withheld the park URL and every question went to the issue thread and nowhere else.
     const env = await deployWith({ lock: bundleLockWith("github") });
 
-    expect(env.HARNESST_FOH_PARK_URL).toBe("https://harnesst.example/api/foh/park");
+    expect(env.HARNESST_FOH_PARK_URL).toBe(
+      "https://harnesst.example/api/foh/park",
+    );
     expect(verifyDelegationToken(env.HARNESST_TEAM_TOKEN)).toBe(
       (await listDeployments(ENV, store))[0].id,
     );
   });
 
   it("ignores a bundle whose include shares the id but is not a channel", async () => {
-    const env = await deployWith({ lock: bundleLockWith("github", null, "skill") });
+    const env = await deployWith({
+      lock: bundleLockWith("github", null, "skill"),
+    });
 
     expect(env).not.toHaveProperty("HARNESST_FOH_PARK_URL");
   });
@@ -2196,7 +2256,9 @@ describe("channel park env injection (WS1)", () => {
   it("ignores a bundle installed under a different roster member", async () => {
     // Park rights follow the member whose container this is; a sibling agent's GitHub bundle
     // must not put a delegation token in it.
-    const env = await deployWith({ lock: bundleLockWith("github", "someone-else") });
+    const env = await deployWith({
+      lock: bundleLockWith("github", "someone-else"),
+    });
 
     expect(env).not.toHaveProperty("HARNESST_FOH_PARK_URL");
   });
@@ -2209,14 +2271,18 @@ describe("channel park env injection (WS1)", () => {
       secrets: { HARNESST_FOH_PARK_URL: "https://attacker.example/collect" },
     });
 
-    expect(env.HARNESST_FOH_PARK_URL).toBe("https://harnesst.example/api/foh/park");
+    expect(env.HARNESST_FOH_PARK_URL).toBe(
+      "https://harnesst.example/api/foh/park",
+    );
   });
 
   it("removes the park URL when the channel is uninstalled and the agent redeployed", async () => {
     const first = await deployWith({ lock: lockWith("github") });
     expect(first.HARNESST_FOH_PARK_URL).toBeTruthy();
 
-    const second = await deployWith({ lock: JSON.stringify({ version: 1, installs: [] }) });
+    const second = await deployWith({
+      lock: JSON.stringify({ version: 1, installs: [] }),
+    });
 
     expect(second).not.toHaveProperty("HARNESST_FOH_PARK_URL");
   });
@@ -2298,8 +2364,14 @@ describe("channel settings env injection (#254)", () => {
       { environmentId: ENV, releaseId: release.id },
       {
         store,
-        deployTarget: fakeDeployTarget({ health: { status: "live" }, deployedEnvs }),
-        secrets: fakeSecrets({ OPENROUTER_API_KEY: "k", ...(input.secrets ?? {}) }),
+        deployTarget: fakeDeployTarget({
+          health: { status: "live" },
+          deployedEnvs,
+        }),
+        secrets: fakeSecrets({
+          OPENROUTER_API_KEY: "k",
+          ...(input.secrets ?? {}),
+        }),
         ...(input.lock ? { agentLock: async () => input.lock! } : {}),
       },
     );
@@ -2352,7 +2424,10 @@ describe("channel settings env injection (#254)", () => {
 
   it("ignores settings stored under a different roster member", async () => {
     const env = await deployWith({
-      lock: bundleLock({ member: "someone-else", settings: { repos: ["acme/site"] } }),
+      lock: bundleLock({
+        member: "someone-else",
+        settings: { repos: ["acme/site"] },
+      }),
     });
 
     expect(env).not.toHaveProperty("HARNESST_CHANNEL_GITHUB_REPOS");
@@ -2433,7 +2508,10 @@ describe("run reporting env injection (WS2)", () => {
       { environmentId: ENV, releaseId: release.id },
       {
         store,
-        deployTarget: fakeDeployTarget({ health: { status: "live" }, deployedEnvs }),
+        deployTarget: fakeDeployTarget({
+          health: { status: "live" },
+          deployedEnvs,
+        }),
         secrets: fakeSecrets({ OPENROUTER_API_KEY: "k", ...secrets }),
       },
     );
@@ -2444,7 +2522,9 @@ describe("run reporting env injection (WS2)", () => {
   it("wires the runs URL and a delegation token into a plain, channel-less deployment", async () => {
     const env = await deployWith();
 
-    expect(env.HARNESST_RUNS_URL).toBe("https://harnesst.example/api/agent/runs");
+    expect(env.HARNESST_RUNS_URL).toBe(
+      "https://harnesst.example/api/agent/runs",
+    );
     // The endpoint authenticates the deployment by this token alone — it must name THIS one.
     expect(verifyDelegationToken(env.HARNESST_TEAM_TOKEN)).toBe(
       (await listDeployments(ENV, store))[0].id,
@@ -2458,6 +2538,8 @@ describe("run reporting env injection (WS2)", () => {
       HARNESST_RUNS_URL: "https://attacker.example/collect",
     });
 
-    expect(env.HARNESST_RUNS_URL).toBe("https://harnesst.example/api/agent/runs");
+    expect(env.HARNESST_RUNS_URL).toBe(
+      "https://harnesst.example/api/agent/runs",
+    );
   });
 });

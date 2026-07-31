@@ -65,6 +65,7 @@ import {
 import {
   SESSION_WORKSPACE_CHANNEL_PATH,
   SESSION_WORKSPACE_CHANNEL_SOURCE,
+  SESSION_WORKSPACE_IMAGE_LABEL,
 } from "./session-workspace-channel";
 
 const exec = promisify(execFile);
@@ -205,6 +206,7 @@ RUN npm exec -- eve build
 # inheriting it shares every heavy layer instead of duplicating them into a fresh image.
 FROM build
 WORKDIR /app
+LABEL ${SESSION_WORKSPACE_IMAGE_LABEL}="1"
 # eve-docker shim (EVE_DOCKER_PATH): mounts the agent's home volume onto session sandboxes.
 # See EVE_DOCKER_SHIM / eve-image.server.ts for why and how it degrades. base64 in, decode out.
 RUN echo '${EVE_DOCKER_SHIM_B64}' | base64 -d > /usr/local/bin/eve-docker && chmod 0755 /usr/local/bin/eve-docker

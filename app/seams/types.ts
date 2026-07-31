@@ -97,12 +97,7 @@ export type BuildCheckResult =
   | { ok: false; output: string };
 
 export type InstanceStatus =
-  | "pending"
-  | "building"
-  | "starting"
-  | "live"
-  | "stopped"
-  | "failed";
+  "pending" | "building" | "starting" | "live" | "stopped" | "failed";
 
 export interface InstanceHealth {
   status: InstanceStatus;
@@ -123,6 +118,12 @@ export interface WorldSessionSummary {
 export interface DeployTarget {
   readonly name: string;
   build(req: BuildRequest): Promise<BuiltArtifact>;
+  /**
+   * Whether an already-built image contains platform runtime machinery introduced after the
+   * release was first built. Controllers use this to rebuild cached images during capability
+   * rollouts instead of deploying a container that cannot honor the requested boundary.
+   */
+  imageSupports?(imageRef: string, capability: string): Promise<boolean>;
   /**
    * Build source + overlay without deploying — the publish build that keeps broken code from
    * ever landing, and whose image is promoted at deploy time (§3.2). Optional: targets

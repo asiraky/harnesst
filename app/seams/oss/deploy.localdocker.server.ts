@@ -47,6 +47,10 @@ import {
   buildStageTagFor,
   buildStagedTree,
 } from "~/deploy/eve-image.server";
+import {
+  SESSION_WORKSPACE_IMAGE_CAPABILITY,
+  SESSION_WORKSPACE_IMAGE_LABEL,
+} from "~/deploy/session-workspace-channel";
 import type {
   BuildRequest,
   BuiltArtifact,
@@ -96,6 +100,31 @@ export function supportsVolumeSubpath(serverVersion: string): boolean {
     10,
   );
   return Number.isFinite(major) && major >= 26;
+}
+
+type DockerHostMount = {
+  Source?: unknown;
+  Target?: unknown;
+  VolumeOptions?: { Subpath?: unknown } | null;
+};
+
+/** Whether Docker recorded the private session subpath mount introduced by #315. */
+export function hasIsolatedSessionHomeMount(
+  mounts: unknown,
+  volume: string,
+): boolean {
+  return (
+    Array.isArray(mounts) &&
+    mounts.some((mount: DockerHostMount) => {
+      const subpath = mount.VolumeOptions?.Subpath;
+      return (
+        mount.Source === volume &&
+        mount.Target === "/workspace/home" &&
+        typeof subpath === "string" &&
+        subpath.startsWith("sessions/")
+      );
+    })
+  );
 }
 
 /**
@@ -172,6 +201,66 @@ async function docker(args: string[]): Promise<string> {
   } catch (error) {
     throw normalizeDockerCliError(error, `run \`docker ${args[0] ?? ""}\``);
   }
+}
+
+async function imageHasSessionWorkspaceRuntime(
+  imageRef: string,
+): Promise<boolean> {
+  try {
+    return (
+      (await docker([
+        "image",
+        "inspect",
+        "--format",
+        `{{index .Config.Labels "${SESSION_WORKSPACE_IMAGE_LABEL}"}}`,
+        imageRef,
+      ])) === "1"
+    );
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * A pre-#315 sandbox has the environment volume as a legacy `-v` bind and can therefore traverse
+ * into every new `sessions/*` directory. Docker cannot change a container's mounts in place, so
+ * retire those containers during the rollout; Eve recreates them from durable session state on the
+ * next turn, now through the isolated shim. Already-isolated containers are left intact.
+ */
+type DockerCommand = (args: string[]) => Promise<string>;
+
+export async function retireLegacySessionSandboxes(
+  worldKey: string,
+  run: DockerCommand = docker,
+): Promise<void> {
+  const volume = homeVolumeName(worldKey);
+  const rawIds = await run([
+    "ps",
+    "-aq",
+    "--filter",
+    "label=eve.sandbox.role=session",
+    "--filter",
+    `volume=${volume}`,
+  ]);
+  const ids = rawIds
+    .split("\n")
+    .map((value) => value.trim())
+    .filter(Boolean);
+  const inspected = await Promise.all(
+    ids.map(async (id) => {
+      let mounts: unknown = null;
+      try {
+        mounts = JSON.parse(
+          await run(["inspect", "--format", "{{json .HostConfig.Mounts}}", id]),
+        );
+      } catch {
+        // An unreadable mount description cannot be trusted with a security boundary.
+      }
+      return hasIsolatedSessionHomeMount(mounts, volume) ? null : id;
+    }),
+  );
+  const legacy = inspected.filter((id): id is string => id !== null);
+  if (legacy.length > 0) await run(["rm", "-f", ...legacy]);
 }
 
 type DockerRunner = (args: string[]) => Promise<string>;
@@ -492,6 +581,13 @@ async function containerLogsTail(name: string, lines = 40): Promise<string> {
 export const localDockerTarget: DeployTarget = {
   name: "local-docker",
 
+  async imageSupports(imageRef, capability) {
+    return (
+      capability === SESSION_WORKSPACE_IMAGE_CAPABILITY &&
+      (await imageHasSessionWorkspaceRuntime(imageRef))
+    );
+  },
+
   async build(req: BuildRequest): Promise<BuiltArtifact> {
     if (!req.installationId) {
       throw new Error(
@@ -533,6 +629,13 @@ export const localDockerTarget: DeployTarget = {
       };
     }
     if (req.isolateSessionWorkspace) {
+      if (!(await imageHasSessionWorkspaceRuntime(req.imageRef))) {
+        return {
+          status: "failed",
+          detail:
+            "This agent image predates isolated session workspaces and must be rebuilt before deployment.",
+        };
+      }
       const serverVersion = await docker([
         "version",
         "--format",
@@ -546,6 +649,7 @@ export const localDockerTarget: DeployTarget = {
             `(the daemon reported ${serverVersion || "an unknown version"}).`,
         };
       }
+      await retireLegacySessionSandboxes(req.worldKey);
     }
     const name = containerName(req.deploymentId);
     await removeIfExists(name);

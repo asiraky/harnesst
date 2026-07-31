@@ -27,6 +27,7 @@ import {
   type HarnesstLock,
 } from "~/marketplace/lock";
 import { CHANNEL_ANSWER_ROUTES } from "~/foh/channel-resume";
+import { SESSION_WORKSPACE_IMAGE_CAPABILITY } from "~/deploy/session-workspace-channel";
 import { lockSecretsForMember } from "~/project/secrets.server";
 import { listProviders } from "~/connections/providers.server";
 import { envIngressUrl } from "~/lib/ingress";
@@ -747,7 +748,18 @@ export async function deployRelease(
     }
 
     let imageRef = release.imageRef;
-    const shouldBuild = input.rebuild || !imageRef;
+    const hasSessionWorkspaceRuntime =
+      agent?.kind !== "member" ||
+      (imageRef != null &&
+        deployTarget.imageSupports != null &&
+        (await deployTarget.imageSupports(
+          imageRef,
+          SESSION_WORKSPACE_IMAGE_CAPABILITY,
+        )));
+    // Existing Release rows may point at images built before #315 injected the authenticated
+    // channel and subpath-mount shim. Rebuild those cached member images once during rollout.
+    const shouldBuild =
+      input.rebuild || !imageRef || !hasSessionWorkspaceRuntime;
     if (shouldBuild) {
       if (!project?.repoOwner || !project.repoName) {
         throw new Error(

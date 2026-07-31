@@ -13,24 +13,30 @@ import type {
  * throws it (to exercise the controller's failure-recording path, like the real container
  * target does when docker is unavailable).
  */
-export function fakeDeployTarget(opts: {
-  health?: InstanceHealth;
-  deployError?: string;
-  buildImageRef?: string;
-  stopError?: string;
-  /** Captures the image refs produced by build(), for cache/rebuild assertions. */
-  builtRefs?: string[];
-  /** Captures the env each deploy() received, for injection assertions. */
-  deployedEnvs?: Record<string, string>[];
-  /** Captures stopped deployment ids for cleanup/cutover assertions. */
-  stoppedIds?: string[];
-  /** Captures destroyed deployment ids for cleanup/cutover assertions. */
-  destroyedIds?: string[];
-  /** Captures each deploy()'s worldKey, for the durability (env-keyed world) invariant. */
-  deployedWorldKeys?: string[];
-  /** Captures worldKeys passed to destroyWorld() on env/repo teardown. */
-  destroyedWorlds?: string[];
-} = {}): DeployTarget {
+export function fakeDeployTarget(
+  opts: {
+    health?: InstanceHealth;
+    deployError?: string;
+    buildImageRef?: string;
+    stopError?: string;
+    /** Captures the image refs produced by build(), for cache/rebuild assertions. */
+    builtRefs?: string[];
+    /** Captures the env each deploy() received, for injection assertions. */
+    deployedEnvs?: Record<string, string>[];
+    /** Captures stopped deployment ids for cleanup/cutover assertions. */
+    stoppedIds?: string[];
+    /** Captures destroyed deployment ids for cleanup/cutover assertions. */
+    destroyedIds?: string[];
+    /** Captures each deploy()'s worldKey, for the durability (env-keyed world) invariant. */
+    deployedWorldKeys?: string[];
+    /** Captures worldKeys passed to destroyWorld() on env/repo teardown. */
+    destroyedWorlds?: string[];
+    /** False simulates a cached image built before a requested platform capability shipped. */
+    imageSupports?: boolean;
+    /** Captures whether each deploy requested the session-workspace boundary. */
+    isolatedWorkspaces?: boolean[];
+  } = {},
+): DeployTarget {
   const stopped = new Set<string>();
   return {
     name: "fake",
@@ -39,9 +45,13 @@ export function fakeDeployTarget(opts: {
       opts.builtRefs?.push(imageRef);
       return { imageRef, digest: "sha256:fake" };
     },
+    async imageSupports() {
+      return opts.imageSupports ?? true;
+    },
     async deploy(req): Promise<InstanceHealth> {
       opts.deployedEnvs?.push(req.env);
       opts.deployedWorldKeys?.push(req.worldKey);
+      opts.isolatedWorkspaces?.push(req.isolateSessionWorkspace === true);
       if (opts.deployError) throw new Error(opts.deployError);
       return opts.health ?? { status: "live", url: "http://fake.local" };
     },

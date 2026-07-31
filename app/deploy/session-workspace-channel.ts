@@ -17,6 +17,9 @@ export const SESSION_WORKSPACE_CHANNEL_PATH =
   "agent/channels/harnesst-session-workspace.ts";
 export const SESSION_WORKSPACE_ROUTE = "/harnesst/v1/session";
 export const SESSION_WORKSPACE_CHANNEL_NAME = "harnesst-session-workspace";
+export const SESSION_WORKSPACE_IMAGE_CAPABILITY = "session-workspaces-v1";
+export const SESSION_WORKSPACE_IMAGE_LABEL =
+  "dev.harnesst.capability.session-workspaces";
 /**
  * `send()` returns the channel-local token, not Eve's internally namespaced token, so this prefix
  * is deliberately independent of the channel slug and is what harnesst persists on its row.
