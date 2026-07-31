@@ -33,7 +33,9 @@ import { makeFakeStore, type FakeStore } from "../fakes/store";
 
 const PROJECT = "proj_1";
 const NOW = new Date(1_700_000_000_000);
-const PNG = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x01, 0x02]);
+const PNG = Buffer.from([
+  0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x01, 0x02,
+]);
 const HTML = Buffer.from("<html><body>hi</body></html>");
 const CSS = Buffer.from("body{color:red}");
 /** A two-file page, as the bundle copy hands it over: names already bundle-relative. */
@@ -78,12 +80,22 @@ function session(over: Partial<PlaygroundSession> = {}): PlaygroundSession {
     surface: "foh",
     status: "running",
     streamIndex: 7,
+    worldKey: "env_1",
+    externalSessionId: "wrun_live",
+    predecessorExternalSessionId: null,
+    resumeVia: null,
     ...over,
   } as unknown as PlaygroundSession;
 }
 
 type Deps = PublishArtifactDeps & {
-  copies: Array<{ deploymentId: string; path: string; bundle?: true }>;
+  copies: Array<{
+    deploymentId: string;
+    worldKey: string;
+    sandboxSessionId: string;
+    path: string;
+    bundle?: true;
+  }>;
   finds: Array<Parameters<PublishArtifactDeps["findSession"]>[0]>;
   /** One entry per CARD — a republish appends to `versions`, it does not push here (#292). */
   rows: Artifact[];
@@ -138,7 +150,8 @@ function makeDeps(
     }
     // The store's own refusals, which are the ones a publish racing another publish of the same
     // name meets: the kind pin and the version ceiling are re-decided where the row is written.
-    if (artifact.kind !== row.kind) return { ok: false as const, reason: "kind" as const };
+    if (artifact.kind !== row.kind)
+      return { ok: false as const, reason: "kind" as const };
     const stack = versions.filter((v) => v.artifactId === artifact.id);
     const latest = stack.at(-1) ?? null;
     if (latest && latest.sha256 === row.sha256) {
@@ -185,12 +198,19 @@ function makeDeps(
         : { ok: true as const, session: session() };
     },
     copyFile: async (input) => {
-      copies.push({ deploymentId: input.deploymentId, path: input.path });
+      copies.push({
+        deploymentId: input.deploymentId,
+        worldKey: input.worldKey,
+        sandboxSessionId: input.sandboxSessionId,
+        path: input.path,
+      });
       return over.copy ? over.copy(input) : { ok: true as const, bytes: PNG };
     },
     copyBundle: async (input) => {
       copies.push({
         deploymentId: input.deploymentId,
+        worldKey: input.worldKey,
+        sandboxSessionId: input.sandboxSessionId,
         path: input.path,
         bundle: true,
       });
@@ -253,6 +273,33 @@ describe("publishArtifact destination", () => {
       environmentId: "env_1",
     });
     expect(deps.finds[0].staleAfterMs).toBeGreaterThan(0);
+    expect(deps.copies[0]).toMatchObject({
+      worldKey: "env_1",
+      sandboxSessionId: "wrun_live",
+    });
+  });
+
+  it("reads a successor's artifact from the predecessor sandbox it reuses", async () => {
+    const deploymentId = await seedDeployment();
+    const deps = makeDeps({
+      find: async () => ({
+        ok: true,
+        session: session({
+          externalSessionId: "wrun_successor",
+          predecessorExternalSessionId: "wrun_original",
+        }),
+      }),
+    });
+
+    const result = await publishArtifact(
+      { deploymentId, path: "artifacts/chart.png" },
+      deps,
+    );
+
+    expect(result.ok).toBe(true);
+    expect(deps.copies[0]).toMatchObject({
+      sandboxSessionId: "wrun_original",
+    });
   });
 
   it("refuses when no conversation is running a turn instead of falling back to the newest one", async () => {
@@ -268,7 +315,9 @@ describe("publishArtifact destination", () => {
 
     expect(result.ok).toBe(false);
     if (result.ok) return;
-    expect(result.error).toMatch(/no Front of House conversation waiting on you/i);
+    expect(result.error).toMatch(
+      /no Front of House conversation waiting on you/i,
+    );
     // Nothing was read: a refusal must not cost a 25 MB copy either.
     expect(deps.copies).toHaveLength(0);
     expect(deps.rows).toHaveLength(0);
@@ -319,7 +368,13 @@ describe("publishArtifact kinds", () => {
       fileCount: 2,
     });
     expect(deps.copies).toEqual([
-      { deploymentId, path: "/workspace/home/artifacts/site", bundle: true },
+      {
+        deploymentId,
+        worldKey: "env_1",
+        sandboxSessionId: "wrun_live",
+        path: "/workspace/home/artifacts/site",
+        bundle: true,
+      },
     ]);
     expect(deps.rows).toHaveLength(1);
     expect(deps.rows[0]).toMatchObject({
@@ -329,7 +384,9 @@ describe("publishArtifact kinds", () => {
       streamIndex: 7,
       title: "Landing",
     });
-    expect(deps.files[0].map((f) => [f.relPath, f.contentType, f.byteSize])).toEqual([
+    expect(
+      deps.files[0].map((f) => [f.relPath, f.contentType, f.byteSize]),
+    ).toEqual([
       ["index.html", "text/html", HTML.length],
       ["assets/app.css", "text/css", CSS.length],
     ]);
@@ -382,11 +439,17 @@ describe("publishArtifact kinds", () => {
     });
     const image = makeDeps();
 
-    await publishArtifact({ deploymentId, path: "artifacts/report.html" }, page);
+    await publishArtifact(
+      { deploymentId, path: "artifacts/report.html" },
+      page,
+    );
     await publishArtifact({ deploymentId, path: "artifacts/chart.png" }, image);
 
     expect(page.copies[0].bundle).toBe(true);
-    expect(page.rows[0]).toMatchObject({ kind: "html", entryPath: "report.html" });
+    expect(page.rows[0]).toMatchObject({
+      kind: "html",
+      entryPath: "report.html",
+    });
     expect(image.copies[0].bundle).toBeUndefined();
     expect(image.rows[0]).toMatchObject({ kind: "image", entryPath: null });
   });
@@ -471,7 +534,9 @@ describe("publishArtifact kinds", () => {
 
   it("holds a page to the same destination and budget rules as an image", async () => {
     const deploymentId = await seedDeployment();
-    const noTurn = makeDeps({ find: async () => ({ ok: false, reason: "no_live_turn" }) });
+    const noTurn = makeDeps({
+      find: async () => ({ ok: false, reason: "no_live_turn" }),
+    });
     const overBudget = makeDeps({
       usage: async () => ({
         sessionCount: MAX_ARTIFACTS_PER_SESSION,
@@ -572,7 +637,9 @@ describe("publishArtifact versions", () => {
   it("versions a page the same way an image is, members and all", async () => {
     const deploymentId = await seedDeployment();
     let page = PAGE;
-    const deps = makeDeps({ copyBundle: async () => ({ ok: true, files: page }) });
+    const deps = makeDeps({
+      copyBundle: async () => ({ ok: true, files: page }),
+    });
 
     await publishArtifact(
       { deploymentId, path: "artifacts/site", kind: "html" },
@@ -588,7 +655,12 @@ describe("publishArtifact versions", () => {
       deps,
     );
 
-    expect(second).toMatchObject({ ok: true, version: 2, updated: true, fileCount: 2 });
+    expect(second).toMatchObject({
+      ok: true,
+      version: 2,
+      updated: true,
+      fileCount: 2,
+    });
     expect(deps.rows).toHaveLength(1);
     // Each version owns its own member rows: keyed to the artifact instead, v2's index.html would
     // collide with v1's and the preview would go on serving the old page.
@@ -596,9 +668,7 @@ describe("publishArtifact versions", () => {
     expect(deps.files[1].map((f) => f.sha256)).not.toEqual(
       deps.files[0].map((f) => f.sha256),
     );
-    expect(deps.rows[0].byteSize).toBe(
-      HTML.length + restyled[1].bytes.length,
-    );
+    expect(deps.rows[0].byteSize).toBe(HTML.length + restyled[1].bytes.length);
   });
 
   it("refuses to republish a name as the other kind rather than swapping which door serves it", async () => {
@@ -744,7 +814,8 @@ describe("publishArtifact budgets", () => {
 
   it("refuses on the repo's daily count and byte ceilings, and measures them over the window", async () => {
     const deploymentId = await seedDeployment();
-    const seen: Array<{ since: Date; projectId: string; sessionId: string }> = [];
+    const seen: Array<{ since: Date; projectId: string; sessionId: string }> =
+      [];
     const byCount = makeDeps({
       usage: async (input) => {
         seen.push(input);
@@ -774,7 +845,9 @@ describe("publishArtifact budgets", () => {
       expect(deps.copies).toHaveLength(0);
     }
     expect(seen[0]).toMatchObject({ projectId: PROJECT, sessionId: "ps_live" });
-    expect(seen[0].since.getTime()).toBe(NOW.getTime() - ARTIFACT_BUDGET_WINDOW_MS);
+    expect(seen[0].since.getTime()).toBe(
+      NOW.getTime() - ARTIFACT_BUDGET_WINDOW_MS,
+    );
   });
 });
 
@@ -790,7 +863,9 @@ describe("withArtifactCopySlot", () => {
       ),
     );
 
-    expect(await withArtifactCopySlot(async () => "extra")).toEqual({ ok: false });
+    expect(await withArtifactCopySlot(async () => "extra")).toEqual({
+      ok: false,
+    });
     for (const release of releases) release();
     expect(await Promise.all(held)).toEqual(
       held.map(() => ({ ok: true, value: "done" })),

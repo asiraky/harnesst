@@ -31,6 +31,10 @@ import {
   normalizeChatInputSurface,
 } from "~/chat/input-option";
 import type { ChatInputOption, ChatInputRequest } from "~/chat/types";
+import {
+  SESSION_WORKSPACE_ID_HEADER,
+  SESSION_WORKSPACE_ROUTE,
+} from "~/deploy/session-workspace-channel";
 import { effectiveModelId } from "~/models/model-directive";
 
 /** One action (tool call) inside a step, correlated request → result. */
@@ -399,6 +403,14 @@ export async function* streamTurn(input: {
     /** The instance's own HARNESST_TEAM_TOKEN; the channel route is otherwise unauthenticated. */
     bearer: string;
   } | null;
+  /**
+   * Private harnesst HTTP channel. On a first turn this seeds `id` into Eve's sandbox state before
+   * Docker creates the container; on later turns it reaches the same stateful channel.
+   */
+  workspace?: {
+    id: string;
+    bearer: string;
+  } | null;
   /** Remote event cursor from the last consumed session stream event. */
   streamIndex?: number | null;
   /** Abort the local stream consumer, e.g. when the user presses Stop. */
@@ -484,6 +496,7 @@ export async function* streamTurn(input: {
 
   try {
     throwIfAborted();
+    const workspace = via ? null : (input.workspace ?? null);
     const res = via
       ? await fetch(`${base}${via.routePath}`, {
           method: "POST",
@@ -500,12 +513,22 @@ export async function* streamTurn(input: {
           signal: AbortSignal.timeout(15_000),
         })
       : await fetch(
-          isFollowUp
-            ? `${base}/eve/v1/session/${input.sessionId}`
-            : `${base}/eve/v1/session`,
+          workspace
+            ? isFollowUp
+              ? `${base}${SESSION_WORKSPACE_ROUTE}/${input.sessionId}`
+              : `${base}${SESSION_WORKSPACE_ROUTE}`
+            : isFollowUp
+              ? `${base}/eve/v1/session/${input.sessionId}`
+              : `${base}/eve/v1/session`,
           {
             method: "POST",
-            headers: { "content-type": "application/json" },
+            headers: workspace
+              ? {
+                  "content-type": "application/json",
+                  authorization: `Bearer ${workspace.bearer}`,
+                  [SESSION_WORKSPACE_ID_HEADER]: workspace.id,
+                }
+              : { "content-type": "application/json" },
             body: JSON.stringify({
               message: input.message,
               ...(isFollowUp
@@ -1150,7 +1173,9 @@ export async function dispatchTurn(input: {
     continuationToken,
     turnId,
     streamIndex,
-    error: sessionId ? null : (error ?? "The agent did not accept the message."),
+    error: sessionId
+      ? null
+      : (error ?? "The agent did not accept the message."),
   };
 }
 
@@ -1161,6 +1186,11 @@ export async function sendTurn(input: {
   /** Both present → follow-up turn on the existing session (context retained). */
   sessionId?: string | null;
   continuationToken?: string | null;
+  /** Private harnesst session workspace route (member-agent FOH conversations). */
+  workspace?: {
+    id: string;
+    bearer: string;
+  } | null;
   streamIndex?: number | null;
   timeoutMs?: number;
 }): Promise<TurnResult> {

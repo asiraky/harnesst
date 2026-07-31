@@ -916,7 +916,7 @@ two-source-of-truth reconciliation problem.
   (3) **agent-level persistent home directory** — _shipped in Milestone 6.2 below (the eve-docker shim),
   NOT the upstream-mounts route once planned here._
 
-**Milestone 6.2 — Agent home: persistent `/workspace/home` across sessions (shipped)**
+**Milestone 6.2 — Durable environment setup + isolated session workspaces (shipped)**
 
 - **The gap.** 6.1 made _sessions_ durable, but eve's sandbox filesystem is per **durable session** —
   a new session starts from a clean template. There is no per-_agent_ home, so anything an agent set
@@ -932,14 +932,13 @@ two-source-of-truth reconciliation problem.
   (`EVE_DOCKER_SHIM`, eve-image.server.ts); the deploy target sets `EVE_DOCKER_PATH` to it and
   `HARNESST_HOME_VOLUME` to this environment's volume (both injected AFTER the user-secret env spread, so
   a secret can never shadow them). On a `run` that carries eve's session-container label pair
-  `--label eve.sandbox.role=session`, the shim injects `-v $HARNESST_HOME_VOLUME:/workspace/home` right
-  after the `run` token and `exec`s the real client; everything else — template-build runs (shared,
-  must not capture a volume), `start`/`exec`/`stop`/`rm`, an unset volume — passes through untouched.
-  (The image runs as root, so the mount is already writable — no chown needed.)
+  `--label eve.sandbox.role=session`, the shim injects the isolated subpath mounts described below
+  and execs the real client; everything else — template-build runs (shared, must not capture a
+  volume), `start`/`exec`/`stop`/`rm`, an unset volume — passes through untouched.
 - **The tripwire.** The shim keys on eve's `eve.sandbox.role=session` label. If a future eve upgrade
-  renames it, the shim silently stops matching: no injection, sandboxes still run, homes just quietly
-  stop mounting — a graceful degradation back to pre-6.2 behaviour, documented here as the thing to
-  check when "my SSH key vanished again" resurfaces.
+  renames it, the shim stops matching: no persistent mount is injected and the sandbox keeps its
+  private container filesystem. Durability degrades, but sibling session data is never exposed.
+  Once a run matches, a missing or unsafe container identity fails closed.
 - **Volume naming & lifecycle.** One named volume per environment: `homeVolumeName(worldKey)` =
   `harnesst-home-<sanitized>-<sha1slug8>` (same stability/collision-safety shape as `worldDbName`, wider
   volume charset). Docker auto-creates it on first sandbox use — no provisioning. `destroyWorld` now
@@ -947,9 +946,22 @@ two-source-of-truth reconciliation problem.
   mounting this env's volumes (the home volume finds its sandbox siblings — closing part of the 6.1
   sandbox-GC punt — and, since #288, the world-data volume finds any straggler instances), then
   remove both volumes.
-- **The agent-visible contract.** Anything an agent keeps under `/workspace/home` — SSH keys, caches,
-  notes-to-self — **survives new sessions, redeploys, and instance restarts, and dies with the
-  environment.** Everything outside `/workspace/home` remains per-session scratch.
+- **Session isolation (#315).** The environment still owns one named volume, but a member-agent
+  sandbox receives only `sessions/<sandbox-identity>` from it at `/workspace/home` via Docker's
+  `volume-subpath` mount. The sandbox identity is the harnesst conversation id carried through a
+  private authenticated Eve channel, so an Eve-session succession reattaches the same tree while a
+  different harnesst conversation cannot mount, list, traverse, or symlink into it. The instance
+  container holds the full volume only to create those subdirectories and to support control-plane
+  lifecycle work; the model sandbox never receives that mount.
+- **The agent-visible contract.** `/workspace/home` is the private working root for this
+  conversation: product files, generated artifacts, browser state, and other project work stay
+  there and are absent from every other conversation's container. `/workspace/shared` is the
+  explicit environment-level area for setup that should deliberately survive across conversations
+  (keys, caches, tool data); it is a separate subpath mount, not a parent of the private roots.
+  Legacy files at the old volume root are not copied into new sessions. On the first isolated
+  deploy, cached pre-isolation images are rebuilt and legacy whole-volume sandbox containers are
+  retired; Eve recreates them with private mounts if their durable sessions resume. The isolated
+  mount requires Docker Engine 26+; deploys fail closed on an older daemon.
 
 **Milestone 7 — Teams (peer teams, §7.9) (shipped)**
 

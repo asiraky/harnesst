@@ -18,6 +18,7 @@ import {
   type DockerStreamer,
   type StreamResult,
 } from "~/foh/artifact-copy.server";
+import { homeVolumeName } from "~/seams/oss/deploy.localdocker.server";
 
 const TAR_BLOCK = 512;
 
@@ -33,7 +34,12 @@ function tarEntry(
 ): Buffer {
   const header = Buffer.alloc(TAR_BLOCK, 0);
   header.write(name, 0, 100, "utf8");
-  header.write(body.length.toString(8).padStart(11, "0") + "\0", 124, 12, "utf8");
+  header.write(
+    body.length.toString(8).padStart(11, "0") + "\0",
+    124,
+    12,
+    "utf8",
+  );
   header.write(type, 156, 1, "utf8");
   if (linkName) header.write(linkName, 157, 100, "utf8");
   const padded = Math.ceil(body.length / TAR_BLOCK) * TAR_BLOCK;
@@ -47,12 +53,21 @@ const PNG = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x09]);
  * recording every argv it was handed so the test can assert what docker was actually asked to do.
  */
 function fakeDocker(over: {
+  lookup?: StreamResult;
   resolve?: StreamResult;
   copy?: StreamResult;
 }): DockerStreamer & { calls: string[][] } {
   const calls: string[][] = [];
   const run: DockerStreamer = async (args) => {
     calls.push(args);
+    if (args[0] === "ps") {
+      return (
+        over.lookup ?? {
+          ok: true as const,
+          stdout: Buffer.from("sandbox-1\n"),
+        }
+      );
+    }
     if (args[0] === "exec") {
       return (
         over.resolve ?? {
@@ -70,6 +85,8 @@ function fakeDocker(over: {
 
 const input = {
   deploymentId: "dep_1",
+  worldKey: "env_1",
+  sandboxSessionId: "wrun_1",
   path: "/workspace/home/artifacts/chart.png",
   maxBytes: 1024 * 1024,
 };
@@ -79,27 +96,44 @@ describe("copyArtifactFromInstance", () => {
     const docker = fakeDocker({
       resolve: {
         ok: true,
-        stdout: Buffer.from("file\n/workspace/home/agent-browser/screenshots/2.png"),
+        stdout: Buffer.from(
+          "file\n/workspace/home/agent-browser/screenshots/2.png",
+        ),
       },
     });
 
     const result = await copyArtifactFromInstance(input, docker);
 
     expect(result).toEqual({ ok: true, bytes: PNG });
-    const [resolve, copy] = docker.calls;
+    const [lookup, resolve, copy] = docker.calls;
+    expect(lookup).toEqual([
+      "ps",
+      "-aq",
+      "--filter",
+      "label=eve.sandbox.role=session",
+      "--filter",
+      "label=eve.sandbox.tag.sessionId=wrun_1",
+      "--filter",
+      `volume=${homeVolumeName("env_1")}`,
+      "--format",
+      "{{.ID}}",
+    ]);
     expect(resolve[0]).toBe("exec");
     // The path travels as its own argv entry: nothing is interpolated into a shell.
     expect(resolve.at(-1)).toBe(input.path);
     expect(copy).not.toContain("-L");
     // The RESOLVED path is what is read — not the one the agent named.
     expect(copy).toContain(
-      "harnesst-inst-dep_1:/workspace/home/agent-browser/screenshots/2.png",
+      "sandbox-1:/workspace/home/agent-browser/screenshots/2.png",
     );
   });
 
   it("refuses a link that resolves outside the home volume", async () => {
     const docker = fakeDocker({
-      resolve: { ok: true, stdout: Buffer.from("file\n/root/.config/creds.png") },
+      resolve: {
+        ok: true,
+        stdout: Buffer.from("file\n/root/.config/creds.png"),
+      },
     });
 
     const result = await copyArtifactFromInstance(input, docker);
@@ -108,14 +142,19 @@ describe("copyArtifactFromInstance", () => {
     if (result.ok) return;
     expect(result.error).toMatch(/points outside \/workspace\/home/);
     // Refused BEFORE the copy: the bytes are never read at all.
-    expect(docker.calls).toHaveLength(1);
+    expect(docker.calls).toHaveLength(2);
   });
 
   it("refuses a link swapped in after the resolve (the copy sees a link entry)", async () => {
     const docker = fakeDocker({
       copy: {
         ok: true,
-        stdout: tarEntry("chart.png", Buffer.alloc(0), "2", "/root/.ssh/id.png"),
+        stdout: tarEntry(
+          "chart.png",
+          Buffer.alloc(0),
+          "2",
+          "/root/.ssh/id.png",
+        ),
       },
     });
 
@@ -161,6 +200,21 @@ describe("copyArtifactFromInstance", () => {
     expect(result.error).toMatch(/can't reach this agent's instance/i);
   });
 
+  it("refuses an absent or ambiguous session sandbox before reading any container", async () => {
+    for (const stdout of ["", "sandbox-1\nsandbox-2\n"]) {
+      const docker = fakeDocker({
+        lookup: { ok: true, stdout: Buffer.from(stdout) },
+      });
+
+      const result = await copyArtifactFromInstance(input, docker);
+
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.error).toMatch(/workspace|sandbox/i);
+      expect(docker.calls).toHaveLength(1);
+    }
+  });
+
   it("refuses an oversized file while it is still streaming", async () => {
     const docker = fakeDocker({
       copy: { ok: false, error: "overflow", overflow: true },
@@ -183,12 +237,17 @@ describe("firstFileInTar", () => {
       tarEntry("artifacts/", Buffer.alloc(0), "5"),
       tarEntry("artifacts/chart.png", PNG),
     ]);
-    expect(firstFileInTar(tar)).toEqual({ name: "artifacts/chart.png", bytes: PNG });
+    expect(firstFileInTar(tar)).toEqual({
+      name: "artifacts/chart.png",
+      bytes: PNG,
+    });
   });
 
   it("returns null for an archive whose only entry carries no payload", () => {
     expect(
-      firstFileInTar(tarEntry("chart.png", Buffer.alloc(0), "2", "/etc/shadow")),
+      firstFileInTar(
+        tarEntry("chart.png", Buffer.alloc(0), "2", "/etc/shadow"),
+      ),
     ).toBeNull();
   });
 });
@@ -288,6 +347,8 @@ describe("copyArtifactBundleFromInstance", () => {
   const css = Buffer.from("body{color:red}");
   const bundleInput = {
     deploymentId: "dep_1",
+    worldKey: "env_1",
+    sandboxSessionId: "wrun_1",
     path: "/workspace/home/artifacts/site",
     maxBytes: 1024 * 1024,
     maxFiles: 10,
@@ -321,10 +382,10 @@ describe("copyArtifactBundleFromInstance", () => {
       ],
     });
     // The RESOLVED directory is copied, and never with -L.
-    expect(docker.calls[1]).toContain(
-      "harnesst-inst-dep_1:/workspace/home/artifacts/site",
+    expect(docker.calls[2]).toContain(
+      "sandbox-1:/workspace/home/artifacts/site",
     );
-    expect(docker.calls[1]).not.toContain("-L");
+    expect(docker.calls[2]).not.toContain("-L");
   });
 
   it("takes a single HTML file, whose archive is one entry named after the file", async () => {
@@ -342,7 +403,10 @@ describe("copyArtifactBundleFromInstance", () => {
       docker,
     );
 
-    expect(result).toEqual({ ok: true, files: [{ name: "page.html", bytes: html }] });
+    expect(result).toEqual({
+      ok: true,
+      files: [{ name: "page.html", bytes: html }],
+    });
   });
 
   it("refuses an entry that does not sit under the copied root rather than re-rooting it", async () => {
@@ -424,7 +488,10 @@ describe("copyArtifactBundleFromInstance", () => {
 
     const blank = await copyArtifactBundleFromInstance(
       bundleInput,
-      dirDocker({ ok: true, stdout: tarEntry("site/index.html", Buffer.alloc(0)) }),
+      dirDocker({
+        ok: true,
+        stdout: tarEntry("site/index.html", Buffer.alloc(0)),
+      }),
     );
     expect(blank.ok).toBe(false);
     if (blank.ok) return;
@@ -441,6 +508,6 @@ describe("copyArtifactBundleFromInstance", () => {
     expect(result.ok).toBe(false);
     if (result.ok) return;
     expect(result.error).toMatch(/points outside \/workspace\/home/);
-    expect(docker.calls).toHaveLength(1);
+    expect(docker.calls).toHaveLength(2);
   });
 });

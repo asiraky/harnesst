@@ -47,6 +47,10 @@ import {
   buildStageTagFor,
   buildStagedTree,
 } from "~/deploy/eve-image.server";
+import {
+  SESSION_WORKSPACE_IMAGE_CAPABILITY,
+  SESSION_WORKSPACE_IMAGE_LABEL,
+} from "~/deploy/session-workspace-channel";
 import type {
   BuildRequest,
   BuiltArtifact,
@@ -84,6 +88,44 @@ export const DEPLOY_HEALTH_TIMEOUT_MS = Number(
 export const WAKE_HEALTH_TIMEOUT_MS = Number(
   process.env.HARNESST_WAKE_HEALTH_TIMEOUT_MS ?? 120 * 1000,
 );
+
+/**
+ * `volume-subpath` arrived in Docker Engine 26. Session isolation is a security boundary, so an
+ * older daemon must refuse a member-agent deploy instead of silently restoring the whole-volume
+ * mount that caused #315.
+ */
+export function supportsVolumeSubpath(serverVersion: string): boolean {
+  const major = Number.parseInt(
+    serverVersion.trim().match(/^(\d+)/)?.[1] ?? "",
+    10,
+  );
+  return Number.isFinite(major) && major >= 26;
+}
+
+type DockerHostMount = {
+  Source?: unknown;
+  Target?: unknown;
+  VolumeOptions?: { Subpath?: unknown } | null;
+};
+
+/** Whether Docker recorded the private session subpath mount introduced by #315. */
+export function hasIsolatedSessionHomeMount(
+  mounts: unknown,
+  volume: string,
+): boolean {
+  return (
+    Array.isArray(mounts) &&
+    mounts.some((mount: DockerHostMount) => {
+      const subpath = mount.VolumeOptions?.Subpath;
+      return (
+        mount.Source === volume &&
+        mount.Target === "/workspace/home" &&
+        typeof subpath === "string" &&
+        subpath.startsWith("sessions/")
+      );
+    })
+  );
+}
 
 /**
  * The instance container for a deployment. Exported because artifact copy-on-publish (#290) reads
@@ -159,6 +201,66 @@ async function docker(args: string[]): Promise<string> {
   } catch (error) {
     throw normalizeDockerCliError(error, `run \`docker ${args[0] ?? ""}\``);
   }
+}
+
+async function imageHasSessionWorkspaceRuntime(
+  imageRef: string,
+): Promise<boolean> {
+  try {
+    return (
+      (await docker([
+        "image",
+        "inspect",
+        "--format",
+        `{{index .Config.Labels "${SESSION_WORKSPACE_IMAGE_LABEL}"}}`,
+        imageRef,
+      ])) === "1"
+    );
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * A pre-#315 sandbox has the environment volume as a legacy `-v` bind and can therefore traverse
+ * into every new `sessions/*` directory. Docker cannot change a container's mounts in place, so
+ * retire those containers during the rollout; Eve recreates them from durable session state on the
+ * next turn, now through the isolated shim. Already-isolated containers are left intact.
+ */
+type DockerCommand = (args: string[]) => Promise<string>;
+
+export async function retireLegacySessionSandboxes(
+  worldKey: string,
+  run: DockerCommand = docker,
+): Promise<void> {
+  const volume = homeVolumeName(worldKey);
+  const rawIds = await run([
+    "ps",
+    "-aq",
+    "--filter",
+    "label=eve.sandbox.role=session",
+    "--filter",
+    `volume=${volume}`,
+  ]);
+  const ids = rawIds
+    .split("\n")
+    .map((value) => value.trim())
+    .filter(Boolean);
+  const inspected = await Promise.all(
+    ids.map(async (id) => {
+      let mounts: unknown = null;
+      try {
+        mounts = JSON.parse(
+          await run(["inspect", "--format", "{{json .HostConfig.Mounts}}", id]),
+        );
+      } catch {
+        // An unreadable mount description cannot be trusted with a security boundary.
+      }
+      return hasIsolatedSessionHomeMount(mounts, volume) ? null : id;
+    }),
+  );
+  const legacy = inspected.filter((id): id is string => id !== null);
+  if (legacy.length > 0) await run(["rm", "-f", ...legacy]);
 }
 
 type DockerRunner = (args: string[]) => Promise<string>;
@@ -479,6 +581,13 @@ async function containerLogsTail(name: string, lines = 40): Promise<string> {
 export const localDockerTarget: DeployTarget = {
   name: "local-docker",
 
+  async imageSupports(imageRef, capability) {
+    return (
+      capability === SESSION_WORKSPACE_IMAGE_CAPABILITY &&
+      (await imageHasSessionWorkspaceRuntime(imageRef))
+    );
+  },
+
   async build(req: BuildRequest): Promise<BuiltArtifact> {
     if (!req.installationId) {
       throw new Error(
@@ -519,6 +628,29 @@ export const localDockerTarget: DeployTarget = {
         detail: "no image to run (build did not produce one)",
       };
     }
+    if (req.isolateSessionWorkspace) {
+      if (!(await imageHasSessionWorkspaceRuntime(req.imageRef))) {
+        return {
+          status: "failed",
+          detail:
+            "This agent image predates isolated session workspaces and must be rebuilt before deployment.",
+        };
+      }
+      const serverVersion = await docker([
+        "version",
+        "--format",
+        "{{.Server.Version}}",
+      ]);
+      if (!supportsVolumeSubpath(serverVersion)) {
+        return {
+          status: "failed",
+          detail:
+            `Docker Engine 26 or newer is required for isolated session workspaces ` +
+            `(the daemon reported ${serverVersion || "an unknown version"}).`,
+        };
+      }
+      await retireLegacySessionSandboxes(req.worldKey);
+    }
     const name = containerName(req.deploymentId);
     await removeIfExists(name);
 
@@ -540,6 +672,8 @@ export const localDockerTarget: DeployTarget = {
       // environment's agent home. AFTER the req.env spread so user secrets can never shadow them.
       EVE_DOCKER_PATH: "/usr/local/bin/eve-docker",
       HARNESST_HOME_VOLUME: homeVolumeName(req.worldKey),
+      HARNESST_HOME_ROOT: "/workspace/home",
+      HARNESST_SESSION_WORKSPACES: req.isolateSessionWorkspace ? "1" : "0",
       // Point world-local at the mounted per-env volume (see WORLD_DATA_DIR for the version
       // split this papers over).
       WORKFLOW_LOCAL_DATA_DIR: WORLD_DATA_DIR,
@@ -563,10 +697,10 @@ export const localDockerTarget: DeployTarget = {
       // Docker sandbox instead of just-bash. Standard socket path on Docker Desktop/OrbStack/Colima.
       "-v",
       "/var/run/docker.sock:/var/run/docker.sock",
-      // Mount the environment's agent-home volume into the INSTANCE too (the eve-docker shim only
-      // mounts it into session sandboxes). The assistant sidecar clones per-conversation checkouts
-      // under /workspace/home/checkouts so both the instance and the model's sandbox see one shared
-      // tree. Benign for non-assistant instances (nothing writes there).
+      // Mount the full environment volume into the INSTANCE only. The shim creates session/shared
+      // subdirectories through this mount, then exposes only the selected subpaths to a member
+      // sandbox. The assistant sidecar still uses the full mount for its already-isolated
+      // /workspace/home/checkouts trees.
       "-v",
       `${homeVolumeName(req.worldKey)}:/workspace/home`,
       // Per-environment eve World store: sessions (history, run state, parked asks) live on this

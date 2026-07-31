@@ -75,7 +75,12 @@ import { action } from "~/routes/api.foh.stream";
 
 const AUTH = { user: { id: "user_1" } };
 const PROJECT = { id: "proj_1", orgId: "org_1", name: "repo" };
-const AGENT = { id: "agent_1", projectId: "proj_1", name: "ivy", kind: "member" };
+const AGENT = {
+  id: "agent_1",
+  projectId: "proj_1",
+  name: "ivy",
+  kind: "member",
+};
 const TARGET = {
   deploymentId: "dep_1",
   environmentId: "env_1",
@@ -134,7 +139,11 @@ beforeEach(() => {
   // The claim wins by default, echoing the row it flipped to running (fenced by claimId).
   mocks.claimPlaygroundSessionForTurn.mockImplementation(
     async (input: { id: string; claimId: string }) =>
-      sessionRow({ id: input.id, status: "running", turnClaimId: input.claimId }),
+      sessionRow({
+        id: input.id,
+        status: "running",
+        turnClaimId: input.claimId,
+      }),
   );
   mocks.clearSessionHandles.mockResolvedValue(undefined);
   mocks.loadPlaygroundEntriesFromEve.mockResolvedValue([]);
@@ -194,7 +203,11 @@ describe("FOH stream route", () => {
     mocks.claimPlaygroundSessionForTurn.mockResolvedValue(null);
     await expect(
       action(
-        args({ agentId: "agent_1", playgroundSessionId: "ps_1", message: "go" }),
+        args({
+          agentId: "agent_1",
+          playgroundSessionId: "ps_1",
+          message: "go",
+        }),
       ),
     ).rejects.toMatchObject({ init: { status: 409 } });
     // A losing request must not clear the park/inbox items or start a drain.
@@ -232,7 +245,9 @@ describe("FOH stream route", () => {
     );
     // A bound session wakes ONLY its own environment — no other env could serve it.
     expect(mocks.ensureLiveDeploymentForEnvironment).toHaveBeenCalledTimes(1);
-    expect(mocks.ensureLiveDeploymentForEnvironment).toHaveBeenCalledWith("env_1");
+    expect(mocks.ensureLiveDeploymentForEnvironment).toHaveBeenCalledWith(
+      "env_1",
+    );
     expect(mocks.streamTurnResponse).toHaveBeenCalledWith(
       expect.objectContaining({ channel: "foh", target: TARGET }),
     );
@@ -252,7 +267,9 @@ describe("FOH stream route", () => {
       args({ agentId: "agent_1", playgroundSessionId: "ps_1", message: "go" }),
     );
     expect(mocks.ensureLiveDeploymentForEnvironment).toHaveBeenCalledTimes(1);
-    expect(mocks.ensureLiveDeploymentForEnvironment).toHaveBeenCalledWith("env_1");
+    expect(mocks.ensureLiveDeploymentForEnvironment).toHaveBeenCalledWith(
+      "env_1",
+    );
     // Home target, never the foreign fallback — and the claim carries the home env, so the
     // row is not rebound.
     expect(mocks.claimPlaygroundSessionForTurn).toHaveBeenCalledWith(
@@ -270,10 +287,16 @@ describe("FOH stream route", () => {
 
     await expect(
       action(
-        args({ agentId: "agent_1", playgroundSessionId: "ps_1", message: "go" }),
+        args({
+          agentId: "agent_1",
+          playgroundSessionId: "ps_1",
+          message: "go",
+        }),
       ),
     ).rejects.toMatchObject({ init: { status: 409 } });
-    expect(mocks.ensureLiveDeploymentForEnvironment).toHaveBeenCalledWith("env_1");
+    expect(mocks.ensureLiveDeploymentForEnvironment).toHaveBeenCalledWith(
+      "env_1",
+    );
     // The row must be left exactly as it was: no claim (no env rebind), no park clear.
     expect(mocks.claimPlaygroundSessionForTurn).not.toHaveBeenCalled();
     expect(mocks.beginFohTurn).not.toHaveBeenCalled();
@@ -330,7 +353,11 @@ describe("FOH stream route", () => {
     mocks.getFohSessionForViewer.mockResolvedValue(null);
     await expect(
       action(
-        args({ agentId: "agent_1", playgroundSessionId: "ps_hidden", message: "go" }),
+        args({
+          agentId: "agent_1",
+          playgroundSessionId: "ps_hidden",
+          message: "go",
+        }),
       ),
     ).rejects.toMatchObject({ init: { status: 404 } });
     expect(mocks.beginFohTurn).not.toHaveBeenCalled();
@@ -482,7 +509,9 @@ describe("FOH stream route", () => {
     expect(forwarded.messagePrefix).toContain(
       "User: Issue #2: pricing page 404s",
     );
-    expect(forwarded.messagePrefix).toContain("Assistant (asked): Which branch?");
+    expect(forwarded.messagePrefix).toContain(
+      "Assistant (asked): Which branch?",
+    );
     expect(forwarded.inputResponses).toBeNull();
   });
 
@@ -592,7 +621,11 @@ describe("FOH stream route", () => {
 
     await expect(
       action(
-        args({ agentId: "agent_1", playgroundSessionId: "ps_1", message: "hi" }),
+        args({
+          agentId: "agent_1",
+          playgroundSessionId: "ps_1",
+          message: "hi",
+        }),
       ),
     ).rejects.toMatchObject({ init: { status: 409 } });
     expect(mocks.streamTurnResponse).not.toHaveBeenCalled();
@@ -624,7 +657,7 @@ describe("FOH stream route", () => {
     expect(mocks.clearSessionHandles).not.toHaveBeenCalled();
     expect(mocks.streamTurnResponse).toHaveBeenCalledWith(
       expect.objectContaining({
-        messagePrefix: null,
+        messagePrefix: expect.stringContaining("/workspace/home"),
         inputResponses: null,
         succession: true,
       }),
@@ -644,7 +677,11 @@ describe("FOH stream route", () => {
     mocks.claimPlaygroundSessionForTurn.mockResolvedValue(null);
     await expect(
       action(
-        args({ agentId: "agent_1", playgroundSessionId: "ps_1", message: "hi" }),
+        args({
+          agentId: "agent_1",
+          playgroundSessionId: "ps_1",
+          message: "hi",
+        }),
       ),
     ).rejects.toMatchObject({ init: { status: 409 } });
     // A losing racer must leave the channel binding (and the park) untouched.
@@ -765,7 +802,9 @@ describe("FOH stream route", () => {
         agentId: "agent_1",
         playgroundSessionId: "ps_1",
         message: "main",
-        inputResponses: JSON.stringify([{ requestId: "req_1", optionId: "main" }]),
+        inputResponses: JSON.stringify([
+          { requestId: "req_1", optionId: "main" },
+        ]),
       }),
     );
 

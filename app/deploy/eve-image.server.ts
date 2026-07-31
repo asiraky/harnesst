@@ -62,6 +62,11 @@ import {
   isDockerUnavailableError,
   normalizeDockerCliError,
 } from "./docker.server";
+import {
+  SESSION_WORKSPACE_CHANNEL_PATH,
+  SESSION_WORKSPACE_CHANNEL_SOURCE,
+  SESSION_WORKSPACE_IMAGE_LABEL,
+} from "./session-workspace-channel";
 
 const exec = promisify(execFile);
 
@@ -78,20 +83,23 @@ const DOCKER_CLI_VERSION = "27.5.1";
  * WHY a shim, not a real mount option: eve's `docker()` sandbox backend exposes only
  * { image, env, networkPolicy, pullPolicy } — no `mounts` (verified in vercel/eve source). The
  * owner rejected upstreaming a mounts option, so harnesst interposes on the docker CLI eve already
- * shells out to. eve gives each *durable session* a fresh /workspace from a template; there is no
- * per-*agent* filesystem. This shim gives one: it mounts a harnesst-managed named volume at
- * /workspace/home on exactly the session sandbox containers.
+ * shells out to. The environment keeps one harnesst-managed volume, but a session sandbox receives
+ * only its own `sessions/<sandbox-container>` subdirectory at /workspace/home. The stable sandbox
+ * identity comes from the platform-owned session-workspace channel below, so one harnesst
+ * conversation keeps the same directory even if Eve succeeds it with a fresh durable session.
  *
  * WHAT it matches: the stable label pair eve stamps on a session container's `docker run` —
- * `--label eve.sandbox.role=session` (each label and value are SEPARATE argv entries). It injects
- * `-v $HARNESST_HOME_VOLUME:/workspace/home` right after the `run` token, argv otherwise untouched.
- * template-build runs (`--label eve.sandbox.role=template-build`) are SHARED across sessions and
- * must NOT capture an agent's volume, so they pass through unmodified — as does every non-`run`
- * verb (start/exec/cp/stop/rm) and any run without the session label or with HARNESST_HOME_VOLUME unset.
+ * `--label eve.sandbox.role=session` (each label and value are SEPARATE argv entries). In isolation
+ * mode it captures the container name (Eve derives it from the sandbox identity), creates that
+ * volume subdirectory through the instance's full-volume mount, and injects two subpath mounts:
+ * the private root at /workspace/home and an explicit environment-level area at /workspace/shared.
+ * Template-build runs are shared across sessions and must NOT capture either mount, so they pass
+ * through unmodified — as does every non-`run` verb.
  *
- * FAILURE MODE (a deliberate, PRD-documented tripwire): if a future eve upgrade renames that label,
- * this shim simply stops matching — no injection happens, sandboxes still run normally, agent homes
- * just quietly stop mounting. It degrades to the pre-6.2 behaviour rather than breaking deploys.
+ * FAILURE MODE: if a future Eve upgrade renames the role label, no persistent mount is injected and
+ * the sandbox falls back to its private container filesystem. That loses durability but never
+ * exposes a sibling session. A matched session run with a missing/unsafe container name fails
+ * closed, because silently restoring the whole environment mount would recreate issue #315.
  *
  * The image's default user is root (`ghcr.io/vercel/eve:latest` sets no USER), so the root-owned
  * /workspace/home mount is already writable — no chown step needed.
@@ -104,15 +112,21 @@ const DOCKER_CLI_VERSION = "27.5.1";
 export const EVE_DOCKER_SHIM = `#!/bin/sh
 # eve-docker — harnesst's EVE_DOCKER_PATH shim (rationale in eve-image.server.ts).
 REAL="\${EVE_DOCKER_REAL:-/usr/local/bin/docker}"
+HOME_ROOT="\${HARNESST_HOME_ROOT:-/workspace/home}"
 
-# Scan argv for eve's session-container label pair (separate argv entries). While here, also
-# capture the channel/sessionId tag labels so a session-sandbox start is visible in the instance
-# log (issue #118: cron turns stall BEFORE their first step, so their sandbox is the only trace).
+# Scan argv for eve's session-container label pair (separate argv entries). While here, capture the
+# container name plus channel/sessionId tags. The container name is derived from Eve's sandbox
+# identity (harnesst's stable conversation id on the private HTTP channel), so it is the durable
+# volume-subpath key rather than Eve's replaceable workflow session id.
 is_session=0
+sbx_container=""
 sbx_channel=""
 sbx_session=""
 prev=""
 for a in "$@"; do
+  if [ "$prev" = "--name" ]; then
+    sbx_container="$a"
+  fi
   if [ "$prev" = "--label" ]; then
     [ "$a" = "eve.sandbox.role=session" ] && is_session=1
     case "$a" in
@@ -127,7 +141,27 @@ if [ "$1" = "run" ] && [ "$is_session" = "1" ]; then
   # STDERR only: eve reads \`run -d\`'s STDOUT for the container id — never pollute it.
   echo "[harnesst] session sandbox starting: channel=\${sbx_channel} session=\${sbx_session}" >&2
   if [ -n "$HARNESST_HOME_VOLUME" ]; then
-    # Inject the agent's home volume immediately after the run token; keep every other arg in order.
+    if [ "$HARNESST_SESSION_WORKSPACES" = "1" ]; then
+      case "$sbx_container" in
+        ""|*[!A-Za-z0-9_.-]*)
+          echo "[harnesst] refusing session sandbox with unsafe container identity" >&2
+          exit 64
+          ;;
+      esac
+      # The instance owns the full volume at this path. Create subpaths before Docker evaluates
+      # volume-subpath (it deliberately refuses a missing subdirectory).
+      mkdir -p \
+        "$HOME_ROOT/sessions/$sbx_container" \
+        "$HOME_ROOT/shared"
+      shift
+      set -- run \
+        --mount "type=volume,src=$HARNESST_HOME_VOLUME,dst=/workspace/home,volume-subpath=sessions/$sbx_container" \
+        --mount "type=volume,src=$HARNESST_HOME_VOLUME,dst=/workspace/shared,volume-subpath=shared" \
+        "$@"
+      exec "$REAL" "$@"
+    fi
+    # Compatibility mode (the built-in coding assistant): its sidecar intentionally shares the
+    # full home volume and already isolates edits in per-conversation checkout directories.
     shift
     set -- run -v "$HARNESST_HOME_VOLUME:/workspace/home" "$@"
     exec "$REAL" "$@"
@@ -172,6 +206,7 @@ RUN npm exec -- eve build
 # inheriting it shares every heavy layer instead of duplicating them into a fresh image.
 FROM build
 WORKDIR /app
+LABEL ${SESSION_WORKSPACE_IMAGE_LABEL}="1"
 # eve-docker shim (EVE_DOCKER_PATH): mounts the agent's home volume onto session sandboxes.
 # See EVE_DOCKER_SHIM / eve-image.server.ts for why and how it degrades. base64 in, decode out.
 RUN echo '${EVE_DOCKER_SHIM_B64}' | base64 -d > /usr/local/bin/eve-docker && chmod 0755 /usr/local/bin/eve-docker
@@ -273,7 +308,10 @@ async function fetchSource(
     await writeFile(path.join(buildDir, "Dockerfile"), HARNESST_EVE_DOCKERFILE);
   }
   if (!existsSync(path.join(buildDir, ".dockerignore"))) {
-    await writeFile(path.join(buildDir, ".dockerignore"), HARNESST_DOCKERIGNORE);
+    await writeFile(
+      path.join(buildDir, ".dockerignore"),
+      HARNESST_DOCKERIGNORE,
+    );
   }
 
   // Team delegation (D2/#269): bake the generated delegation tools (blocking ask-teammate,
@@ -313,7 +351,22 @@ async function fetchSource(
     await mkdir(path.dirname(contactUserPath), { recursive: true });
     await writeFile(contactUserPath, CONTACT_USER_TOOL_SOURCE);
   }
+
+  // Session workspace isolation (#315): this channel exists only in the build context. Harnesst
+  // drives it over the instance's private/authenticated route so a trusted conversation id reaches
+  // Eve's sandbox state before the sandbox container is created. Always replace the reserved build
+  // path: it is platform machinery, not a customer override surface.
+  await writeSessionWorkspaceChannel(buildDir);
   return srcDir;
+}
+
+async function writeSessionWorkspaceChannel(buildDir: string): Promise<void> {
+  const workspaceChannelPath = path.join(
+    buildDir,
+    SESSION_WORKSPACE_CHANNEL_PATH,
+  );
+  await mkdir(path.dirname(workspaceChannelPath), { recursive: true });
+  await writeFile(workspaceChannelPath, SESSION_WORKSPACE_CHANNEL_SOURCE);
 }
 
 /** Fetch repo@ref, ensure Dockerfile, docker-build runtime + build-stage images. */
@@ -375,19 +428,31 @@ export async function buildAssistantImage(input: {
   templateDir: string;
 }): Promise<BuiltArtifact> {
   await assertDockerDaemonReady("build the assistant image");
-  const workDir = await mkdtemp(path.join(tmpdir(), "harnesst-assistant-build-"));
+  const workDir = await mkdtemp(
+    path.join(tmpdir(), "harnesst-assistant-build-"),
+  );
   try {
     const buildDir = path.join(workDir, "src");
     await mkdir(buildDir, { recursive: true });
     // Copy the bundled template (contents, incl. dotfiles) into a scratch build context.
     await exec("cp", ["-R", `${input.templateDir}/.`, buildDir]);
-    await writeFile(path.join(buildDir, "Dockerfile"), HARNESST_ASSISTANT_DOCKERFILE);
-    await writeFile(path.join(buildDir, ".dockerignore"), HARNESST_DOCKERIGNORE);
+    await writeFile(
+      path.join(buildDir, "Dockerfile"),
+      HARNESST_ASSISTANT_DOCKERFILE,
+    );
+    await writeFile(
+      path.join(buildDir, ".dockerignore"),
+      HARNESST_DOCKERIGNORE,
+    );
 
     const buildStage = buildStageTagFor(input.imageRef);
     const opts = { maxBuffer: 64 * 1024 * 1024 };
     try {
-      await exec("docker", ["build", "--target", "build", "-t", buildStage, buildDir], opts);
+      await exec(
+        "docker",
+        ["build", "--target", "build", "-t", buildStage, buildDir],
+        opts,
+      );
       const { stderr: buildLog } = await exec(
         "docker",
         ["build", "-t", input.imageRef, buildDir],
@@ -399,7 +464,11 @@ export async function buildAssistantImage(input: {
         "{{.Id}}",
         input.imageRef,
       ]);
-      return { imageRef: input.imageRef, digest: digest.trim(), logs: buildLog };
+      return {
+        imageRef: input.imageRef,
+        digest: digest.trim(),
+        logs: buildLog,
+      };
     } catch (error) {
       if (isDockerUnavailableError(error)) {
         throw normalizeDockerCliError(error, "build the assistant image");
@@ -461,7 +530,8 @@ export async function buildStagedTree(
     taskId?: string;
   },
 ): Promise<
-  { ok: true; skipped?: boolean; provisionalTag?: string } | { ok: false; output: string }
+  | { ok: true; skipped?: boolean; provisionalTag?: string }
+  | { ok: false; output: string }
 > {
   try {
     await assertDockerDaemonReady("build this change");
@@ -523,7 +593,14 @@ export async function buildStagedTree(
 
     const { dir, member } = projectDirOf(input.agentRoot);
     const buildDir = path.join(srcDir, dir);
-    const tags = provisionalTags({ taskId: input.taskId, projectId: input.projectId, member });
+    // The overlay is customer-authored and runs after the initial platform injection. Restore the
+    // reserved channel last so a draft at the same path cannot replace the workspace boundary.
+    await writeSessionWorkspaceChannel(buildDir);
+    const tags = provisionalTags({
+      taskId: input.taskId,
+      projectId: input.projectId,
+      member,
+    });
     const opts = { maxBuffer: 64 * 1024 * 1024 };
     try {
       await exec(
@@ -593,7 +670,11 @@ export async function promoteProvisionalImage(input: {
   const { member } = projectDirOf(input.agentRoot);
   const tags = imageTags(input.projectId, input.gitSha, member);
   await exec("docker", ["tag", input.provisionalTag, tags.runtime]);
-  await exec("docker", ["tag", buildStageTagFor(input.provisionalTag), tags.buildStage]);
+  await exec("docker", [
+    "tag",
+    buildStageTagFor(input.provisionalTag),
+    tags.buildStage,
+  ]);
   const { stdout: digest } = await exec("docker", [
     "inspect",
     "--format",
@@ -608,7 +689,9 @@ export async function promoteProvisionalImage(input: {
  * images keep their real tags; a failed publish leaves nothing behind. Best-effort by design:
  * the sandbox reaper prunes any stragglers a crash strands.
  */
-export async function removeProvisionalImages(provisionalTags: string[]): Promise<void> {
+export async function removeProvisionalImages(
+  provisionalTags: string[],
+): Promise<void> {
   await untagQuietly(
     provisionalTags.flatMap((tag) => [tag, buildStageTagFor(tag)]),
   );
