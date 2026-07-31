@@ -29,6 +29,7 @@ import {
   isGitHubInstallationCallbackStagingRequest,
   stageGitHubInstallationCallback,
 } from "~/github/installation-callback.server";
+import { returnToFromRequest, safeReturnTo } from "./return-to";
 
 type BetterAuthSession = NonNullable<
   Awaited<ReturnType<typeof auth.api.getSession>>
@@ -119,27 +120,18 @@ function hasValidMutationOrigin(request: Request): boolean {
   }
 }
 
-// Post-login home is Front of House at `/` (FOH D18).
-function safeReturnTo(request: Request, fallback = "/"): string {
-  const url = new URL(request.url);
-  const candidate = `${url.pathname}${url.search}`;
-  return candidate.startsWith("/") && !candidate.startsWith("//")
-    ? candidate
-    : fallback;
-}
-
 export function loginPath(
   request: Request,
-  returnTo = safeReturnTo(request),
+  returnTo = returnToFromRequest(request),
 ): string {
-  return `/login?returnTo=${encodeURIComponent(returnTo)}`;
+  return `/login?returnTo=${encodeURIComponent(safeReturnTo(returnTo))}`;
 }
 
 export function signupPath(
   request: Request,
-  returnTo = safeReturnTo(request),
+  returnTo = returnToFromRequest(request),
 ): string {
-  return `/signup?returnTo=${encodeURIComponent(returnTo)}`;
+  return `/signup?returnTo=${encodeURIComponent(safeReturnTo(returnTo))}`;
 }
 
 function toSessionState(

@@ -1,3 +1,25 @@
+const RETURN_TO_ORIGIN = "http://harnesst.local";
+
+function stripSingleFetchDetails(url: URL): void {
+  if (url.pathname === "/_root.data" || url.pathname === "/_.data") {
+    url.pathname = "/";
+  } else if (url.pathname.endsWith("/_.data")) {
+    url.pathname = url.pathname.slice(0, -"_.data".length);
+  } else if (url.pathname.endsWith(".data")) {
+    url.pathname = url.pathname.slice(0, -".data".length) || "/";
+  }
+
+  url.searchParams.delete("_routes");
+
+  // React Router's naked `index` marker selects an index route. A valued
+  // `index=something` parameter belongs to the application and must survive.
+  const indexValues = url.searchParams.getAll("index");
+  url.searchParams.delete("index");
+  for (const value of indexValues) {
+    if (value) url.searchParams.append("index", value);
+  }
+}
+
 // Sanitizers for the query parameters the auth screens accept. The default post-auth
 // destination is Front of House at `/` (FOH D18); back of house keeps its own /dashboard
 // entry for admins/owners.
@@ -15,16 +37,23 @@ export function safeReturnTo(
     return fallback;
   }
   try {
-    const url = new URL(value, "http://harnesst.local");
-    if (url.origin !== "http://harnesst.local") return fallback;
+    const url = new URL(value, RETURN_TO_ORIGIN);
+    if (url.origin !== RETURN_TO_ORIGIN) return fallback;
     // URL normalization removes dot segments, so "/.//evil.com" passes the checks above yet
     // normalizes to the protocol-relative "//evil.com". Re-check the NORMALIZED path before
     // trusting it.
     if (url.pathname.startsWith("//")) return fallback;
+    stripSingleFetchDetails(url);
+    if (url.pathname.endsWith(".data")) return fallback;
     return `${url.pathname}${url.search}${url.hash}`;
   } catch {
     return fallback;
   }
+}
+
+export function returnToFromRequest(request: Request, fallback = "/"): string {
+  const url = new URL(request.url);
+  return safeReturnTo(`${url.pathname}${url.search}`, fallback);
 }
 
 /**
