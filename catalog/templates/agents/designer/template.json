@@ -3,7 +3,7 @@
   "type": "agent",
   "name": "Designer",
   "description": "Interviews you to capture product truth, then designs, quality-checks, and publishes a complete static site into the Front of House preview.",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "eve": ">=0.22.0",
   "model": "anthropic/claude-sonnet-5",
   "files": [
@@ -24,6 +24,9 @@
     "skills/impeccable/reference/craft-floor.md",
     "skills/impeccable/reference/craft.md",
     "skills/impeccable/reference/critique.md",
+    "skills/impeccable/reference/degraded/asset-producer.md",
+    "skills/impeccable/reference/degraded/documenter.md",
+    "skills/impeccable/reference/degraded/finish-reviewer.md",
     "skills/impeccable/reference/delight.md",
     "skills/impeccable/reference/designer-v1.md",
     "skills/impeccable/reference/distill.md",
@@ -156,11 +159,22 @@
     "skills/impeccable/scripts/serve-question.mjs",
     "skills/impeccable/scripts/surface-brief.mjs"
   ],
+  "secrets": [
+    {
+      "name": "OPENAI_API_KEY",
+      "description": "Optional. Enables generated direction sketches (OpenAI gpt-image-2, roughly $0.05-0.25 per image, billed to this key). Without it the Designer serves text-only direction cards and says so.",
+      "sandbox": true
+    }
+  ],
   "assistantSkill": "assistant-skill.md",
   "includes": [
     {
       "type": "tool",
       "id": "publish-artifact"
+    },
+    {
+      "type": "skill",
+      "id": "agent-browser"
     }
   ],
   "dependencies": {
@@ -171,11 +185,12 @@
   },
   "sandbox": {
     "bootstrap": [
-      "npm install --global --no-audit --no-fund impeccable@3.5.0"
+      "npm install --global --no-audit --no-fund impeccable@3.5.0 http-server@14.1.1"
     ],
     "env": {
-      "IMPECCABLE_NO_TELEMETRY": "1"
+      "IMPECCABLE_NO_TELEMETRY": "1",
+      "IMPECCABLE_QUESTION_DISABLED": "1"
     },
-    "revalidationKey": "designer-impeccable-4.0.4-cli-3.5.0"
+    "revalidationKey": "designer-impeccable-4.0.4-cli-3.5.0-directions-3"
   }
 }
