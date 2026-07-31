@@ -11,7 +11,6 @@ import {
   Plug,
   ScrollText,
   ShieldAlert,
-  X,
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import {
@@ -58,7 +57,6 @@ import { isReasoningEffort, type ReasoningEffort } from "~/models/reasoning";
 import {
   listAgentModelOverrides,
   removeAgentModelOverride,
-  setAgentModelOverride,
   type AgentModelOverride,
 } from "~/models/agent-model-config.server";
 import {
@@ -310,40 +308,6 @@ export async function action(args: ActionFunctionArgs) {
     throw redirect("/org/settings");
   }
 
-  // ── Per-agent model overrides: the workspace's explicit exceptions to the default ──
-  if (intent === "set-agent-model-override") {
-    const agentName = String(form.get("agentName") ?? "").trim();
-    const model = String(form.get("model") ?? "").trim();
-    const effortValue = String(form.get("effort") ?? "").trim();
-    const effort =
-      effortValue && isReasoningEffort(effortValue) ? effortValue : null;
-    if (!agentName) return { error: "Enter the agent's name." };
-    if (!model) return { error: "Pick a model for the override." };
-    if (effortValue && !effort)
-      return { error: "Choose a valid reasoning effort." };
-    const modelInfo = await findWorkspaceModel(org.id, model);
-    if (!modelInfo) {
-      return {
-        error:
-          "That model is not available from an active provider connection in this workspace.",
-      };
-    }
-    if (effort && !modelInfo.supportedEfforts?.includes(effort)) {
-      return {
-        error: "That reasoning effort is not supported by the selected model.",
-      };
-    }
-    await setAgentModelOverride(org.id, agentName, { model, effort });
-    await recordAudit({
-      orgId: org.id,
-      actorUserId: auth.user.id,
-      action: "agent_model_override_set",
-      target: agentName,
-      meta: { model, effort: effort ?? "provider-default" },
-    });
-    return { ok: true as const };
-  }
-
   if (intent === "remove-agent-model-override") {
     const agentName = String(form.get("agentName") ?? "").trim();
     if (!agentName) return { error: "No agent specified." };
@@ -477,45 +441,45 @@ export default function OrgSettings({ loaderData }: Route.ComponentProps) {
             </div>
 
             <div className="max-w-xl space-y-2 border-t pt-4">
-              <Label>Default model</Label>
-              {canManage ? (
-                <div className="flex flex-wrap items-start gap-2">
-                  <ModelSelection
-                    model={assistantModel}
-                    effort={assistantEffort}
-                    busy={modelFetcher.state !== "idle"}
-                    onCommit={(model, effort) =>
+              <div className="flex min-h-8 items-center justify-between gap-3">
+                <Label>Default model</Label>
+                {canManage && assistantModel && (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    disabled={modelFetcher.state !== "idle"}
+                    onClick={() =>
                       modelFetcher.submit(
                         {
                           intent: "set-assistant-model",
-                          assistantModel: model,
-                          assistantEffort: effort ?? "",
+                          assistantModel: "",
+                          assistantEffort: "",
                         },
                         { method: "post" },
                       )
                     }
-                  />
-                  {assistantModel && (
-                    <Button
-                      type="button"
-                      variant="secondary"
-                      size="sm"
-                      disabled={modelFetcher.state !== "idle"}
-                      onClick={() =>
-                        modelFetcher.submit(
-                          {
-                            intent: "set-assistant-model",
-                            assistantModel: "",
-                            assistantEffort: "",
-                          },
-                          { method: "post" },
-                        )
-                      }
-                    >
-                      Clear default
-                    </Button>
-                  )}
-                </div>
+                  >
+                    Clear default
+                  </Button>
+                )}
+              </div>
+              {canManage ? (
+                <ModelSelection
+                  model={assistantModel}
+                  effort={assistantEffort}
+                  busy={modelFetcher.state !== "idle"}
+                  onCommit={(model, effort) =>
+                    modelFetcher.submit(
+                      {
+                        intent: "set-assistant-model",
+                        assistantModel: model,
+                        assistantEffort: effort ?? "",
+                      },
+                      { method: "post" },
+                    )
+                  }
+                />
               ) : (
                 <p className="font-mono text-sm">
                   {assistantModel
@@ -667,9 +631,8 @@ function AgentOverridesSection({
     <div className="max-w-xl space-y-3 border-t pt-4">
       <Label>Per-agent model overrides</Label>
       <p className="text-xs text-muted-foreground">
-        Pin a specific model for one agent, by agent name (subagents always
-        follow their parent agent). Remove an override to fall back to the
-        default model above.
+        Only agents explicitly pinned in Agent Settings appear here. Subagents
+        follow their parent agent.
       </p>
       {overrides.length === 0 ? (
         <div className="rounded-lg border border-dashed p-3 text-sm text-muted-foreground">
@@ -686,12 +649,11 @@ function AgentOverridesSection({
           ))}
         </ul>
       )}
-      {canManage && <AddAgentOverrideRow />}
     </div>
   );
 }
 
-/** One override — the agent name, an inline model/effort picker, and the remove X. */
+/** One explicit override — managed in Agent Settings, with a shortcut to restore inheritance. */
 function AgentOverrideRow({
   override,
   canManage,
@@ -702,39 +664,21 @@ function AgentOverrideRow({
   const fetcher = useFetcher<typeof action>();
   const busy = fetcher.state !== "idle";
   return (
-    <li className="flex flex-wrap items-center gap-2 px-3 py-2">
-      <span className="min-w-24 font-mono text-sm">{override.agentName}</span>
-      <div className="flex-1">
-        {canManage ? (
-          <ModelSelection
-            model={override.model}
-            effort={override.effort}
-            busy={busy}
-            onCommit={(model, effort) =>
-              fetcher.submit(
-                {
-                  intent: "set-agent-model-override",
-                  agentName: override.agentName,
-                  model,
-                  effort: effort ?? "",
-                },
-                { method: "post" },
-              )
-            }
-          />
-        ) : (
-          <span className="font-mono text-sm text-muted-foreground">
-            {override.model}
-            {override.effort ? ` · ${override.effort}` : ""}
-          </span>
-        )}
+    <li className="flex flex-wrap items-center gap-x-4 gap-y-1 px-3 py-2">
+      <span className="min-w-28 font-mono text-sm">{override.agentName}</span>
+      <div className="min-w-0 flex-1">
+        <div className="truncate font-mono text-sm text-muted-foreground">
+          {override.model}
+        </div>
+        <div className="text-xs text-muted-foreground">
+          {override.effort ?? "Provider default"} reasoning
+        </div>
       </div>
       {canManage && (
         <Button
           type="button"
-          variant="ghost"
+          variant="secondary"
           size="sm"
-          aria-label={`Remove the model override for ${override.agentName}`}
           disabled={busy}
           onClick={() =>
             fetcher.submit(
@@ -746,82 +690,13 @@ function AgentOverrideRow({
             )
           }
         >
-          <X className="size-4" aria-hidden />
+          Use default
         </Button>
       )}
       {fetcher.data && "error" in fetcher.data && fetcher.data.error && (
         <p className="w-full text-sm text-destructive">{fetcher.data.error}</p>
       )}
     </li>
-  );
-}
-
-/** Add an override: type the agent's name, pick the model — committing the picker saves. */
-function AddAgentOverrideRow() {
-  const fetcher = useFetcher<typeof action>();
-  const [agentName, setAgentName] = useState("");
-  const [missingName, setMissingName] = useState(false);
-  const busy = fetcher.state !== "idle";
-
-  // Clear the row after a successful save so it's ready for the next override.
-  useEffect(() => {
-    if (
-      fetcher.state === "idle" &&
-      fetcher.data &&
-      "ok" in fetcher.data &&
-      fetcher.data.ok
-    ) {
-      setAgentName("");
-    }
-  }, [fetcher.data, fetcher.state]);
-
-  return (
-    <div className="space-y-2">
-      <div className="flex flex-wrap items-center gap-2">
-        <Input
-          value={agentName}
-          onChange={(event) => {
-            setAgentName(event.target.value);
-            setMissingName(false);
-          }}
-          placeholder="agent name"
-          aria-label="Agent name for the new override"
-          className="h-9 w-40 font-mono"
-        />
-        <div className="flex-1">
-          <ModelSelection
-            model={null}
-            effort={null}
-            busy={busy}
-            placeholder="Add an override…"
-            onCommit={(model, effort) => {
-              if (!agentName.trim()) {
-                setMissingName(true);
-                return;
-              }
-              fetcher.submit(
-                {
-                  intent: "set-agent-model-override",
-                  agentName: agentName.trim(),
-                  model,
-                  effort: effort ?? "",
-                },
-                { method: "post" },
-              );
-            }}
-          />
-        </div>
-      </div>
-      {missingName && (
-        <p className="text-sm text-destructive">
-          Enter the agent's name first — it's the name in{" "}
-          <code>harnesstAgentModel('…')</code>.
-        </p>
-      )}
-      {fetcher.data && "error" in fetcher.data && fetcher.data.error && (
-        <p className="text-sm text-destructive">{fetcher.data.error}</p>
-      )}
-    </div>
   );
 }
 
