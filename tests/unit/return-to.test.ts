@@ -7,7 +7,7 @@
  */
 import { describe, expect, it } from "vitest";
 
-import { safeReturnTo } from "~/auth/return-to";
+import { returnToFromRequest, safeReturnTo } from "~/auth/return-to";
 
 describe("safeReturnTo", () => {
   it("accepts ordinary same-origin paths, preserving query and hash", () => {
@@ -15,6 +15,36 @@ describe("safeReturnTo", () => {
     expect(safeReturnTo("/org/members?tab=invites#pending")).toBe(
       "/org/members?tab=invites#pending",
     );
+  });
+
+  it("turns React Router single-fetch URLs into document destinations", () => {
+    expect(
+      safeReturnTo(
+        "/projects/123.data?_routes=root%2Croutes%2Fprojects&tab=activity&index",
+      ),
+    ).toBe("/projects/123?tab=activity");
+    expect(safeReturnTo("/_root.data?_routes=root")).toBe("/");
+    expect(safeReturnTo("/_.data?_routes=root")).toBe("/");
+    expect(safeReturnTo("/projects/123/_.data?_routes=root")).toBe(
+      "/projects/123/",
+    );
+    expect(safeReturnTo("/projects/123.data.data?_routes=root")).toBe("/");
+  });
+
+  it("preserves valued application index parameters", () => {
+    expect(safeReturnTo("/search.data?index=articles&index")).toBe(
+      "/search?index=articles",
+    );
+  });
+
+  it("normalizes the current request before minting a returnTo value", () => {
+    expect(
+      returnToFromRequest(
+        new Request(
+          "https://harnesst.example.com/projects/123.data?_routes=root&tab=activity",
+        ),
+      ),
+    ).toBe("/projects/123?tab=activity");
   });
 
   it("falls back to Front of House for empty, relative, and absolute-URL values (D18)", () => {

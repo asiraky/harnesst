@@ -35,6 +35,31 @@ describe("explicit authentication return destinations", () => {
     process.env.BETTER_AUTH_URL = "https://harnesst.example.com";
   });
 
+  it("uses the document URL when a signed-out data request is redirected", async () => {
+    getSession.mockResolvedValue({ response: null, headers: new Headers() });
+    const { sessionLoader } = await import("~/auth/session.server");
+    const request = new Request(
+      "https://harnesst.example.com/projects/123.data?_routes=root%2Croutes%2Fprojects&tab=activity",
+    );
+
+    let response: Response | undefined;
+    try {
+      await sessionLoader(
+        { request, context: new RouterContextProvider() },
+        async () => ({ ok: true }),
+        { ensureSignedIn: true },
+      );
+    } catch (error) {
+      if (error instanceof Response) response = error;
+      else throw error;
+    }
+
+    expect(response?.status).toBe(302);
+    expect(response?.headers.get("location")).toBe(
+      `/login?returnTo=${encodeURIComponent("/projects/123?tab=activity")}`,
+    );
+  });
+
   it("does not copy callback credentials into the login URL", async () => {
     getSession.mockResolvedValue({ response: null, headers: new Headers() });
     const { sessionLoader } = await import("~/auth/session.server");
