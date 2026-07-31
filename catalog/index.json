@@ -4,9 +4,9 @@
       "id": "designer",
       "type": "agent",
       "name": "Designer",
-      "version": "1.1.0",
+      "version": "1.1.1",
       "description": "Interviews you to capture product truth, then designs, quality-checks, and publishes a complete static site into the Front of House preview.",
-      "hash": "533cd1ebfefb931abc1c2a1f7842dacc0f50762e"
+      "hash": "0483a90b89c8a428a35ce3a884f8e116576f2f20"
     },
     {
       "id": "github-bundle",
