@@ -22,8 +22,8 @@ Designer is a Front of House website builder with a human-picked design directio
 5. It builds a static HTML/CSS site at `/workspace/home/artifacts/site` carrying the direction
    contract as the first child of `<body>`.
 6. It runs the finish pass: batched desktop and mobile screenshots via the included `agent-browser`
-   skill, published as image artifacts, an inline finish review, then `DESIGN.md` plus
-   `.impeccable/design.json`.
+   skill, published as image artifacts, a structured review in a fresh eve child session, then a
+   documenter child writes `DESIGN.md` plus `.impeccable/design.json`.
 7. It runs the pinned Impeccable detector, fixes all findings, and publishes the directory with the
    installed `publish_artifact` tool.
 8. Refine requests ("polish it", "bolder", "critique it") route through an intent table in
@@ -73,12 +73,12 @@ upstream reference files unless the upstream source itself is being rebased.
 
 When rebasing, start from the `skill/` source directory at the recorded upstream commit, not one of
 Impeccable's generated provider directories — except for the files `VENDORED.md` names as
-generated-only (the detector engine and `reference/degraded/**`, which upstream compiles from
-`skill/agents/**` and which eve needs because it has no subagents). Reapply the transformations
-listed in `VENDORED.md`, review upstream changes to `init.md`, `new-work.md`, `craft-floor.md`,
-`document.md`, the degraded role files, and detector scripts against `designer-v1.md`, then bump the
-template version and sandbox revalidation key. Keep the npm detector version explicit: the vendored
-skill and published CLI have independent versions.
+generated-only (the detector engine). Copy the three role bodies from `skill/agents/**` into
+`reference/roles/**` as `VENDORED.md` describes, then reapply the transformations listed there.
+Review upstream changes to `init.md`, `new-work.md`, `craft-floor.md`, `document.md`, the role files,
+and detector scripts against `designer-v1.md`, then bump the template version and sandbox
+revalidation key. Keep the npm detector version explicit: the vendored skill and published CLI have
+independent versions.
 
 Template-owned files are replaced by marketplace updates. Put customer-specific product truth and
 visual decisions in the workspace `PRODUCT.md` and `DESIGN.md`, not in the agent prompt or vendored
