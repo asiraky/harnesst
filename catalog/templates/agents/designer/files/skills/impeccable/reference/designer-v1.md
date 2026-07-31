@@ -19,6 +19,18 @@ the image-generation probe: it prints an `IMAGE_GEN_AVAILABLE:` line when and on
 `OPENAI_API_KEY` is set in this sandbox. Absence of that line means image generation is off; that
 is a configuration fact to disclose, never an error to retry or an install to attempt.
 
+The root session receives eve's built-in `agent` tool by default. Each call starts a fresh copy of
+Designer with no parent conversation history, but with the same instructions, tools, credentials,
+and sandbox; a child's writes under `/workspace/home` are immediately visible to the root. Every
+role message must therefore name its file under `reference/roles/`, tell the child that the role
+overrides the ordinary Designer workflow for this task, and carry every task input. Do not author
+declared subagents: their sandbox would fall back to the framework default instead of inheriting
+this workspace.
+
+If an `agent` call actually fails, run that one role inline from the same role file and disclose the
+exact failure. A successful child pass needs no degradation disclaimer. Never choose the inline
+path merely to save a call.
+
 ## 2. Interview and confirm product truth
 
 When `PRODUCT.md` is missing or the user is starting a different product, read `init.md` and follow
@@ -84,16 +96,63 @@ Emit **exactly one** structured question for the whole round. A human's answer r
 pending ask on the session, so a second question in the same turn loses one of them. Shape it as:
 
 - a `select` display with free-form answers allowed — free text is the steer channel;
-- a self-contained prompt naming the surface, the mode, whether the roll ran degraded, and the
-  sketch artifact names when section 5 published any;
+- a self-contained prompt naming the surface, the mode, and whether the roll ran degraded, plus a
+  request-level `surface` set to `web`, `mobile`, or `native` so every card in the hand shares one
+  frame;
 - one option per card, in reading order: assigned first, then the hand, then `canon`, then
   `reroll`.
 
-Each option carries an id, a label, and a description. The card fields have no separate slots in
-this UI, so compress them into the description: thesis first, then palette as text chips,
-materials, first viewport, and the honest risk. Every option having a description is what makes
-Front of House render the round as stacked rows instead of chips, which is the layout this decision
-needs.
+Each direction option carries an id, a label, and structured `fields` in this exact shape:
+
+```json
+[
+  {
+    "label": "Thesis",
+    "value": { "type": "text", "text": "<one short sentence>" }
+  },
+  {
+    "label": "Palette",
+    "value": {
+      "type": "swatches",
+      "swatches": [
+        { "color": "#1A1A1A", "label": "charcoal" },
+        { "color": "#F5F1E8", "label": "chalk" }
+      ]
+    }
+  },
+  { "label": "Materials", "value": { "type": "text", "text": "<materials>" } },
+  {
+    "label": "First viewport",
+    "value": { "type": "text", "text": "<first viewport>" }
+  },
+  { "label": "Risk", "value": { "type": "text", "text": "<honest risk>" } }
+]
+```
+
+Use hex colors for every swatch. Add the challenger's case as one more text field named
+`Challenger case`; omit it for the assignment and canon. Do not compress these facts into
+`description`. A short `description` is reserved for a card-specific degraded note, such as its
+sketch failing to render.
+
+When section 5 published a sketch for the card, also attach:
+
+```json
+{
+  "media": {
+    "artifactId": "<artifactId returned by publish_artifact>",
+    "artifactName": "sketch-assigned.webp",
+    "artifactVersionId": "<artifactVersionId returned by publish_artifact>"
+  }
+}
+```
+
+Set the request-level `surface` to `web` for a desktop web surface, `mobile` for a mobile-first web
+surface, and `native` for a native app. It controls every card frame in the hand; never repeat it
+per option or infer it from image dimensions. `artifactVersionId` is mandatory whenever `media` is
+present: stable artifact names are republished on re-roll, so the version is what keeps an earlier
+round paired with the sketch it actually offered. Omit `media` entirely when that card has no
+published sketch, including the no-key path. The structured fields still make a text-only round a
+readable stack of cards.
 
 Use stable ids: `assigned`, `challenger-1`…`challenger-3`, `canon`, `reroll`.
 
@@ -181,25 +240,29 @@ emitted. A publish attempted after the park has no live turn and is refused.
 
 When the `IMAGE_GEN_AVAILABLE` line from section 1 was present:
 
-1. Generate one sketch per card, in reading order — assigned, then hand, then canon — writing each
-   file the moment it renders:
+1. Emit one built-in `agent` call per card in the same response so eve runs them concurrently. Give
+   each child a non-overlapping output path and this complete packet: tell it to read
+   `reference/roles/asset-producer.md` and follow only its **Decision Sketches** role; include
+   `PRODUCT.md`, the card's structured fields, the shared frame, the real product name and headline,
+   and its `.impeccable/sketches/<slug>.webp` output path. The shared frame is the requested
+   surface's first viewport, flat matte, deliberately unfinished, no photorealism, no gloss,
+   identical framing, and an aspect following the surface. Everything except the real product name
+   and one real headline is greeked. Each child generates immediately with:
 
    ```bash
    node $HOME/.agents/skills/impeccable/scripts/generate-image.mjs \
      --prompt-file <brief> --out .impeccable/sketches/<slug>.webp
    ```
 
-2. Follow `reference/degraded/asset-producer.md`'s **Decision Sketches** section for the brief: one
-   shared frame across all cards (the requested surface's first viewport, flat matte, deliberately
-   unfinished, no photorealism, no gloss, identical framing, aspect following the surface), the
-   card's own palette and type character, and only the product's real name plus one real headline
-   legible — everything else greeked. Nothing below that section of the file applies here. Disclose
-   in one line that the asset-producer role ran inline.
+2. Wait for every child result, then verify each reported path exists. Children write the files;
+   only the root publishes them.
 3. Publish each finished sketch with `publish_artifact`, `kind: "image"`, using stable names so a
    re-roll versions the existing card instead of spamming new ones: `sketch-assigned.webp`,
    `sketch-challenger-1.webp` … `sketch-challenger-3.webp`, `sketch-canon.webp`. Keep the extension
    identical between rounds; a name change splits one card into two.
-4. Name the sketches in the question's prompt so the user knows which card is which.
+4. Keep each successful publish response: section 3.3 attaches its returned `artifactId`,
+   `artifactVersionId`, and stable name to the matching option's `media`. A failed or skipped
+   sketch gets no `media` object, so the UI leaves no empty frame.
 5. Say once, before the first render, that images are billed to the configured OpenAI key.
 
 Two degraded paths, both disclosed rather than blocking:
@@ -208,8 +271,8 @@ Two degraded paths, both disclosed rather than blocking:
   are off because no image key is configured. Per `new-work.md`, that round is complete, not a
   lesser version.
 - **Generation fails mid-batch.** Publish the sketches that rendered, serve the whole hand anyway,
-  and annotate the cards that have no sketch in their description. Never drop a direction because
-  its picture failed.
+  annotate the cards that have no sketch in their description, and disclose the exact child or
+  generation failure. Never drop a direction because its picture failed.
 
 Do not regenerate a sketch for a card that has not changed; a re-roll generates only for new cards.
 
@@ -235,9 +298,14 @@ reference that owns it. `instructions.md` carries the intent table. The invarian
 - **Scope stays tight.** Refine commands edit the existing `artifacts/site` directory. They do not
   add pages, restyle neighbors, or migrate the site to a new idea.
 - **One detector pass per cycle.** Section 8's gate is that pass; do not add another.
-- `critique.md` runs its dual assessment in one context here, so its degradation banner is
-  mandatory and is the report's first line: `⚠️ DEGRADED: single-context (no subagents in this
-  harness)`. Report honestly which checks the sandbox could not run.
+- For `critique.md`, use eve's built-in `agent` tool. Emit Assessment A and Assessment B as two calls
+  in the same response, each with a message naming `critique.md`, the assessment letter, target
+  paths, and every input that assessment requires. Say explicitly: perform only the named
+  assessment and its return contract; do not run critique orchestration, synthesis, persistence, or
+  call `agent`. They run concurrently in isolated child histories and share the screenshots and
+  built files. Merge their results only after both return. Do not print a degraded banner when both
+  children succeed. If a call fails, run only that assessment inline and use `critique.md`'s banner
+  with the exact failure reason.
 
 An ambiguous ask gets the menu instead of a guess: name the two or three highest-value commands for
 what is on screen, with one line of reason each, and let the user pick. Never auto-run a command the
@@ -271,15 +339,74 @@ effect. Do not install anything. Report the failure, then run the review from th
 one-line disclosure that the reviewer worked without screenshots — that is a real reduction in what
 it could check.
 
-### 7.2 Inline finish review
+### 7.2 Fresh finish review
 
-Read `reference/degraded/finish-reviewer.md` and run it inline. Step out of the build thread and
-adopt only that file for the pass. Hand it the inputs its contract names: the original request, the
-confirmed answers, the artifact path, both screenshot paths, the direction contract, the
-`PRODUCT.md` path, the detector findings, and `reference/craft-floor.md`. Disclose the inline
-substitution in one line.
+Call the built-in `agent` tool with a message that tells the child to read
+`reference/roles/finish-reviewer.md`, adopt only that role for this task, and never edit. Hand it
+every input its contract names: the original request, confirmed answers, artifact path, both
+screenshot paths, direction contract, `PRODUCT.md` path, existing detector findings, QUALITY BAR
+card and approved comp paths when present, and `reference/craft-floor.md`. The child can read all of
+them directly because it shares `/workspace/home`.
 
-Then obey its output contract without softening it:
+Set `outputSchema` on the call to this schema:
+
+```json
+{
+  "type": "object",
+  "properties": {
+    "disposition": {
+      "type": "string",
+      "enum": ["rebuild", "fix", "ship"]
+    },
+    "missing_inputs": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "persistence": { "type": "string" },
+    "fidelity": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "element": { "type": "string" },
+          "status": {
+            "type": "string",
+            "enum": [
+              "match",
+              "adaptation",
+              "missing",
+              "contradicted",
+              "added without approval"
+            ]
+          },
+          "evidence": { "type": "string" }
+        },
+        "required": ["element", "status", "evidence"],
+        "additionalProperties": false
+      }
+    },
+    "ceiling": { "type": "string" },
+    "material_fixes": {
+      "type": "array",
+      "items": { "type": "string" },
+      "maxItems": 8
+    },
+    "keep": { "type": "string" }
+  },
+  "required": [
+    "disposition",
+    "missing_inputs",
+    "persistence",
+    "fidelity",
+    "ceiling",
+    "material_fixes",
+    "keep"
+  ],
+  "additionalProperties": false
+}
+```
+
+Treat the structured tool result as the reviewer's contract and obey it without softening:
 
 - report the `disposition` word verbatim — `rebuild`, `fix`, or `ship`;
 - its contract check verifies `FORM` carries the seed key the roll printed; a contract with no seed
@@ -289,18 +416,63 @@ Then obey its output contract without softening it:
 - a rebuild directive short-circuits the patch list — do not launder it into a fix list;
 - do not run a second detector pass here.
 
+After applying a fix batch and recapturing, call a fresh child with the same role path, the original
+review object, the new screenshot paths, and an instruction to run only its **Verdict Pass**. Use
+this `outputSchema`:
+
+```json
+{
+  "type": "object",
+  "properties": {
+    "verdict": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "fix": { "type": "string" },
+          "status": {
+            "type": "string",
+            "enum": ["resolved", "partial", "unresolved"]
+          },
+          "evidence": { "type": "string" }
+        },
+        "required": ["fix", "status", "evidence"],
+        "additionalProperties": false
+      }
+    },
+    "remaining": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "regressions": {
+      "type": "array",
+      "items": { "type": "string" },
+      "maxItems": 3
+    },
+    "disposition": {
+      "type": "string",
+      "enum": ["rebuild", "fix", "ship"]
+    }
+  },
+  "required": ["verdict", "remaining", "regressions", "disposition"],
+  "additionalProperties": false
+}
+```
+
 Two rounds is the budget. When the budget is spent with findings open, say what remains open rather
 than continuing to polish.
 
 ### 7.3 Documentation
 
-After the review, read `reference/degraded/documenter.md` and run it inline, following `document.md`
-exactly for format, token schema, sidecar, and section order. It writes `DESIGN.md` and
-`.impeccable/design.json` from the built result, never from what was planned. Never canonize a
-craft-floor refusal into the system. Disclose the inline substitution in one line.
+After the review, call the built-in `agent` tool with a message that tells the child to read
+`reference/roles/documenter.md`, adopt only that role, and follow `document.md` exactly for format,
+token schema, sidecar, and section order. Pass the project root, artifact path, direction contract,
+`PRODUCT.md`, `reference/document.md`, the boundary to write at, and any existing `DESIGN.md`. The
+child writes `DESIGN.md` and `.impeccable/design.json` directly into the shared sandbox from the
+built result, never from what was planned. Never canonize a craft-floor refusal into the system.
 
 On a new world `DESIGN.md` is written after the review, so its absence during the review is not a
-finding. Do not spawn subagents for either role; eve runs them inline.
+finding.
 
 ## 8. Detector gate
 

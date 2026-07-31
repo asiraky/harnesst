@@ -183,6 +183,8 @@ export type PublishArtifactResult =
   | {
       ok: true;
       artifactId: string;
+      /** Immutable version id for correlating this exact publish from another transcript record. */
+      artifactVersionId: string;
       kind: string;
       /**
        * App path the artifact is served at, or null for a page bundle — a bundle's bytes are ONLY
@@ -463,6 +465,7 @@ async function publishImage(
   return {
     ok: true,
     artifactId: artifact.id,
+    artifactVersionId: version.id,
     kind: artifact.kind,
     // Version-scoped, so the URL in transcript data stays immutably cacheable while the card it
     // sits on goes on changing.
@@ -568,6 +571,7 @@ async function publishBundle(
   return {
     ok: true,
     artifactId: artifact.id,
+    artifactVersionId: version.id,
     kind: artifact.kind,
     // No stable URL by design — a bundle is reachable only through a short-lived preview token the
     // app mints when the user opens the card.
