@@ -7,6 +7,7 @@ import {
 
 import { auth } from "~/lib/auth.server";
 import { marketingHostRedirect } from "~/lib/marketing-host.server";
+import { previewHostAppRedirect } from "~/lib/preview-origin.server";
 import {
   clearGoogleCallbackCookie,
   isGoogleCallbackStagingRequest,
@@ -271,6 +272,14 @@ export const betterAuthSessionMiddleware: MiddlewareFunction<Response> = async (
   // bounces the marketing-only paths back. No-op when the env is unset (self-host default).
   const hostRedirect = marketingHostRedirect(request);
   if (hostRedirect) return hardenDynamicResponse(hostRedirect);
+
+  // Sandbox origin (#296): with PREVIEW_ORIGIN configured, that host serves artifact previews and
+  // nothing else — every other GET goes back to the app origin, so the host where agent-authored
+  // script is expected to run never also hosts a sign-in form. The opposite direction (an artifact
+  // preview asked for on the APP origin) is decided by the preview route itself, before it reads
+  // its token. No-op when the env is unset.
+  const previewRedirect = previewHostAppRedirect(request);
+  if (previewRedirect) return hardenDynamicResponse(previewRedirect);
 
   // Better Auth's own handler owns all cookies for its endpoints. In particular, sign-out and
   // reset responses must not be followed by an older rolling session cookie from this wrapper.

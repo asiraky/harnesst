@@ -131,6 +131,18 @@ Fill in every value (`deploy/vps/.env` is gitignored). Notes per section:
   A record for that host, fill in the marketing `server` blocks at the bottom of
   `deploy/vps/nginx-harnesst.conf`, and extend the certificate with an extra `-d <marketing-host>`
   in step 6.
+- **`PREVIEW_ORIGIN` (optional)** — leave unset for a normal install: HTML artifact previews
+  serve from the app origin, sandboxed by their own `Content-Security-Policy`. Set it to a full
+  https origin (e.g. `https://preview.harnesst.example.com`) to serve agent-authored HTML from a
+  separate origin instead: add a DNS A record for that host, fill in the preview `server` blocks at
+  the bottom of `deploy/vps/nginx-harnesst.conf`, and extend the certificate with an extra
+  `-d <preview-host>` in step 6. It has to be a different *host* from `BETTER_AUTH_URL`, not just a
+  different origin — cookies ignore ports, so the same host on another port would still receive the
+  session cookie; startup refuses that configuration. Once set, the app origin redirects preview requests to that origin
+  and the preview host serves nothing else. Preview URLs authenticate with a short-lived signed
+  token in the path, not a cookie, so nothing about sign-in changes. A separate registrable domain
+  is stronger than a subdomain if you have one; harnesst's session cookie is `__Host-`-prefixed
+  either way, which is what stops a subdomain from writing cookies the app would read.
 - **Transactional email** — set `POSTMARK_SERVER_TOKEN` and `FROM_EMAIL` to a verified Postmark
   sender. Better Auth uses it for password resets and organization invitations. Local development
   may use `SMTP_URL` with Mailpit or Mailtrap instead, but production intentionally uses Postmark.
@@ -245,6 +257,10 @@ above (the marketing `server` blocks in `nginx-harnesst.conf` reference the same
 `/etc/letsencrypt/live/<your-domain>/` paths). The marketing host needs its own DNS A record
 pointing at this VPS before issuance.
 
+**Preview host (optional):** same procedure if you set `PREVIEW_ORIGIN` in step 4 — append
+`-d <preview-host>` to the same `certbot certonly` command (the preview `server` blocks reference
+the same lineage) and add its DNS A record before issuance.
+
 **Renewal** is a weekly host cron entry — certbot's own systemd timer isn't in play here since
 it's containerized. Add it with `crontab -e`:
 
@@ -304,6 +320,12 @@ grep -c '"idx"' drizzle/meta/_journal.json                            # journal 
 Agent instances keep running through a harnesst update (they're independent containers); an
 update never rebuilds or restarts them.
 
+**One-time re-login on the `__Host-` session cookie release (issue #296).** The session cookie is
+now `__Host-`-prefixed, which makes it host-locked — a subdomain (notably an artifact-preview
+sandbox host) can no longer set a cookie the app will read. The cookie is renamed, so every
+browser signed in before the update is signed out once on the first request after it. Nothing is
+lost: the session rows are untouched, users just sign in again. Tell your users before deploying.
+
 **Backups** — two things matter: Postgres (all control-plane + agent session state) and
 `HARNESST_SECRETS_KEY` (without it, a restored DB's secrets are unreadable).
 
@@ -337,6 +359,11 @@ whenever the agent isn't running, and pruning them destroys rollbacks and agent 
   the agents' _own_ code and shell use. Treat the whole box as the trust boundary.
 - Postgres is reachable only from the host and the docker bridge (see the firewall note);
   the only public ports are 22/80/443.
+- HTML artifacts an agent publishes are served sandboxed by CSP (`sandbox allow-scripts`,
+  `default-src 'none'`, `frame-ancestors <app origin>`) from a short-lived signed URL. Setting
+  `PREVIEW_ORIGIN` moves them onto their own origin as well, so a header regression is no longer
+  the only thing between agent-authored script and harnesst's origin. The session cookie is
+  `__Host-`-prefixed regardless, which is what keeps a sibling subdomain out of the cookie jar.
 
 ## Known limitations (deliberate, for now)
 

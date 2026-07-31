@@ -8,9 +8,12 @@ import * as schema from "~/db/auth-schema";
 import { sendOrganizationInvitation } from "~/email/send-organization-invitation.server";
 import { sendEmailVerification } from "~/email/send-email-verification.server";
 import { sendPasswordResetEmail } from "~/email/send-password-reset.server";
+import { authCookieConfig } from "~/lib/auth-cookies";
 import { assertProductionAuthEnvironment } from "~/lib/auth-env.server";
 
 assertProductionAuthEnvironment();
+
+const cookieConfig = authCookieConfig();
 
 export const auth = betterAuth({
   appName: "harnesst",
@@ -40,6 +43,16 @@ export const auth = betterAuth({
     // X-Real-IP with the TCP peer address. Reading that single trusted value keeps Better Auth's
     // production rate limits per-client without accepting a spoofable forwarded chain.
     ipAddress: { ipAddressHeaders: ["x-real-ip"] },
+    // `__Host-` cookies (#296) — host-locked, so a sibling subdomain (notably the optional
+    // PREVIEW_ORIGIN sandbox host, where agent-authored script runs by design) cannot set a cookie
+    // this app will read. Better Auth prepends `__Secure-` itself when it considers cookies
+    // secure, which would produce the meaningless `__Secure-__Host-…`, so its automatic prefixing
+    // is turned off here and `Secure` — which `__Host-` requires — is restored for every cookie
+    // through the default attributes. See app/lib/auth-cookies.ts for why http development keeps
+    // an unprefixed name.
+    useSecureCookies: false,
+    defaultCookieAttributes: { secure: cookieConfig.secure },
+    cookiePrefix: cookieConfig.cookiePrefix,
   },
   emailVerification: {
     // Ordinary email/password signup and sign-in stay verification-free. Verification is sent
