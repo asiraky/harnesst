@@ -3,17 +3,17 @@ import { describe, expect, it } from "vitest";
 
 import {
   isSessionWorkspaceContinuationToken,
-  SESSION_WORKSPACE_CHANNEL_NAME,
   SESSION_WORKSPACE_CHANNEL_SOURCE,
   SESSION_WORKSPACE_ID_HEADER,
   SESSION_WORKSPACE_ROUTE,
+  SESSION_WORKSPACE_TOKEN_PREFIX,
 } from "~/deploy/session-workspace-channel";
 
 describe("session workspace channel", () => {
   it("recognizes only continuation tokens owned by the private channel", () => {
     expect(
       isSessionWorkspaceContinuationToken(
-        `${SESSION_WORKSPACE_CHANNEL_NAME}:workspace:abc`,
+        `${SESSION_WORKSPACE_TOKEN_PREFIX}abc`,
       ),
     ).toBe(true);
     expect(isSessionWorkspaceContinuationToken("session:abc")).toBe(false);

@@ -17,7 +17,11 @@ export const SESSION_WORKSPACE_CHANNEL_PATH =
   "agent/channels/harnesst-session-workspace.ts";
 export const SESSION_WORKSPACE_ROUTE = "/harnesst/v1/session";
 export const SESSION_WORKSPACE_CHANNEL_NAME = "harnesst-session-workspace";
-export const SESSION_WORKSPACE_TOKEN_PREFIX = `${SESSION_WORKSPACE_CHANNEL_NAME}:`;
+/**
+ * `send()` returns the channel-local token, not Eve's internally namespaced token, so this prefix
+ * is deliberately independent of the channel slug and is what harnesst persists on its row.
+ */
+export const SESSION_WORKSPACE_TOKEN_PREFIX = "harnesst-workspace:";
 export const SESSION_WORKSPACE_ID_HEADER = "x-harnesst-workspace-id";
 /** Existing deployment-scoped bearer shared by every agent→harnesst control-plane surface. */
 export const SESSION_WORKSPACE_TOKEN_ENV = "HARNESST_TEAM_TOKEN";
@@ -96,7 +100,7 @@ export default defineChannel<WorkspaceState>({
         { message },
         {
           auth: null,
-          continuationToken: \`workspace:\${crypto.randomUUID()}\`,
+          continuationToken: \`${SESSION_WORKSPACE_TOKEN_PREFIX}\${crypto.randomUUID()}\`,
           state: { sandboxSessionId: workspace },
         },
       );

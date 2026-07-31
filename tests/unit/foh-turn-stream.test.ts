@@ -11,6 +11,7 @@ import type { TalkEvent, TurnResult } from "~/agent/talk.server";
 import type { Target } from "~/chat/playground.server";
 import type { ChatInputRequest } from "~/chat/types";
 import type { PlaygroundSession } from "~/playground/sessions.server";
+import { SESSION_WORKSPACE_TOKEN_PREFIX } from "~/deploy/session-workspace-channel";
 
 const mocks = vi.hoisted(() => ({
   streamTurn: vi.fn(),
@@ -522,6 +523,32 @@ describe("streamTurnResponse — channel-homed delivery", () => {
     expect(mocks.streamTurn.mock.calls[0][0]).toMatchObject({
       deliverVia: null,
       workspace: null,
+    });
+  });
+
+  it("continues a private-workspace session through the same stateful route", async () => {
+    script([
+      {
+        kind: "session",
+        sessionId: "sess_ext",
+        continuationToken: `${SESSION_WORKSPACE_TOKEN_PREFIX}tok_1`,
+      },
+      { kind: "done", result: result({ reply: "ok" }) },
+    ]);
+
+    await run({
+      session: session({
+        externalSessionId: "sess_ext",
+        continuationToken: `${SESSION_WORKSPACE_TOKEN_PREFIX}tok_1`,
+      }),
+      channel: "foh",
+    });
+
+    expect(mocks.streamTurn.mock.calls[0][0]).toMatchObject({
+      workspace: {
+        id: "ps_1",
+        bearer: expect.any(String),
+      },
     });
   });
 

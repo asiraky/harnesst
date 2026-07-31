@@ -31,13 +31,16 @@ describe("sendTurn", () => {
     const fetchMock = vi
       .fn<typeof fetch>()
       .mockResolvedValueOnce(
-        new Response(JSON.stringify({ continuationToken: "workspace:tok_1" }), {
-          status: 202,
-          headers: {
-            "content-type": "application/json",
-            "x-eve-session-id": "sess_1",
+        new Response(
+          JSON.stringify({ continuationToken: "harnesst-workspace:tok_1" }),
+          {
+            status: 202,
+            headers: {
+              "content-type": "application/json",
+              "x-eve-session-id": "sess_1",
+            },
           },
-        }),
+        ),
       )
       .mockResolvedValueOnce(
         streamResponse([
