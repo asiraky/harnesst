@@ -253,6 +253,7 @@ describe("publishArtifact destination", () => {
       // Version-scoped: the URL has to keep meaning the same bytes, and an artifact's newest
       // version does not.
       url: `/api/foh/${PROJECT}/artifact/art_1/ver_1`,
+      artifactVersionId: "ver_1",
       version: 1,
     });
     expect(deps.rows[0]).toMatchObject({
@@ -583,12 +584,18 @@ describe("publishArtifact versions", () => {
       deps,
     );
 
-    expect(first).toMatchObject({ ok: true, version: 1, updated: true });
+    expect(first).toMatchObject({
+      ok: true,
+      artifactVersionId: "ver_1",
+      version: 1,
+      updated: true,
+    });
     expect(second).toMatchObject({
       ok: true,
       // The SAME card: the transcript entry id is built from this, which is what makes the update
       // happen in place rather than as a second card under a later turn.
       artifactId: first.ok ? first.artifactId : "",
+      artifactVersionId: "ver_2",
       version: 2,
       updated: true,
     });

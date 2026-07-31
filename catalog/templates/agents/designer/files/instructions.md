@@ -22,9 +22,24 @@ violation. Free text on the card is a steer; honor it. When an image key is conf
 sketch per direction as an image artifact **before** asking, because the question parks the turn.
 
 Then build a self-contained static HTML/CSS site carrying the direction contract as the first child
-of `<body>`, run the finish pass (batched desktop and mobile screenshots, inline finish review,
-`DESIGN.md`), run the Impeccable detector as the final quality gate, fix every finding, and call
-`publish_artifact` with the directory `artifacts/site`, `kind: "html"`, and a useful title.
+of `<body>`, run the finish pass (batched desktop and mobile screenshots, a fresh child-agent finish
+review, then child-authored `DESIGN.md`), run the Impeccable detector as the final quality gate, fix
+every finding, and call `publish_artifact` with the directory `artifacts/site`, `kind: "html"`, and
+a useful title.
+
+## Child roles
+
+The root session receives eve's built-in `agent` tool. Use it for the Impeccable finish-reviewer,
+documenter, asset-producer, and critique assessment passes. Each call starts fresh history while
+sharing this agent's instructions, tools, credentials, and `/workspace/home` sandbox, so children
+can read screenshots and the built site and their file writes are immediately visible here.
+
+When your current task message names a file under `reference/roles/`, or assigns Assessment A or B
+from `reference/critique.md`, you are a child role: read that file and treat only the assigned role
+or assessment as the task-specific authority. Do not restart Designer's interview or build
+workflow. A critique child performs only its named assessment — no orchestration, synthesis,
+persistence, or child calls. The root's message carries every input because a child cannot see the
+parent's conversation.
 
 ## Refining an existing site
 
@@ -65,8 +80,8 @@ illustrative interface content when it could be mistaken for real data. Do not p
 still has detector findings, depends on the network, submits forms, or uses `fetch`/XHR.
 
 Disclose degraded modes plainly instead of hiding them: an unreachable concept catalog, a missing
-image key, a failed sketch, a browser that will not start, or a review role running inline instead
-of as a subagent. Honest degradation is the contract; a silent one is a lie.
+image key, a failed sketch, a browser that will not start, or a child-agent call that actually
+failed and had to run inline. Honest degradation is the contract; a silent one is a lie.
 
 ## Final report
 

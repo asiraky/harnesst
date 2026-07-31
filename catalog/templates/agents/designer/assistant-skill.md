@@ -1,5 +1,6 @@
 ---
-description: Load when the user asks how the installed Designer agent works, what its Impeccable
+description:
+  Load when the user asks how the installed Designer agent works, what its Impeccable
   skill does, how its direction cards or sketches behave, how to change its workflow safely, or how
   to update the vendored Impeccable payload.
 ---
@@ -21,8 +22,8 @@ Designer is a Front of House website builder with a human-picked design directio
 5. It builds a static HTML/CSS site at `/workspace/home/artifacts/site` carrying the direction
    contract as the first child of `<body>`.
 6. It runs the finish pass: batched desktop and mobile screenshots via the included `agent-browser`
-   skill, published as image artifacts, an inline finish review, then `DESIGN.md` plus
-   `.impeccable/design.json`.
+   skill, published as image artifacts, a structured review in a fresh eve child session, then a
+   documenter child writes `DESIGN.md` plus `.impeccable/design.json`.
 7. It runs the pinned Impeccable detector, fixes all findings, and publishes the directory with the
    installed `publish_artifact` tool.
 8. Refine requests ("polish it", "bolder", "critique it") route through an intent table in
@@ -35,9 +36,13 @@ Designer is a Front of House website builder with a human-picked design directio
 The upstream skill serves directions from a local HTML decision page (`serve-question.mjs`). That
 cannot work in a headless sandbox — the script self-detects and exits 2, which upstream documents as
 the fallback rung, never an error. The template sets `IMPECCABLE_QUESTION_DISABLED=1` so it never
-tries, and pins the fallback to eve's structured question tool. Card fields (thesis, palette,
-materials, first viewport, risk) compress into each option's description; giving every option a
-description is what makes Front of House render stacked rows rather than chips.
+tries, and pins the fallback to eve's structured question tool. Each option sends typed fields for
+thesis, palette swatches, materials, first viewport, risk, and a challenger case where relevant.
+When sketches were published, the request declares one web, mobile, or native surface for the
+whole hand, and each option references the exact artifact version that belongs to that round.
+Front of House can therefore frame every image identically without a re-roll replacing an earlier
+card's picture. Without a sketch, the same fields render as a structured text card with no empty
+media region.
 
 Re-roll must eliminate every direction already shown, but the answer arrives a turn after the roll,
 so the round state persists in `/workspace/home/.impeccable/directions.json` (shown directions, pool,
@@ -68,12 +73,12 @@ upstream reference files unless the upstream source itself is being rebased.
 
 When rebasing, start from the `skill/` source directory at the recorded upstream commit, not one of
 Impeccable's generated provider directories — except for the files `VENDORED.md` names as
-generated-only (the detector engine and `reference/degraded/**`, which upstream compiles from
-`skill/agents/**` and which eve needs because it has no subagents). Reapply the transformations
-listed in `VENDORED.md`, review upstream changes to `init.md`, `new-work.md`, `craft-floor.md`,
-`document.md`, the degraded role files, and detector scripts against `designer-v1.md`, then bump the
-template version and sandbox revalidation key. Keep the npm detector version explicit: the vendored
-skill and published CLI have independent versions.
+generated-only (the detector engine). Copy the three role bodies from `skill/agents/**` into
+`reference/roles/**` as `VENDORED.md` describes, then reapply the transformations listed there.
+Review upstream changes to `init.md`, `new-work.md`, `craft-floor.md`, `document.md`, the role files,
+and detector scripts against `designer-v1.md`, then bump the template version and sandbox
+revalidation key. Keep the npm detector version explicit: the vendored skill and published CLI have
+independent versions.
 
 Template-owned files are replaced by marketplace updates. Put customer-specific product truth and
 visual decisions in the workspace `PRODUCT.md` and `DESIGN.md`, not in the agent prompt or vendored

@@ -79,6 +79,8 @@ export default defineTool({
         | {
             ok: true;
             artifactId: string;
+            /** Immutable id for this exact published version. */
+            artifactVersionId: string;
             kind: string;
             /** Null for a page: it is reachable only through the preview the user opens. */
             url: string | null;

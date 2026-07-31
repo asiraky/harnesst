@@ -42,6 +42,12 @@ Treat the comp as a north star, not something to trace, and know what that allow
 
 Generation context is part of the asset: a build composed by a thread that never saw the prompts places assets it does not understand. So prefer generating build-critical imagery in the build thread when the budget allows, and when a subagent produces assets instead, every asset must carry its prompt, and the builder reads those prompts before composing a single one of them. The carrier is uniform across harnesses: after generating any image with any tool, native or `generate-image.mjs` (which does it automatically), run `node $HOME/.agents/skills/impeccable/scripts/embed-prompt.mjs <image> --prompt "<the prompt used>"` so the intent lives inside the file itself and survives copies between machines and harnesses; `--read` recovers it from any impeccable-generated image.
 
-When clean raster ingredients are required and the harness runs subagents, use the shipped asset producer, `impeccable-asset-producer` (`impeccable_asset_producer` in codex; `/impeccable-asset-producer` in Cursor; on GitHub Copilot say "Use the impeccable-asset-producer agent"): give it the approved comp, output paths, required dimensions and formats, transparency needs, crop notes, and what must remain semantic code. Otherwise produce the minimum required assets in the current thread by the book: load [degraded/asset-producer.md](degraded/asset-producer.md) and follow it inline, with whatever generation exists, the native tool or generate-image.mjs.
+When clean raster ingredients are required, call eve's built-in `agent` tool with a self-contained
+message that tells the child to read [roles/asset-producer.md](roles/asset-producer.md) and gives it
+the approved comp, output paths, required dimensions and formats, transparency needs, crop notes,
+and what must remain semantic code. The child shares the root sandbox, so its produced assets appear
+in the build workspace immediately. If that child call actually fails, load the same role file and
+produce the minimum required assets inline with the native tool or `generate-image.mjs`, disclosing
+the exact failure.
 
 Return to [new-work.md](new-work.md) for the direction contract, implementation, and the finishing pass.
