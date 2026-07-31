@@ -20,6 +20,7 @@ import {
   Link,
   useRevalidator,
   type LoaderFunctionArgs,
+  type ShouldRevalidateFunctionArgs,
 } from "react-router";
 
 import { liveTargets } from "~/chat/playground.server";
@@ -48,6 +49,7 @@ import { newestTurnEntry } from "~/foh/artifact-entries";
 import { useArtifactPreview } from "~/foh/use-artifact-preview";
 import { requireFohProject } from "~/foh/guard.server";
 import { channelLabelFor } from "~/foh/channel-resume";
+import { archivedOpenSessionShouldRevalidate } from "~/foh/archive-revalidation";
 import { openInboxQuestion, resolveInboxForSession } from "~/foh/inbox.server";
 import {
   composerAnswerFor,
@@ -79,6 +81,10 @@ import { hasActiveTurn, TURN_IDLE_TIMEOUT_MS } from "~/chat/turn-stream.server";
 import { getRuntime } from "~/seams/index.server";
 import type { ReasoningEffort } from "~/models/reasoning";
 import type { Route } from "./+types/foh.session";
+
+export function shouldRevalidate(args: ShouldRevalidateFunctionArgs) {
+  return archivedOpenSessionShouldRevalidate(args);
+}
 
 export const loader = (args: LoaderFunctionArgs) =>
   sessionLoader(
