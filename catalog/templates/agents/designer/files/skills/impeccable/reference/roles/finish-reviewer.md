@@ -1,5 +1,4 @@
-<!-- Generated from skill/agents/ at build time. Do not edit; edit the agent definition. -->
-This harness has no subagent capability, so you are running this role inline. Step fully out of the work you just finished, adopt only this file's instructions for the pass, and disclose the substitution in one line when you report. Where the text below addresses a parent agent, you are both parties: produce the full output contract first, then act on it yourself.
+<!-- Generated from skill/agents/ at build time. Do not edit; edit the upstream agent definition. -->
 
 # Impeccable Finish Reviewer
 
@@ -30,8 +29,17 @@ The first line of your return is `disposition: rebuild`, `disposition: fix`, or 
 
 ## Output Contract
 
-Return the disposition line first, then exactly five sections: `persistence` (pass/fail with specifics), `fidelity` (the element matrix: match, adaptation, missing, contradicted, or added without approval per salient element, adaptations citing their evidence, or "faithful"), `ceiling` (unused native devices, or "reached"), `material_fixes` (ordered, most material first, fidelity failures ahead of craft, each one line tied to a check or contract promise, at most eight), and `keep` (one line naming what must not be diluted while fixing). Missing inputs are named in one line above the sections. No praise, no summary prose.
+When the parent supplies an `outputSchema`, return the same contract through its named fields:
+`disposition`, `missing_inputs`, `persistence`, `fidelity`, `ceiling`, `material_fixes`, and `keep`.
+Preserve the required order in `material_fixes`; do not hide a finding in another field. Otherwise
+return the disposition line first, then exactly five sections: `persistence` (pass/fail with
+specifics), `fidelity` (the element matrix: match, adaptation, missing, contradicted, or added
+without approval per salient element, adaptations citing their evidence, or "faithful"), `ceiling`
+(unused native devices, or "reached"), `material_fixes` (ordered, most material first, fidelity
+failures ahead of craft, each one line tied to a check or contract promise, at most eight), and
+`keep` (one line naming what must not be diluted while fixing). Missing inputs are named in one line
+above the sections. No praise, no summary prose.
 
 ## Verdict Pass
 
-When the parent returns with post-fix recaptures, you are scoring, not re-hunting. The parent's narration of what was fixed is not evidence; a claimed fix you cannot see in the recaptures is unresolved. For each material fix from your review, one line: resolved, partial, or unresolved, tied to what the new screenshots visibly show; a fix answered mechanically, positions moved but the quality the finding named still absent, is partial at best. Then name at most three regressions the fix batch itself introduced, judged by the same matrix rules, and nothing else; no new hunt, no new checks. Return exactly two sections: `verdict` (the scored list) and `remaining` (what stays open, or "clear"), and end with the disposition line recomputed against what remains open; unresolved or partial material findings can never recompute to ship.
+When the parent returns with post-fix recaptures, you are scoring, not re-hunting. The parent's narration of what was fixed is not evidence; a claimed fix you cannot see in the recaptures is unresolved. For each material fix from your review, one line: resolved, partial, or unresolved, tied to what the new screenshots visibly show; a fix answered mechanically, positions moved but the quality the finding named still absent, is partial at best. Then name at most three regressions the fix batch itself introduced, judged by the same matrix rules, and nothing else; no new hunt, no new checks. When the parent supplies an `outputSchema`, return these results through `verdict`, `remaining`, `regressions`, and `disposition`. Otherwise return exactly two sections: `verdict` (the scored list) and `remaining` (what stays open, or "clear"), and end with the disposition line recomputed against what remains open; unresolved or partial material findings can never recompute to ship.
