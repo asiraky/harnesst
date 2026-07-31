@@ -770,6 +770,9 @@ export async function deployRelease(
       deploymentId: dep.id,
       imageRef: imageRef ?? "",
       env: envVars,
+      // Member-agent working files are private to one harnesst conversation (#315). The built-in
+      // assistant uses a different deploy path and keeps its sidecar-managed checkout isolation.
+      isolateSessionWorkspace: agent?.kind === "member",
       // World database is keyed by ENVIRONMENT, not deployment: every deploy of this env
       // reuses one world, so sessions and their sandboxes survive redeploys.
       worldKey: env.id,

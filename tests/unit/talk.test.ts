@@ -26,6 +26,53 @@ afterEach(() => {
 });
 
 describe("sendTurn", () => {
+  it("starts an isolated conversation through the private workspace route", async () => {
+    const at = new Date().toISOString();
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ continuationToken: "workspace:tok_1" }), {
+          status: 202,
+          headers: {
+            "content-type": "application/json",
+            "x-eve-session-id": "sess_1",
+          },
+        }),
+      )
+      .mockResolvedValueOnce(
+        streamResponse([
+          {
+            type: "message.received",
+            data: { message: "hi", turnId: "turn_1" },
+            meta: { at },
+          },
+          { type: "turn.completed", data: { turnId: "turn_1" }, meta: { at } },
+        ]),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await sendTurn({
+      baseUrl: "https://agent.example.test",
+      message: "hi",
+      workspace: { id: "ps_private", bearer: "deployment-token" },
+    });
+
+    expect(result.ok).toBe(true);
+    expect(String(fetchMock.mock.calls[0]![0])).toBe(
+      "https://agent.example.test/harnesst/v1/session",
+    );
+    expect(fetchMock.mock.calls[0]![1]).toMatchObject({
+      method: "POST",
+      headers: {
+        authorization: "Bearer deployment-token",
+        "x-harnesst-workspace-id": "ps_private",
+      },
+    });
+    expect(String(fetchMock.mock.calls[1]![0])).toBe(
+      "https://agent.example.test/eve/v1/session/sess_1/stream",
+    );
+  });
+
   it("preserves provider failure details from failed steps", async () => {
     const at = new Date().toISOString();
     const fetchMock = vi

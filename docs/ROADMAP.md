@@ -67,8 +67,9 @@ source of truth; harnesst is a projection and a control plane over it.
 - ✅ **M6.1** — Real Docker sandboxes (ship the docker CLI client + mount the host socket, ending
   silent `just-bash` degradation); durable worlds keyed per **environment** — sessions and their
   `/workspace` filesystems survive redeploys.
-- ✅ **M6.2** — Persistent agent home at `/workspace/home` via an `EVE_DOCKER_PATH` shim; survives
-  new sessions, redeploys, and restarts, and dies with the environment.
+- ✅ **M6.2** — Persistent environment setup plus structurally isolated per-conversation
+  `/workspace/home` roots via an `EVE_DOCKER_PATH` shim and Docker volume subpaths; survives
+  redeploys and restarts without exposing one conversation's artifacts to another.
 
 ### Teams, self-host, platform polish — M7–M8.5
 

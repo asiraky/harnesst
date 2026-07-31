@@ -15,12 +15,14 @@ import { data, redirect, type ActionFunctionArgs } from "react-router";
 import type { ChatInputAnswer } from "~/chat/types";
 
 import { liveTargets, type Target } from "~/chat/playground.server";
+import { buildSystemNotes } from "~/chat/system-note";
 import {
   asString,
   streamTurnResponse,
   TURN_IDLE_TIMEOUT_MS,
 } from "~/chat/turn-stream.server";
 import { listAgentEnvironments } from "~/db/queries.server";
+import { isSessionWorkspaceContinuationToken } from "~/deploy/session-workspace-channel";
 import { ensureLiveDeploymentForEnvironment } from "~/deploy/wake.server";
 import { beginFohTurn } from "~/foh/inbox.server";
 import { requireFohProject } from "~/foh/guard.server";
@@ -67,9 +69,7 @@ const SUCCESSION_PROLOGUE_EVENT_CAP = 1_000;
  * card. Malformed input is a hard 400 — silently dropping it would fall back to eve's
  * batch-wide text resolution, the exact bug this field exists to prevent.
  */
-function parseInputResponses(
-  raw: string,
-): ChatInputAnswer[] | null {
+function parseInputResponses(raw: string): ChatInputAnswer[] | null {
   if (!raw) return null;
   let parsed: unknown;
   try {
@@ -112,7 +112,9 @@ export async function action(args: ActionFunctionArgs) {
   const message = asString(form.get("message")).trim();
   if (!message) throw data({ error: "Type a message first." }, { status: 400 });
   const playgroundSessionId = asString(form.get("playgroundSessionId")) || null;
-  const inputResponses = parseInputResponses(asString(form.get("inputResponses")));
+  const inputResponses = parseInputResponses(
+    asString(form.get("inputResponses")),
+  );
 
   const agent = agentId
     ? await getRuntime().data.agents.findById(agentId)
@@ -147,7 +149,9 @@ export async function action(args: ActionFunctionArgs) {
     !requestedModel?.supportedEfforts?.includes(requestedEffort)
   ) {
     throw data(
-      { error: "That reasoning effort is not supported by the selected model." },
+      {
+        error: "That reasoning effort is not supported by the selected model.",
+      },
       { status: 400 },
     );
   }
@@ -307,7 +311,8 @@ export async function action(args: ActionFunctionArgs) {
   // completed succession rebound the row to a fresh eve session), the requestIds name asks
   // the row's current session never issued, so they are dropped and the text travels as a
   // plain message instead.
-  const answers = inputResponses && session.pendingInputAt ? inputResponses : null;
+  const answers =
+    inputResponses && session.pendingInputAt ? inputResponses : null;
   // Succession (#288 3b): free text into a channel-homed row starts a fresh HTTP-homed
   // successor seeded with the old session's transcript. An answer to a pending ask keeps
   // flowing through the channel answer route; anything else can never be delivered there
@@ -336,9 +341,7 @@ export async function action(args: ActionFunctionArgs) {
           target,
           timeoutMs: SUCCESSION_PROLOGUE_TIMEOUT_MS,
           limit:
-            session.streamIndex > 0
-              ? undefined
-              : SUCCESSION_PROLOGUE_EVENT_CAP,
+            session.streamIndex > 0 ? undefined : SUCCESSION_PROLOGUE_EVENT_CAP,
         }),
         SUCCESSION_INSTRUCTION,
       );
@@ -375,18 +378,28 @@ export async function action(args: ActionFunctionArgs) {
         message,
       )
     : null;
-  // Directive first (it must be the first line for the agent-side verifier), then the
-  // succession prologue; both ride inside the sent message and are stripped on replay.
+  const usesIsolatedWorkspace =
+    succeedsChannelSession ||
+    !session.externalSessionId ||
+    isSessionWorkspaceContinuationToken(session.continuationToken);
+  const workspaceNote = usesIsolatedWorkspace
+    ? buildSystemNotes([
+        "[harnesst] This conversation's private working root is /workspace/home. Keep all project files and generated artifacts there; no other conversation's working files are mounted. /workspace/shared is only for environment-level setup that should deliberately persist across conversations.",
+      ])
+    : null;
+  // Directive first (it must be the first line for the agent-side verifier), then the succession
+  // prologue, then the ordinary strippable system note. Replay strips them in that same order.
   const messagePrefix =
-    [directive, seedContext].filter(Boolean).join("\n\n") || null;
+    [directive, seedContext, workspaceNote].filter(Boolean).join("\n\n") ||
+    null;
 
   // Answers correlate to requests only on the session that parked them: a fresh session has
   // nothing pending, and a succession turn starts one, so drop the responses rather than
   // send eve ids the receiving session never issued.
   const continuingSession = Boolean(
     !succeedsChannelSession &&
-      session.externalSessionId &&
-      session.continuationToken,
+    session.externalSessionId &&
+    session.continuationToken,
   );
 
   if (succeedsChannelSession) {

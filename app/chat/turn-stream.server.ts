@@ -16,6 +16,8 @@ import {
 import type { Target } from "~/chat/playground.server";
 import { normalizeTurnError } from "~/chat/stream-error";
 import type { ChatStep } from "~/chat/types";
+import { isSessionWorkspaceContinuationToken } from "~/deploy/session-workspace-channel";
+import { fohWorkspaceId } from "~/foh/session-workspace";
 import {
   externalRunId,
   recordTurnFinish,
@@ -340,6 +342,22 @@ export function streamTurnResponse(input: {
             // `finally` still runs, and its `notDelivered` branch leaves the row untouched.
             return;
           }
+          // New FOH conversations and their harnesst-channel continuations use the private
+          // stateful route. Legacy stock-HTTP sessions keep their original route/token; channel
+          // answers keep their channel-owned delivery path. A succession is a fresh private-route
+          // session carrying the predecessor's stable workspace identity.
+          const workspaceRoute =
+            isFoh &&
+            delivery.kind === "http" &&
+            (succession ||
+              sessionId === null ||
+              isSessionWorkspaceContinuationToken(continuationToken));
+          const workspace = workspaceRoute
+            ? {
+                id: fohWorkspaceId(activeSession),
+                bearer: mintDelegationToken(target.deploymentId),
+              }
+            : null;
           for await (const event of streamTurn({
             baseUrl: target.url,
             message: sentMessage,
@@ -349,6 +367,7 @@ export function streamTurnResponse(input: {
               ? null
               : activeSession.continuationToken,
             deliverVia: delivery.kind === "channel" ? delivery.via : null,
+            workspace,
             streamIndex: baseStreamIndex,
             signal: turnController.signal,
             timeoutMs: TURN_IDLE_TIMEOUT_MS,

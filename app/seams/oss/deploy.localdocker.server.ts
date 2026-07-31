@@ -86,6 +86,19 @@ export const WAKE_HEALTH_TIMEOUT_MS = Number(
 );
 
 /**
+ * `volume-subpath` arrived in Docker Engine 26. Session isolation is a security boundary, so an
+ * older daemon must refuse a member-agent deploy instead of silently restoring the whole-volume
+ * mount that caused #315.
+ */
+export function supportsVolumeSubpath(serverVersion: string): boolean {
+  const major = Number.parseInt(
+    serverVersion.trim().match(/^(\d+)/)?.[1] ?? "",
+    10,
+  );
+  return Number.isFinite(major) && major >= 26;
+}
+
+/**
  * The instance container for a deployment. Exported because artifact copy-on-publish (#290) reads
  * files out of the same container over the docker socket, and the naming rule must not be
  * re-derived anywhere else.
@@ -519,6 +532,21 @@ export const localDockerTarget: DeployTarget = {
         detail: "no image to run (build did not produce one)",
       };
     }
+    if (req.isolateSessionWorkspace) {
+      const serverVersion = await docker([
+        "version",
+        "--format",
+        "{{.Server.Version}}",
+      ]);
+      if (!supportsVolumeSubpath(serverVersion)) {
+        return {
+          status: "failed",
+          detail:
+            `Docker Engine 26 or newer is required for isolated session workspaces ` +
+            `(the daemon reported ${serverVersion || "an unknown version"}).`,
+        };
+      }
+    }
     const name = containerName(req.deploymentId);
     await removeIfExists(name);
 
@@ -540,6 +568,8 @@ export const localDockerTarget: DeployTarget = {
       // environment's agent home. AFTER the req.env spread so user secrets can never shadow them.
       EVE_DOCKER_PATH: "/usr/local/bin/eve-docker",
       HARNESST_HOME_VOLUME: homeVolumeName(req.worldKey),
+      HARNESST_HOME_ROOT: "/workspace/home",
+      HARNESST_SESSION_WORKSPACES: req.isolateSessionWorkspace ? "1" : "0",
       // Point world-local at the mounted per-env volume (see WORLD_DATA_DIR for the version
       // split this papers over).
       WORKFLOW_LOCAL_DATA_DIR: WORLD_DATA_DIR,
@@ -563,10 +593,10 @@ export const localDockerTarget: DeployTarget = {
       // Docker sandbox instead of just-bash. Standard socket path on Docker Desktop/OrbStack/Colima.
       "-v",
       "/var/run/docker.sock:/var/run/docker.sock",
-      // Mount the environment's agent-home volume into the INSTANCE too (the eve-docker shim only
-      // mounts it into session sandboxes). The assistant sidecar clones per-conversation checkouts
-      // under /workspace/home/checkouts so both the instance and the model's sandbox see one shared
-      // tree. Benign for non-assistant instances (nothing writes there).
+      // Mount the full environment volume into the INSTANCE only. The shim creates session/shared
+      // subdirectories through this mount, then exposes only the selected subpaths to a member
+      // sandbox. The assistant sidecar still uses the full mount for its already-isolated
+      // /workspace/home/checkouts trees.
       "-v",
       `${homeVolumeName(req.worldKey)}:/workspace/home`,
       // Per-environment eve World store: sessions (history, run state, parked asks) live on this

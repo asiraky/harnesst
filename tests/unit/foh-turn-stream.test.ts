@@ -49,7 +49,8 @@ vi.mock("~/foh/inbox.server", () => ({
   recordInboxFinished: mocks.recordInboxFinished,
 }));
 vi.mock("~/observability/record.server", () => ({
-  externalRunId: (sessionId: string, turnId: string) => `${sessionId}:${turnId}`,
+  externalRunId: (sessionId: string, turnId: string) =>
+    `${sessionId}:${turnId}`,
   recordTurnStart: mocks.recordTurnStart,
   recordTurnFinish: mocks.recordTurnFinish,
 }));
@@ -138,7 +139,10 @@ function parkedTurn(requests: ChatInputRequest[]): TalkEvent[] {
     { kind: "session", sessionId: "sess_ext", continuationToken: "tok_1" },
     { kind: "turn", turnId: "turn_1" },
     { kind: "input", requests },
-    { kind: "done", result: result({ inputRequests: requests, reply: "One thing —" }) },
+    {
+      kind: "done",
+      result: result({ inputRequests: requests, reply: "One thing —" }),
+    },
   ];
 }
 
@@ -333,7 +337,11 @@ describe("streamTurnResponse — FOH needs-you chokepoint", () => {
 
 describe("streamTurnResponse — delegation wake-on-answer (WP4)", () => {
   const delegated = () =>
-    session({ createdBy: null, delegationId: "deleg_1", openedByAgentId: "agent_1" });
+    session({
+      createdBy: null,
+      delegationId: "deleg_1",
+      openedByAgentId: "agent_1",
+    });
 
   it("finalizes a waiting delegation as completed when the resumed turn completes", async () => {
     script([
@@ -395,7 +403,9 @@ describe("streamTurnResponse — delegation wake-on-answer (WP4)", () => {
 
   it("swallows a finalize failure — the drain and run recorder still finish", async () => {
     const error = vi.spyOn(console, "error").mockImplementation(() => {});
-    mocks.finalizeDelegationOnResume.mockRejectedValueOnce(new Error("db down"));
+    mocks.finalizeDelegationOnResume.mockRejectedValueOnce(
+      new Error("db down"),
+    );
     script([
       { kind: "session", sessionId: "sess_ext", continuationToken: "tok_1" },
       { kind: "turn", turnId: "turn_2" },
@@ -472,7 +482,7 @@ describe("streamTurnResponse — channel-homed delivery", () => {
     });
   });
 
-  it("leaves an ordinary session on the unchanged HTTP path", async () => {
+  it("starts a new FOH conversation in the row's private workspace", async () => {
     script([
       { kind: "session", sessionId: "sess_ext", continuationToken: "tok_1" },
       { kind: "done", result: result({ reply: "ok" }) },
@@ -480,9 +490,39 @@ describe("streamTurnResponse — channel-homed delivery", () => {
 
     await run({ session: session(), channel: "foh" });
 
-    expect(mocks.streamTurn.mock.calls[0][0].deliverVia).toBeNull();
+    expect(mocks.streamTurn.mock.calls[0][0]).toMatchObject({
+      deliverVia: null,
+      workspace: {
+        id: "ps_1",
+        bearer: expect.any(String),
+      },
+    });
     // HTTP-homed rows keep the route-level supersede — the drain never re-begins the turn.
     expect(mocks.beginFohTurn).not.toHaveBeenCalled();
+  });
+
+  it("keeps a pre-isolation stock-HTTP session on its original route", async () => {
+    script([
+      {
+        kind: "session",
+        sessionId: "sess_ext",
+        continuationToken: "tok_legacy",
+      },
+      { kind: "done", result: result({ reply: "ok" }) },
+    ]);
+
+    await run({
+      session: session({
+        externalSessionId: "sess_ext",
+        continuationToken: "tok_legacy",
+      }),
+      channel: "foh",
+    });
+
+    expect(mocks.streamTurn.mock.calls[0][0]).toMatchObject({
+      deliverVia: null,
+      workspace: null,
+    });
   });
 
   it("resolves the park only when the first event proves delivery (issue #282 deferred begin)", async () => {
@@ -687,9 +727,8 @@ describe("streamTurnResponse — channel-homed delivery", () => {
 
   it("succession runs as a first-turn HTTP send and rebinds atomically on the session event (#288 3b)", async () => {
     // The row is still channel-homed with the PREDECESSOR's handles; the succession flag —
-    // not a pre-cleared row — is what makes the drain start a fresh eve session. No bearer
-    // is minted for it, so a missing key must not refuse the send (delete it to prove so).
-    delete process.env.HARNESST_SECRETS_KEY;
+    // not a pre-cleared row — is what makes the drain start a fresh eve session. The private
+    // workspace route uses a deployment-scoped bearer even though channel delivery does not.
     const row = session({
       externalSessionId: "sess_old",
       continuationToken: "github:repo:1310524517:issue:7",
@@ -724,13 +763,16 @@ describe("streamTurnResponse — channel-homed delivery", () => {
       }),
     );
 
-    // First-turn POST: no session id, no continuation token, no channel delivery, cursor 0 —
-    // and no bearer was ever needed (HARNESST_SECRETS_KEY is irrelevant to a succession).
+    // First-turn POST: no session id, no continuation token, no channel delivery, cursor 0.
     expect(mocks.streamTurn.mock.calls[0][0]).toMatchObject({
       sessionId: null,
       continuationToken: null,
       deliverVia: null,
       streamIndex: 0,
+      workspace: {
+        id: "sess_old",
+        bearer: expect.any(String),
+      },
     });
     // The one atomic rebind: predecessor pointer + successor handles + descriptor drop +
     // cursor reset, fenced by the route's claim.

@@ -56,6 +56,12 @@ export interface DeployRequest {
   /** Secrets + config injected as container env at start. */
   env: Record<string, string>;
   /**
+   * Mount only the sandbox's private volume subdirectory at /workspace/home. User/member agents
+   * enable this; the built-in coding assistant keeps its existing full-volume mount because its
+   * sidecar already owns per-conversation checkout isolation on that volume.
+   */
+  isolateSessionWorkspace?: boolean;
+  /**
    * Stable per-environment key for the instance's Workflow world database. Every deployment
    * of an environment shares one world, so eve sessions AND their durable sandbox containers
    * (the filesystems behind /workspace) survive a redeploy — eve's intended "sessions survive

@@ -1,6 +1,6 @@
 /**
- * Copy-on-publish (issues #290, #291): read one file — or the files of one page bundle — out of an
- * agent's instance over the mounted Docker socket, at publish time, and hand the bytes back.
+ * Copy-on-publish (issues #290, #291, #315): read one file — or the files of one page bundle —
+ * directly out of the publishing turn's sandbox over the mounted Docker socket.
  *
  * Why the control plane reads it rather than the agent uploading it: the tool's POST crosses
  * harnesst's own edge (`client_max_body_size 25m`) and would have to base64 a screenshot through a
@@ -14,14 +14,8 @@
  *
  * CONFINEMENT is the reason this is two docker calls and not one. The path check in
  * `artifact-media.ts` is textual, so it says nothing about where a LINK under the home volume
- * points, and `docker cp -L` (the first shape of this) dereferenced it happily: an agent — or
- * prompt-injected code in its sandbox, which mounts the same home volume — could plant
- * `ln -s /root/.config/x.png /workspace/home/artifacts/chart.png` and have the control plane read a
- * file from the instance container's own filesystem. So the path is FIRST resolved to its real path
- * inside the container (`realpathSync`, which resolves intermediate directory symlinks too, not
- * just the last component), that real path is re-checked against the home root, and only then is it
- * copied — with `-L` dropped, so a link swapped in after the resolve arrives as a payload-less link
- * entry and is refused rather than followed.
+ * points. The path is FIRST resolved inside the exact session sandbox, re-checked against that
+ * sandbox's private /workspace/home mount, and only then copied without link dereferencing.
  *
  * `realpathSync` runs through `docker exec node -e`, which needs a RUNNING container. That is the
  * publish's own precondition (it only lands inside a live turn — see `liveFohTurnForDeployment`),
@@ -34,9 +28,7 @@ import { spawn } from "node:child_process";
 
 import { commandErrorText } from "~/deploy/docker.server";
 import { resolveArtifactSource } from "~/foh/artifact-media";
-// The instance container naming rule lives with the target that creates them; importing it keeps
-// the two from drifting apart the day the prefix changes.
-import { containerName as instanceContainerName } from "~/seams/oss/deploy.localdocker.server";
+import { homeVolumeName } from "~/seams/oss/deploy.localdocker.server";
 
 /** A tar entry as read off `docker cp` — one regular file the copy asked for. */
 export interface TarFile {
@@ -69,7 +61,11 @@ export function firstFileInTar(tar: Buffer): TarFile | null {
     const name = header.subarray(0, 100).toString("utf8").replace(/\0.*$/, "");
     // Two consecutive zero blocks end the archive; a single one is enough to stop reading.
     if (!name) return null;
-    const rawSize = header.subarray(124, 136).toString("utf8").replace(/\0.*$/, "").trim();
+    const rawSize = header
+      .subarray(124, 136)
+      .toString("utf8")
+      .replace(/\0.*$/, "")
+      .trim();
     const size = Number.parseInt(rawSize, 8);
     if (!Number.isFinite(size) || size < 0) return null;
     const type = String.fromCharCode(header[156]);
@@ -180,16 +176,18 @@ export const realDockerStreamer: DockerStreamer = (args, maxBytes) =>
     child.stderr.on("data", (chunk: Buffer) => {
       stderr += chunk.toString("utf8");
     });
-    child.on("error", (error) => settle({ ok: false, error: commandErrorText(error) }));
+    child.on("error", (error) =>
+      settle({ ok: false, error: commandErrorText(error) }),
+    );
     child.on("close", (code) => {
       if (code === 0) settle({ ok: true, stdout: Buffer.concat(chunks) });
-      else settle({ ok: false, error: stderr.trim() || `docker exited ${code}` });
+      else
+        settle({ ok: false, error: stderr.trim() || `docker exited ${code}` });
     });
   });
 
 export type ArtifactCopyResult =
-  | { ok: true; bytes: Buffer }
-  | { ok: false; error: string };
+  { ok: true; bytes: Buffer } | { ok: false; error: string };
 
 /**
  * Resolved inside the container by node, so no coreutils (`realpath`/`readlink`) is assumed and the
@@ -212,8 +210,7 @@ process.stdout.write(out);`;
 const REALPATH_MAX_BYTES = 8 * 1024;
 
 type RealPathResult =
-  | { ok: true; path: string; directory: boolean }
-  | { ok: false; error: string };
+  { ok: true; path: string; directory: boolean } | { ok: false; error: string };
 
 /**
  * The real path of `path` inside the container, with every symlink resolved and confirmed to still
@@ -225,7 +222,7 @@ type RealPathResult =
  * nothing at all about the files under it — per-member confinement is the tar walk's link refusal
  * in `filesInTar`, which is why that walk aborts instead of skipping.
  */
-async function realPathInInstance(
+async function realPathInContainer(
   container: string,
   path: string,
   stream: DockerStreamer,
@@ -277,9 +274,67 @@ async function realPathInInstance(
   return { ok: true, path: confined.path, directory: verdict === "dir" };
 }
 
+const SANDBOX_LOOKUP_MAX_BYTES = 8 * 1024;
+
+/**
+ * Resolve one Eve session label to the one sandbox mounting this environment's home volume.
+ * Both filters are load-bearing: an Eve id identifies the turn, while the volume ties that
+ * container to the authenticated deployment's environment.
+ */
+async function sandboxContainerForSession(
+  input: { sandboxSessionId: string; worldKey: string },
+  stream: DockerStreamer,
+): Promise<{ ok: true; container: string } | { ok: false; error: string }> {
+  if (!/^[A-Za-z0-9][A-Za-z0-9_.-]{0,255}$/.test(input.sandboxSessionId)) {
+    return {
+      ok: false,
+      error: "harnesst could not identify this conversation's workspace.",
+    };
+  }
+  const result = await stream(
+    [
+      "ps",
+      "-aq",
+      "--filter",
+      "label=eve.sandbox.role=session",
+      "--filter",
+      `label=eve.sandbox.tag.sessionId=${input.sandboxSessionId}`,
+      "--filter",
+      `volume=${homeVolumeName(input.worldKey)}`,
+      "--format",
+      "{{.ID}}",
+    ],
+    SANDBOX_LOOKUP_MAX_BYTES,
+  );
+  if (!result.ok) {
+    return {
+      ok: false,
+      error:
+        "harnesst can't reach this conversation's workspace right now, so it couldn't read the file.",
+    };
+  }
+  const containers = result.stdout
+    .toString("utf8")
+    .split("\n")
+    .map((value) => value.trim())
+    .filter(Boolean);
+  if (containers.length !== 1) {
+    return {
+      ok: false,
+      error:
+        containers.length === 0
+          ? "harnesst can't find this conversation's workspace right now, so it couldn't read the file."
+          : "harnesst found more than one sandbox for this conversation and refused to guess which file to publish.",
+    };
+  }
+  return { ok: true, container: containers[0] };
+}
+
 /** Map a docker CLI failure onto something the agent can act on. */
 function dockerFailureText(text: string, path: string): string {
-  if (/No such container|No such object|is not running|not running/i.test(text)) {
+  if (
+    /No such container|No such object|is not running|not running/i.test(text)
+  ) {
     return "harnesst can't reach this agent's instance right now, so it couldn't read the file. Try again while the agent is running.";
   }
   if (/[Nn]o such file or directory|Could not find the file/.test(text)) {
@@ -294,11 +349,19 @@ function dockerFailureText(text: string, path: string): string {
  * anything is buffered whole.
  */
 export async function copyArtifactFromInstance(
-  input: { deploymentId: string; path: string; maxBytes: number },
+  input: {
+    deploymentId: string;
+    worldKey: string;
+    sandboxSessionId: string;
+    path: string;
+    maxBytes: number;
+  },
   stream: DockerStreamer = realDockerStreamer,
 ): Promise<ArtifactCopyResult> {
-  const container = instanceContainerName(input.deploymentId);
-  const real = await realPathInInstance(container, input.path, stream);
+  const found = await sandboxContainerForSession(input, stream);
+  if (!found.ok) return found;
+  const container = found.container;
+  const real = await realPathInContainer(container, input.path, stream);
   if (!real.ok) return { ok: false, error: real.error };
   // `-` sends the archive to stdout. No `-L`: the path is already fully resolved, so the only thing
   // dereferencing could still buy is following a link swapped in since — which must not happen.
@@ -336,8 +399,7 @@ export async function copyArtifactFromInstance(
 }
 
 export type ArtifactBundleCopyResult =
-  | { ok: true; files: TarFile[] }
-  | { ok: false; error: string };
+  { ok: true; files: TarFile[] } | { ok: false; error: string };
 
 /**
  * How many directory-entry headers a bundle's archive may spend. Directories carry no payload, so
@@ -390,14 +452,18 @@ function megabytes(bytes: number): number {
 export async function copyArtifactBundleFromInstance(
   input: {
     deploymentId: string;
+    worldKey: string;
+    sandboxSessionId: string;
     path: string;
     maxBytes: number;
     maxFiles: number;
   },
   stream: DockerStreamer = realDockerStreamer,
 ): Promise<ArtifactBundleCopyResult> {
-  const container = instanceContainerName(input.deploymentId);
-  const real = await realPathInInstance(container, input.path, stream, true);
+  const found = await sandboxContainerForSession(input, stream);
+  if (!found.ok) return found;
+  const container = found.container;
+  const real = await realPathInContainer(container, input.path, stream, true);
   if (!real.ok) return { ok: false, error: real.error };
   const result = await stream(
     ["cp", `${container}:${real.path}`, "-"],
@@ -450,7 +516,10 @@ export async function copyArtifactBundleFromInstance(
     files.push({ name: file.name.slice(root.length + 1), bytes: file.bytes });
   }
   if (files.length === 0) {
-    return { ok: false, error: `There are no files to publish in ${input.path}.` };
+    return {
+      ok: false,
+      error: `There are no files to publish in ${input.path}.`,
+    };
   }
   const total = files.reduce((sum, file) => sum + file.bytes.length, 0);
   if (total === 0) {

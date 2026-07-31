@@ -8,7 +8,14 @@
  * pass through untouched; an unset home volume is a no-op; and exit codes stream through (`exec`).
  */
 import { spawnSync } from "node:child_process";
-import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -54,12 +61,18 @@ function runShimFull(
   env: Record<string, string>,
 ): { argv: string[]; stdout: string; stderr: string } {
   const res = spawnSync(shimPath, args, {
-    env: { HARNESST_TEST_CAPTURE: capturePath, EVE_DOCKER_REAL: fakeDocker, ...env },
+    env: {
+      HARNESST_TEST_CAPTURE: capturePath,
+      EVE_DOCKER_REAL: fakeDocker,
+      ...env,
+    },
     encoding: "utf8",
   });
   expect(res.status).toBe(0);
   return {
-    argv: readFileSync(capturePath, "utf8").split("\n").filter((l) => l.length > 0),
+    argv: readFileSync(capturePath, "utf8")
+      .split("\n")
+      .filter((l) => l.length > 0),
     stdout: res.stdout,
     stderr: res.stderr,
   };
@@ -90,11 +103,54 @@ const SESSION_RUN = [
 ];
 
 describe("eve-docker shim", () => {
-  it("injects -v <vol>:/workspace/home right after run for a session-role run", () => {
-    const got = runShim(SESSION_RUN, { HARNESST_HOME_VOLUME: "harnesst-home-x" });
-    expect(got.slice(0, 3)).toEqual(["run", "-v", "harnesst-home-x:/workspace/home"]);
+  it("keeps the full-volume mount for compatibility-mode sessions", () => {
+    const got = runShim(SESSION_RUN, {
+      HARNESST_HOME_VOLUME: "harnesst-home-x",
+    });
+    expect(got.slice(0, 3)).toEqual([
+      "run",
+      "-v",
+      "harnesst-home-x:/workspace/home",
+    ]);
     // Everything after run is preserved in original order.
     expect(got.slice(3)).toEqual(SESSION_RUN.slice(1));
+  });
+
+  it("mounts only the named session subpath plus the explicit shared directory in isolation mode", () => {
+    const got = runShim(SESSION_RUN, {
+      HARNESST_HOME_VOLUME: "harnesst-home-x",
+      HARNESST_HOME_ROOT: dir,
+      HARNESST_SESSION_WORKSPACES: "1",
+    });
+
+    expect(got.slice(0, 5)).toEqual([
+      "run",
+      "--mount",
+      "type=volume,src=harnesst-home-x,dst=/workspace/home,volume-subpath=sessions/sess1",
+      "--mount",
+      "type=volume,src=harnesst-home-x,dst=/workspace/shared,volume-subpath=shared",
+    ]);
+    expect(got.slice(5)).toEqual(SESSION_RUN.slice(1));
+    expect(existsSync(path.join(dir, "sessions", "sess1"))).toBe(true);
+    expect(existsSync(path.join(dir, "shared"))).toBe(true);
+  });
+
+  it("fails closed when an isolated session has no safe container identity", () => {
+    const unsafe = SESSION_RUN.map((arg) =>
+      arg === "sess1" ? "../sibling" : arg,
+    );
+    const res = spawnSync(shimPath, unsafe, {
+      env: {
+        EVE_DOCKER_REAL: fakeDocker,
+        HARNESST_HOME_VOLUME: "harnesst-home-x",
+        HARNESST_HOME_ROOT: dir,
+        HARNESST_SESSION_WORKSPACES: "1",
+      },
+      encoding: "utf8",
+    });
+
+    expect(res.status).toBe(64);
+    expect(res.stderr).toContain("unsafe container identity");
   });
 
   it("leaves a template-build run untouched (shared templates must not capture a volume)", () => {
@@ -107,7 +163,9 @@ describe("eve-docker shim", () => {
       "eve.sandbox.role=template-build",
       "ghcr.io/vercel/eve:latest",
     ];
-    expect(runShim(argv, { HARNESST_HOME_VOLUME: "harnesst-home-x" })).toEqual(argv);
+    expect(runShim(argv, { HARNESST_HOME_VOLUME: "harnesst-home-x" })).toEqual(
+      argv,
+    );
   });
 
   it("leaves non-run verbs untouched (start / exec / ps)", () => {
@@ -116,12 +174,16 @@ describe("eve-docker shim", () => {
       ["exec", "sess1", "/bin/sh", "-c", "echo hi"],
       ["ps", "-aq", "--filter", "volume=harnesst-home-x"],
     ]) {
-      expect(runShim(argv, { HARNESST_HOME_VOLUME: "harnesst-home-x" })).toEqual(argv);
+      expect(
+        runShim(argv, { HARNESST_HOME_VOLUME: "harnesst-home-x" }),
+      ).toEqual(argv);
     }
   });
 
   it("is a no-op when HARNESST_HOME_VOLUME is empty, even for a session run", () => {
-    expect(runShim(SESSION_RUN, { HARNESST_HOME_VOLUME: "" })).toEqual(SESSION_RUN);
+    expect(runShim(SESSION_RUN, { HARNESST_HOME_VOLUME: "" })).toEqual(
+      SESSION_RUN,
+    );
   });
 
   it("echoes a session-sandbox start line to STDERR (issue #118), capturing channel + session", () => {
@@ -144,7 +206,11 @@ describe("eve-docker shim", () => {
     // STDOUT must stay clean — eve reads `run -d`'s stdout for the container id.
     expect(res.stdout).toBe("");
     // The volume injection still happens for a session run.
-    expect(res.argv.slice(0, 3)).toEqual(["run", "-v", "harnesst-home-x:/workspace/home"]);
+    expect(res.argv.slice(0, 3)).toEqual([
+      "run",
+      "-v",
+      "harnesst-home-x:/workspace/home",
+    ]);
   });
 
   it("emits the start line even when HARNESST_HOME_VOLUME is unset (no injection, still visible)", () => {
@@ -163,7 +229,12 @@ describe("eve-docker shim", () => {
 
   it("emits NO start line for non-session invocations", () => {
     const tmplRun = runShimFull(
-      ["run", "--label", "eve.sandbox.role=template-build", "ghcr.io/vercel/eve:latest"],
+      [
+        "run",
+        "--label",
+        "eve.sandbox.role=template-build",
+        "ghcr.io/vercel/eve:latest",
+      ],
       { HARNESST_HOME_VOLUME: "harnesst-home-x" },
     );
     expect(tmplRun.stderr).not.toContain("[harnesst] session sandbox starting");

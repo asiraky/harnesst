@@ -55,6 +55,7 @@ import {
   resolveBundleMember,
   sniffArtifactContentType,
 } from "~/foh/artifact-media";
+import { fohArtifactSandboxSessionId } from "~/foh/session-workspace";
 import {
   artifactUsage,
   findSessionArtifact,
@@ -134,12 +135,16 @@ export interface PublishArtifactDeps {
   /** Read the file out of the publishing deployment's instance over the docker socket. */
   copyFile: (input: {
     deploymentId: string;
+    worldKey: string;
+    sandboxSessionId: string;
     path: string;
     maxBytes: number;
   }) => Promise<ArtifactCopyResult>;
   /** The same, for a page bundle: one HTML file, or a directory of one. */
   copyBundle: (input: {
     deploymentId: string;
+    worldKey: string;
+    sandboxSessionId: string;
     path: string;
     maxBytes: number;
     maxFiles: number;
@@ -234,7 +239,9 @@ function bundleSha256(
   files: readonly { relPath: string; sha256: string }[],
 ): string {
   const manifest = [...files]
-    .sort((a, b) => (a.relPath < b.relPath ? -1 : a.relPath > b.relPath ? 1 : 0))
+    .sort((a, b) =>
+      a.relPath < b.relPath ? -1 : a.relPath > b.relPath ? 1 : 0,
+    )
     .map((file) => `${file.relPath}\0${file.sha256}`)
     .join("\n");
   return createHash("sha256").update(manifest, "utf8").digest("hex");
@@ -263,9 +270,13 @@ export async function publishArtifact(
   // Caller resolution — deployment → environment → agent → project, all from the token's
   // deployment id (the park/`runAsk` rule: nothing about identity comes off the wire).
   const deployment = await store.deployments.findById(input.deploymentId);
-  if (!deployment) return deny("Your deployment is no longer known to harnesst.");
-  const environment = await store.environments.findById(deployment.environmentId);
-  if (!environment) return deny("Your environment is no longer known to harnesst.");
+  if (!deployment)
+    return deny("Your deployment is no longer known to harnesst.");
+  const environment = await store.environments.findById(
+    deployment.environmentId,
+  );
+  if (!environment)
+    return deny("Your environment is no longer known to harnesst.");
   const agent = await store.agents.findById(environment.agentId);
   if (!agent) return deny("Your agent is no longer part of this repository.");
   const project = await store.projects.findById(agent.projectId);
@@ -290,6 +301,12 @@ export async function publishArtifact(
     );
   }
   const session = found.session;
+  const sandboxSessionId = fohArtifactSandboxSessionId(session);
+  if (!sandboxSessionId || !session.worldKey) {
+    return deny(
+      "harnesst could not identify this conversation's isolated workspace, so it refused to publish a file from anywhere else.",
+    );
+  }
 
   // IDENTITY (#292): a name inside a conversation. Republishing it appends a version to the card
   // that is already on screen, which is the whole refine loop — "make it bolder", publish again,
@@ -361,8 +378,28 @@ export async function publishArtifact(
   // Budget-checked and destination-resolved before a single byte is read: everything above is a
   // couple of indexed queries, while the copies below hold up to 25 MB of this process's heap.
   return kind === "html"
-    ? publishBundle({ deployment, source, common, capSha }, deps)
-    : publishImage({ deployment, source, common, capSha }, deps);
+    ? publishBundle(
+        {
+          deployment,
+          source,
+          common,
+          capSha,
+          sandboxSessionId,
+          worldKey: session.worldKey,
+        },
+        deps,
+      )
+    : publishImage(
+        {
+          deployment,
+          source,
+          common,
+          capSha,
+          sandboxSessionId,
+          worldKey: session.worldKey,
+        },
+        deps,
+      );
 }
 
 /** The row fields both kinds share, resolved before any bytes are read. */
@@ -380,6 +417,8 @@ interface ArtifactRowCommon {
 
 interface PublishHalfInput {
   deployment: { id: string };
+  worldKey: string;
+  sandboxSessionId: string;
   source: { path: string; name: string };
   common: ArtifactRowCommon;
   /**
@@ -390,8 +429,10 @@ interface PublishHalfInput {
   capSha: string | null;
 }
 
-const BUSY = "harnesst is already copying as many files as it can at once. Try publishing again in a moment.";
-const RECORD_FAILED = "harnesst could not record the artifact. Try publishing again.";
+const BUSY =
+  "harnesst is already copying as many files as it can at once. Try publishing again in a moment.";
+const RECORD_FAILED =
+  "harnesst could not record the artifact. Try publishing again.";
 
 /**
  * What the store refused, in the agent's words. Two of the three are the refusals `publishArtifact`
@@ -415,12 +456,21 @@ function recordRefusal(
  * than claimed because the image route serves same-origin behind the operator's own cookie.
  */
 async function publishImage(
-  { deployment, source, common, capSha }: PublishHalfInput,
+  {
+    deployment,
+    source,
+    common,
+    capSha,
+    worldKey,
+    sandboxSessionId,
+  }: PublishHalfInput,
   deps: PublishArtifactDeps,
 ): Promise<PublishArtifactResult> {
   const slot = await withArtifactCopySlot(() =>
     deps.copyFile({
       deploymentId: deployment.id,
+      worldKey,
+      sandboxSessionId,
       path: source.path,
       maxBytes: ARTIFACT_MAX_BYTES,
     }),
@@ -457,7 +507,8 @@ async function publishImage(
     console.error("[foh] artifact publish failed to record:", error);
     return deny(RECORD_FAILED);
   }
-  if (!recorded.ok) return deny(recordRefusal(recorded.reason, source.name, "image"));
+  if (!recorded.ok)
+    return deny(recordRefusal(recorded.reason, source.name, "image"));
   const { artifact, version, appended } = recorded;
 
   return {
@@ -483,12 +534,21 @@ async function publishImage(
  * decide what may be SERVED, and the preview route trusts the stored rows completely.
  */
 async function publishBundle(
-  { deployment, source, common, capSha }: PublishHalfInput,
+  {
+    deployment,
+    source,
+    common,
+    capSha,
+    worldKey,
+    sandboxSessionId,
+  }: PublishHalfInput,
   deps: PublishArtifactDeps,
 ): Promise<PublishArtifactResult> {
   const slot = await withArtifactCopySlot(() =>
     deps.copyBundle({
       deploymentId: deployment.id,
+      worldKey,
+      sandboxSessionId,
       path: source.path,
       maxBytes: ARTIFACT_MAX_BYTES,
       maxFiles: ARTIFACT_BUNDLE_MAX_FILES,
@@ -519,7 +579,9 @@ async function publishBundle(
       `harnesst couldn't tell which page to open in ${source.name}. Name the page index.html, or publish a single .html file.`,
     );
   }
-  if (members.find((member) => member.relPath === entryPath)?.bytes.length === 0) {
+  if (
+    members.find((member) => member.relPath === entryPath)?.bytes.length === 0
+  ) {
     return deny(`${entryPath} is empty, so there is no page to show.`);
   }
 
@@ -562,7 +624,8 @@ async function publishBundle(
     console.error("[foh] artifact bundle publish failed to record:", error);
     return deny(RECORD_FAILED);
   }
-  if (!recorded.ok) return deny(recordRefusal(recorded.reason, source.name, "html"));
+  if (!recorded.ok)
+    return deny(recordRefusal(recorded.reason, source.name, "html"));
   const { artifact, version, appended } = recorded;
 
   return {
