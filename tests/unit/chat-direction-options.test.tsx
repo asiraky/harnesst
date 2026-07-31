@@ -30,13 +30,16 @@ describe("direction option cards", () => {
     const html = render({
       requestId: "req_1",
       prompt: "Choose a direction",
+      surface: "web",
       options: [
         {
           id: "assigned",
           label: "Field guide",
           media: {
             artifactName: "sketch-assigned.webp",
-            surface: "web",
+            artifactVersionId: "ver_1",
+            // A stale/hand-written per-option value must not override the request-wide frame.
+            surface: "mobile",
             artifact: {
               id: "art_1",
               name: "sketch-assigned.webp",
@@ -47,13 +50,33 @@ describe("direction option cards", () => {
               url: "/api/foh/proj_1/artifact/art_1/ver_1",
               version: 1,
             },
-          },
+          } as never,
           fields,
+        },
+        {
+          id: "challenger-1",
+          label: "Ledger",
+          media: {
+            artifactName: "sketch-challenger-1.webp",
+            artifactVersionId: "ver_2",
+            surface: "native",
+            artifact: {
+              id: "art_2",
+              name: "sketch-challenger-1.webp",
+              title: null,
+              kind: "image",
+              contentType: "image/webp",
+              byteSize: 100,
+              url: "/api/foh/proj_1/artifact/art_2/ver_2",
+              version: 1,
+            },
+          } as never,
         },
       ],
     });
 
-    expect(html).toContain("aspect-[8/5]");
+    expect(html.match(/aspect-\[8\/5\]/g)).toHaveLength(2);
+    expect(html).not.toContain("aspect-[9/16]");
     expect(html).toContain("object-contain");
     expect(html).toContain("Open sketch");
     expect(html).toContain("The product as a field guide.");
@@ -66,13 +89,14 @@ describe("direction option cards", () => {
       const html = render({
         requestId: `req_${surface}`,
         prompt: "Choose",
+        surface,
         options: [
           {
             id: "assigned",
             label: "Pocket edition",
             media: {
               artifactId: "art_1",
-              surface,
+              artifactVersionId: "ver_1",
               artifact: {
                 id: "art_1",
                 name: "pocket.webp",
@@ -111,13 +135,14 @@ describe("direction option cards", () => {
     const html = render({
       requestId: "req_1",
       prompt: "Choose",
+      surface: "web",
       options: [
         {
           id: "assigned",
           label: "Unsafe",
           media: {
             artifactId: "art_1",
-            surface: "web",
+            artifactVersionId: "ver_1",
             artifact: {
               id: "art_1",
               name: "unsafe.png",

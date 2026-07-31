@@ -2,6 +2,7 @@ import type {
   ChatInputOption,
   ChatInputOptionField,
   ChatInputOptionMedia,
+  ChatInputSurface,
   ChatInputOptionSwatch,
 } from "~/chat/types";
 
@@ -10,6 +11,14 @@ export const MAX_CHAT_OPTION_TEXT_BYTES = 4_000;
 const MAX_FIELDS = 8;
 const MAX_FIELD_TEXT_BYTES = 2_000;
 const MAX_SWATCHES = 12;
+
+export function normalizeChatInputSurface(
+  value: unknown,
+): ChatInputSurface | null {
+  return value === "web" || value === "mobile" || value === "native"
+    ? value
+    : null;
+}
 
 export function boundedChatInputString(
   value: unknown,
@@ -29,14 +38,12 @@ function normalizeMedia(value: unknown): ChatInputOptionMedia | null {
   const media = value as Record<string, unknown>;
   const artifactId = boundedChatInputString(media.artifactId, 200);
   const artifactName = boundedChatInputString(media.artifactName, 200);
-  const surface =
-    media.surface === "web" ||
-    media.surface === "mobile" ||
-    media.surface === "native"
-      ? media.surface
-      : null;
-  if ((!artifactId && !artifactName) || !surface) return null;
-  return { artifactId, artifactName, surface };
+  const artifactVersionId = boundedChatInputString(
+    media.artifactVersionId,
+    200,
+  );
+  if (!artifactId && !artifactName) return null;
+  return { artifactId, artifactName, artifactVersionId };
 }
 
 function normalizeSwatches(value: unknown): ChatInputOptionSwatch[] {

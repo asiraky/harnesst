@@ -142,7 +142,7 @@ describe("mergeArtifactEntries with versions", () => {
                 label: "Editorial",
                 media: {
                   artifactName: "sketch-assigned.webp",
-                  surface: "web",
+                  artifactVersionId: "ver_1",
                 },
               },
             ],
@@ -171,8 +171,44 @@ describe("mergeArtifactEntries with versions", () => {
       id: "art_1",
       name: "sketch-assigned.webp",
       version: 2,
-      url: "/api/foh/proj_1/artifact/art_1/ver_2",
+      url: "/api/foh/proj_1/artifact/art_1/ver_1",
     });
+  });
+
+  it("keeps two re-rolls pinned to the artifact versions each round offered", () => {
+    const round = (id: string, artifactVersionId: string): ChatEntry => ({
+      ...entry(id),
+      inputRequests: [
+        {
+          requestId: `req_${id}`,
+          prompt: "Choose",
+          surface: "web",
+          options: [
+            {
+              id: "assigned",
+              label: "Assigned",
+              media: {
+                artifactId: "art_1",
+                artifactVersionId,
+              },
+            },
+          ],
+        },
+      ],
+    });
+
+    const merged = mergeArtifactEntries(
+      [round("1:t1:assistant", "ver_1"), round("1:t2:assistant", "ver_2")],
+      [row({ versionNumber: 2, latestVersionId: "ver_2" })],
+      ANCHORS,
+    );
+
+    expect(
+      merged[0].inputRequests?.[0].options?.[0].media?.artifact?.url,
+    ).toBe("/api/foh/proj_1/artifact/art_1/ver_1");
+    expect(
+      merged[1].inputRequests?.[0].options?.[0].media?.artifact?.url,
+    ).toBe("/api/foh/proj_1/artifact/art_1/ver_2");
   });
 
   it("keeps an unresolved or non-image reference out of the option", () => {
@@ -186,7 +222,7 @@ describe("mergeArtifactEntries with versions", () => {
             {
               id: "assigned",
               label: "Editorial",
-              media: { artifactId: "page_1", surface: "web" },
+              media: { artifactId: "page_1", artifactVersionId: "ver_1" },
             },
           ],
         },

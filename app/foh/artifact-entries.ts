@@ -155,7 +155,16 @@ export function mergeArtifactEntries(
           if (!row || row.kind !== "image") {
             return { ...option, media: { ...media, artifact: null } };
           }
-          const artifact = artifactEntry(row).artifact!;
+          const artifact = {
+            ...artifactEntry(row).artifact!,
+            url: artifactUrl(
+              row.projectId,
+              row.id,
+              typeof media.artifactVersionId === "string"
+                ? media.artifactVersionId
+                : row.latestVersionId,
+            ),
+          };
           referenced.add(row.id);
           return { ...option, media: { ...media, artifact } };
         }),

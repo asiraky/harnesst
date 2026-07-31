@@ -84,7 +84,9 @@ Emit **exactly one** structured question for the whole round. A human's answer r
 pending ask on the session, so a second question in the same turn loses one of them. Shape it as:
 
 - a `select` display with free-form answers allowed — free text is the steer channel;
-- a self-contained prompt naming the surface, the mode, and whether the roll ran degraded;
+- a self-contained prompt naming the surface, the mode, and whether the roll ran degraded, plus a
+  request-level `surface` set to `web`, `mobile`, or `native` so every card in the hand shares one
+  frame;
 - one option per card, in reading order: assigned first, then the hand, then `canon`, then
   `reroll`.
 
@@ -127,15 +129,18 @@ When section 5 published a sketch for the card, also attach:
   "media": {
     "artifactId": "<artifactId returned by publish_artifact>",
     "artifactName": "sketch-assigned.webp",
-    "surface": "web"
+    "artifactVersionId": "<artifactVersionId returned by publish_artifact>"
   }
 }
 ```
 
-Set `surface` to `web` for a desktop web surface, `mobile` for a mobile-first web surface, and
-`native` for a native app. This explicit field controls the card frame; never infer it from the
-image dimensions. Omit `media` entirely when that card has no published sketch, including the
-no-key path. The structured fields still make a text-only round a readable stack of cards.
+Set the request-level `surface` to `web` for a desktop web surface, `mobile` for a mobile-first web
+surface, and `native` for a native app. It controls every card frame in the hand; never repeat it
+per option or infer it from image dimensions. `artifactVersionId` is mandatory whenever `media` is
+present: stable artifact names are republished on re-roll, so the version is what keeps an earlier
+round paired with the sketch it actually offered. Omit `media` entirely when that card has no
+published sketch, including the no-key path. The structured fields still make a text-only round a
+readable stack of cards.
 
 Use stable ids: `assigned`, `challenger-1`…`challenger-3`, `canon`, `reroll`.
 
@@ -241,9 +246,9 @@ When the `IMAGE_GEN_AVAILABLE` line from section 1 was present:
    re-roll versions the existing card instead of spamming new ones: `sketch-assigned.webp`,
    `sketch-challenger-1.webp` … `sketch-challenger-3.webp`, `sketch-canon.webp`. Keep the extension
    identical between rounds; a name change splits one card into two.
-4. Keep each successful publish response: section 3.3 attaches its returned `artifactId` and stable
-   name to the matching option's `media`. A failed or skipped sketch gets no `media` object, so the
-   UI leaves no empty frame.
+4. Keep each successful publish response: section 3.3 attaches its returned `artifactId`,
+   `artifactVersionId`, and stable name to the matching option's `media`. A failed or skipped
+   sketch gets no `media` object, so the UI leaves no empty frame.
 5. Say once, before the first render, that images are billed to the configured OpenAI key.
 
 Two degraded paths, both disclosed rather than blocking:

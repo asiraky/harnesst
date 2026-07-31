@@ -28,6 +28,7 @@ import {
   MAX_CHAT_INPUT_OPTIONS,
   MAX_CHAT_OPTION_TEXT_BYTES,
   normalizeChatInputOptionPresentation,
+  normalizeChatInputSurface,
 } from "~/chat/input-option";
 import type { ChatInputOption, ChatInputRequest } from "~/chat/types";
 import { effectiveModelId } from "~/models/model-directive";
@@ -304,6 +305,9 @@ export function inputRequestsOf(
           : input && typeof input.allowFreeform === "boolean"
             ? input.allowFreeform
             : null,
+      surface:
+        normalizeChatInputSurface(r.surface) ??
+        normalizeChatInputSurface(input?.surface),
       options: options.length > 0 ? options : undefined,
     });
   }

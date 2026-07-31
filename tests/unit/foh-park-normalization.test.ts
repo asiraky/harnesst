@@ -9,6 +9,7 @@ describe("normalizeParkRequests rich option presentation", () => {
       {
         requestId: "req_1",
         prompt: "Choose a direction",
+        surface: "web",
         options: [
           {
             id: "assigned",
@@ -16,7 +17,7 @@ describe("normalizeParkRequests rich option presentation", () => {
             media: {
               artifactId: "art_1",
               artifactName: "sketch-assigned.webp",
-              surface: "web",
+              artifactVersionId: "ver_1",
               artifact: { url: "https://tracker.invalid/pixel.png" },
             },
             fields: [
@@ -51,7 +52,7 @@ describe("normalizeParkRequests rich option presentation", () => {
       media: {
         artifactId: "art_1",
         artifactName: "sketch-assigned.webp",
-        surface: "web",
+        artifactVersionId: "ver_1",
       },
       fields: [
         {
@@ -70,6 +71,7 @@ describe("normalizeParkRequests rich option presentation", () => {
         },
       ],
     });
+    expect(requests?.[0].surface).toBe("web");
   });
 
   it("drops unknown or unsafe presentation values without rejecting the option", () => {
@@ -77,13 +79,13 @@ describe("normalizeParkRequests rich option presentation", () => {
       {
         requestId: "req_1",
         prompt: "Choose a direction",
+        surface: "television",
         options: [
           {
             id: "assigned",
             label: "Editorial",
             media: {
-              artifactId: "art_1",
-              surface: "television",
+              artifactVersionId: "ver_1",
             },
             fields: [
               { label: "Unknown", value: { type: "markdown", text: "**no**" } },
@@ -116,6 +118,7 @@ describe("normalizeParkRequests rich option presentation", () => {
         },
       ],
     });
+    expect(requests?.[0].surface).toBeNull();
   });
 
   it("preserves the same rich fields when projecting eve's direct event stream", () => {
@@ -124,13 +127,14 @@ describe("normalizeParkRequests rich option presentation", () => {
         {
           requestId: "req_1",
           prompt: "Choose",
+          surface: "mobile",
           options: [
             {
               id: "assigned",
               label: "Editorial",
               media: {
                 artifactName: "sketch-assigned.webp",
-                surface: "mobile",
+                artifactVersionId: "ver_1",
               },
               fields: [
                 {
@@ -148,7 +152,7 @@ describe("normalizeParkRequests rich option presentation", () => {
       id: "assigned",
       media: {
         artifactName: "sketch-assigned.webp",
-        surface: "mobile",
+        artifactVersionId: "ver_1",
       },
       fields: [
         {
@@ -157,5 +161,6 @@ describe("normalizeParkRequests rich option presentation", () => {
         },
       ],
     });
+    expect(requests[0].surface).toBe("mobile");
   });
 });

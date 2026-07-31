@@ -557,6 +557,7 @@ function InputRequestView({
                 <DirectionOptionCard
                   key={option.id}
                   option={option}
+                  surface={request.surface}
                   disabled={!answerable}
                   onSelect={() =>
                     onAnswer?.(option.label, {
@@ -674,10 +675,12 @@ function OptionRow({
  */
 function DirectionOptionCard({
   option,
+  surface,
   disabled,
   onSelect,
 }: {
   option: ChatInputOption;
+  surface?: ChatInputRequest["surface"];
   disabled: boolean;
   onSelect: () => void;
 }) {
@@ -687,8 +690,7 @@ function DirectionOptionCard({
       <OptionRow option={option} disabled={disabled} onSelect={onSelect} />
     );
   }
-  const portrait =
-    option.media?.surface === "mobile" || option.media?.surface === "native";
+  const portrait = surface === "mobile" || surface === "native";
 
   return (
     <article className="overflow-hidden rounded-xl border border-border bg-card shadow-sm">

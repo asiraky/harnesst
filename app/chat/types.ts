@@ -33,6 +33,8 @@ export interface ChatInputRequest {
   prompt: string;
   display?: "confirmation" | "select" | "text" | null;
   allowFreeform?: boolean | null;
+  /** One frame for every visual option in this request; never chosen independently per card. */
+  surface?: ChatInputSurface | null;
   options?: ChatInputOption[];
 }
 
@@ -42,9 +44,9 @@ export interface ChatInputOption {
   description?: string | null;
   style?: "danger" | "default" | "primary" | null;
   /**
-   * A published image attached to this option. The agent sends only an artifact id/name plus the
-   * surface being designed; transcript projection resolves that reference to a same-session
-   * artifact before the UI is allowed to load it.
+   * A published image attached to this option. The agent sends only an artifact + immutable
+   * version reference; transcript projection resolves it to a same-session artifact before the UI
+   * is allowed to load it.
    */
   media?: ChatInputOptionMedia | null;
   /** Structured facts for visually comparing rich options without compressing them into prose. */
@@ -56,7 +58,8 @@ export type ChatInputSurface = "web" | "mobile" | "native";
 export interface ChatInputOptionMedia {
   artifactId?: string | null;
   artifactName?: string | null;
-  surface: ChatInputSurface;
+  /** The immutable artifact version returned by the publish that made this option's sketch. */
+  artifactVersionId?: string | null;
   /** Filled by harnesst from the published artifacts on this conversation, never from the wire. */
   artifact?: ChatArtifact | null;
 }

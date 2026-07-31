@@ -4,9 +4,9 @@
       "id": "designer",
       "type": "agent",
       "name": "Designer",
-      "version": "1.2.0",
+      "version": "1.2.1",
       "description": "Interviews you to capture product truth, then designs, quality-checks, and publishes a complete static site into the Front of House preview.",
-      "hash": "e3adffd4a3c1cfe27125e31bd2c26f1e8ba9bbf6"
+      "hash": "f5c1575247ab335a4f7016831230d31ac785acd1"
     },
     {
       "id": "github-bundle",
@@ -164,9 +164,9 @@
       "id": "publish-artifact",
       "type": "tool",
       "name": "Publish Artifact",
-      "version": "0.3.1",
+      "version": "0.3.2",
       "description": "Publish something the agent produced into the Front of House conversation, where it renders as a card the user can see: an image (screenshot, chart, diagram) or a static HTML page (a single file, or a directory of index.html plus its css/js/image siblings). harnesst copies the files out of the agent's home directory and serves them back behind the user's own sign-in — pages inside a sandboxed preview panel. Publishing the same name again updates that card in place as a new version.",
-      "hash": "52ecd2676a5fce2832cb16ad5de33c6317430a09"
+      "hash": "2e98f53a841f99c6813cf03499cf3bd24948cb5b"
     }
   ]
 }

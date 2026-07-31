@@ -38,9 +38,11 @@ cannot work in a headless sandbox — the script self-detects and exits 2, which
 the fallback rung, never an error. The template sets `IMPECCABLE_QUESTION_DISABLED=1` so it never
 tries, and pins the fallback to eve's structured question tool. Each option sends typed fields for
 thesis, palette swatches, materials, first viewport, risk, and a challenger case where relevant.
-When a sketch was published, the option also references that artifact and declares whether the
-surface is web, mobile, or native so Front of House can frame the whole image correctly. Without a
-sketch, the same fields render as a structured text card with no empty media region.
+When sketches were published, the request declares one web, mobile, or native surface for the
+whole hand, and each option references the exact artifact version that belongs to that round.
+Front of House can therefore frame every image identically without a re-roll replacing an earlier
+card's picture. Without a sketch, the same fields render as a structured text card with no empty
+media region.
 
 Re-roll must eliminate every direction already shown, but the answer arrives a turn after the roll,
 so the round state persists in `/workspace/home/.impeccable/directions.json` (shown directions, pool,

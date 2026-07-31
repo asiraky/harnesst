@@ -29,6 +29,7 @@ import {
   MAX_CHAT_INPUT_OPTIONS,
   MAX_CHAT_OPTION_TEXT_BYTES,
   normalizeChatInputOptionPresentation,
+  normalizeChatInputSurface,
 } from "~/chat/input-option";
 import type { ChatInputOption, ChatInputRequest } from "~/chat/types";
 import type { DataStore } from "~/data/ports";
@@ -144,6 +145,7 @@ export function normalizeParkRequests(value: unknown): ChatInputRequest[] | null
       display,
       allowFreeform:
         typeof entry.allowFreeform === "boolean" ? entry.allowFreeform : null,
+      surface: normalizeChatInputSurface(entry.surface),
       options,
     });
   }
