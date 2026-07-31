@@ -835,6 +835,7 @@ export default function FohSession({ loaderData }: Route.ComponentProps) {
                 : `Message ${agentName}…`
             }
             busy={busy}
+            focusKey={sessionId}
             onSend={send}
             controls={composerControls}
           />

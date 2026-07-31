@@ -108,7 +108,8 @@ export const loader = (args: LoaderFunctionArgs) =>
       // Degrade to the disconnected (render-nothing) payload on any failure — a shared-header
       // control must never take the page down with it.
       try {
-        return await publishState(connected);
+        const resultTaskId = new URL(args.request.url).searchParams.get("result");
+        return await publishState(connected, resultTaskId);
       } catch {
         return DISCONNECTED;
       }
@@ -117,12 +118,18 @@ export const loader = (args: LoaderFunctionArgs) =>
   );
 
 /** Build the GET payload the control polls: changes, live status, env question, task state. */
-async function publishState(connected: ConnectedProject): Promise<PublishStatePayload> {
-  const [drafts, tasks, envNames, agents] = await Promise.all([
+async function publishState(
+  connected: ConnectedProject,
+  resultTaskId: string | null,
+): Promise<PublishStatePayload> {
+  const [drafts, tasks, envNames, agents, requestedTask] = await Promise.all([
     listDrafts(connected.id),
     listWorkspaceTasks(connected.id),
     listTeamEnvNames(connected.id),
     getRuntime().data.agents.listByProject(connected.id),
+    resultTaskId
+      ? getRuntime().data.workspaceTasks.findById(resultTaskId)
+      : Promise.resolve(null),
   ]);
 
   // The panel groups by EVERY agent that can own a change, not just the member roster: the
@@ -207,14 +214,23 @@ async function publishState(connected: ConnectedProject): Promise<PublishStatePa
 
   const running = tasks.find((t) => t.subjectKey === "publish" && t.status === "running");
   // Newest failed/succeeded, undismissed publish (listWorkspaceTasks filters dismissed rows).
-  // The panel's success state only fires for a publish it watched run, so the succeeded row
-  // lingering in the task window never re-celebrates on a later open.
+  // Ordinarily the panel's success state only fires for a publish it watched run; an explicit
+  // result link below is the exception and selects the named completed task.
   const failed = [...tasks]
     .reverse()
     .find((t) => t.subjectKey === "publish" && t.status === "failed");
-  const succeeded = [...tasks]
-    .reverse()
-    .find((t) => t.subjectKey === "publish" && t.status === "succeeded");
+  // A result link names the exact completed publish it represents. It may have since been
+  // dismissed from the task strip, so load it directly, but never cross the current project
+  // boundary or accept a non-publish/non-success task from an untrusted query string.
+  const requestedSucceeded =
+    requestedTask?.projectId === connected.id &&
+    requestedTask.subjectKey === "publish" &&
+    requestedTask.status === "succeeded"
+      ? requestedTask
+      : null;
+  const succeeded =
+    requestedSucceeded ??
+    [...tasks].reverse().find((t) => t.subjectKey === "publish" && t.status === "succeeded");
 
   // Present each task's steps against the LIVE deployment rows (§3.2 honesty), through the same
   // resolver the compact header indicator reads — a completed task whose deploys are still

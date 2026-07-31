@@ -8,7 +8,7 @@ import { Archive, Loader2 } from "lucide-react";
 import { useState } from "react";
 import { NavLink, useNavigate } from "react-router";
 
-import { relativeTimeLabel } from "~/components/foh/relative-time";
+import { FohRelativeTime } from "~/components/foh/relative-time";
 import { cn } from "~/lib/utils";
 
 export interface FohSessionRow {
@@ -126,7 +126,7 @@ export function SessionList({
               </span>
               <span className="block text-xs text-muted-foreground">
                 {STATUS_LABEL[session.fohStatus]} ·{" "}
-                {relativeTimeLabel(session.updatedAt)}
+                <FohRelativeTime value={session.updatedAt} />
                 {session.openedByAgent && " · opened by the agent"}
                 {session.unread && (
                   <span className="ml-1 inline-block size-1.5 rounded-full bg-blue-500 align-middle" />

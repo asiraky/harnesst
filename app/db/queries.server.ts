@@ -213,7 +213,7 @@ async function rewriteMemberDraftPaths(
  * roster: a NEW member automatically inherits EVERY team env name — that's the mechanism that
  * keeps a member from existing in one environment but not another. Members that already have all
  * the team names are left untouched (create swallows the drift dup), so the self-heal that runs
- * on every Overview load never disturbs user CRUD. Removed members get their instance infra
+ * on every project landing load never disturbs user CRUD. Removed members get their instance infra
  * torn down first (containers + world DBs — the row cascade can't do that), then cascade away;
  * the root member's human-given name survives detection.
  *
