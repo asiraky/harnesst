@@ -78,8 +78,19 @@ import {
   createIngestToken,
   listIngestTokens,
 } from "~/observability/store.server";
-import { listDrafts, stageDeletions, stageDraft } from "~/drafts/drafts.server";
+import {
+  listDrafts,
+  resolveFileView,
+  stageDeletions,
+  stageDraft,
+} from "~/drafts/drafts.server";
 import { EMPTY_TEAM_MARKER } from "~/eve/parse";
+import {
+  orgResolverAgentName,
+  readModel,
+  readReasoningEffort,
+  usesOrgModelResolver,
+} from "~/eve/agentModule";
 import { getAgentSource } from "~/github/cached.server";
 import { fetchAgentSource, readAgentFile } from "~/github/repo.server";
 import { contextPath } from "~/lib/paths";
@@ -102,7 +113,10 @@ import {
   type ResolvedTemplate,
 } from "~/marketplace/compose.server";
 import type { TemplateType } from "~/marketplace/manifest";
-import { resolveAgentModel } from "~/models/agent-model-config.server";
+import {
+  removeAgentModelOverride,
+  resolveAgentModel,
+} from "~/models/agent-model-config.server";
 import { stageModelChange } from "~/models/stage-model.server";
 import { ownsWorkspaceModelReference } from "~/models/union.server";
 import { getWorkspaceAssistantSelection } from "~/org/workspace.server";
@@ -171,6 +185,7 @@ interface SettingsView {
   model: string | null;
   effort: ReasoningEffort | null;
   modelInherited: boolean;
+  modelOverridden: boolean;
   hasAgentModule: boolean;
   modelStaged: boolean;
   /** Member: secrets scope state. */
@@ -416,6 +431,7 @@ export const loader = (args: LoaderFunctionArgs) =>
         model: null,
         effort: null,
         modelInherited: false,
+        modelOverridden: false,
         hasAgentModule: false,
         modelStaged: false,
         envs: [],
@@ -446,21 +462,36 @@ export const loader = (args: LoaderFunctionArgs) =>
 
       if (showMember && active) {
         const agentTsPath = `${active.root}/agent.ts`;
+        const agentTsDraft = drafts.find((d) => d.path === agentTsPath);
+        const agentTs =
+          agentTsDraft !== undefined
+            ? agentTsDraft.content
+            : (source.files[agentTsPath] ?? null);
+        const resolverName = agentTs ? orgResolverAgentName(agentTs) : null;
         const [envs, resolved] = await Promise.all([
           listAgentEnvironments(active.id),
-          resolveAgentModel(project.orgId, active.name).catch(() => null),
+          resolverName
+            ? resolveAgentModel(project.orgId, resolverName).catch(() => null)
+            : Promise.resolve(null),
         ]);
-        // Model + effort are workspace configuration, resolved from harnesst's control plane by
-        // agent name (the `harnesstAgentModel('<name>')` identity the running agent resolves itself
-        // by) — never parsed out of agent.ts. An explicit per-agent override wins; otherwise the
-        // shown value is the workspace default ("inherited default").
-        base.model = resolved?.model ?? null;
-        base.effort = resolved?.effort ?? null;
-        base.modelInherited = resolved?.source === "workspace-default";
-        const agentTsStaged = drafts.some(
-          (d) => d.path === agentTsPath && d.content !== null,
-        );
-        base.hasAgentModule = source.paths.includes(agentTsPath) || agentTsStaged;
+        if (agentTs && usesOrgModelResolver(agentTs)) {
+          // Resolver-backed agents are keyed by the identity embedded in agent.ts. It can differ
+          // from a renamed UI roster entry, and using the roster name here makes a successful save
+          // appear to snap back to the workspace default after revalidation.
+          base.model = resolved?.model ?? null;
+          base.effort = resolved?.effort ?? null;
+          base.modelInherited = resolved?.source === "workspace-default";
+          base.modelOverridden = resolved?.source === "override";
+        } else if (agentTs) {
+          // Legacy agents still carry their model in repo content. A staged draft wins over the
+          // branch copy so Settings reflects a successful save immediately.
+          base.model = readModel(agentTs);
+          base.effort = readReasoningEffort(agentTs);
+        }
+        const agentTsStaged =
+          agentTsDraft !== undefined && agentTsDraft.content !== null;
+        base.hasAgentModule =
+          source.paths.includes(agentTsPath) || agentTsStaged;
         base.modelStaged = agentTsStaged;
         base.envs = envs;
         base.scope = resolveScope(
@@ -608,6 +639,27 @@ export async function action(args: ActionFunctionArgs) {
       });
       if (!result.ok) return { error: result.error };
       return { ok: true as const, mode: result.mode };
+    }
+
+    if (intent === "clear-model-override") {
+      const { active } = await resolveAgentContext(
+        project.id,
+        String(form.get("agent") ?? "") || null,
+      );
+      requireActiveAgent(active, project.id);
+      const view = await resolveFileView(
+        project,
+        `${active.root}/agent.ts`,
+        getRuntime().data,
+      );
+      const resolverName = view.content
+        ? orgResolverAgentName(view.content)
+        : null;
+      if (!resolverName) {
+        return { error: "This agent does not use workspace model overrides." };
+      }
+      await removeAgentModelOverride(project.orgId, resolverName);
+      return { ok: true as const, mode: "applied" as const };
     }
 
     // ── Marketplace installs: update / uninstall stage reviewable repo changes ──
@@ -1265,6 +1317,7 @@ function ModelSection({
     model,
     effort,
     modelInherited,
+    modelOverridden,
     hasAgentModule,
     modelStaged,
     activeAgent,
@@ -1320,6 +1373,26 @@ function ModelSection({
           )
         }
       />
+      {modelOverridden && (
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          className="mt-2"
+          disabled={fetcher.state !== "idle"}
+          onClick={() =>
+            fetcher.submit(
+              {
+                intent: "clear-model-override",
+                agent: activeAgent,
+              },
+              { method: "post" },
+            )
+          }
+        >
+          Use workspace default
+        </Button>
+      )}
       {fetcher.data?.error && (
         <p className="mt-2 text-sm text-destructive">{fetcher.data.error}</p>
       )}

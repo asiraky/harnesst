@@ -1,8 +1,8 @@
 /** Workspace-level default-model settings. Provider credentials live on provider connections. */
-import { eq } from "drizzle-orm";
+import { and, eq, isNull } from "drizzle-orm";
 
 import { db } from "~/db/client.server";
-import { workspaceSettings } from "~/db/schema";
+import { agentModelOverrides, workspaceSettings } from "~/db/schema";
 import type { ReasoningEffort } from "~/models/reasoning";
 
 export interface WorkspaceAssistantSelection {
@@ -16,21 +16,39 @@ export async function setWorkspaceAssistantSelection(
   selection: WorkspaceAssistantSelection,
 ): Promise<void> {
   const effort = selection.model ? selection.effort : null;
-  await db
-    .insert(workspaceSettings)
-    .values({
-      orgId,
-      assistantModel: selection.model,
-      assistantEffort: effort,
-    })
-    .onConflictDoUpdate({
-      target: workspaceSettings.orgId,
-      set: {
+  await db.transaction(async (tx) => {
+    await tx
+      .insert(workspaceSettings)
+      .values({
+        orgId,
         assistantModel: selection.model,
         assistantEffort: effort,
-        updatedAt: new Date(),
-      },
-    });
+      })
+      .onConflictDoUpdate({
+        target: workspaceSettings.orgId,
+        set: {
+          assistantModel: selection.model,
+          assistantEffort: effort,
+          updatedAt: new Date(),
+        },
+      });
+
+    if (selection.model) {
+      // A pin identical to the new default is redundant and would prevent the agent from
+      // inheriting the next default change. Keep the override table to genuine exceptions.
+      await tx
+        .delete(agentModelOverrides)
+        .where(
+          and(
+            eq(agentModelOverrides.orgId, orgId),
+            eq(agentModelOverrides.model, selection.model),
+            effort === null
+              ? isNull(agentModelOverrides.effort)
+              : eq(agentModelOverrides.effort, effort),
+          ),
+        );
+    }
+  });
 }
 
 /** Set (or clear, with null) the connection-qualified workspace default model id. */

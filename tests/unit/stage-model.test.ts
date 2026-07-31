@@ -57,6 +57,7 @@ export default defineAgent({
 function fakeDeps(files: Record<string, string>): StageModelDeps {
   return {
     readFile: async (_installationId, _repo, path) => files[path] ?? null,
+    getWorkspaceSelection: async () => ({ model: null, effort: null }),
     lookupModel: async (_orgId, model) =>
       model.startsWith("openrouter/") || model.startsWith("openai/")
         ? {
@@ -185,5 +186,36 @@ describe("stageModelChange", () => {
       effort: null,
     });
     expect(await listDrafts(PROJECT.id, store)).toEqual([]);
+  });
+
+  it("removes the override when the agent chooses the workspace default", async () => {
+    const deps = fakeDeps({
+      "agent/agent.ts": RESOLVER_AGENT_TS,
+      "package.json": PKG,
+    });
+    deps.getWorkspaceSelection = async () => ({
+      model: "openai/abcdefghijkl/gpt-5.1",
+      effort: null,
+    });
+    const setOverride = vi.fn().mockResolvedValue(undefined);
+    const removeOverride = vi.fn().mockResolvedValue(undefined);
+    deps.setOverride = setOverride;
+    deps.removeOverride = removeOverride;
+
+    const result = await stageModelChange(
+      {
+        project: PROJECT,
+        root: "agent",
+        model: "openai/abcdefghijkl/gpt-5.1",
+        effort: null,
+        createdBy: "user_1",
+      },
+      store,
+      deps,
+    );
+
+    expect(result).toEqual({ ok: true, mode: "applied" });
+    expect(removeOverride).toHaveBeenCalledWith("org_1", "bookkeeping");
+    expect(setOverride).not.toHaveBeenCalled();
   });
 });

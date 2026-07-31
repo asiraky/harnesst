@@ -190,6 +190,13 @@
       "when": 1785419211676,
       "tag": "0026_artifact_versions",
       "breakpoints": true
+    },
+    {
+      "idx": 27,
+      "version": "7",
+      "when": 1785459489832,
+      "tag": "0027_prune_redundant_agent_model_overrides",
+      "breakpoints": true
     }
   ]
 }
