@@ -5,6 +5,7 @@ import { db } from "~/db/client.server";
 import { userWorkspaceMemory } from "~/db/schema";
 import { newId } from "~/lib/id";
 import { auth } from "~/lib/auth.server";
+import { returnToFromRequest } from "./return-to";
 import type { SessionAuth } from "./session.server";
 
 export type WorkspaceInfo = {
@@ -166,7 +167,7 @@ export async function ensureWorkspace(
     await setActiveWorkspace(session, null);
   }
 
-  const replayTo = `${new URL(request.url).pathname}${new URL(request.url).search}`;
+  const replayTo = returnToFromRequest(request);
   const workspaces = await listUserWorkspaces(session);
   const decision = chooseWorkspaceEntry({
     membershipOrgIds: workspaces.map((workspace) => workspace.id),

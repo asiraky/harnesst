@@ -25,8 +25,12 @@ import {
 } from "~/eve/agentModule";
 import type { ReasoningEffort } from "~/models/reasoning";
 import { packageJsonPathForRoot } from "~/marketplace/install.server";
-import { setAgentModelOverride } from "~/models/agent-model-config.server";
+import {
+  removeAgentModelOverride,
+  setAgentModelOverride,
+} from "~/models/agent-model-config.server";
 import { findWorkspaceModel } from "~/models/union.server";
+import { getWorkspaceAssistantSelection } from "~/org/workspace.server";
 import { getRuntime } from "~/seams/index.server";
 
 export interface StageModelInput {
@@ -56,8 +60,10 @@ export type StageModelResult =
 /** GitHub reads + the model-catalog lookup + the override writer, injected for zero-I/O tests. */
 export interface StageModelDeps extends FileViewDeps {
   lookupModel: typeof findWorkspaceModel;
+  getWorkspaceSelection?: typeof getWorkspaceAssistantSelection;
   /** Injected in tests; defaults to the real org override map. */
   setOverride?: typeof setAgentModelOverride;
+  removeOverride?: typeof removeAgentModelOverride;
 }
 
 /**
@@ -106,11 +112,31 @@ export async function stageModelChange(
           "harnesstAgentModel(...) call has no readable agent name — fix agent.ts first.",
       };
     }
-    await (deps?.setOverride ?? setAgentModelOverride)(
-      input.project.orgId,
-      agentName,
-      { model: input.model, effort: input.effort ?? null },
-    );
+    const selection = {
+      model: input.model,
+      effort: input.effort ?? null,
+    };
+    const workspaceDefault = await (
+      deps?.getWorkspaceSelection ?? getWorkspaceAssistantSelection
+    )(input.project.orgId);
+    if (
+      workspaceDefault.model === selection.model &&
+      workspaceDefault.effort === selection.effort
+    ) {
+      // Choosing the workspace default is inheritance, not an explicit pin. Keeping a
+      // redundant row here would make the agent unexpectedly stay on the old model when the
+      // workspace default changes later.
+      await (deps?.removeOverride ?? removeAgentModelOverride)(
+        input.project.orgId,
+        agentName,
+      );
+    } else {
+      await (deps?.setOverride ?? setAgentModelOverride)(
+        input.project.orgId,
+        agentName,
+        selection,
+      );
+    }
     return { ok: true, mode: "applied" };
   }
 

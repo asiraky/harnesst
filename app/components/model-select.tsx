@@ -142,7 +142,7 @@ export function ModelSelection({
     <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:items-end">
       {modelSelect}
       {effortSelect && (
-        <label className="grid min-w-40 gap-1 text-xs text-muted-foreground">
+        <label className="grid w-full gap-1 text-xs text-muted-foreground sm:w-72">
           <span>Reasoning effort</span>
           {effortSelect}
         </label>
