@@ -96,16 +96,63 @@ Emit **exactly one** structured question for the whole round. A human's answer r
 pending ask on the session, so a second question in the same turn loses one of them. Shape it as:
 
 - a `select` display with free-form answers allowed — free text is the steer channel;
-- a self-contained prompt naming the surface, the mode, whether the roll ran degraded, and the
-  sketch artifact names when section 5 published any;
+- a self-contained prompt naming the surface, the mode, and whether the roll ran degraded, plus a
+  request-level `surface` set to `web`, `mobile`, or `native` so every card in the hand shares one
+  frame;
 - one option per card, in reading order: assigned first, then the hand, then `canon`, then
   `reroll`.
 
-Each option carries an id, a label, and a description. The card fields have no separate slots in
-this UI, so compress them into the description: thesis first, then palette as text chips,
-materials, first viewport, and the honest risk. Every option having a description is what makes
-Front of House render the round as stacked rows instead of chips, which is the layout this decision
-needs.
+Each direction option carries an id, a label, and structured `fields` in this exact shape:
+
+```json
+[
+  {
+    "label": "Thesis",
+    "value": { "type": "text", "text": "<one short sentence>" }
+  },
+  {
+    "label": "Palette",
+    "value": {
+      "type": "swatches",
+      "swatches": [
+        { "color": "#1A1A1A", "label": "charcoal" },
+        { "color": "#F5F1E8", "label": "chalk" }
+      ]
+    }
+  },
+  { "label": "Materials", "value": { "type": "text", "text": "<materials>" } },
+  {
+    "label": "First viewport",
+    "value": { "type": "text", "text": "<first viewport>" }
+  },
+  { "label": "Risk", "value": { "type": "text", "text": "<honest risk>" } }
+]
+```
+
+Use hex colors for every swatch. Add the challenger's case as one more text field named
+`Challenger case`; omit it for the assignment and canon. Do not compress these facts into
+`description`. A short `description` is reserved for a card-specific degraded note, such as its
+sketch failing to render.
+
+When section 5 published a sketch for the card, also attach:
+
+```json
+{
+  "media": {
+    "artifactId": "<artifactId returned by publish_artifact>",
+    "artifactName": "sketch-assigned.webp",
+    "artifactVersionId": "<artifactVersionId returned by publish_artifact>"
+  }
+}
+```
+
+Set the request-level `surface` to `web` for a desktop web surface, `mobile` for a mobile-first web
+surface, and `native` for a native app. It controls every card frame in the hand; never repeat it
+per option or infer it from image dimensions. `artifactVersionId` is mandatory whenever `media` is
+present: stable artifact names are republished on re-roll, so the version is what keeps an earlier
+round paired with the sketch it actually offered. Omit `media` entirely when that card has no
+published sketch, including the no-key path. The structured fields still make a text-only round a
+readable stack of cards.
 
 Use stable ids: `assigned`, `challenger-1`…`challenger-3`, `canon`, `reroll`.
 
@@ -213,7 +260,9 @@ When the `IMAGE_GEN_AVAILABLE` line from section 1 was present:
    re-roll versions the existing card instead of spamming new ones: `sketch-assigned.webp`,
    `sketch-challenger-1.webp` … `sketch-challenger-3.webp`, `sketch-canon.webp`. Keep the extension
    identical between rounds; a name change splits one card into two.
-4. Name the sketches in the question's prompt so the user knows which card is which.
+4. Keep each successful publish response: section 3.3 attaches its returned `artifactId`,
+   `artifactVersionId`, and stable name to the matching option's `media`. A failed or skipped
+   sketch gets no `media` object, so the UI leaves no empty frame.
 5. Say once, before the first render, that images are billed to the configured OpenAI key.
 
 Two degraded paths, both disclosed rather than blocking:

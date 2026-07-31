@@ -58,8 +58,20 @@ const darkModeScript = `
 `;
 
 export function Layout({ children }: { children: React.ReactNode }) {
+  // The pre-paint script owns this imperative class because SSR cannot see the browser's color
+  // scheme. A client error recreates the root document tree, at which point React otherwise
+  // removes the class and flashes the light palette. In production, teach the hydrated tree
+  // about the active class so an error remount preserves it. Development intentionally keeps
+  // the conspicuous light error screen as a visual signal that an error escaped.
+  const retainedThemeClass =
+    import.meta.env.PROD &&
+    typeof document !== "undefined" &&
+    document.documentElement.classList.contains("dark")
+      ? "dark"
+      : undefined;
+
   return (
-    <html lang="en" suppressHydrationWarning>
+    <html lang="en" className={retainedThemeClass} suppressHydrationWarning>
       <head>
         <meta charSet="utf-8" />
         {/* `interactive-widget=resizes-content` shrinks the layout viewport when the on-screen

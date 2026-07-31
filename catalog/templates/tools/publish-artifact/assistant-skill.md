@@ -43,7 +43,9 @@ look back through; a new name would leave them with two cards and no idea which 
 overwrite `artifacts/chart.png` and publish that path again rather than writing `chart-v2.png`. The
 reply tells you the version number, and tells you when the file was unchanged (`updated: false`) —
 in that case say so instead of claiming you updated it. The card stays where it was first published,
-so mention the update in your reply; the user may be scrolled somewhere else.
+so mention the update in your reply; the user may be scrolled somewhere else. The response also
+includes `artifactVersionId`, the immutable identifier to retain when another structured record
+needs to point at the exact bytes from this publish rather than whichever version is newest later.
 
 A name is fixed to one kind for the life of the conversation: a name published as an image cannot
 later be republished as a page, or the other way round. Publish that under a different name. Around
