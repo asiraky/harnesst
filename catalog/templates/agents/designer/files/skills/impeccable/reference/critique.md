@@ -30,6 +30,8 @@ Resolve one stable target, run two independent assessments, synthesize a design 
 
 Delegate Assessment A and Assessment B to separate sub-agents. They must not see each other's output. Do not show findings to the user until synthesis.
 
+Delegated-child override: when the current task message assigns exactly Assessment A or Assessment B, skip this orchestration section and every synthesis, persistence, and report-header step. Run only the named assessment and return its contract to the parent. Do not call `agent` or delegate again.
+
 Sub-agent gate (all harnesses):
 - Unless a harness-specific gate below overrides this, spawn A and B as two isolated, parallel sub-agents whenever a sub-agent/Task tool is exposed. This is the default and is mandatory; do not run them inline because it is faster.
 - "Unavailable" means exactly one thing: no sub-agent/Task tool is exposed in this session (or, on harnesses that ask, the user declined). It does not mean inconvenient.
@@ -101,7 +103,7 @@ Structure your feedback as a design director would:
 #### Report header provenance
 
 The report's first line MUST declare how the assessments were run, so a degraded run is never silent:
-- Dual-agent: `Method: dual-agent (A: <agent-id> · B: <agent-id>)`
+- Dual-agent: `Method: dual-agent (A: isolated child · B: isolated child)`
 - Degraded: `⚠️ DEGRADED: single-context (<exact child-agent failure or user-declined reason>)`
 
 #### Design Health Score

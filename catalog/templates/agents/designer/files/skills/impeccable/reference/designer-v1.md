@@ -251,10 +251,12 @@ reference that owns it. `instructions.md` carries the intent table. The invarian
 - **One detector pass per cycle.** Section 8's gate is that pass; do not add another.
 - For `critique.md`, use eve's built-in `agent` tool. Emit Assessment A and Assessment B as two calls
   in the same response, each with a message naming `critique.md`, the assessment letter, target
-  paths, and every input that assessment requires. They run concurrently in isolated child
-  histories and share the screenshots and built files. Merge their results only after both return.
-  Do not print a degraded banner when both children succeed. If a call fails, run only that
-  assessment inline and use `critique.md`'s banner with the exact failure reason.
+  paths, and every input that assessment requires. Say explicitly: perform only the named
+  assessment and its return contract; do not run critique orchestration, synthesis, persistence, or
+  call `agent`. They run concurrently in isolated child histories and share the screenshots and
+  built files. Merge their results only after both return. Do not print a degraded banner when both
+  children succeed. If a call fails, run only that assessment inline and use `critique.md`'s banner
+  with the exact failure reason.
 
 An ambiguous ask gets the menu instead of a guess: name the two or three highest-value commands for
 what is on screen, with one line of reason each, and let the user pick. Never auto-run a command the

@@ -34,10 +34,12 @@ documenter, asset-producer, and critique assessment passes. Each call starts fre
 sharing this agent's instructions, tools, credentials, and `/workspace/home` sandbox, so children
 can read screenshots and the built site and their file writes are immediately visible here.
 
-When your current task message names a file under `reference/roles/`, you are a child role: read that
-file and treat it as the task-specific authority. Do only the requested role pass; do not restart
-Designer's interview or build workflow. The root's message carries every input because a child
-cannot see the parent's conversation.
+When your current task message names a file under `reference/roles/`, or assigns Assessment A or B
+from `reference/critique.md`, you are a child role: read that file and treat only the assigned role
+or assessment as the task-specific authority. Do not restart Designer's interview or build
+workflow. A critique child performs only its named assessment — no orchestration, synthesis,
+persistence, or child calls. The root's message carries every input because a child cannot see the
+parent's conversation.
 
 ## Refining an existing site
 

@@ -33,10 +33,13 @@ describe("Designer template child roles", () => {
       template.files["skills/impeccable/reference/designer-v1.md"];
 
     expect(instructions).toContain(
-      "When your current task message names a file under `reference/roles/`, you are a child role",
+      "When your current task message names a file under `reference/roles/`",
     );
     expect(instructions).toMatch(
-      /do not restart\s+Designer's interview or build workflow/,
+      /assigns Assessment A or B\s+from `reference\/critique\.md`/,
+    );
+    expect(instructions).toMatch(
+      /do not restart\s+Designer's interview or build\s+workflow/i,
     );
     expect(workflow).toContain(
       "a child's writes under `/workspace/home` are immediately visible to the root",
@@ -72,6 +75,13 @@ describe("Designer template child roles", () => {
     expect(critique).toContain(
       "Emit A and B as two `agent` calls in the same response",
     );
+    expect(critique).toContain(
+      "Run only the named assessment and return its contract to the parent",
+    );
+    expect(critique).toContain(
+      "Method: dual-agent (A: isolated child · B: isolated child)",
+    );
+    expect(critique).not.toContain("<agent-id>");
     expect(critique).not.toContain("`spawn_agent` is not exposed");
     expect(critique).not.toContain("sub-agents declined by user");
   });
