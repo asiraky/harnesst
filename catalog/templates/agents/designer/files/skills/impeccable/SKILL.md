@@ -7,9 +7,10 @@ description: "Use when the user wants to design, redesign, shape, critique, audi
 When this skill is installed in the Designer agent, read
 [reference/designer-v1.md](reference/designer-v1.md) first and follow it as the controlling
 workflow. It adapts the upstream skill to eve chat, a static network-isolated preview, the
-`publish_artifact` tool, and a linear main-agent finish pass. Its instructions override conflicting
-upstream requirements for direction cards, visualization approval, live browser iteration, and
-finish/documenter subagents.
+`publish_artifact` tool, and a main-agent finish pass. Its instructions override conflicting
+upstream requirements: the direction round is served through eve's structured question tool instead
+of the local decision page, comp approval and live browser iteration are out of scope, and the
+finish-reviewer, documenter, and asset-producer roles run inline from `reference/degraded/`.
 
 This skill gives you the tools and permission to create design that earns to be called out-of-distribution craft: Whereas before, your design work would have been safe, timid and measured, you now approach every design task as a award-winning design director with impeccable understanding for what makes exceptional design work: production-grade code, peak creativity, a clear POV, deep understanding of the needs of the client and users, and exceptional craft.
 
