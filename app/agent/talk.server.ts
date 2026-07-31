@@ -23,6 +23,12 @@
  * final transcript keep the same shape and semantics they always had.
  */
 
+import {
+  boundedChatInputString,
+  MAX_CHAT_INPUT_OPTIONS,
+  MAX_CHAT_OPTION_TEXT_BYTES,
+  normalizeChatInputOptionPresentation,
+} from "~/chat/input-option";
 import type { ChatInputOption, ChatInputRequest } from "~/chat/types";
 import { effectiveModelId } from "~/models/model-directive";
 
@@ -264,20 +270,25 @@ export function inputRequestsOf(
         ? input.options
         : [];
     const options: ChatInputOption[] = [];
-    for (const rawOption of rawOptions) {
+    for (const rawOption of rawOptions.slice(0, MAX_CHAT_INPUT_OPTIONS)) {
       if (typeof rawOption === "string") {
-        if (rawOption.trim()) options.push({ id: rawOption, label: rawOption });
+        const label = boundedChatInputString(
+          rawOption,
+          MAX_CHAT_OPTION_TEXT_BYTES,
+        );
+        if (label) options.push({ id: label, label });
         continue;
       }
       if (typeof rawOption !== "object" || rawOption === null) continue;
       const o = rawOption as Record<string, unknown>;
-      const label = stringField(o, "label") ?? stringField(o, "id");
+      const label =
+        boundedChatInputString(o.label, MAX_CHAT_OPTION_TEXT_BYTES) ??
+        boundedChatInputString(o.id, MAX_CHAT_OPTION_TEXT_BYTES);
       if (!label) continue;
       options.push({
-        id: stringField(o, "id") ?? label,
+        id: boundedChatInputString(o.id, 200) ?? label,
         label,
-        description: stringField(o, "description"),
-        style: styleOf(stringField(o, "style")),
+        ...normalizeChatInputOptionPresentation(o),
       });
     }
     out.push({
@@ -297,12 +308,6 @@ export function inputRequestsOf(
     });
   }
   return out;
-}
-
-function styleOf(value: string | null): ChatInputOption["style"] {
-  return value === "danger" || value === "primary" || value === "default"
-    ? value
-    : null;
 }
 
 /**

@@ -41,6 +41,39 @@ export interface ChatInputOption {
   label: string;
   description?: string | null;
   style?: "danger" | "default" | "primary" | null;
+  /**
+   * A published image attached to this option. The agent sends only an artifact id/name plus the
+   * surface being designed; transcript projection resolves that reference to a same-session
+   * artifact before the UI is allowed to load it.
+   */
+  media?: ChatInputOptionMedia | null;
+  /** Structured facts for visually comparing rich options without compressing them into prose. */
+  fields?: ChatInputOptionField[];
+}
+
+export type ChatInputSurface = "web" | "mobile" | "native";
+
+export interface ChatInputOptionMedia {
+  artifactId?: string | null;
+  artifactName?: string | null;
+  surface: ChatInputSurface;
+  /** Filled by harnesst from the published artifacts on this conversation, never from the wire. */
+  artifact?: ChatArtifact | null;
+}
+
+export interface ChatInputOptionSwatch {
+  /** A bounded CSS hex color (`#rgb`, `#rrggbb`, or either form with alpha). */
+  color: string;
+  label?: string | null;
+}
+
+export type ChatInputOptionFieldValue =
+  | { type: "text"; text: string }
+  | { type: "swatches"; swatches: ChatInputOptionSwatch[] };
+
+export interface ChatInputOptionField {
+  label: string;
+  value: ChatInputOptionFieldValue;
 }
 
 /**

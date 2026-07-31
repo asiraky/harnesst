@@ -133,14 +133,44 @@ export function mergeArtifactEntries(
   anchors: TurnAnchor[],
 ): ChatEntry[] {
   if (rows.length === 0) return entries;
-  const ordered = [...rows].sort(
-    (a, b) => a.streamIndex - b.streamIndex || (a.id < b.id ? -1 : 1),
-  );
+  const byId = new Map(rows.map((row) => [row.id, row]));
+  const byName = new Map(rows.map((row) => [row.name, row]));
+  const referenced = new Set<string>();
+  const resolvedEntries = entries.map((entry) => {
+    if (!entry.inputRequests) return entry;
+    return {
+      ...entry,
+      inputRequests: entry.inputRequests.map((request) => ({
+        ...request,
+        options: request.options?.map((option) => {
+          const media = option.media;
+          if (!media) return option;
+          const row =
+            (typeof media.artifactId === "string"
+              ? byId.get(media.artifactId)
+              : undefined) ??
+            (typeof media.artifactName === "string"
+              ? byName.get(media.artifactName)
+              : undefined);
+          if (!row || row.kind !== "image") {
+            return { ...option, media: { ...media, artifact: null } };
+          }
+          const artifact = artifactEntry(row).artifact!;
+          referenced.add(row.id);
+          return { ...option, media: { ...media, artifact } };
+        }),
+      })),
+    };
+  });
+  const ordered = rows
+    .filter((row) => !referenced.has(row.id))
+    .sort((a, b) => a.streamIndex - b.streamIndex || (a.id < b.id ? -1 : 1));
+  if (ordered.length === 0) return resolvedEntries;
   const after = new Map<number, ChatEntry[]>();
   const trailing: ChatEntry[] = [];
   for (const row of ordered) {
     const turnKey = anchorFor(anchors, row.streamIndex);
-    const index = turnKey ? lastEntryOfTurn(entries, turnKey) : -1;
+    const index = turnKey ? lastEntryOfTurn(resolvedEntries, turnKey) : -1;
     if (index < 0) {
       trailing.push(artifactEntry(row));
       continue;
@@ -150,7 +180,7 @@ export function mergeArtifactEntries(
     else after.set(index, [artifactEntry(row)]);
   }
   const merged: ChatEntry[] = [];
-  entries.forEach((entry, index) => {
+  resolvedEntries.forEach((entry, index) => {
     merged.push(entry);
     const extra = after.get(index);
     if (extra) merged.push(...extra);

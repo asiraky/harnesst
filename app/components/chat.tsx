@@ -24,6 +24,7 @@ import {
   FileCode2,
   Image as ImageIcon,
   Loader2,
+  Maximize2,
   ShieldAlert,
   Sparkles,
 } from "lucide-react";
@@ -34,6 +35,7 @@ import remarkGfm from "remark-gfm";
 import type {
   ChatArtifact,
   ChatInputAnswer,
+  ChatInputOptionField,
   ChatInputOption,
   ChatInputRequest,
   ChatStep,
@@ -523,7 +525,10 @@ function InputRequestView({
 }) {
   const isConfirmation = request.display === "confirmation";
   const options = request.options ?? [];
-  const asRows = options.some((option) => option.description);
+  const asRows = options.some(
+    (option) =>
+      option.description || option.media || (option.fields?.length ?? 0) > 0,
+  );
   const answerable = Boolean(onAnswer) && !busy;
   const showFreeformHint =
     Boolean(onAnswer) && (request.allowFreeform || options.length === 0);
@@ -546,19 +551,34 @@ function InputRequestView({
       {options.length > 0 &&
         (asRows ? (
           <div className="grid gap-2">
-            {options.map((option) => (
-              <OptionRow
-                key={option.id}
-                option={option}
-                disabled={!answerable}
-                onSelect={() =>
-                  onAnswer?.(option.label, {
-                    requestId: request.requestId,
-                    optionId: option.id,
-                  })
-                }
-              />
-            ))}
+            {options.map((option) =>
+              option.media?.artifact?.kind === "image" &&
+              option.media.artifact.url?.startsWith("/api/foh/") ? (
+                <DirectionOptionCard
+                  key={option.id}
+                  option={option}
+                  disabled={!answerable}
+                  onSelect={() =>
+                    onAnswer?.(option.label, {
+                      requestId: request.requestId,
+                      optionId: option.id,
+                    })
+                  }
+                />
+              ) : (
+                <OptionRow
+                  key={option.id}
+                  option={option}
+                  disabled={!answerable}
+                  onSelect={() =>
+                    onAnswer?.(option.label, {
+                      requestId: request.requestId,
+                      optionId: option.id,
+                    })
+                  }
+                />
+              ),
+            )}
           </div>
         ) : (
           <div className="flex flex-wrap gap-2">
@@ -634,12 +654,145 @@ function OptionRow({
             {option.description}
           </span>
         )}
+        {option.fields && option.fields.length > 0 && (
+          <OptionFields fields={option.fields} />
+        )}
       </span>
       <ChevronRight
         className="size-4 shrink-0 text-muted-foreground/40 transition group-hover:translate-x-0.5 group-hover:text-primary"
         aria-hidden
       />
     </button>
+  );
+}
+
+/**
+ * A visual-direction choice. The generated first viewport leads at one consistent surface-driven
+ * ratio, while selection and structured facts live in their own region below it. The image link is
+ * deliberately separate from the selection button so opening a sketch cannot accidentally answer
+ * the pending question.
+ */
+function DirectionOptionCard({
+  option,
+  disabled,
+  onSelect,
+}: {
+  option: ChatInputOption;
+  disabled: boolean;
+  onSelect: () => void;
+}) {
+  const artifact = option.media?.artifact;
+  if (!artifact?.url) {
+    return (
+      <OptionRow option={option} disabled={disabled} onSelect={onSelect} />
+    );
+  }
+  const portrait =
+    option.media?.surface === "mobile" || option.media?.surface === "native";
+
+  return (
+    <article className="overflow-hidden rounded-xl border border-border bg-card shadow-sm">
+      <a
+        href={artifact.url}
+        target="_blank"
+        rel="noreferrer"
+        className={cn(
+          "group/media mx-auto block bg-muted/30",
+          portrait ? "w-full max-w-sm" : "w-full",
+        )}
+        aria-label={`Open ${option.label} sketch at full size`}
+      >
+        <span
+          className={cn(
+            "block overflow-hidden",
+            portrait ? "aspect-[9/16]" : "aspect-[8/5]",
+          )}
+        >
+          <img
+            src={artifact.url}
+            alt={`Sketch for ${option.label}`}
+            className="size-full object-contain"
+          />
+        </span>
+        <span className="flex items-center justify-end gap-1.5 border-t border-border/60 px-3 py-1.5 text-[11px] font-medium text-muted-foreground transition group-hover/media:text-foreground">
+          <Maximize2 className="size-3" aria-hidden />
+          Open sketch
+        </span>
+      </a>
+      <button
+        type="button"
+        disabled={disabled}
+        onClick={onSelect}
+        className={cn(
+          "group flex w-full items-start gap-3 border-t border-border px-3.5 py-3 text-left transition disabled:pointer-events-none disabled:opacity-70",
+          option.style === "danger"
+            ? "hover:bg-destructive/5"
+            : "hover:bg-primary/[0.06]",
+        )}
+      >
+        <span className="min-w-0 flex-1">
+          <span className="block text-sm leading-snug font-semibold text-foreground">
+            {option.label}
+          </span>
+          {option.description && (
+            <span className="mt-1 block text-xs leading-relaxed text-muted-foreground">
+              {option.description}
+            </span>
+          )}
+          {option.fields && option.fields.length > 0 && (
+            <OptionFields fields={option.fields} />
+          )}
+        </span>
+        <ChevronRight
+          className="mt-0.5 size-4 shrink-0 text-muted-foreground/40 transition group-hover:translate-x-0.5 group-hover:text-primary"
+          aria-hidden
+        />
+      </button>
+    </article>
+  );
+}
+
+function OptionFields({ fields }: { fields: ChatInputOptionField[] }) {
+  return (
+    <span className="mt-3 grid gap-2.5 sm:grid-cols-2">
+      {fields.map((field) => (
+        <span key={field.label} className="min-w-0">
+          <span className="block text-[10px] leading-none font-semibold tracking-wider text-muted-foreground uppercase">
+            {field.label}
+          </span>
+          {field.value.type === "text" ? (
+            <span className="mt-1 block text-xs leading-relaxed text-foreground/85">
+              {field.value.text}
+            </span>
+          ) : (
+            <span className="mt-1.5 flex flex-wrap gap-1.5">
+              {field.value.swatches.map((swatch) => (
+                <span
+                  key={swatch.color}
+                  className={cn(
+                    "inline-flex items-center rounded-full border border-border bg-background p-0.5",
+                    swatch.label ? "gap-1.5 pr-2" : "",
+                  )}
+                  title={swatch.label ?? swatch.color}
+                  aria-label={swatch.label ?? swatch.color}
+                >
+                  <span
+                    className="block size-5 rounded-full border border-black/10"
+                    style={{ backgroundColor: swatch.color }}
+                    aria-hidden
+                  />
+                  {swatch.label && (
+                    <span className="text-[11px] leading-none text-muted-foreground">
+                      {swatch.label}
+                    </span>
+                  )}
+                </span>
+              ))}
+            </span>
+          )}
+        </span>
+      ))}
+    </span>
   );
 }
 

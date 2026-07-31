@@ -3,7 +3,7 @@
   "type": "agent",
   "name": "Designer",
   "description": "Interviews you to capture product truth, then designs, quality-checks, and publishes a complete static site into the Front of House preview.",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "eve": ">=0.22.0",
   "model": "anthropic/claude-sonnet-5",
   "files": [
@@ -191,6 +191,6 @@
       "IMPECCABLE_NO_TELEMETRY": "1",
       "IMPECCABLE_QUESTION_DISABLED": "1"
     },
-    "revalidationKey": "designer-impeccable-4.0.4-cli-3.5.0-directions-3"
+    "revalidationKey": "designer-impeccable-4.0.4-cli-3.5.0-directions-4"
   }
 }

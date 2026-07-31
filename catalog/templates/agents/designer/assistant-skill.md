@@ -1,5 +1,6 @@
 ---
-description: Load when the user asks how the installed Designer agent works, what its Impeccable
+description:
+  Load when the user asks how the installed Designer agent works, what its Impeccable
   skill does, how its direction cards or sketches behave, how to change its workflow safely, or how
   to update the vendored Impeccable payload.
 ---
@@ -35,9 +36,11 @@ Designer is a Front of House website builder with a human-picked design directio
 The upstream skill serves directions from a local HTML decision page (`serve-question.mjs`). That
 cannot work in a headless sandbox — the script self-detects and exits 2, which upstream documents as
 the fallback rung, never an error. The template sets `IMPECCABLE_QUESTION_DISABLED=1` so it never
-tries, and pins the fallback to eve's structured question tool. Card fields (thesis, palette,
-materials, first viewport, risk) compress into each option's description; giving every option a
-description is what makes Front of House render stacked rows rather than chips.
+tries, and pins the fallback to eve's structured question tool. Each option sends typed fields for
+thesis, palette swatches, materials, first viewport, risk, and a challenger case where relevant.
+When a sketch was published, the option also references that artifact and declares whether the
+surface is web, mobile, or native so Front of House can frame the whole image correctly. Without a
+sketch, the same fields render as a structured text card with no empty media region.
 
 Re-roll must eliminate every direction already shown, but the answer arrives a turn after the roll,
 so the round state persists in `/workspace/home/.impeccable/directions.json` (shown directions, pool,

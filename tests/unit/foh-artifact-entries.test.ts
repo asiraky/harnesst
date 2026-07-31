@@ -27,7 +27,11 @@ const row = (over: Partial<ArtifactRow> = {}): ArtifactRow => ({
   ...over,
 });
 
-const entry = (id: string): ChatEntry => ({ id, role: "assistant", text: "hi" });
+const entry = (id: string): ChatEntry => ({
+  id,
+  role: "assistant",
+  text: "hi",
+});
 
 const ANCHORS = [
   { streamIndex: 2, turnKey: "1:t1" },
@@ -96,9 +100,9 @@ describe("mergeArtifactEntries with versions", () => {
       "1:t2:assistant",
     ]);
     expect(merged.filter((e) => e.role === "artifact")).toHaveLength(1);
-    expect(
-      merged.find((e) => e.role === "artifact")?.artifact?.version,
-    ).toBe(2);
+    expect(merged.find((e) => e.role === "artifact")?.artifact?.version).toBe(
+      2,
+    );
   });
 
   it("still places a second name separately", () => {
@@ -121,5 +125,83 @@ describe("mergeArtifactEntries with versions", () => {
       "1:t2:assistant",
       "artifact:art_2",
     ]);
+  });
+
+  it("resolves option media from this session and removes its duplicate artifact card", () => {
+    const entries: ChatEntry[] = [
+      entry("1:t1:user"),
+      {
+        ...entry("1:t1:assistant"),
+        inputRequests: [
+          {
+            requestId: "req_1",
+            prompt: "Choose a direction",
+            options: [
+              {
+                id: "assigned",
+                label: "Editorial",
+                media: {
+                  artifactName: "sketch-assigned.webp",
+                  surface: "web",
+                },
+              },
+            ],
+          },
+        ],
+      },
+    ];
+
+    const merged = mergeArtifactEntries(
+      entries,
+      [
+        row({
+          name: "sketch-assigned.webp",
+          versionNumber: 2,
+          latestVersionId: "ver_2",
+        }),
+      ],
+      ANCHORS,
+    );
+
+    expect(merged).toHaveLength(2);
+    expect(merged.some((item) => item.role === "artifact")).toBe(false);
+    expect(
+      merged[1].inputRequests?.[0].options?.[0].media?.artifact,
+    ).toMatchObject({
+      id: "art_1",
+      name: "sketch-assigned.webp",
+      version: 2,
+      url: "/api/foh/proj_1/artifact/art_1/ver_2",
+    });
+  });
+
+  it("keeps an unresolved or non-image reference out of the option", () => {
+    const asked: ChatEntry = {
+      ...entry("1:t1:assistant"),
+      inputRequests: [
+        {
+          requestId: "req_1",
+          prompt: "Choose",
+          options: [
+            {
+              id: "assigned",
+              label: "Editorial",
+              media: { artifactId: "page_1", surface: "web" },
+            },
+          ],
+        },
+      ],
+    };
+
+    const merged = mergeArtifactEntries(
+      [asked],
+      [row({ id: "page_1", kind: "html" })],
+      ANCHORS,
+    );
+
+    expect(
+      merged[0].inputRequests?.[0].options?.[0].media?.artifact,
+    ).toBeNull();
+    expect(merged.some((item) => item.role === "artifact")).toBe(true);
   });
 });

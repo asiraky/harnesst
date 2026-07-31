@@ -24,6 +24,12 @@
  */
 import type { Target } from "~/chat/playground.server";
 import { TURN_IDLE_TIMEOUT_MS } from "~/chat/turn-stream.server";
+import {
+  boundedChatInputString,
+  MAX_CHAT_INPUT_OPTIONS,
+  MAX_CHAT_OPTION_TEXT_BYTES,
+  normalizeChatInputOptionPresentation,
+} from "~/chat/input-option";
 import type { ChatInputOption, ChatInputRequest } from "~/chat/types";
 import type { DataStore } from "~/data/ports";
 import { buildResumeVia } from "~/foh/channel-resume";
@@ -100,7 +106,8 @@ export function normalizeParkRequests(value: unknown): ChatInputRequest[] | null
   for (const raw of value) {
     if (typeof raw !== "object" || raw === null) return null;
     const entry = raw as Record<string, unknown>;
-    const requestId = typeof entry.requestId === "string" ? entry.requestId : "";
+    const requestId =
+      typeof entry.requestId === "string" ? entry.requestId : "";
     const prompt = typeof entry.prompt === "string" ? entry.prompt : "";
     if (!requestId || !prompt.trim()) return null;
     if (Buffer.byteLength(prompt, "utf8") > MAX_PROMPT_BYTES) return null;
@@ -111,23 +118,25 @@ export function normalizeParkRequests(value: unknown): ChatInputRequest[] | null
         ? entry.display
         : null;
     const options: ChatInputOption[] = Array.isArray(entry.options)
-      ? entry.options.flatMap((option): ChatInputOption[] => {
-          if (typeof option !== "object" || option === null) return [];
-          const o = option as Record<string, unknown>;
-          if (typeof o.id !== "string" || typeof o.label !== "string") return [];
-          return [
-            {
-              id: o.id,
-              label: o.label,
-              description:
-                typeof o.description === "string" ? o.description : null,
-              style:
-                o.style === "danger" || o.style === "primary" || o.style === "default"
-                  ? o.style
-                  : null,
-            },
-          ];
-        })
+      ? entry.options
+          .slice(0, MAX_CHAT_INPUT_OPTIONS)
+          .flatMap((option): ChatInputOption[] => {
+            if (typeof option !== "object" || option === null) return [];
+            const o = option as Record<string, unknown>;
+            const id = boundedChatInputString(o.id, 200);
+            const label = boundedChatInputString(
+              o.label,
+              MAX_CHAT_OPTION_TEXT_BYTES,
+            );
+            if (!id || !label) return [];
+            return [
+              {
+                id,
+                label,
+                ...normalizeChatInputOptionPresentation(o),
+              },
+            ];
+          })
       : [];
     out.push({
       requestId,
