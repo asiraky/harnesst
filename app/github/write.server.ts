@@ -17,6 +17,12 @@ export interface FileChange {
   content: string | null;
 }
 
+/** Git Data writes may also carry binary repo-backed asset bytes. */
+export interface GitFileChange {
+  path: string;
+  content: string | Buffer | null;
+}
+
 interface RepoRef {
   owner: string;
   repo: string;
@@ -142,11 +148,19 @@ export async function getBranchHead(
 export async function commitToDefaultBranch(
   installationId: string | number,
   { owner, repo }: RepoRef,
-  input: { branch: string; expectedHeadSha: string; files: FileChange[]; message: string },
+  input: {
+    branch: string;
+    expectedHeadSha: string;
+    files: GitFileChange[];
+    message: string;
+    /** Asset commits do not change the cached agent-source projection. */
+    invalidateSourceCache?: boolean;
+  },
 ): Promise<{ sha: string }> {
   const octokit = await getInstallationOctokit(installationId);
   const writes = input.files.filter(
-    (f): f is FileChange & { content: string } => f.content !== null,
+    (f): f is GitFileChange & { content: string | Buffer } =>
+      f.content !== null,
   );
   let deletes = input.files.filter((f) => f.content === null);
   const [blobs, headCommit] = await Promise.all([
@@ -155,7 +169,7 @@ export async function commitToDefaultBranch(
         octokit.rest.git.createBlob({
           owner,
           repo,
-          content: Buffer.from(f.content, "utf8").toString("base64"),
+          content: Buffer.from(f.content).toString("base64"),
           encoding: "base64",
         }),
       ),
@@ -227,6 +241,8 @@ export async function commitToDefaultBranch(
     }
     throw error;
   }
-  invalidateRepoSource(installationId, { owner, repo });
+  if (input.invalidateSourceCache !== false) {
+    invalidateRepoSource(installationId, { owner, repo });
+  }
   return { sha: commit.data.sha };
 }

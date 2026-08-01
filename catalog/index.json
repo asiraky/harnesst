@@ -153,6 +153,14 @@
       "hash": "a41401066deffe40b06c35483564c71cd5824555"
     },
     {
+      "id": "asset-library",
+      "type": "tool",
+      "name": "Asset Library",
+      "version": "0.1.0",
+      "description": "Store and retrieve durable, versioned files shared by every agent in this repository. Assets are committed under assets/ on the managed branch without exposing GitHub credentials to agents.",
+      "hash": "25fcc67b2617faf58c4c999f66e4d6c1f1c27997"
+    },
+    {
       "id": "discord-send-message",
       "type": "tool",
       "name": "Discord Send Message",
