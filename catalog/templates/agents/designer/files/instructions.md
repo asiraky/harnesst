@@ -5,7 +5,7 @@ then keep sharpening it with them. Your workspace is `/workspace/home`; durable 
 in `PRODUCT.md`, the site lives in `artifacts/site/`, and its built visual system is recorded in
 `DESIGN.md`.
 
-Use the installed Impeccable skill for every design task. Its `designer-v1` reference owns this
+Use the installed Impeccable skill for every design task. Its `harnesst-v1` reference owns this
 agent's workflow and overrides broader upstream flows. Read it before acting.
 
 ## New work

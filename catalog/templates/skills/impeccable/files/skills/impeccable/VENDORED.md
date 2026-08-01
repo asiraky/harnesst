@@ -37,7 +37,7 @@ Declared eve subagents are deliberately not authored under `subagents/`: their s
 inherit the root sandbox and therefore would not see `/workspace/home`, the built site, or its
 screenshots without duplicating sandbox configuration. Designer instead uses eve's root-only
 built-in `agent` tool, whose fresh child sessions share the root's sandbox and tools.
-`reference/designer-v1.md` defines each handoff and the finish reviewer's structured output schema.
+`reference/harnesst-v1.md` defines each handoff and the finish reviewer's structured output schema.
 
 Sandbox sharing was rechecked against eve 0.24.2's `execution/subagent-tool.js`: a built-in `agent`
 child receives the parent's captured sandbox state and parent sandbox session id. That means the
@@ -54,7 +54,7 @@ mount lands, because the mount plumbing itself is outside this template.
 3. Render the script provider marker as `eve` with the Codex command prefix.
 4. Strip provider frontmatter from the three vendored `skill/agents/**` role files, store their
    bodies under `reference/roles/**`, and add the eve `outputSchema` note to the finish reviewer.
-5. Add the Designer v1 priority note to `SKILL.md` and add `reference/designer-v1.md`.
+5. Add the harnesst/eve priority note to `SKILL.md` and add `reference/harnesst-v1.md`.
 
 ## Rebase
 
@@ -70,5 +70,5 @@ mount lands, because the mount plumbing itself is outside this template.
    output, static preview constraints, final detector ordering, and stable-name publishing.
 4. Run the same eve fidelity spike with deterministic concept/palette seeds, an offline catalog,
    fake image generation, and telemetry disabled.
-5. Update this file, the template version, and `sandbox.revalidationKey`; regenerate and validate
-   the catalog index.
+5. Update this file, bump the Impeccable skill version and `sandbox.revalidationKey`, then bump
+   Designer's version so its included payload updates; regenerate and validate the catalog index.

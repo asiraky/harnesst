@@ -65,20 +65,21 @@ The template suggests `anthropic/claude-sonnet-5`, but the installer can select 
 harnesst rewrites `agent.ts`. Keep a strong model: the workflow asks the model to interpret a
 product interview, derive and defend a visual system, and implement it.
 
-The upstream payload is under `agent/skills/impeccable/`. `VENDORED.md` records its version, commit,
-license, transformations, and rebase procedure. The harnesst-specific behavior is isolated in
-`reference/designer-v1.md` plus the short priority note near the top of `SKILL.md`. Adjust those two
-files (and the routing table in `instructions.md`) when changing the workflow; avoid editing
-upstream reference files unless the upstream source itself is being rebased.
+The upstream payload comes from the standalone `impeccable` catalog skill and installs under
+`agent/skills/impeccable/`. Its `VENDORED.md` records the version, commit, license, transformations,
+and rebase procedure. The harnesst-specific behavior is isolated in `reference/harnesst-v1.md` plus
+the short priority note near the top of `SKILL.md`. Adjust those two files (and the routing table in
+`instructions.md`) when changing the workflow; avoid editing upstream reference files unless the
+upstream source itself is being rebased.
 
 When rebasing, start from the `skill/` source directory at the recorded upstream commit, not one of
 Impeccable's generated provider directories — except for the files `VENDORED.md` names as
 generated-only (the detector engine). Copy the three role bodies from `skill/agents/**` into
 `reference/roles/**` as `VENDORED.md` describes, then reapply the transformations listed there.
 Review upstream changes to `init.md`, `new-work.md`, `craft-floor.md`, `document.md`, the role files,
-and detector scripts against `designer-v1.md`, then bump the template version and sandbox
-revalidation key. Keep the npm detector version explicit: the vendored skill and published CLI have
-independent versions.
+and detector scripts against `harnesst-v1.md`, then bump the Impeccable skill version and sandbox
+revalidation key followed by Designer's version. Keep the npm detector version explicit: the
+vendored skill and published CLI have independent versions.
 
 Template-owned files are replaced by marketplace updates. Put customer-specific product truth and
 visual decisions in the workspace `PRODUCT.md` and `DESIGN.md`, not in the agent prompt or vendored

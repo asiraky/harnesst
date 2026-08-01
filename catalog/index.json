@@ -4,9 +4,9 @@
       "id": "designer",
       "type": "agent",
       "name": "Designer",
-      "version": "1.2.1",
+      "version": "1.3.0",
       "description": "Interviews you to capture product truth, then designs, quality-checks, and publishes a complete static site into the Front of House preview.",
-      "hash": "27325f4700be66f58a4616f74c92d9c1022b902d"
+      "hash": "2d73832fdbe2aa73c24507b3b0dfbd0c314234e7"
     },
     {
       "id": "github-bundle",
@@ -135,6 +135,14 @@
       "version": "0.1.1",
       "description": "End-to-end guidance for authoring eve agents through harnesst's MCP server: save complete files, review every pending change, publish once, and poll every deployment until live.",
       "hash": "fff8fcce8d3adbb0fbc910ab6ebd244fba2eb1c7"
+    },
+    {
+      "id": "impeccable",
+      "type": "skill",
+      "name": "Impeccable",
+      "version": "0.1.0",
+      "description": "A comprehensive frontend design skill for creating, critiquing, refining, and quality-checking polished interfaces inside harnesst/eve agents.",
+      "hash": "56fc8e9e8c441044daa839b9dbcf0335e91ddb61"
     },
     {
       "id": "reviewing-a-pull-request",
