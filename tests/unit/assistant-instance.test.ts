@@ -294,6 +294,24 @@ describe("assistant instance: peek reports resumable, not first-run setup", () =
     });
   });
 
+  it("reports a failed current replacement despite an older live image", async () => {
+    const store = makeFakeStore();
+    await seedDeployment(store, {
+      gitSha: "tmpl-0000000000000000",
+      status: "live",
+      url: "http://old-inst:3000",
+    });
+    const replacement = await ensureAssistantInstance("p", store);
+    expect(replacement.status).toBe("provisioning");
+    await store.deployments.update(replacement.deploymentId!, {
+      status: "failed",
+    });
+
+    expect(await peekAssistantInstance("p", store)).toMatchObject({
+      status: "failed",
+    });
+  });
+
   it("still reports idle when nothing was ever deployed", async () => {
     const store = makeFakeStore();
     store.seedProject({
