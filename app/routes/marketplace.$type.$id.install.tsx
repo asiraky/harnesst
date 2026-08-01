@@ -67,6 +67,8 @@ import {
   describeDependencies,
   packageJsonPathForRoot,
   planInstall,
+  providerExplanation,
+  templateProviderForTarget,
   type DependencyDecision,
   type InstallTarget,
 } from "~/marketplace/install.server";
@@ -320,6 +322,13 @@ export const loader = (args: LoaderFunctionArgs) =>
         selectedMember,
         newMemberName,
         preview: null as PreviewData | null,
+        provider: null as {
+          id: string;
+          type: TemplateType;
+          name: string;
+          version: string;
+          explanation: string;
+        } | null,
         /** Project-level shared secret names — powers the three-way choice (§9). */
         sharedNames: [] as string[],
       };
@@ -420,6 +429,22 @@ export const loader = (args: LoaderFunctionArgs) =>
         selectedMember,
       );
       if (!resolved) return base;
+
+      const provider = templateProviderForTarget(
+        lock,
+        template,
+        resolved.target,
+      );
+      if (provider && provider.via !== "direct") {
+        base.provider = {
+          id: provider.install.id,
+          type: provider.install.type,
+          name: provider.install.name,
+          version: provider.install.version,
+          explanation: providerExplanation(provider.install),
+        };
+        return base;
+      }
 
       // The target's current package.json (a staged draft wins) — needed only for the dep
       // merge, so skip the read entirely when the template ships no dependencies.
@@ -804,6 +829,7 @@ export default function InstallWizard({
     selectedMember,
     newMemberName,
     preview,
+    provider,
     sharedNames,
   } = loaderData;
   const navigate = useNavigate();
@@ -943,6 +969,20 @@ export default function InstallWizard({
                   </SelectContent>
                 </Select>
               </div>
+            )}
+
+            {provider && (
+              <Alert>
+                <AlertTitle>Already installed through a bundle</AlertTitle>
+                <AlertDescription>
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <span>{provider.explanation}</span>
+                    <Button type="button" size="sm" disabled>
+                      Install
+                    </Button>
+                  </div>
+                </AlertDescription>
+              </Alert>
             )}
 
             {selectedProjectId && newMemberTemplate && singleAgentInvalid && (

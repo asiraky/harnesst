@@ -40,11 +40,13 @@ import { platformFileHash, templateContentHash } from "./hash.server";
 import type { ResolvedAuth, ResolvedInclude } from "./compose.server";
 import {
   findInstall,
+  findTemplateProvider,
   removeInstall,
   serializeLock,
   upsertInstall,
   type HarnesstLock,
   type InstallEntry,
+  type TemplateProvider,
 } from "./lock";
 
 /** Files that are MERGED, never owned — they can't be conflicts and never land in a lock entry. */
@@ -368,6 +370,52 @@ export interface InstallPlan {
   }>;
 }
 
+/** The shared UI/error explanation for a template whose lifecycle belongs to its parent install. */
+export function providerExplanation(
+  provider: Pick<InstallEntry, "name" | "version">,
+): string {
+  return `Provided by ${provider.name} v${provider.version} — update ${provider.name} to update this.`;
+}
+
+/**
+ * A stale client, assistant call, or API must not degrade a provider-owned template into a wall of
+ * file conflicts. This named error is the planner's explicit unreachable-state guard.
+ */
+export class TemplateAlreadyProvidedError extends Error {
+  readonly provider: InstallEntry;
+
+  constructor(templateName: string, provider: InstallEntry) {
+    super(
+      `${templateName} is already provided by ${provider.name} v${provider.version} — update ${provider.name} to update this.`,
+    );
+    this.name = "TemplateAlreadyProvidedError";
+    this.provider = provider;
+  }
+}
+
+/**
+ * Resolve the install that provides `template` at an existing member target. Manifest paths are
+ * mapped exactly as the planner maps them, enabling safe compatibility with old locks that owned
+ * an extracted child's files before `includes` provenance existed.
+ */
+export function templateProviderForTarget(
+  lock: HarnesstLock,
+  template: PlanContext["template"],
+  target: InstallTarget,
+): TemplateProvider | undefined {
+  if (target.kind !== "member") return undefined;
+  const ownedPaths = template.manifest.files.map((file) =>
+    installedFilePath(target.root, file),
+  );
+  return findTemplateProvider(
+    lock,
+    template.manifest.type,
+    template.manifest.id,
+    target.memberName,
+    ownedPaths,
+  );
+}
+
 /** The lock's registry locator, from the same env the CatalogSource seam reads (index.server). */
 export function catalogLocator(): string {
   const repo = process.env.HARNESST_CATALOG_REPO;
@@ -499,6 +547,14 @@ export function planInstall(ctx: PlanContext): InstallPlan {
   // where this install lives.
   const agentRoot =
     target.kind === "new-member" ? `agents/${target.name}/agent` : target.root;
+
+  const provider = templateProviderForTarget(ctx.lock, template, target);
+  if (provider && provider.via !== "direct") {
+    throw new TemplateAlreadyProvidedError(
+      template.manifest.name,
+      provider.install,
+    );
+  }
 
   if (target.kind === "new-member") {
     member = target.name;

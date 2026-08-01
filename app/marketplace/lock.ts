@@ -246,6 +246,58 @@ export function findInstall(
   return lock.installs.find((e) => e.id === id && e.member === member);
 }
 
+export interface TemplateProvider {
+  install: InstallEntry;
+  via: "direct" | "include" | "legacy-files";
+}
+
+/**
+ * Which install provides one typed catalog template for a member? A template may have its own lock
+ * row, be recorded in a composite's flattened `includes` provenance, or come from an old parent
+ * lock that predates `includes` but owns every path the now-standalone template materializes.
+ *
+ * Identity is always `(type, id)`, never id alone. The strict type check is security-sensitive for
+ * channels/tools: those identities gate park/publish URLs and delegation tokens. Legacy inference
+ * requires a different parent id plus complete path ownership; if that parent records the same id
+ * under a different type, it is explicitly ineligible rather than falling through to coincidence.
+ * Path-only compatibility is skill-specific: it exists for skills extracted from old composite
+ * agents, and never participates in channel/tool capability decisions.
+ */
+export function findTemplateProvider(
+  lock: HarnesstLock,
+  type: TemplateType,
+  id: string,
+  member: string | null,
+  legacyOwnedPaths: readonly string[] = [],
+): TemplateProvider | undefined {
+  const memberInstalls = lock.installs.filter((e) => e.member === member);
+  const direct = memberInstalls.find((e) => e.type === type && e.id === id);
+  if (direct) return { install: direct, via: "direct" };
+
+  const included = memberInstalls.find((e) =>
+    (e.includes ?? []).some((i) => i.type === type && i.id === id),
+  );
+  if (included) return { install: included, via: "include" };
+
+  if (type !== "skill" || legacyOwnedPaths.length < 2) return undefined;
+  const legacy = memberInstalls.find(
+    (e) => {
+      if (e.id === id || (e.includes ?? []).some((i) => i.id === id)) {
+        return false;
+      }
+      // One path may have been renamed while the skill was extracted (Designer 1.2.1's adapter
+      // is the real compatibility case). Requiring every other path keeps this evidence specific:
+      // an ordinary collision on one or a handful of files remains a conflict, not provenance.
+      const owned = new Set(e.files);
+      return (
+        legacyOwnedPaths.filter((path) => owned.has(path)).length >=
+        legacyOwnedPaths.length - 1
+      );
+    },
+  );
+  return legacy ? { install: legacy, via: "legacy-files" } : undefined;
+}
+
 /**
  * Is the channel template `id` present for this member — installed directly, OR carried by a
  * bundle? A composite install records its parts under `includes` and DROPS their standalone lock
@@ -421,9 +473,16 @@ export function installKey(type: TemplateType, id: string): string {
   return `${type}/${id}`;
 }
 
-/** All (type/id) keys installed in a lock — the marketplace "Installed" facet reads this. */
+/**
+ * All (type/id) keys provided by a lock — direct rows plus every flattened include. The
+ * marketplace "Installed" facet reads this, so a bundle-carried template is installed too even
+ * though it intentionally has no standalone lock row.
+ */
 export function installedKeys(lock: HarnesstLock): string[] {
-  return lock.installs.map((e) => installKey(e.type, e.id));
+  return lock.installs.flatMap((e) => [
+    installKey(e.type, e.id),
+    ...(e.includes ?? []).map((i) => installKey(i.type, i.id)),
+  ]);
 }
 
 /** One install's auth snapshot (see `installEntrySchema.auth`). */

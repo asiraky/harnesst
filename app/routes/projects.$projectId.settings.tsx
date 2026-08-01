@@ -100,8 +100,10 @@ import {
   packageJsonPathForRoot,
   planInstall,
   planUninstall,
+  providerExplanation,
 } from "~/marketplace/install.server";
 import {
+  findTemplateProvider,
   missingOwnedFiles,
   overlayLock,
   renameMember,
@@ -259,6 +261,13 @@ interface InstallDisplay {
   update: string | null;
   /** Current catalog version matches, but the installed lock is missing flattened catalog content. */
   repair: boolean;
+  /** The parent install that owns this bundled template's lifecycle. */
+  providedBy: {
+    id: string;
+    type: TemplateType;
+    name: string;
+    version: string;
+  } | null;
 }
 
 /** Resolve the `?env=` param to an environmentId (null == agent-wide), validated. */
@@ -286,8 +295,15 @@ function buildInstalls(
   /** Paths that actually exist for the reviewer: the branch tree with staged drafts applied. */
   present: Set<string>,
 ): InstallDisplay[] {
-  return lock.installs.reduce<InstallDisplay[]>((rows, entry) => {
-    if (!keep(entry.member)) return rows;
+  const rows: InstallDisplay[] = [];
+  const directKeys = new Set(
+    lock.installs.map(
+      (entry) => `${entry.member ?? "root"}:${entry.type}/${entry.id}`,
+    ),
+  );
+
+  for (const entry of lock.installs) {
+    if (!keep(entry.member)) continue;
     const row = index.find((r) => r.id === entry.id && r.type === entry.type);
     const template = resolved.get(`${entry.type}/${entry.id}`);
     let update: string | null = null;
@@ -340,9 +356,52 @@ function buildInstalls(
       depsLeft: Object.keys(entry.dependencies ?? {}),
       update,
       repair: !update && (missingFiles || missingIncludes || goneFromDisk),
+      providedBy: null,
     });
-    return rows;
-  }, []);
+
+    // A bundled template intentionally has no lock row of its own. Project it as a read-only row
+    // from the lock's flattened provenance. For older locks, the current resolved parent supplies
+    // transitive candidates and near-complete path ownership proves the parent really shipped them.
+    const candidates = new Map(
+      [...(template?.includes ?? []), ...(entry.includes ?? [])].map(
+        (include) => [`${include.type}/${include.id}`, include] as const,
+      ),
+    );
+    for (const include of candidates.values()) {
+      const directKey = `${entry.member ?? "root"}:${include.type}/${include.id}`;
+      if (directKeys.has(directKey)) continue;
+      const child = resolved.get(`${include.type}/${include.id}`);
+      const childPaths = (child?.manifest.files ?? []).map((file) =>
+        installedFilePath(root, file),
+      );
+      const provider = findTemplateProvider(
+        lock,
+        include.type,
+        include.id,
+        entry.member,
+        childPaths,
+      );
+      if (provider?.install !== entry || provider.via === "direct") continue;
+      rows.push({
+        id: include.id,
+        type: include.type,
+        name: include.name,
+        version: include.version,
+        member: entry.member,
+        files: [],
+        depsLeft: [],
+        update: null,
+        repair: false,
+        providedBy: {
+          id: entry.id,
+          type: entry.type,
+          name: entry.name,
+          version: entry.version,
+        },
+      });
+    }
+  }
+  return rows;
 }
 
 export const loader = (args: LoaderFunctionArgs) =>
@@ -404,6 +463,18 @@ export const loader = (args: LoaderFunctionArgs) =>
                   entry.id,
                 );
                 resolvedTemplates.set(`${entry.type}/${entry.id}`, template);
+                await Promise.all(
+                  template.includes.map(async (include) => {
+                    const key = `${include.type}/${include.id}`;
+                    if (resolvedTemplates.has(key)) return;
+                    const child = await resolveTemplate(
+                      catalog,
+                      include.type,
+                      include.id,
+                    );
+                    resolvedTemplates.set(key, child);
+                  }),
+                );
               } catch (error) {
                 console.warn(
                   `[settings] catalog template ${entry.type}/${entry.id} unavailable:`,
@@ -1454,8 +1525,18 @@ function MarketplaceInstallsSection({
                   key={`${install.member ?? "root"}:${install.type}/${install.id}`}
                   className="flex flex-wrap items-center gap-3 px-3 py-2"
                 >
-                  <span className="min-w-0 flex-1 truncate font-medium">
-                    {install.name}
+                  <span className="min-w-0 flex-1">
+                    <Link
+                      to={`/marketplace/${install.type}/${install.id}`}
+                      className="block truncate font-medium underline-offset-4 hover:underline"
+                    >
+                      {install.name}
+                    </Link>
+                    {install.providedBy && (
+                      <span className="block text-xs text-muted-foreground">
+                        {providerExplanation(install.providedBy)}
+                      </span>
+                    )}
                   </span>
                   <span className="font-mono text-xs text-muted-foreground">
                     v{install.version}
@@ -1474,7 +1555,7 @@ function MarketplaceInstallsSection({
                         shared
                       </span>
                     ))}
-                  {install.update && (
+                  {!install.providedBy && install.update && (
                     <Form method="post">
                       <input
                         type="hidden"
@@ -1498,7 +1579,7 @@ function MarketplaceInstallsSection({
                       </Button>
                     </Form>
                   )}
-                  {install.repair && (
+                  {!install.providedBy && install.repair && (
                     <Form method="post">
                       <input
                         type="hidden"
@@ -1523,38 +1604,40 @@ function MarketplaceInstallsSection({
                       </Button>
                     </Form>
                   )}
-                  <ConfirmDialog
-                    trigger={
-                      <Button
-                        type="button"
-                        size="sm"
-                        variant="ghost"
-                        className="text-destructive hover:text-destructive"
-                        disabled={busy}
-                      >
-                        Uninstall
-                      </Button>
-                    }
-                    title={`Uninstall ${install.name}?`}
-                    description={
-                      `Saves the deletion of ${install.files.length} file${install.files.length === 1 ? "" : "s"}:\n` +
-                      install.files.join("\n") +
-                      (install.depsLeft.length > 0
-                        ? `\n\nnpm packages left for review: ${install.depsLeft.join(", ")}`
-                        : "")
-                    }
-                    confirmLabel="Uninstall"
-                    onConfirm={() =>
-                      submit(
-                        {
-                          intent: "uninstall",
-                          id: install.id,
-                          member: install.member ?? "",
-                        },
-                        { method: "post" },
-                      )
-                    }
-                  />
+                  {!install.providedBy && (
+                    <ConfirmDialog
+                      trigger={
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="ghost"
+                          className="text-destructive hover:text-destructive"
+                          disabled={busy}
+                        >
+                          Uninstall
+                        </Button>
+                      }
+                      title={`Uninstall ${install.name}?`}
+                      description={
+                        `Saves the deletion of ${install.files.length} file${install.files.length === 1 ? "" : "s"}:\n` +
+                        install.files.join("\n") +
+                        (install.depsLeft.length > 0
+                          ? `\n\nnpm packages left for review: ${install.depsLeft.join(", ")}`
+                          : "")
+                      }
+                      confirmLabel="Uninstall"
+                      onConfirm={() =>
+                        submit(
+                          {
+                            intent: "uninstall",
+                            id: install.id,
+                            member: install.member ?? "",
+                          },
+                          { method: "post" },
+                        )
+                      }
+                    />
+                  )}
                 </li>
               ))}
             </ul>
