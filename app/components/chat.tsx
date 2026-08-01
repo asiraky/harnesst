@@ -3,7 +3,7 @@
  * region and keeps itself pinned to the newest message (unless the user scrolls up to
  * read), user/assistant bubbles, a typing indicator for an in-flight turn, a collapsible
  * steps card for agent tool activity, and a composer that submits on Enter (Shift+Enter
- * for a newline) and clears after send. The routes own the data; this owns the
+ * for a newline) and clears after the route accepts the send. The routes own the data; this owns the
  * conversational feel.
  */
 import {
@@ -1046,7 +1046,8 @@ export function ChatComposer({
   initialValue?: string;
   /** Refocus the composer when the surrounding conversation changes. */
   focusKey?: unknown;
-  onSend: (message: string) => void;
+  /** Resolve true once the server accepts the turn; false keeps the draft for retry. */
+  onSend: (message: string) => Promise<boolean>;
   /** Optional controls rendered in the toolbar, left of the send button (e.g. a picker). */
   controls?: ReactNode;
 }) {
@@ -1069,14 +1070,40 @@ export function ChatComposer({
     autoGrow(el);
   }, [initialValue]);
 
-  const send = () => {
-    const message = ref.current?.value.trim();
+  const sendingRef = useRef(false);
+
+  const send = async () => {
+    const el = ref.current;
+    const message = el?.value.trim();
     if (!message || unavailable) return;
-    onSend(message);
-    if (ref.current) {
-      ref.current.value = "";
-      ref.current.style.height = "auto";
+    // `busy` is a render-derived guard and can lag a double click/key press by one frame.
+    if (sendingRef.current) return;
+    sendingRef.current = true;
+    let accepted = false;
+    try {
+      accepted = await onSend(message);
+    } catch {
+      // A rejected callback is the same as a refused request: retain the user's draft.
+    } finally {
+      sendingRef.current = false;
     }
+
+    const current = ref.current;
+    if (!current) return;
+    if (accepted) {
+      // Do not erase text typed after a very fast caller accepted without making the
+      // composer busy. Normal chat routes disable it while the request is pending.
+      if (current.value.trim() === message) {
+        current.value = "";
+        current.style.height = "auto";
+      }
+      return;
+    }
+
+    // Rejections leave the uncontrolled value intact. Resize/refocus after the route's
+    // state update has re-enabled the textarea so Enter can retry the same message.
+    autoGrow(current);
+    window.requestAnimationFrame(() => ref.current?.focus());
   };
 
   return (
