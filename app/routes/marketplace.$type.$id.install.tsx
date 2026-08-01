@@ -68,7 +68,6 @@ import {
   describeDependencies,
   packageJsonPathForRoot,
   planInstall,
-  providerExplanation,
   templateProviderForTarget,
   type DependencyDecision,
   type InstallTarget,
@@ -76,6 +75,7 @@ import {
 import {
   findInstall,
   overlayLock,
+  providerExplanation,
   selectedGroupIds,
   type HarnesstLock,
 } from "~/marketplace/lock";

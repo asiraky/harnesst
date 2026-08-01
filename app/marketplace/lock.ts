@@ -196,6 +196,13 @@ const installEntrySchema = z.object({
 
 export type InstallEntry = z.infer<typeof installEntrySchema>;
 
+/** The shared UI/error explanation for a template whose lifecycle belongs to its parent install. */
+export function providerExplanation(
+  provider: Pick<InstallEntry, "name" | "version">,
+): string {
+  return `Provided by ${provider.name} v${provider.version} — update ${provider.name} to update this.`;
+}
+
 export const lockSchema = z.object({
   version: z.literal(LOCK_VERSION),
   installs: z.array(installEntrySchema),

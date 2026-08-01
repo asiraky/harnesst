@@ -378,13 +378,6 @@ export interface InstallPlan {
   }>;
 }
 
-/** The shared UI/error explanation for a template whose lifecycle belongs to its parent install. */
-export function providerExplanation(
-  provider: Pick<InstallEntry, "name" | "version">,
-): string {
-  return `Provided by ${provider.name} v${provider.version} — update ${provider.name} to update this.`;
-}
-
 /**
  * A stale client, assistant call, or API must not degrade a provider-owned template into a wall of
  * file conflicts. This named error is the planner's explicit unreachable-state guard.

@@ -101,12 +101,12 @@ import {
   packageJsonPathForRoot,
   planInstall,
   planUninstall,
-  providerExplanation,
 } from "~/marketplace/install.server";
 import {
   findTemplateProvider,
   missingOwnedFiles,
   overlayLock,
+  providerExplanation,
   renameMember,
   serializeLock,
   type CatalogProviderEvidence,
