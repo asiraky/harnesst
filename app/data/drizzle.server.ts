@@ -201,6 +201,14 @@ export const drizzleDataStore: DataStore = {
         .returning();
       return row;
     },
+    async updateIfStatus(id, expectedStatus, patch) {
+      const [row] = await db
+        .update(deployments)
+        .set({ ...patch, updatedAt: new Date() })
+        .where(and(eq(deployments.id, id), eq(deployments.status, expectedStatus)))
+        .returning();
+      return row ?? null;
+    },
     async listByEnvironment(environmentId) {
       return db
         .select({

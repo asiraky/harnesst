@@ -1,8 +1,21 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const { buildAssistantImage, getWorkspaceAssistantSelection } = vi.hoisted(
+import type { InstanceHealth } from "~/seams/types";
+
+const {
+  buildAssistantImage,
+  deployHealth,
+  deployStart,
+  getWorkspaceAssistantSelection,
+} = vi.hoisted(
   () => ({
     buildAssistantImage: vi.fn(),
+    deployHealth: vi.fn(
+      async (): Promise<InstanceHealth> => ({ status: "pending" }),
+    ),
+    deployStart: vi.fn(
+      async (): Promise<InstanceHealth> => ({ status: "failed" }),
+    ),
     getWorkspaceAssistantSelection: vi.fn(
       async (): Promise<{ model: string | null; effort: string | null }> => ({
         model: null,
@@ -14,6 +27,23 @@ const { buildAssistantImage, getWorkspaceAssistantSelection } = vi.hoisted(
 
 vi.mock("~/deploy/eve-image.server", () => ({ buildAssistantImage }));
 vi.mock("~/org/workspace.server", () => ({ getWorkspaceAssistantSelection }));
+vi.mock("~/seams/index.server", async (importOriginal) => {
+  const original = await importOriginal<typeof import("~/seams/index.server")>();
+  return {
+    ...original,
+    getRuntime: () => {
+      const runtime = original.getRuntime();
+      return {
+        ...runtime,
+        deployTarget: {
+          ...runtime.deployTarget,
+          health: deployHealth,
+          start: deployStart,
+        },
+      };
+    },
+  };
+});
 
 import {
   assistantTemplateHash,
@@ -23,6 +53,13 @@ import {
   runAssistantDeploy,
 } from "~/assistant/instance.server";
 import { makeFakeStore } from "../fakes/store";
+
+beforeEach(() => {
+  deployHealth.mockReset();
+  deployHealth.mockResolvedValue({ status: "pending" });
+  deployStart.mockReset();
+  deployStart.mockResolvedValue({ status: "failed" });
+});
 
 describe("assistant instance: agent + environment", () => {
   it("creates the assistant agent (kind assistant) and its 'assistant' environment", async () => {
@@ -203,6 +240,91 @@ describe("assistant instance: provisioning", () => {
     ).toHaveLength(1);
     const stats = await store.jobs.statsByStatus();
     expect(stats.queued ?? 0).toBe(1);
+  });
+});
+
+describe("assistant instance: stale live recovery", () => {
+  async function seedCurrentLive() {
+    const store = makeFakeStore();
+    store.seedProject({
+      id: "p",
+      orgId: "o",
+      repoOwner: "a",
+      repoName: "r",
+      repoInstallationId: "i",
+    });
+    const first = await ensureAssistantInstance("p", store);
+    await store.deployments.update(first.deploymentId!, {
+      status: "live",
+      url: "http://stale.local",
+    });
+    return { store, first };
+  }
+
+  it("wakes a definitely stopped live row and persists the fresh port", async () => {
+    const { store, first } = await seedCurrentLive();
+    deployHealth.mockResolvedValue({ status: "stopped" });
+    deployStart.mockResolvedValue({
+      status: "live",
+      url: "http://fresh.local",
+    });
+
+    const instance = await ensureAssistantInstance("p", store);
+
+    expect(deployHealth).toHaveBeenCalledWith(first.deploymentId);
+    expect(deployStart).toHaveBeenCalledWith(first.deploymentId);
+    expect(instance).toMatchObject({
+      status: "live",
+      deploymentId: first.deploymentId,
+      url: "http://fresh.local",
+    });
+    expect(await store.deployments.findById(first.deploymentId!)).toMatchObject({
+      status: "live",
+      url: "http://fresh.local",
+    });
+  });
+
+  it("demotes an unwakeable row and provisions a replacement", async () => {
+    const { store, first } = await seedCurrentLive();
+    deployHealth.mockResolvedValue({ status: "stopped" });
+    deployStart.mockRejectedValue(new Error("container is gone"));
+
+    const instance = await ensureAssistantInstance("p", store);
+
+    expect(instance.status).toBe("provisioning");
+    expect(instance.deploymentId).not.toBe(first.deploymentId);
+    expect(await store.deployments.findById(first.deploymentId!)).toMatchObject({
+      status: "stopped",
+      url: null,
+    });
+  });
+
+  it("trusts an inconclusive pending health answer", async () => {
+    const { store, first } = await seedCurrentLive();
+    deployHealth.mockResolvedValue({ status: "pending" });
+
+    const instance = await ensureAssistantInstance("p", store);
+
+    expect(instance).toMatchObject({
+      status: "live",
+      deploymentId: first.deploymentId,
+      url: "http://stale.local",
+    });
+    expect(deployStart).not.toHaveBeenCalled();
+  });
+
+  it("trusts the row when the health probe throws", async () => {
+    const { store, first } = await seedCurrentLive();
+    deployHealth.mockRejectedValue(new Error("probe unavailable"));
+
+    const instance = await ensureAssistantInstance("p", store);
+
+    expect(instance).toMatchObject({
+      status: "live",
+      deploymentId: first.deploymentId,
+      url: "http://stale.local",
+    });
+    expect(deployStart).not.toHaveBeenCalled();
   });
 });
 

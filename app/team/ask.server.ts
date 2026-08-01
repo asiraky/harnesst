@@ -253,20 +253,19 @@ export async function runAsk(
   const targetDeployments = await store.deployments.listByEnvironment(
     targetEnv.id,
   );
-  let live =
-    targetDeployments.find((d) => d.status === "live" && d.url) ?? null;
-  if (!live) {
-    const stopped = targetDeployments.find((d) => d.status === "stopped");
-    if (!stopped) {
-      const everDeployed = targetDeployments.length > 0;
-      return deny(
-        everDeployed
-          ? `"${teammate}" has no live deployment in "${callerEnv.name}" right now — it needs to be deployed and running.`
-          : `"${teammate}" has never been deployed to "${callerEnv.name}" — deploy it before delegating.`,
-      );
-    }
-    live = await deps.ensureLiveDeployment(targetEnv.id).catch(() => null);
+  const recoverable = targetDeployments.some(
+    (d) => d.status === "live" || d.status === "stopped",
+  );
+  if (!recoverable) {
+    const everDeployed = targetDeployments.length > 0;
+    return deny(
+      everDeployed
+        ? `"${teammate}" has no live deployment in "${callerEnv.name}" right now — it needs to be deployed and running.`
+        : `"${teammate}" has never been deployed to "${callerEnv.name}" — deploy it before delegating.`,
+    );
   }
+  // Even a persisted live row may point at a container lost in a host restart.
+  const live = await deps.ensureLiveDeployment(targetEnv.id).catch(() => null);
   if (!live || !live.url) {
     return deny(
       `"${teammate}" is stopped in "${callerEnv.name}" and couldn't be woken — try again shortly.`,

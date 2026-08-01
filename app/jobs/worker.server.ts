@@ -8,6 +8,7 @@
  */
 import type { DataStore } from "~/data/ports";
 import { deployRelease, rollbackTo } from "~/deploy/controller.server";
+import { reconcileLiveDeployments } from "~/deploy/liveness.server";
 import { ensureSandboxReaperStarted } from "~/deploy/sandbox-reaper.server";
 import { PUBLISH_INTERRUPTED_MESSAGE } from "~/publish/pipeline.server";
 import { getRuntime } from "~/seams/index.server";
@@ -181,20 +182,39 @@ function startWorker(): { stop: () => void } {
   // This worker is the only one per box (ARCH §2), so requeueing `running` jobs is safe —
   // except publishes, which are settled as failed first (see reconcilePublishesOnBoot).
   const data = getRuntime().data;
-  reconcilePublishesOnBoot(data)
+  let booted = false;
+  void reconcilePublishesOnBoot(data)
     .catch((err) =>
       console.error("[jobs] publish boot reconciliation failed:", err),
+    )
+    .then(async () => {
+      const result = await reconcileLiveDeployments({
+        store: data,
+        deployTarget: getRuntime().deployTarget,
+      });
+      if (result.checked > 0) {
+        console.log(
+          `[jobs] reconciled ${result.checked} live deployment(s): ` +
+            `${result.live} live, ${result.stopped} stopped`,
+        );
+      }
+    })
+    .catch((err) =>
+      console.error("[jobs] deployment boot reconciliation failed:", err),
     )
     .then(() => data.jobs.requeueRunning())
     .then((n) => {
       if (n > 0)
         console.log(`[jobs] requeued ${n} job(s) stranded by a restart`);
     })
-    .catch((err) => console.error("[jobs] boot recovery failed:", err));
+    .catch((err) => console.error("[jobs] boot recovery failed:", err))
+    .finally(() => {
+      booted = true;
+    });
 
   let running = false;
   const interval = setInterval(async () => {
-    if (running) return; // don't stack ticks behind a long build
+    if (!booted || running) return; // recover persisted state first; don't stack long builds
     running = true;
     try {
       await tick();
