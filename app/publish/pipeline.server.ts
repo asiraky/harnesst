@@ -154,6 +154,11 @@ const ASSISTANT_ONLY_REASON = "This change only affects the assistant's configur
 const CAS_FAILED_MESSAGE =
   "Someone else changed this repository while we were publishing. Try publishing again.";
 
+/** The Overview result view for a completed publish task. */
+export function publishResultUrl(projectId: string, taskId: string): string {
+  return `/repos/${projectId}?publish=${encodeURIComponent(taskId)}`;
+}
+
 /** The outcome of a publish whose process died mid-run (boot reconciliation / rerun guard). */
 export const PUBLISH_INTERRUPTED_MESSAGE =
   "harnesst restarted while this publish was running. Nothing you saved was lost — publish again.";
@@ -703,7 +708,7 @@ export async function runPublish(
     }
 
     if (assistantConfigOnly) {
-      await completeTask(taskId, { resultUrl: task.originUrl }, store);
+      await completeTask(taskId, { resultUrl: publishResultUrl(connected.id, taskId) }, store);
       outcome.status = "succeeded";
       return outcome;
     }
@@ -840,7 +845,7 @@ export async function runPublish(
     }
     deployStep.status = "succeeded";
     await save();
-    await completeTask(taskId, { resultUrl: task.originUrl }, store);
+    await completeTask(taskId, { resultUrl: publishResultUrl(connected.id, taskId) }, store);
     outcome.status = "succeeded";
     return outcome;
   } catch (error) {

@@ -5,10 +5,10 @@ import { Button } from "~/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "~/components/ui/card";
 
 export function EmptyTeamState({
-  overviewHref,
+  agentsHref,
   action,
 }: {
-  overviewHref: string;
+  agentsHref: string;
   action?: ReactNode;
 }) {
   return (
@@ -22,7 +22,7 @@ export function EmptyTeamState({
         </p>
         {action ?? (
           <Button asChild>
-            <Link to={overviewHref}>Add your first agent on Overview</Link>
+            <Link to={agentsHref}>Add your first agent on the Agents tab</Link>
           </Button>
         )}
       </CardContent>

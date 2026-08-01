@@ -1,7 +1,7 @@
 /**
  * File editor (Author pillar, M1) — CodeMirror-backed, for any file under `agent/`.
  *
- * Reached from a resource link or the "New <kind>" dialog on the Overview. A file that exists
+ * Reached from a resource link or the "New <kind>" dialog on the agent page. A file that exists
  * nowhere yet (no repo content, no draft) starts from its category's starter template
  * (~/eve/templates). Save formats code files with Prettier, then writes a draft
  * (refresh-proof, no git write); the header Publish control takes every saved change live
@@ -103,11 +103,11 @@ export const loader = (args: LoaderFunctionArgs) =>
       const url = new URL(args.request.url);
       const requested = url.searchParams.get("path") ?? "";
       // A link into `harnesst/` is a well-formed path we refuse on purpose (issue #254) — say
-      // so, instead of bouncing to the overview as if the link were malformed.
+      // so, instead of bouncing to the agent page as if the link were malformed.
       const refusal = platformPathRefusal(requested);
       if (refusal) throw data(refusal, { status: 403 });
       const path = normalizeAgentPath(requested);
-      // No (valid) target — nothing to edit; back to the overview, where creation lives.
+      // No (valid) target — nothing to edit; back to the agent page, where creation lives.
       if (!path) throw redirect(contextPath(project.id, paramAgent));
 
       // Markdown schedules get the structured editor (cron + message); ?raw=1 is its own

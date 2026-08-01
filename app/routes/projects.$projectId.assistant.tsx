@@ -643,7 +643,7 @@ export default function Assistant({ loaderData }: Route.ComponentProps) {
         />
         {isTeam && roster.length === 0 && (
           <div className="mt-6">
-            <EmptyTeamState overviewHref={`/repos/${project.id}`} />
+            <EmptyTeamState agentsHref={`/repos/${project.id}`} />
           </div>
         )}
       </div>
