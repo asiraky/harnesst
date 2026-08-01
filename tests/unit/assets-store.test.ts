@@ -228,6 +228,41 @@ describe("repo-backed asset operations", () => {
     });
   });
 
+  it("falls back to base64 when a text-named file is not valid UTF-8", async () => {
+    const windows1252 = Buffer.from([0x3c, 0x70, 0x3e, 0x93, 0x68, 0x69, 0x94]);
+    await runAssetOperation(
+      deploymentId,
+      {
+        op: "put",
+        id: "templates/legacy",
+        files: [
+          {
+            path: "index.html",
+            content: windows1252.toString("base64"),
+            encoding: "base64",
+          },
+        ],
+      },
+      deps,
+    );
+
+    const get = await runAssetOperation(
+      deploymentId,
+      { op: "get", id: "templates/legacy" },
+      deps,
+    );
+    expect(get).toMatchObject({
+      ok: true,
+      files: [
+        {
+          path: "index.html",
+          encoding: "base64",
+          content: windows1252.toString("base64"),
+        },
+      ],
+    });
+  });
+
   it("replaces the whole asset, preserves createdAt, removes stale files, then deletes it", async () => {
     const first = await runAssetOperation(
       deploymentId,

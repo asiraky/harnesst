@@ -408,10 +408,16 @@ async function getAsset(
         `Asset "${id}" file ${expected.path} does not match its manifest.json.`,
       );
     }
-    const encoding = isTextAssetPath(expected.path) ? "utf8" : "base64";
+    const text = isTextAssetPath(expected.path) ? bytes.toString("utf8") : null;
+    // A text extension is only a hint. Preserve arbitrary bytes exactly when UTF-8 decoding would
+    // insert replacement characters (for example a Windows-1252 HTML template).
+    const encoding =
+      text !== null && Buffer.from(text, "utf8").equals(bytes)
+        ? "utf8"
+        : "base64";
     files.push({
       path: expected.path,
-      content: bytes.toString(encoding),
+      content: encoding === "utf8" ? text! : bytes.toString("base64"),
       encoding,
     });
   }
