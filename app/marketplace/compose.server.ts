@@ -89,7 +89,11 @@ export interface ResolvedTemplate {
    * (frontmatter can't survive concatenation, and one install gets one skill).
    */
   assistantSkill: string | null;
-  /** Direct include references, each with its own name/version/hash (composition provenance). */
+  /**
+   * Flattened include references at every depth, each with its own name/version/hash (composition
+   * provenance). Recording the whole resolved tree lets lock-only readers see through nested
+   * bundles without re-walking a possibly newer catalog.
+   */
   includes: ResolvedInclude[];
   /**
    * OAuth connection descriptors the install must broker (issue #30): the parent's own `auth`
@@ -173,6 +177,7 @@ async function resolve(
       version: child.manifest.version,
       hash: child.hash,
     });
+    provenance.push(...child.includes);
   }
 
   // ── files: union of every include (in order) then the parent; duplicates are an error ──

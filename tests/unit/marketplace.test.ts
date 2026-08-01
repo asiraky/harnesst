@@ -21,10 +21,14 @@ import {
 } from "~/marketplace/manifest";
 import {
   emptyLock,
+  findTemplateProvider,
+  hasChannelInstalled,
+  hasToolInstalled,
   installKey,
   installedKeys,
   missingOwnedFiles,
   upsertInstall,
+  type CatalogProviderEvidence,
   type HarnesstLock,
   type InstallEntry,
 } from "~/marketplace/lock";
@@ -494,6 +498,89 @@ describe("composition against the real seed", () => {
   });
 });
 
+describe("transitive composition provenance", () => {
+  it("flattens every include depth into the resolved provenance", async () => {
+    const leaf: CatalogTemplate = {
+      assistantSkill: null,
+      manifest: {
+        ...VALID,
+        id: "leaf-skill",
+        type: "skill",
+        name: "Leaf skill",
+        files: ["skills/leaf/SKILL.md"],
+      },
+      files: { "skills/leaf/SKILL.md": "# Leaf\n" },
+    };
+    const middle: CatalogTemplate = {
+      assistantSkill: null,
+      manifest: {
+        ...VALID,
+        id: "middle-bundle",
+        type: "bundle",
+        name: "Middle bundle",
+        files: [],
+        includes: [{ type: "skill", id: "leaf-skill" }],
+      },
+      files: {},
+    };
+    const parent: CatalogTemplate = {
+      assistantSkill: null,
+      manifest: {
+        ...VALID,
+        id: "parent-bundle",
+        type: "bundle",
+        name: "Parent bundle",
+        files: [],
+        includes: [{ type: "bundle", id: "middle-bundle" }],
+      },
+      files: {},
+    };
+
+    const resolved = await resolveTemplate(
+      fakeCatalog([parent, middle, leaf]),
+      "bundle",
+      "parent-bundle",
+    );
+    expect(resolved.includes.map(({ type, id }) => ({ type, id }))).toEqual([
+      { type: "bundle", id: "middle-bundle" },
+      { type: "skill", id: "leaf-skill" },
+    ]);
+    const entry: InstallEntry = {
+      id: "parent-bundle",
+      type: "bundle",
+      name: "Parent bundle",
+      version: "1.0.0",
+      hash: "parent-hash",
+      registry: "fixture",
+      member: "ivy",
+      files: ["agents/ivy/agent/skills/leaf/SKILL.md"],
+      // A pre-change lock recorded only the direct child, not the leaf nested beneath it.
+      includes: [resolved.includes[0]],
+    };
+    const catalogProviders: CatalogProviderEvidence[] = [
+      {
+        provider: { id: entry.id, type: entry.type, member: entry.member },
+        includes: [
+          {
+            id: "leaf-skill",
+            type: "skill",
+            ownedPaths: ["agents/ivy/agent/skills/leaf/SKILL.md"],
+          },
+        ],
+      },
+    ];
+    expect(
+      findTemplateProvider(
+        { version: 1, installs: [entry] },
+        "skill",
+        "leaf-skill",
+        "ivy",
+        catalogProviders,
+      ),
+    ).toEqual({ install: entry, via: "catalog-include" });
+  });
+});
+
 describe("fakeCatalog", () => {
   const tpl: CatalogTemplate = {
     assistantSkill: null,
@@ -592,6 +679,52 @@ describe("installedKeys", () => {
     expect(installedKeys(lock).sort()).toEqual(["agent/pm", "tool/web-search"]);
   });
 
+  it("includes templates provided by a composite lock row", () => {
+    const parent: InstallEntry = {
+      ...installEntry({ id: "designer", type: "agent", member: "designer" }),
+      includes: [
+        {
+          id: "impeccable",
+          type: "skill",
+          name: "Impeccable",
+          version: "0.1.0",
+          hash: "child-sha",
+        },
+      ],
+    };
+    expect(installedKeys({ version: 1, installs: [parent] })).toEqual([
+      "agent/designer",
+      "skill/impeccable",
+    ]);
+  });
+
+  it("includes a catalog-confirmed child from a pre-includes parent", () => {
+    const parent: InstallEntry = {
+      ...installEntry({ id: "designer", type: "agent", member: "designer" }),
+      files: ["agents/designer/agent/skills/impeccable/SKILL.md"],
+    };
+    const catalogProviders: CatalogProviderEvidence[] = [
+      {
+        provider: { id: "designer", type: "agent", member: "designer" },
+        includes: [
+          {
+            id: "impeccable",
+            type: "skill",
+            ownedPaths: [
+              "agents/designer/agent/skills/impeccable/SKILL.md",
+            ],
+          },
+        ],
+      },
+    ];
+    expect(
+      installedKeys(
+        { version: 1, installs: [parent] },
+        catalogProviders,
+      ),
+    ).toEqual(["agent/designer", "skill/impeccable"]);
+  });
+
   it("returns one key per install for the same id under two members, and the caller dedupes by set", () => {
     // A team repo can host the same (type, id) under two members. `installedKeys` reports BOTH;
     // the marketplace loader collapses them via `new Set(...)` so the facet counts it once.
@@ -604,6 +737,95 @@ describe("installedKeys", () => {
     };
     expect(installedKeys(lock)).toEqual(["tool/web-search", "tool/web-search"]);
     expect([...new Set(installedKeys(lock))]).toEqual(["tool/web-search"]);
+  });
+});
+
+describe("findTemplateProvider", () => {
+  const parent: InstallEntry = {
+    ...installEntry({ id: "designer", type: "agent", member: "designer" }),
+    files: ["agents/designer/agent/skills/impeccable/SKILL.md"],
+    includes: [
+      {
+        id: "impeccable",
+        type: "skill",
+        name: "Impeccable",
+        version: "0.1.0",
+        hash: "child-sha",
+      },
+    ],
+  };
+
+  it("returns direct installs and bundle-carried templates", () => {
+    const lock = { version: 1 as const, installs: [parent] };
+    expect(findTemplateProvider(lock, "agent", "designer", "designer")).toEqual(
+      {
+        install: parent,
+        via: "direct",
+      },
+    );
+    expect(
+      findTemplateProvider(lock, "skill", "impeccable", "designer"),
+    ).toEqual({
+      install: parent,
+      via: "include",
+    });
+  });
+
+  it("keeps include identity type-strict", () => {
+    const lock = { version: 1 as const, installs: [parent] };
+    expect(
+      findTemplateProvider(lock, "tool", "impeccable", "designer"),
+    ).toBeUndefined();
+    expect(
+      findTemplateProvider(lock, "channel", "impeccable", "designer"),
+    ).toBeUndefined();
+    expect(hasToolInstalled(lock, "impeccable", "designer")).toBe(false);
+    expect(hasChannelInstalled(lock, "impeccable", "designer")).toBe(false);
+  });
+
+  it("requires catalog membership plus owned-path evidence for old parents", () => {
+    const legacy = { ...parent, includes: undefined };
+    const lock = { version: 1 as const, installs: [legacy] };
+    const catalogProviders: CatalogProviderEvidence[] = [
+      {
+        provider: { id: "designer", type: "agent", member: "designer" },
+        includes: [
+          {
+            id: "impeccable",
+            type: "skill",
+            ownedPaths: legacy.files,
+          },
+        ],
+      },
+    ];
+    expect(
+      findTemplateProvider(
+        lock,
+        "skill",
+        "impeccable",
+        "designer",
+        catalogProviders,
+      ),
+    ).toEqual({ install: legacy, via: "catalog-include" });
+    // Owning a colliding path without catalog membership is never enough, even for a tiny skill.
+    expect(
+      findTemplateProvider(lock, "skill", "impeccable", "designer"),
+    ).toBeUndefined();
+    // Catalog membership without any lock-owned child path means the child was added later.
+    expect(
+      findTemplateProvider(lock, "skill", "impeccable", "designer", [
+        {
+          ...catalogProviders[0],
+          includes: [
+            {
+              id: "impeccable",
+              type: "skill",
+              ownedPaths: ["agents/designer/agent/skills/other/SKILL.md"],
+            },
+          ],
+        },
+      ]),
+    ).toBeUndefined();
   });
 });
 
