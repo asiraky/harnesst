@@ -28,6 +28,7 @@ import {
   countArchivedFohSessions,
   createPlaygroundSession,
   listFohSessionsForAgent,
+  renameFohSession,
   summarizePlaygroundSession,
 } from "~/playground/sessions.server";
 import { getRuntime } from "~/seams/index.server";
@@ -97,7 +98,35 @@ export async function action(args: ActionFunctionArgs) {
   const agent = await requireFohAgent(access.project.id, args.params.agentId);
 
   const form = await args.request.formData();
-  if (String(form.get("intent")) !== "new-session") {
+  const intent = String(form.get("intent"));
+  if (intent === "rename-session") {
+    const sessionId = String(form.get("playgroundSessionId") ?? "").trim();
+    const title = String(form.get("title") ?? "")
+      .replace(/\s+/g, " ")
+      .trim();
+    if (!sessionId || !title) {
+      return data({ error: "A session title is required." }, { status: 400 });
+    }
+    if (title.length > 120) {
+      return data(
+        { error: "Session titles must be 120 characters or fewer." },
+        { status: 400 },
+      );
+    }
+    const renamed = await renameFohSession({
+      id: sessionId,
+      projectId: access.project.id,
+      agentId: agent.id,
+      viewerId: auth.user.id,
+      includeAll: access.backOfHouse,
+      title,
+    });
+    if (!renamed) {
+      return data({ error: "That session was not found." }, { status: 404 });
+    }
+    return { error: null, renamed };
+  }
+  if (intent !== "new-session") {
     return { error: "Unknown action." };
   }
   const existing = await listFohSessionsForAgent({

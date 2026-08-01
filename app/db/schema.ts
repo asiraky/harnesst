@@ -1232,6 +1232,11 @@ export const playgroundSessions = pgTable(
      */
     openingMessage: text("opening_message"),
     title: text("title"),
+    /**
+     * A human-edited title is authoritative. Turn drains and channel/delegation adoption can
+     * finish after the rename, so every inferred-title writer checks this bit before updating.
+     */
+    titleManuallySet: boolean("title_manually_set").notNull().default(false),
     /** new | running | waiting | completed | failed */
     status: text("status").notNull().default("new"),
     /** Version label of the release that last served this conversation (turn-meta display). */
