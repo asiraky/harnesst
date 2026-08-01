@@ -1,7 +1,8 @@
-# Designer v1: product interview to published static site
+# Harnesst/eve v1: product interview to published static site
 
-This adapter owns the Designer agent's ordinary workflow. It narrows the broader Impeccable skill
-to one Front of House path. Where another reference conflicts with this file, follow this file.
+This adapter owns the harnesst/eve agent's ordinary workflow. It narrows the broader Impeccable
+skill to one Front of House path. Where another reference conflicts with this file, follow this
+file.
 
 ## 1. Establish the workspace
 
@@ -20,10 +21,10 @@ the image-generation probe: it prints an `IMAGE_GEN_AVAILABLE:` line when and on
 is a configuration fact to disclose, never an error to retry or an install to attempt.
 
 The root session receives eve's built-in `agent` tool by default. Each call starts a fresh copy of
-Designer with no parent conversation history, but with the same instructions, tools, credentials,
-and sandbox; a child's writes under `/workspace/home` are immediately visible to the root. Every
-role message must therefore name its file under `reference/roles/`, tell the child that the role
-overrides the ordinary Designer workflow for this task, and carry every task input. Do not author
+the harnesst/eve agent with no parent conversation history, but with the same instructions, tools,
+credentials, and sandbox; a child's writes under `/workspace/home` are immediately visible to the root.
+Every role message must therefore name its file under `reference/roles/`, tell the child that the
+role overrides the ordinary root workflow for this task, and carry every task input. Do not author
 declared subagents: their sandbox would fall back to the framework default instead of inheriting
 this workspace.
 
@@ -90,7 +91,7 @@ dealt directions.
 
 `serve-question.mjs` cannot run here: this sandbox is headless, so the script exits 2, and
 `IMPECCABLE_QUESTION_DISABLED` is set so it never tries. Exit 2 is the documented fallback rung,
-never an error to retry. Designer v1 pins that rung to eve's structured question tool.
+never an error to retry. The harnesst/eve adapter pins that rung to eve's structured question tool.
 
 Emit **exactly one** structured question for the whole round. A human's answer resolves every
 pending ask on the session, so a second question in the same turn loses one of them. Shape it as:
