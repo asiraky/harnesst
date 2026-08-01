@@ -17,6 +17,10 @@ import {
 } from "~/assistant/authoring.server";
 import type { Agent, DataStore, Environment, Release } from "~/data/ports";
 import { buildAssistantImage } from "~/deploy/eve-image.server";
+import {
+  recoverLiveDeployment,
+  wakeStoppedDeployment,
+} from "~/deploy/liveness.server";
 import { isVersionLabelCollision } from "~/deploy/versioning";
 import { enqueue } from "~/jobs/queue.server";
 import { getWorkspaceAssistantSelection } from "~/org/workspace.server";
@@ -456,30 +460,24 @@ export async function ensureAssistantInstance(
     agentId: agent.id,
   };
 
-  // A live deployment on the CURRENT template → use it (wake first if the container is stopped).
+  // A live deployment on the CURRENT template → verify it, waking a definitely-stopped target.
   const live = deployments.find(
     (d) => d.status === "live" && d.gitSha === currentSha,
   );
   if (live) {
-    let url = live.url;
-    if (!url) {
-      const woke = await runtime.deployTarget.start(live.id).catch(() => null);
-      url = woke?.url ?? null;
-      if (woke?.url)
-        await store.deployments.update(live.id, {
-          url: woke.url,
-          status: "live",
-        });
-    }
-    if (url) {
+    const recovered = await recoverLiveDeployment(live, {
+      store,
+      deployTarget: runtime.deployTarget,
+    });
+    if (recovered?.url) {
       return {
         ...base,
         status: "live",
-        url,
-        deploymentId: live.id,
-        releaseId: live.releaseId,
-        version: live.version,
-        gitSha: live.gitSha,
+        url: recovered.url,
+        deploymentId: recovered.id,
+        releaseId: recovered.releaseId,
+        version: recovered.version,
+        gitSha: recovered.gitSha,
       };
     }
   }
@@ -489,26 +487,19 @@ export async function ensureAssistantInstance(
     (d) => d.status === "stopped" && d.gitSha === currentSha,
   );
   if (stopped) {
-    const health = await runtime.deployTarget
-      .start(stopped.id)
-      .catch((error) => ({
-        status: "failed" as const,
-        url: undefined,
-        detail: error instanceof Error ? error.message : String(error),
-      }));
-    if (health.status === "live" && health.url) {
-      await store.deployments.update(stopped.id, {
-        status: "live",
-        url: health.url,
-      });
+    const recovered = await wakeStoppedDeployment(stopped, {
+      store,
+      deployTarget: runtime.deployTarget,
+    });
+    if (recovered?.url) {
       return {
         ...base,
         status: "live",
-        url: health.url,
-        deploymentId: stopped.id,
-        releaseId: stopped.releaseId,
-        version: stopped.version,
-        gitSha: stopped.gitSha,
+        url: recovered.url,
+        deploymentId: recovered.id,
+        releaseId: recovered.releaseId,
+        version: recovered.version,
+        gitSha: recovered.gitSha,
       };
     }
   }
