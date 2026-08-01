@@ -95,6 +95,7 @@ import { getAgentSource } from "~/github/cached.server";
 import { fetchAgentSource, readAgentFile } from "~/github/repo.server";
 import { contextPath } from "~/lib/paths";
 import {
+  catalogProviderEvidence,
   catalogLocator,
   installedFilePath,
   packageJsonPathForRoot,
@@ -108,6 +109,7 @@ import {
   overlayLock,
   renameMember,
   serializeLock,
+  type CatalogProviderEvidence,
 } from "~/marketplace/lock";
 import { slugifyResourceName } from "~/eve/templates";
 import {
@@ -291,6 +293,7 @@ function buildInstalls(
   lock: ReturnType<typeof overlayLock>,
   index: { id: string; type: TemplateType; version: string }[],
   resolved: Map<string, ResolvedTemplate>,
+  catalogProviders: readonly CatalogProviderEvidence[],
   keep: (member: string | null) => boolean,
   /** Paths that actually exist for the reviewer: the branch tree with staged drafts applied. */
   present: Set<string>,
@@ -360,8 +363,8 @@ function buildInstalls(
     });
 
     // A bundled template intentionally has no lock row of its own. Project it as a read-only row
-    // from the lock's flattened provenance. For older locks, the current resolved parent supplies
-    // transitive candidates and near-complete path ownership proves the parent really shipped them.
+    // from the lock's flattened provenance. For older locks, current-catalog membership plus an
+    // included path the parent lock owns proves that the parent actually shipped the child.
     const candidates = new Map(
       [...(template?.includes ?? []), ...(entry.includes ?? [])].map(
         (include) => [`${include.type}/${include.id}`, include] as const,
@@ -370,16 +373,12 @@ function buildInstalls(
     for (const include of candidates.values()) {
       const directKey = `${entry.member ?? "root"}:${include.type}/${include.id}`;
       if (directKeys.has(directKey)) continue;
-      const child = resolved.get(`${include.type}/${include.id}`);
-      const childPaths = (child?.manifest.files ?? []).map((file) =>
-        installedFilePath(root, file),
-      );
       const provider = findTemplateProvider(
         lock,
         include.type,
         include.id,
         entry.member,
-        childPaths,
+        catalogProviders,
       );
       if (provider?.install !== entry || provider.via === "direct") continue;
       rows.push({
@@ -450,10 +449,12 @@ export const loader = (args: LoaderFunctionArgs) =>
       }
       let index: { id: string; type: TemplateType; version: string }[] = [];
       const resolvedTemplates = new Map<string, ResolvedTemplate>();
+      let catalogProviders: CatalogProviderEvidence[] = [];
       if (lock.installs.length > 0) {
         try {
           const catalog = getRuntime().catalog;
           index = (await catalog.index()).templates;
+          catalogProviders = await catalogProviderEvidence(catalog, lock);
           await Promise.all(
             lock.installs.map(async (entry) => {
               try {
@@ -520,6 +521,7 @@ export const loader = (args: LoaderFunctionArgs) =>
           lock,
           index,
           resolvedTemplates,
+          catalogProviders,
           level === "repo"
             ? () => true
             : (member) =>
@@ -813,6 +815,10 @@ export async function action(args: ActionFunctionArgs) {
         drafts: draftPaths,
         packageJson,
         lock,
+        catalogProviders: await catalogProviderEvidence(
+          getRuntime().catalog,
+          lock,
+        ),
         rosterNames: roster.map((a) => a.name),
         model: installModel,
         effort: installEffort,

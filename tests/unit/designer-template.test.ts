@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { resolveTemplate } from "~/marketplace/compose.server";
 import {
+  catalogProviderEvidence,
   planInstall,
   TemplateAlreadyProvidedError,
 } from "~/marketplace/install.server";
@@ -153,6 +154,11 @@ describe("Standalone Impeccable skill", () => {
         ),
       ),
     };
+    const lock = upsertInstall(emptyLock(), provider);
+    const catalogProviders = await catalogProviderEvidence(
+      fixtureCatalog,
+      lock,
+    );
 
     expect(() =>
       planInstall({
@@ -161,7 +167,8 @@ describe("Standalone Impeccable skill", () => {
         repoPaths: provider.files,
         drafts: [],
         packageJson: null,
-        lock: upsertInstall(emptyLock(), provider),
+        lock,
+        catalogProviders,
         target: { kind: "member", memberName: "designer", root },
       }),
     ).toThrow(

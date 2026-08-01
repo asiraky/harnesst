@@ -28,6 +28,7 @@ import {
   installedKeys,
   missingOwnedFiles,
   upsertInstall,
+  type CatalogProviderEvidence,
   type HarnesstLock,
   type InstallEntry,
 } from "~/marketplace/lock";
@@ -553,16 +554,30 @@ describe("transitive composition provenance", () => {
       registry: "fixture",
       member: "ivy",
       files: ["agents/ivy/agent/skills/leaf/SKILL.md"],
-      includes: resolved.includes,
+      // A pre-change lock recorded only the direct child, not the leaf nested beneath it.
+      includes: [resolved.includes[0]],
     };
+    const catalogProviders: CatalogProviderEvidence[] = [
+      {
+        provider: { id: entry.id, type: entry.type, member: entry.member },
+        includes: [
+          {
+            id: "leaf-skill",
+            type: "skill",
+            ownedPaths: ["agents/ivy/agent/skills/leaf/SKILL.md"],
+          },
+        ],
+      },
+    ];
     expect(
       findTemplateProvider(
         { version: 1, installs: [entry] },
         "skill",
         "leaf-skill",
         "ivy",
+        catalogProviders,
       ),
-    ).toEqual({ install: entry, via: "include" });
+    ).toEqual({ install: entry, via: "catalog-include" });
   });
 });
 
@@ -683,6 +698,33 @@ describe("installedKeys", () => {
     ]);
   });
 
+  it("includes a catalog-confirmed child from a pre-includes parent", () => {
+    const parent: InstallEntry = {
+      ...installEntry({ id: "designer", type: "agent", member: "designer" }),
+      files: ["agents/designer/agent/skills/impeccable/SKILL.md"],
+    };
+    const catalogProviders: CatalogProviderEvidence[] = [
+      {
+        provider: { id: "designer", type: "agent", member: "designer" },
+        includes: [
+          {
+            id: "impeccable",
+            type: "skill",
+            ownedPaths: [
+              "agents/designer/agent/skills/impeccable/SKILL.md",
+            ],
+          },
+        ],
+      },
+    ];
+    expect(
+      installedKeys(
+        { version: 1, installs: [parent] },
+        catalogProviders,
+      ),
+    ).toEqual(["agent/designer", "skill/impeccable"]);
+  });
+
   it("returns one key per install for the same id under two members, and the caller dedupes by set", () => {
     // A team repo can host the same (type, id) under two members. `installedKeys` reports BOTH;
     // the marketplace loader collapses them via `new Set(...)` so the facet counts it once.
@@ -741,23 +783,47 @@ describe("findTemplateProvider", () => {
     expect(hasChannelInstalled(lock, "impeccable", "designer")).toBe(false);
   });
 
-  it("recognizes a pre-includes parent across one renamed child path", () => {
+  it("requires catalog membership plus owned-path evidence for old parents", () => {
     const legacy = { ...parent, includes: undefined };
     const lock = { version: 1 as const, installs: [legacy] };
+    const catalogProviders: CatalogProviderEvidence[] = [
+      {
+        provider: { id: "designer", type: "agent", member: "designer" },
+        includes: [
+          {
+            id: "impeccable",
+            type: "skill",
+            ownedPaths: legacy.files,
+          },
+        ],
+      },
+    ];
     expect(
       findTemplateProvider(
         lock,
         "skill",
         "impeccable",
         "designer",
-        [...legacy.files, "agents/designer/agent/skills/impeccable/new.md"],
+        catalogProviders,
       ),
-    ).toEqual({ install: legacy, via: "legacy-files" });
+    ).toEqual({ install: legacy, via: "catalog-include" });
+    // Owning a colliding path without catalog membership is never enough, even for a tiny skill.
+    expect(
+      findTemplateProvider(lock, "skill", "impeccable", "designer"),
+    ).toBeUndefined();
+    // Catalog membership without any lock-owned child path means the child was added later.
     expect(
       findTemplateProvider(lock, "skill", "impeccable", "designer", [
-        ...legacy.files,
-        "agents/designer/agent/skills/impeccable/new.md",
-        "agents/designer/agent/skills/impeccable/another-new.md",
+        {
+          ...catalogProviders[0],
+          includes: [
+            {
+              id: "impeccable",
+              type: "skill",
+              ownedPaths: ["agents/designer/agent/skills/other/SKILL.md"],
+            },
+          ],
+        },
       ]),
     ).toBeUndefined();
   });

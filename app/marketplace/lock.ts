@@ -248,27 +248,39 @@ export function findInstall(
 
 export interface TemplateProvider {
   install: InstallEntry;
-  via: "direct" | "include" | "legacy-files";
+  via: "direct" | "include" | "catalog-include";
+}
+
+/**
+ * Current-catalog evidence for one installed parent. `ownedPaths` are the included template's
+ * resolved final repo paths, used to prove an older lock actually materialized that child rather
+ * than merely sharing an id with something added to a later parent version.
+ */
+export interface CatalogProviderEvidence {
+  provider: Pick<InstallEntry, "id" | "type" | "member">;
+  includes: Array<{
+    id: string;
+    type: TemplateType;
+    ownedPaths: string[];
+  }>;
 }
 
 /**
  * Which install provides one typed catalog template for a member? A template may have its own lock
- * row, be recorded in a composite's flattened `includes` provenance, or come from an old parent
- * lock that predates `includes` but owns every path the now-standalone template materializes.
+ * row, be recorded in a composite's flattened `includes` provenance, or be confirmed through the
+ * current catalog for an older parent lock that predates flattened provenance.
  *
  * Identity is always `(type, id)`, never id alone. The strict type check is security-sensitive for
  * channels/tools: those identities gate park/publish URLs and delegation tokens. Legacy inference
- * requires a different parent id plus complete path ownership; if that parent records the same id
- * under a different type, it is explicitly ineligible rather than falling through to coincidence.
- * Path-only compatibility is skill-specific: it exists for skills extracted from old composite
- * agents, and never participates in channel/tool capability decisions.
+ * catalog fallback also matches `(type, id)` and requires at least one path the parent lock owns;
+ * catalog membership alone cannot claim a child that was introduced only in a newer version.
  */
 export function findTemplateProvider(
   lock: HarnesstLock,
   type: TemplateType,
   id: string,
   member: string | null,
-  legacyOwnedPaths: readonly string[] = [],
+  catalogProviders: readonly CatalogProviderEvidence[] = [],
 ): TemplateProvider | undefined {
   const memberInstalls = lock.installs.filter((e) => e.member === member);
   const direct = memberInstalls.find((e) => e.type === type && e.id === id);
@@ -279,23 +291,24 @@ export function findTemplateProvider(
   );
   if (included) return { install: included, via: "include" };
 
-  if (type !== "skill" || legacyOwnedPaths.length < 2) return undefined;
-  const legacy = memberInstalls.find(
-    (e) => {
-      if (e.id === id || (e.includes ?? []).some((i) => i.id === id)) {
-        return false;
-      }
-      // One path may have been renamed while the skill was extracted (Designer 1.2.1's adapter
-      // is the real compatibility case). Requiring every other path keeps this evidence specific:
-      // an ordinary collision on one or a handful of files remains a conflict, not provenance.
-      const owned = new Set(e.files);
-      return (
-        legacyOwnedPaths.filter((path) => owned.has(path)).length >=
-        legacyOwnedPaths.length - 1
-      );
-    },
-  );
-  return legacy ? { install: legacy, via: "legacy-files" } : undefined;
+  const catalogInstall = memberInstalls.find((entry) => {
+    const evidence = catalogProviders.find(
+      (candidate) =>
+        candidate.provider.id === entry.id &&
+        candidate.provider.type === entry.type &&
+        candidate.provider.member === entry.member,
+    );
+    const include = evidence?.includes.find(
+      (candidate) => candidate.type === type && candidate.id === id,
+    );
+    return (
+      include !== undefined &&
+      include.ownedPaths.some((path) => entry.files.includes(path))
+    );
+  });
+  return catalogInstall
+    ? { install: catalogInstall, via: "catalog-include" }
+    : undefined;
 }
 
 /**
@@ -478,11 +491,38 @@ export function installKey(type: TemplateType, id: string): string {
  * marketplace "Installed" facet reads this, so a bundle-carried template is installed too even
  * though it intentionally has no standalone lock row.
  */
-export function installedKeys(lock: HarnesstLock): string[] {
-  return lock.installs.flatMap((e) => [
-    installKey(e.type, e.id),
-    ...(e.includes ?? []).map((i) => installKey(i.type, i.id)),
-  ]);
+export function installedKeys(
+  lock: HarnesstLock,
+  catalogProviders: readonly CatalogProviderEvidence[] = [],
+): string[] {
+  return lock.installs.flatMap((entry) => {
+    const recorded = [
+      installKey(entry.type, entry.id),
+      ...(entry.includes ?? []).map((include) =>
+        installKey(include.type, include.id),
+      ),
+    ];
+    const recordedSet = new Set(recorded);
+    const evidence = catalogProviders.find(
+      (candidate) =>
+        candidate.provider.id === entry.id &&
+        candidate.provider.type === entry.type &&
+        candidate.provider.member === entry.member,
+    );
+    const inferred = (evidence?.includes ?? []).flatMap((include) => {
+      const key = installKey(include.type, include.id);
+      if (recordedSet.has(key)) return [];
+      const provider = findTemplateProvider(
+        lock,
+        include.type,
+        include.id,
+        entry.member,
+        catalogProviders,
+      );
+      return provider?.install === entry ? [key] : [];
+    });
+    return [...recorded, ...inferred];
+  });
 }
 
 /** One install's auth snapshot (see `installEntrySchema.auth`). */

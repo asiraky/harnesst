@@ -29,7 +29,7 @@ import {
 } from "~/eve/agentModule";
 import { isPlatformPath, platformRootForAgentRoot } from "~/eve/parse";
 import type { ReasoningEffort } from "~/models/reasoning";
-import type { CatalogTemplate } from "~/seams/types";
+import type { CatalogSource, CatalogTemplate } from "~/seams/types";
 import {
   isPlatformFile,
   isTemplateSlug,
@@ -37,7 +37,12 @@ import {
   type TemplateManifest,
 } from "./manifest";
 import { platformFileHash, templateContentHash } from "./hash.server";
-import type { ResolvedAuth, ResolvedInclude } from "./compose.server";
+import {
+  resolveTemplate,
+  type ResolvedAuth,
+  type ResolvedInclude,
+  type ResolvedTemplate,
+} from "./compose.server";
 import {
   findInstall,
   findTemplateProvider,
@@ -46,6 +51,7 @@ import {
   upsertInstall,
   type HarnesstLock,
   type InstallEntry,
+  type CatalogProviderEvidence,
   type TemplateProvider,
 } from "./lock";
 
@@ -312,6 +318,8 @@ export interface PlanContext {
   packageJson: string | null;
   /** Current lock (caller overlays a staged harnesst-lock.json draft); empty default. */
   lock: HarnesstLock;
+  /** Current-catalog include evidence for old locks that lack flattened provenance. */
+  catalogProviders?: CatalogProviderEvidence[];
   target: InstallTarget;
   /** Existing roster member names — a new-member install must not collide with one. */
   rosterNames?: string[];
@@ -394,25 +402,73 @@ export class TemplateAlreadyProvidedError extends Error {
 }
 
 /**
- * Resolve the install that provides `template` at an existing member target. Manifest paths are
- * mapped exactly as the planner maps them, enabling safe compatibility with old locks that owned
- * an extracted child's files before `includes` provenance existed.
+ * Resolve the install that provides `template` at an existing member target. Callers may supply
+ * current-catalog evidence so old locks that owned an extracted child before flattened `includes`
+ * provenance existed resolve through the same pure lookup.
  */
 export function templateProviderForTarget(
   lock: HarnesstLock,
   template: PlanContext["template"],
   target: InstallTarget,
+  catalogProviders: readonly CatalogProviderEvidence[] = [],
 ): TemplateProvider | undefined {
   if (target.kind !== "member") return undefined;
-  const ownedPaths = template.manifest.files.map((file) =>
-    installedFilePath(target.root, file),
-  );
   return findTemplateProvider(
     lock,
     template.manifest.type,
     template.manifest.id,
     target.memberName,
-    ownedPaths,
+    catalogProviders,
+  );
+}
+
+/**
+ * Resolve current-catalog include trees for every lock parent, mapping each child to the final
+ * paths it would own at that member. Callers pass this read-only evidence into the pure planner and
+ * lock helpers so pre-flatten locks remain visible without guessing from path collisions alone.
+ */
+export async function catalogProviderEvidence(
+  source: CatalogSource,
+  lock: HarnesstLock,
+): Promise<CatalogProviderEvidence[]> {
+  const cache = new Map<string, Promise<ResolvedTemplate | null>>();
+  const resolved = (type: TemplateManifest["type"], id: string) => {
+    const key = `${type}/${id}`;
+    let pending = cache.get(key);
+    if (!pending) {
+      pending = resolveTemplate(source, type, id).catch(() => null);
+      cache.set(key, pending);
+    }
+    return pending;
+  };
+
+  return Promise.all(
+    lock.installs.map(async (entry) => {
+      const parent = await resolved(entry.type, entry.id);
+      const root = rootForMember(entry.member);
+      const includes = parent
+        ? await Promise.all(
+            parent.includes.map(async (include) => {
+              const child = await resolved(include.type, include.id);
+              return {
+                id: include.id,
+                type: include.type,
+                ownedPaths: (child?.manifest.files ?? []).map((file) =>
+                  installedFilePath(root, file),
+                ),
+              };
+            }),
+          )
+        : [];
+      return {
+        provider: {
+          id: entry.id,
+          type: entry.type,
+          member: entry.member,
+        },
+        includes,
+      };
+    }),
   );
 }
 
@@ -548,7 +604,12 @@ export function planInstall(ctx: PlanContext): InstallPlan {
   const agentRoot =
     target.kind === "new-member" ? `agents/${target.name}/agent` : target.root;
 
-  const provider = templateProviderForTarget(ctx.lock, template, target);
+  const provider = templateProviderForTarget(
+    ctx.lock,
+    template,
+    target,
+    ctx.catalogProviders,
+  );
   if (provider && provider.via !== "direct") {
     throw new TemplateAlreadyProvidedError(
       template.manifest.name,

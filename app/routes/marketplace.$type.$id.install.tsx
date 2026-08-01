@@ -63,6 +63,7 @@ import { getAgentSource } from "~/github/cached.server";
 import { fetchAgentSource, readAgentFile } from "~/github/repo.server";
 import { contextPath } from "~/lib/paths";
 import {
+  catalogProviderEvidence,
   catalogLocator,
   describeDependencies,
   packageJsonPathForRoot,
@@ -430,10 +431,15 @@ export const loader = (args: LoaderFunctionArgs) =>
       );
       if (!resolved) return base;
 
+      const catalogProviders = await catalogProviderEvidence(
+        getRuntime().catalog,
+        lock,
+      );
       const provider = templateProviderForTarget(
         lock,
         template,
         resolved.target,
+        catalogProviders,
       );
       if (provider && provider.via !== "direct") {
         base.provider = {
@@ -582,6 +588,11 @@ export async function action(args: ActionFunctionArgs) {
       secretAgent = resolved.agent;
     }
 
+    const catalogProviders =
+      target.kind === "member"
+        ? await catalogProviderEvidence(getRuntime().catalog, lock)
+        : [];
+
     // The target's package.json: a STAGED DRAFT wins over the branch copy — merging over the
     // branch would silently drop dependencies a previously staged install already added.
     let packageJson: string | null = null;
@@ -651,6 +662,7 @@ export async function action(args: ActionFunctionArgs) {
       drafts: draftPaths,
       packageJson,
       lock,
+      catalogProviders,
       rosterNames: ctx.roster.map((a) => a.name),
       model: workspaceModel.model,
       effort: workspaceModel.effort,
