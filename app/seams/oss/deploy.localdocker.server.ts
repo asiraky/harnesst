@@ -440,6 +440,17 @@ async function inspectRunning(name: string): Promise<boolean | null> {
   }
 }
 
+/** Re-read Docker's published port; it may change whenever a stopped container is started. */
+async function instanceUrl(name: string): Promise<string> {
+  const hostPort = await docker([
+    "inspect",
+    "--format",
+    `{{(index (index .NetworkSettings.Ports "${INSTANCE_PORT}/tcp") 0).HostPort}}`,
+    name,
+  ]);
+  return `http://127.0.0.1:${hostPort}`;
+}
+
 /**
  * Run the Workflow World's schema migrations against the instance DB, using the build-stage
  * image (the migration CLI + SQL files are not traced into the runtime .output).
@@ -721,13 +732,7 @@ export const localDockerTarget: DeployTarget = {
       req.imageRef,
     ]);
 
-    const hostPort = await docker([
-      "inspect",
-      "--format",
-      `{{(index (index .NetworkSettings.Ports "${INSTANCE_PORT}/tcp") 0).HostPort}}`,
-      name,
-    ]);
-    const url = `http://127.0.0.1:${hostPort}`;
+    const url = await instanceUrl(name);
 
     const healthy = await waitForHealth(
       url,
@@ -758,13 +763,7 @@ export const localDockerTarget: DeployTarget = {
   async start(deploymentId: string): Promise<InstanceHealth> {
     const name = containerName(deploymentId);
     await docker(["start", name]);
-    const hostPort = await docker([
-      "inspect",
-      "--format",
-      `{{(index (index .NetworkSettings.Ports "${INSTANCE_PORT}/tcp") 0).HostPort}}`,
-      name,
-    ]);
-    const url = `http://127.0.0.1:${hostPort}`;
+    const url = await instanceUrl(name);
     const healthy = await waitForHealth(
       url,
       WAKE_HEALTH_TIMEOUT_MS,
@@ -786,7 +785,9 @@ export const localDockerTarget: DeployTarget = {
       const running = await inspectRunning(name);
       if (running === null)
         return { status: "stopped", detail: "no container" };
-      return { status: running ? "live" : "stopped" };
+      return running
+        ? { status: "live", url: await instanceUrl(name) }
+        : { status: "stopped" };
     } catch (error) {
       return { status: "failed", detail: commandErrorText(error) };
     }

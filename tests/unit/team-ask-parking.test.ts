@@ -105,7 +105,10 @@ function makeDeps(over: Partial<AskDeps> = {}): AskDeps & {
     recordStart: async () => true,
     recordFinish: async () => {},
     resolveRunId: async () => "run_9",
-    ensureLiveDeployment: async () => null,
+    ensureLiveDeployment: async (environmentId) => {
+      const rows = await store.deployments.listByEnvironment(environmentId);
+      return rows.find((d) => d.status === "live" && d.url) ?? null;
+    },
     createSession: async (input) => {
       createdSessions.push(input);
       return {
@@ -171,6 +174,25 @@ beforeEach(() => {
 });
 
 describe("runAsk — wake-on-delegation", () => {
+  it("verifies a persisted live peer through the liveness-aware resolver", async () => {
+    const deploymentId = await seedCallerDeployment();
+    const live = await seedTarget("live", "http://live.local");
+    const ensure = vi.fn(
+      async () =>
+        (await store.deployments.listByEnvironment("env_dep_prod")).find(
+          (d) => d.id === live.id,
+        ) ?? null,
+    );
+
+    const result = await runAsk(
+      { deploymentId, teammate: "deployer", message: "go" },
+      makeDeps({ ensureLiveDeployment: ensure }),
+    );
+
+    expect(ensure).toHaveBeenCalledWith("env_dep_prod");
+    expect(result).toMatchObject({ ok: true });
+  });
+
   it("wakes a stopped peer through the injected dep and proceeds", async () => {
     const deploymentId = await seedCallerDeployment();
     const stopped = await seedTarget("stopped", "http://stale.local");
@@ -277,17 +299,21 @@ describe("runAsk — wake-on-delegation", () => {
 });
 
 describe("ensureLiveDeploymentForEnvironment", () => {
-  const startTarget = (start: DeployTarget["start"]): DeployTarget =>
-    ({ start }) as unknown as DeployTarget;
+  const startTarget = (
+    start: DeployTarget["start"],
+    health: DeployTarget["health"] = async () => ({ status: "pending" }),
+  ): DeployTarget => ({ start, health }) as unknown as DeployTarget;
 
-  it("returns a live row with a url without touching the deploy target", async () => {
+  it("returns a live row when the deploy target gives no definite negative", async () => {
     const dep = await seedTarget("live", "http://live.local");
     const start = vi.fn();
+    const health = vi.fn(async () => ({ status: "pending" as const }));
     const row = await ensureLiveDeploymentForEnvironment("env_dep_prod", {
       store,
-      deployTarget: startTarget(start),
+      deployTarget: startTarget(start, health),
     });
     expect(row).toMatchObject({ id: dep.id, url: "http://live.local" });
+    expect(health).toHaveBeenCalledWith(dep.id);
     expect(start).not.toHaveBeenCalled();
   });
 
