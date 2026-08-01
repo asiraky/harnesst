@@ -11,7 +11,13 @@
  */
 import { getSessionAuth, sessionLoader } from "~/auth/session.server";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { FlaskConical, MessageSquare, Plus, Server, Square } from "lucide-react";
+import {
+  FlaskConical,
+  MessageSquare,
+  Plus,
+  Server,
+  Square,
+} from "lucide-react";
 import {
   redirect,
   useFetcher,
@@ -302,8 +308,7 @@ export function meta() {
  * own `data-[size=default]:h-9` on specificity, so pills would silently mismatch. Non-Select
  * pills (the model Button) pin `h-9` explicitly to line up.
  */
-const CONTROL_PILL =
-  "border-0 bg-muted/60 text-xs shadow-none hover:bg-muted";
+const CONTROL_PILL = "border-0 bg-muted/60 text-xs shadow-none hover:bg-muted";
 
 /** Local mirror of an in-flight turn, driven by the NDJSON stream. */
 interface LiveTurn {
@@ -509,13 +514,14 @@ export default function Playground({ loaderData }: Route.ComponentProps) {
       // Effort rides along only with an explicit model selection: without one, the agent's
       // deployed fallback (which already encodes its own effort) handles the turn, and the
       // server rejects effort-only requests it can't validate against a model.
-      if (selectedModelId && selectedEffort)
-        form.set("effort", selectedEffort);
+      if (selectedModelId && selectedEffort) form.set("effort", selectedEffort);
 
+      const controller = new AbortController();
+      streamAbortRef.current = controller;
+      let res: Response;
+      let body: NonNullable<Response["body"]>;
       try {
-        const controller = new AbortController();
-        streamAbortRef.current = controller;
-        const res = await fetch(`/api/repos/${project.id}/playground/stream`, {
+        res = await fetch(`/api/repos/${project.id}/playground/stream`, {
           method: "POST",
           body: form,
           signal: controller.signal,
@@ -533,86 +539,102 @@ export default function Playground({ loaderData }: Route.ComponentProps) {
               errorMessage ??
                 "This conversation can no longer be continued. Start a new conversation.",
             );
-            return;
+            return false;
           }
           throw new Error(errorMessage ?? `Stream failed (${res.status}).`);
         }
         if (!res.body) throw new Error("The stream returned no response body.");
-
-        const reader = res.body.getReader();
-        const decoder = new TextDecoder();
-        let buf = "";
-        let nextSessionId = currentSessionId;
-        for (;;) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          buf += decoder.decode(value, { stream: true });
-          const lines = buf.split("\n");
-          buf = lines.pop() ?? "";
-          for (const line of lines) {
-            if (!line.trim()) continue;
-            let evt: StreamEvent;
-            try {
-              evt = JSON.parse(line) as StreamEvent;
-            } catch {
-              continue;
-            }
-            if (evt.type === "done" && evt.playgroundSessionId) {
-              nextSessionId = evt.playgroundSessionId;
-            }
-            // A user-requested stop cancels the turn server-side, which flushes a
-            // final "done" event carrying a "Turn was stopped." error before the
-            // /stop fetch resolves. Don't fold that into the live view — stopTurn
-            // clears it cleanly, so surfacing it here would only flash an error.
-            if (stopRequestedRef.current && evt.type === "done") continue;
-            apply(evt);
-          }
-        }
-        // Stream ended — the server has persisted the cursor. Settle the live view (a stream
-        // can close without a "done" event) and revalidate; the derived handoff hides `live`
-        // once the revalidated entries cover this turn. If persistence failed, the live copy
-        // stays on screen instead of the turn vanishing.
-        setLive((prev) =>
-          prev && !prev.done ? { ...prev, activity: null, done: true } : prev,
-        );
-        await revalidator.revalidate();
-        if (!currentSessionId && nextSessionId) {
-          navigate(
-            `${base}/playground?session=${encodeURIComponent(nextSessionId)}`,
-            {
-              replace: true,
-            },
-          );
-        }
-        streamAbortRef.current = null;
+        body = res.body;
       } catch (error) {
-        streamAbortRef.current = null;
-        if (stopRequestedRef.current) {
-          await revalidator.revalidate();
-          setLive(null);
-          stopRequestedRef.current = false;
-          return;
-        }
-        // The server still persists in the background — revalidate so the reply isn't lost.
-        setLive((prev) =>
-          prev
-            ? {
-                ...prev,
-                error: `Lost the live stream: ${(error as Error).message}`,
-                errorDetail: null,
-                errorRetryable: false,
-                activity: null,
-                done: true,
-              }
-            : prev,
-        );
-        setSendError(
-          "The live view dropped — the reply may still have been recorded.",
-        );
-        // No setLive(null): the handoff effect clears it once the revalidated entries include
-        // the turn; until then the errored live view (with the user's message) stays visible.
+        if (streamAbortRef.current === controller)
+          streamAbortRef.current = null;
+        setLive(null);
+        setSendError((error as Error).message);
         await revalidator.revalidate();
+        return false;
       }
+
+      // HTTP success means the turn was accepted. Drain the durable stream in the
+      // background so the shared composer can clear immediately without waiting for the
+      // whole agent turn to finish.
+      void (async () => {
+        try {
+          const reader = body.getReader();
+          const decoder = new TextDecoder();
+          let buf = "";
+          let nextSessionId = currentSessionId;
+          for (;;) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            buf += decoder.decode(value, { stream: true });
+            const lines = buf.split("\n");
+            buf = lines.pop() ?? "";
+            for (const line of lines) {
+              if (!line.trim()) continue;
+              let evt: StreamEvent;
+              try {
+                evt = JSON.parse(line) as StreamEvent;
+              } catch {
+                continue;
+              }
+              if (evt.type === "done" && evt.playgroundSessionId) {
+                nextSessionId = evt.playgroundSessionId;
+              }
+              // A user-requested stop cancels the turn server-side, which flushes a
+              // final "done" event carrying a "Turn was stopped." error before the
+              // /stop fetch resolves. Don't fold that into the live view — stopTurn
+              // clears it cleanly, so surfacing it here would only flash an error.
+              if (stopRequestedRef.current && evt.type === "done") continue;
+              apply(evt);
+            }
+          }
+          // Stream ended — the server has persisted the cursor. Settle the live view (a stream
+          // can close without a "done" event) and revalidate; the derived handoff hides `live`
+          // once the revalidated entries cover this turn. If persistence failed, the live copy
+          // stays on screen instead of the turn vanishing.
+          setLive((prev) =>
+            prev && !prev.done ? { ...prev, activity: null, done: true } : prev,
+          );
+          await revalidator.revalidate();
+          if (!currentSessionId && nextSessionId) {
+            navigate(
+              `${base}/playground?session=${encodeURIComponent(nextSessionId)}`,
+              {
+                replace: true,
+              },
+            );
+          }
+          streamAbortRef.current = null;
+        } catch (error) {
+          streamAbortRef.current = null;
+          if (stopRequestedRef.current) {
+            await revalidator.revalidate();
+            setLive(null);
+            stopRequestedRef.current = false;
+            return;
+          }
+          // The server still persists in the background — revalidate so the reply isn't lost.
+          setLive((prev) =>
+            prev
+              ? {
+                  ...prev,
+                  error: `Lost the live stream: ${(error as Error).message}`,
+                  errorDetail: null,
+                  errorRetryable: false,
+                  activity: null,
+                  done: true,
+                }
+              : prev,
+          );
+          setSendError(
+            "The live view dropped — the reply may still have been recorded.",
+          );
+          // No setLive(null): the handoff effect clears it once the revalidated entries include
+          // the turn; until then the errored live view (with the user's message) stays visible.
+          await revalidator.revalidate();
+        }
+      })();
+      return true;
     },
     [
       activeAgent,
@@ -892,7 +914,9 @@ export default function Playground({ loaderData }: Route.ComponentProps) {
                 i === shownEntries.length - 1 && !visibleLive ? send : undefined
               }
               onRetry={
-                i === shownEntries.length - 1 && !visibleLive && e.errorRetryable
+                i === shownEntries.length - 1 &&
+                !visibleLive &&
+                e.errorRetryable
                   ? () => {
                       const userText = [...shownEntries.slice(0, i)]
                         .reverse()

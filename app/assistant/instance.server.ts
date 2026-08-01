@@ -682,10 +682,28 @@ export async function peekAssistantInstance(
       provisionStartedAt: active.createdAt.toISOString(),
     };
   }
-  // Anything ensureAssistantInstance can wake or transparently replace on the next turn — a
-  // stopped container, a live row on a pre-upgrade template sha, or a live row missing its url —
-  // must NOT read as "never set up": that regressed long-standing projects into the first-run
-  // setup flow whenever a harnesst release changed the assistant template hash.
+  // A current-template stopped/container-without-url row is still recoverable even when older
+  // failed attempts coexist with it. Prefer that positive signal over failure.
+  const currentResumable = deployments.find(
+    (d) =>
+      (d.status === "live" || d.status === "stopped") &&
+      d.gitSha === currentSha,
+  );
+  if (currentResumable) {
+    return { ...base, status: "resumable", target: null };
+  }
+  // A failed attempt for the CURRENT desired image is a terminal readiness signal. This must win
+  // over an older live/stopped image: after an upgrade/model change fails, that stale row cannot
+  // make the newly observed provisioning state look merely resumable forever (#256).
+  const failedCurrent = deployments.find(
+    (d) => d.status === "failed" && d.gitSha === currentSha,
+  );
+  if (failedCurrent) {
+    return { ...base, status: "failed", target: null };
+  }
+  // Anything ensureAssistantInstance can transparently replace on the next turn — a live/stopped
+  // row on a pre-upgrade template sha — must NOT read as "never set up": that regressed
+  // long-standing projects into the first-run setup flow after a harnesst release.
   const resumable = deployments.find(
     (d) => d.status === "live" || d.status === "stopped",
   );

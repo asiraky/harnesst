@@ -26,6 +26,7 @@ import {
   createPlaygroundSession,
   getPlaygroundSession,
   markPlaygroundSessionRunning,
+  settleAbandonedPlaygroundSession,
   titleFromMessage,
   type PlaygroundSession,
 } from "~/playground/sessions.server";
@@ -111,7 +112,13 @@ export async function action(args: ActionFunctionArgs) {
   // clone failed…) must fail the turn: the model would otherwise run against a workspace it was
   // promised and doesn't have, and report a confusing missing-checkout error as its answer.
   const ensureError = checkoutEnsureError(ensured);
-  if (ensureError) throw data({ error: ensureError }, { status: 503 });
+  if (ensureError) {
+    // The row was marked running before checkout preparation. No stream/drain exists to settle
+    // this refusal later, so fail it now; otherwise loader revalidation disables the restored
+    // composer until the abandoned-turn timeout (#256).
+    await settleAbandonedPlaygroundSession(session);
+    throw data({ error: ensureError }, { status: 503 });
+  }
   const prefixParts: string[] = [];
   // Repeated on EVERY turn, not just the first: "first turn" used to be inferred from the absence
   // of a playgroundSessionId, but sessions can be created before their first stream turn (the

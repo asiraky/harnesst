@@ -542,8 +542,10 @@ export default function FohSession({ loaderData }: Route.ComponentProps) {
 
       const controller = new AbortController();
       streamAbortRef.current = controller;
+      let res: Response;
+      let body: NonNullable<Response["body"]>;
       try {
-        const res = await fetch(`/api/foh/${projectId}/stream`, {
+        res = await fetch(`/api/foh/${projectId}/stream`, {
           method: "POST",
           body: form,
           signal: controller.signal,
@@ -557,64 +559,81 @@ export default function FohSession({ loaderData }: Route.ComponentProps) {
           throw new Error(errorMessage ?? `Stream failed (${res.status}).`);
         }
         if (!res.body) throw new Error("The stream returned no response body.");
-
-        const reader = res.body.getReader();
-        const decoder = new TextDecoder();
-        let buf = "";
-        for (;;) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          buf += decoder.decode(value, { stream: true });
-          const lines = buf.split("\n");
-          buf = lines.pop() ?? "";
-          for (const line of lines) {
-            if (!line.trim()) continue;
-            let evt: StreamEvent;
-            try {
-              evt = JSON.parse(line) as StreamEvent;
-            } catch {
-              continue;
-            }
-            if (stopRequestedRef.current && evt.type === "done") continue;
-            apply(evt);
-          }
-        }
-        applyIfCurrent((prev) =>
-          prev && !prev.done ? { ...prev, activity: null, done: true } : prev,
-        );
-        if (isCurrent()) await revalidator.revalidate();
-        // Only the send that owns the controller may clear the ref — a newer send (or the
-        // navigation effect) may have replaced it with its own.
-        if (streamAbortRef.current === controller)
-          streamAbortRef.current = null;
+        body = res.body;
       } catch (error) {
         if (streamAbortRef.current === controller)
           streamAbortRef.current = null;
-        // A navigation-triggered abort lands here for the stale session — report nothing.
-        if (!isCurrent()) return;
-        if (stopRequestedRef.current) {
+        if (isCurrent()) {
+          applyIfCurrent(() => null);
+          setSendError((error as Error).message);
           await revalidator.revalidate();
-          setLive(null);
-          stopRequestedRef.current = false;
-          return;
         }
-        applyIfCurrent((prev) =>
-          prev
-            ? {
-                ...prev,
-                error: `Lost the live stream: ${(error as Error).message}`,
-                errorDetail: null,
-                errorRetryable: false,
-                activity: null,
-                done: true,
-              }
-            : prev,
-        );
-        setSendError(
-          "The live view dropped — the reply may still have been recorded.",
-        );
-        await revalidator.revalidate();
+        return false;
       }
+
+      // The request has been accepted; keep draining independently so the composer can
+      // clear now rather than holding the draft for the duration of the agent turn.
+      void (async () => {
+        try {
+          const reader = body.getReader();
+          const decoder = new TextDecoder();
+          let buf = "";
+          for (;;) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            buf += decoder.decode(value, { stream: true });
+            const lines = buf.split("\n");
+            buf = lines.pop() ?? "";
+            for (const line of lines) {
+              if (!line.trim()) continue;
+              let evt: StreamEvent;
+              try {
+                evt = JSON.parse(line) as StreamEvent;
+              } catch {
+                continue;
+              }
+              if (stopRequestedRef.current && evt.type === "done") continue;
+              apply(evt);
+            }
+          }
+          applyIfCurrent((prev) =>
+            prev && !prev.done ? { ...prev, activity: null, done: true } : prev,
+          );
+          if (isCurrent()) await revalidator.revalidate();
+          // Only the send that owns the controller may clear the ref — a newer send (or the
+          // navigation effect) may have replaced it with its own.
+          if (streamAbortRef.current === controller)
+            streamAbortRef.current = null;
+        } catch (error) {
+          if (streamAbortRef.current === controller)
+            streamAbortRef.current = null;
+          // A navigation-triggered abort lands here for the stale session — report nothing.
+          if (!isCurrent()) return;
+          if (stopRequestedRef.current) {
+            await revalidator.revalidate();
+            setLive(null);
+            stopRequestedRef.current = false;
+            return;
+          }
+          applyIfCurrent((prev) =>
+            prev
+              ? {
+                  ...prev,
+                  error: `Lost the live stream: ${(error as Error).message}`,
+                  errorDetail: null,
+                  errorRetryable: false,
+                  activity: null,
+                  done: true,
+                }
+              : prev,
+          );
+          setSendError(
+            "The live view dropped — the reply may still have been recorded.",
+          );
+          await revalidator.revalidate();
+        }
+      })();
+      return true;
     },
     [
       agentId,

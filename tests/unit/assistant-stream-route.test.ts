@@ -18,6 +18,7 @@ const mocks = vi.hoisted(() => ({
   getPlaygroundSession: vi.fn(),
   createPlaygroundSession: vi.fn(),
   markPlaygroundSessionRunning: vi.fn(async () => {}),
+  settleAbandonedPlaygroundSession: vi.fn(async (session) => session),
   streamTurnResponse: vi.fn(() => new Response("ok")),
 }));
 
@@ -39,6 +40,7 @@ vi.mock("~/playground/sessions.server", () => ({
   getPlaygroundSession: mocks.getPlaygroundSession,
   createPlaygroundSession: mocks.createPlaygroundSession,
   markPlaygroundSessionRunning: mocks.markPlaygroundSessionRunning,
+  settleAbandonedPlaygroundSession: mocks.settleAbandonedPlaygroundSession,
   titleFromMessage: (message: string) => message.slice(0, 80),
 }));
 vi.mock("~/chat/turn-stream.server", () => ({
@@ -144,5 +146,27 @@ describe("assistant stream route: per-turn checkout context", () => {
     });
     const input = await run("make the button blue");
     expect(input.messagePrefix).toBeNull();
+  });
+
+  it("settles a running session when checkout preparation rejects the send", async () => {
+    mocks.ensureConversationCheckout.mockResolvedValue({
+      ok: false,
+      unsupported: false,
+      note: null,
+      reason: "clone failed",
+    });
+
+    await expect(
+      action(
+        args({
+          message: "make the button blue",
+          playgroundSessionId: "conv_1",
+        }),
+      ),
+    ).rejects.toMatchObject({ init: { status: 503 } });
+    expect(mocks.settleAbandonedPlaygroundSession).toHaveBeenCalledWith(
+      SESSION,
+    );
+    expect(mocks.streamTurnResponse).not.toHaveBeenCalled();
   });
 });
