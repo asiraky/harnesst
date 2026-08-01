@@ -13,6 +13,7 @@ import type { TurnResult } from "~/agent/talk.server";
 import type { ChatInputRequest } from "~/chat/types";
 import type { DeploymentWithRelease } from "~/data/ports";
 import { ensureLiveDeploymentForEnvironment } from "~/deploy/wake.server";
+import { titleFromMessage } from "~/foh/session-title";
 import type { PlaygroundSession } from "~/playground/sessions.server";
 import type { AskDeps } from "~/team/ask.server";
 import { runAsk } from "~/team/ask.server";
@@ -113,6 +114,7 @@ function makeDeps(over: Partial<AskDeps> = {}): AskDeps & {
         ...input,
       } as unknown as PlaygroundSession;
     },
+    inferTitle: async ({ message }) => titleFromMessage(message),
     scheduleReattach: async (_store, payload) => {
       reattaches.push(payload);
     },
@@ -360,9 +362,11 @@ describe("runAsk — relay parking", () => {
         display: "confirmation",
       }),
     ];
+    const inferTitle = vi.fn(async () => "Choose deployment environment");
     const deps = makeDeps({
       sendTurn: async () =>
         turnResult({ reply: null, inputRequests: requests }),
+      inferTitle,
     });
 
     const res = await runAsk(
@@ -391,6 +395,10 @@ describe("runAsk — relay parking", () => {
     expect(
       await store.delegations.countActiveProject(PROJECT, new Date(0)),
     ).toBe(0);
+    expect(inferTitle).toHaveBeenCalledWith({
+      message: "Which environment should I target?",
+      project: expect.objectContaining({ id: PROJECT }),
+    });
 
     // Agent-opened session row: FOH surface, no creator, question-derived title, REAL handles.
     expect(deps.createdSessions).toEqual([
@@ -401,7 +409,7 @@ describe("runAsk — relay parking", () => {
         surface: "foh",
         environmentId: "env_dep_prod",
         version: "v1",
-        title: "Which environment should I target?",
+        title: "Choose deployment environment",
         openedByAgentId: "deployer",
         delegationId: deleg.id(),
         externalSessionId: "sess_peer",

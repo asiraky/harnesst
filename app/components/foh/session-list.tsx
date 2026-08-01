@@ -138,13 +138,8 @@ function EditableSessionRow({
   const [draft, setDraft] = useState(session.title);
   const cancelling = useRef(false);
   const submittedTitle = rename.formData?.get("title");
-  const savedTitle =
-    rename.data?.renamed?.id === session.id
-      ? rename.data.renamed.title
-      : null;
   const title =
     (typeof submittedTitle === "string" ? submittedTitle : null) ??
-    savedTitle ??
     session.title;
 
   const finishEditing = () => {

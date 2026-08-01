@@ -22,6 +22,7 @@ import type { Target } from "~/chat/playground.server";
 import type { DataStore, DeploymentWithRelease } from "~/data/ports";
 import { ensureLiveDeploymentForEnvironment } from "~/deploy/wake.server";
 import { openInboxQuestion } from "~/foh/inbox.server";
+import { inferFohSessionTitle } from "~/foh/session-title.server";
 import {
   externalRunId,
   recordTurnFinish,
@@ -29,10 +30,7 @@ import {
 } from "~/observability/record.server";
 import { getRunIdByExternal } from "~/observability/store.server";
 import type { PlaygroundSession } from "~/playground/sessions.server";
-import {
-  createPlaygroundSession,
-  titleFromMessage,
-} from "~/playground/sessions.server";
+import { createPlaygroundSession } from "~/playground/sessions.server";
 import { getRuntime } from "~/seams/index.server";
 import {
   DELEGATION_REATTACH_CEILING_MS,
@@ -72,6 +70,7 @@ export interface AskDeps {
   ) => Promise<DeploymentWithRelease | null>;
   /** FOH session substrate for relay parking (D6/D8) — injected: unit tests stay zero-I/O. */
   createSession: typeof createPlaygroundSession;
+  inferTitle: typeof inferFohSessionTitle;
   /** #267: hand a severed-stream turn to the background reattach watcher. */
   scheduleReattach: typeof scheduleDelegationReattach;
   now: () => Date;
@@ -89,6 +88,7 @@ export function defaultAskDeps(): AskDeps {
     ensureLiveDeployment: (environmentId) =>
       ensureLiveDeploymentForEnvironment(environmentId),
     createSession: createPlaygroundSession,
+    inferTitle: inferFohSessionTitle,
     scheduleReattach: scheduleDelegationReattach,
     now: () => new Date(),
     timeoutMs: delegationTimeoutMs(),
@@ -493,6 +493,10 @@ export async function runAsk(
         externalSessionId: result.sessionId,
         runId,
       });
+      const sessionTitle = await deps.inferTitle({
+        message: question,
+        project,
+      });
       const session = await deps.createSession({
         projectId: project.id,
         agentId: target.id,
@@ -502,7 +506,7 @@ export async function runAsk(
         version: live.version,
         // D6: title from the QUESTION, never from the delegated ask text — the ask can carry
         // the caller's private context, and the list title leaks to every team member.
-        title: titleFromMessage(question),
+        title: sessionTitle,
         openedByAgentId: target.id,
         delegationId: delegation.id,
         externalSessionId: result.sessionId,

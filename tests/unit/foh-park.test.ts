@@ -7,12 +7,13 @@
  * idempotent — the agent's park fetch is best-effort with a timeout, so retries are expected,
  * and a retry must not open a second conversation or a second inbox item.
  */
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { ChatInputRequest } from "~/chat/types";
 import { CHANNEL_ANSWER_ROUTES } from "~/foh/channel-resume";
 import { openInboxQuestion } from "~/foh/inbox.server";
 import { parkChannelQuestion, type ParkDeps } from "~/foh/park.server";
+import { titleFromMessage } from "~/foh/session-title";
 import type { PlaygroundSession } from "~/playground/sessions.server";
 import { makeFakeStore, type FakeStore } from "../fakes/store";
 
@@ -63,7 +64,7 @@ async function seedDeployment(over: { agentId?: string } = {}): Promise<string> 
  * park naming an eve session ANOTHER agent already owns collides on that key and is refused,
  * exactly as the real adopt's `agent_id` predicate refuses it.
  */
-function makeDeps(): ParkDeps & {
+function makeDeps(over: Partial<ParkDeps> = {}): ParkDeps & {
   sessions: Map<string, PlaygroundSession>;
   adopts: Array<Parameters<ParkDeps["adoptSession"]>[0]>;
   cursorAdvances: Array<Parameters<ParkDeps["advanceCursor"]>[0]>;
@@ -111,8 +112,10 @@ function makeDeps(): ParkDeps & {
       cursorAdvances.push(input);
     },
     openQuestion: openInboxQuestion,
+    inferTitle: async ({ message }) => titleFromMessage(message),
     staleAfterMs: 300_000,
     now: () => NOW,
+    ...over,
   };
 }
 
@@ -248,12 +251,17 @@ describe("parkChannelQuestion", () => {
 
   it("titles the session from the question when the agent sends none", async () => {
     const deploymentId = await seedDeployment();
-    const deps = makeDeps();
+    const inferTitle = vi.fn(async () => "Choose deployment branch");
+    const deps = makeDeps({ inferTitle });
 
     await parkChannelQuestion(input({ deploymentId, title: "   " }), deps);
 
+    expect(inferTitle).toHaveBeenCalledWith({
+      message: "Which branch should I target?",
+      project: expect.objectContaining({ id: PROJECT }),
+    });
     expect(deps.sessions.get(`${PROJECT}|sess_eve_1`)!.title).toBe(
-      "Which branch should I target?",
+      "Choose deployment branch",
     );
   });
 

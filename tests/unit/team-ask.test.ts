@@ -9,6 +9,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
 
 import type { TurnResult } from "~/agent/talk.server";
+import { titleFromMessage } from "~/foh/session-title";
 import type { PlaygroundSession } from "~/playground/sessions.server";
 import type { AskDeps } from "~/team/ask.server";
 import { runAsk } from "~/team/ask.server";
@@ -89,6 +90,7 @@ function makeDeps(over: Partial<AskDeps> = {}): AskDeps {
     ensureLiveDeployment: async () => null,
     createSession: async (input) =>
       ({ id: "ps_1", ...input }) as unknown as PlaygroundSession,
+    inferTitle: async ({ message }) => titleFromMessage(message),
     scheduleReattach: async () => {},
     now: () => NOW,
     timeoutMs: 600_000,

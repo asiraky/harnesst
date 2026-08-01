@@ -8,10 +8,11 @@
  * handles and NO pending-input park (a notice is not a blocking ask) plus a `notice` inbox
  * item behind the bell. No idempotency, by design — the tool is fire-and-forget.
  */
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { recordInboxNotice } from "~/foh/inbox.server";
 import { notifyHumans, type NotifyDeps } from "~/foh/notify.server";
+import { titleFromMessage } from "~/foh/session-title";
 import type { PlaygroundSession } from "~/playground/sessions.server";
 import { makeFakeStore, type FakeStore } from "../fakes/store";
 
@@ -81,6 +82,7 @@ function makeDeps(over: Partial<NotifyDeps> = {}): NotifyDeps & {
     deleteBareSession: async (id) => {
       deleted.push(id);
     },
+    inferTitle: async ({ message }) => titleFromMessage(message),
     now: () => NOW,
     ...over,
   };
@@ -152,6 +154,27 @@ describe("notifyHumans", () => {
 
     await notifyHumans({ deploymentId, message: "Short and titled by itself." }, deps);
     expect(deps.created[1].title).toBe("Short and titled by itself.");
+  });
+
+  it("uses async issue-title inference when no explicit title was sent", async () => {
+    const deploymentId = await seedDeployment();
+    const inferTitle = vi.fn(async () => "Fix empty session heading");
+    const deps = makeDeps({ inferTitle });
+    const message =
+      "Please work on https://github.com/acme/widgets/issues/286";
+
+    const result = await notifyHumans({ deploymentId, message }, deps);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(inferTitle).toHaveBeenCalledWith({
+      message,
+      project: expect.objectContaining({ id: PROJECT }),
+    });
+    expect(deps.created[0].title).toBe("Fix empty session heading");
+    expect(store.getInboxItem(result.inboxItemId)!.prompt).toBe(
+      "Fix empty session heading",
+    );
   });
 
   it("refuses an empty message", async () => {
