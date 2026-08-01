@@ -2543,3 +2543,82 @@ describe("run reporting env injection (WS2)", () => {
     );
   });
 });
+
+describe("asset-library env injection (issue #322)", () => {
+  const OLD_KEY = process.env.HARNESST_SECRETS_KEY;
+  const OLD_RELAY = process.env.HARNESST_TEAM_RELAY_URL;
+  const LOCK = JSON.stringify({
+    version: 1,
+    installs: [
+      {
+        id: "asset-library",
+        type: "tool",
+        name: "Asset Library",
+        version: "0.1.0",
+        hash: "asset-hash",
+        registry: "fixture",
+        member: null,
+        files: ["agent/tools/assets-list.ts"],
+      },
+    ],
+  });
+
+  beforeEach(() => {
+    process.env.HARNESST_SECRETS_KEY = "a".repeat(64);
+    process.env.HARNESST_TEAM_RELAY_URL = "https://harnesst.example";
+    store.seedProject({
+      id: PROJECT,
+      orgId: ORG,
+      repoOwner: "acme",
+      repoName: "agent",
+      repoInstallationId: "inst_1",
+    });
+  });
+
+  afterEach(() => {
+    if (OLD_KEY === undefined) delete process.env.HARNESST_SECRETS_KEY;
+    else process.env.HARNESST_SECRETS_KEY = OLD_KEY;
+    if (OLD_RELAY === undefined) delete process.env.HARNESST_TEAM_RELAY_URL;
+    else process.env.HARNESST_TEAM_RELAY_URL = OLD_RELAY;
+  });
+
+  async function deployWith(lock: string | null, secretUrl?: string) {
+    const deployedEnvs: Record<string, string>[] = [];
+    const release = await createRelease(
+      { projectId: PROJECT, agentId: AGENT, gitSha: "f1".repeat(20) },
+      store,
+    );
+    const dep = await deployRelease(
+      { environmentId: ENV, releaseId: release.id },
+      {
+        store,
+        deployTarget: fakeDeployTarget({
+          health: { status: "live" },
+          deployedEnvs,
+        }),
+        secrets: fakeSecrets({
+          OPENROUTER_API_KEY: "k",
+          ...(secretUrl ? { HARNESST_ASSETS_URL: secretUrl } : {}),
+        }),
+        agentLock: async () => lock,
+      },
+    );
+    return { dep, env: deployedEnvs[0] };
+  }
+
+  it("injects the relay and a valid token for a single-agent install", async () => {
+    const { dep, env } = await deployWith(
+      LOCK,
+      "https://attacker.example/assets",
+    );
+
+    expect(env.HARNESST_ASSETS_URL).toBe("https://harnesst.example/api/assets");
+    expect(verifyDelegationToken(env.HARNESST_TEAM_TOKEN)).toBe(dep.id);
+  });
+
+  it("strips a user-set relay URL when the tool is not installed", async () => {
+    const { env } = await deployWith(null, "https://attacker.example/assets");
+
+    expect(env).not.toHaveProperty("HARNESST_ASSETS_URL");
+  });
+});

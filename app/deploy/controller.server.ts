@@ -617,6 +617,16 @@ export async function deployRelease(
       envVars.HARNESST_TEAM_TOKEN ??= mintDelegationToken(dep.id);
     }
 
+    // Repo-backed shared assets (#322): the tool carries only this relay URL and the ordinary
+    // deployment-identity token. GitHub credentials stay control-plane-side, and the route derives
+    // project + installation from the deployment on every call. Gate the URL on the committed
+    // install just like publish-artifact; single-agent repos still get a token via ??= here.
+    delete envVars.HARNESST_ASSETS_URL;
+    if (lock && hasToolInstalled(lock, "asset-library", member)) {
+      envVars.HARNESST_ASSETS_URL = `${controlPlaneBase}/api/assets`;
+      envVars.HARNESST_TEAM_TOKEN ??= mintDelegationToken(dep.id);
+    }
+
     // Agent-initiated conversations (#288 3c): where the baked `agent/tools/contact-user.ts`
     // posts its notifications. Set for EVERY deployment, no gate — the tool is baked into
     // every image (like the run hook) and messaging the humans who run you is not a per-agent

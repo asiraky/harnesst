@@ -261,6 +261,8 @@ export default [
   route("api/mcp", "routes/api.mcp.ts"),
   // Teammate delegation relay: a team member's ask-teammate tool POSTs here (Bearer token).
   route("api/team/ask", "routes/api.team.ask.ts"),
+  // Shared repo-backed assets: agents CRUD only under assets/ with the same deployment bearer.
+  route("api/assets", "routes/api.assets.ts"),
   // Built-in assistant callback API. The assistant instance's baked-in
   // tools + boot entrypoint call GET|POST /api/assistant/<action> with a Bearer assistant token.
   route("api/assistant/:action", "routes/api.assistant.$action.ts"),

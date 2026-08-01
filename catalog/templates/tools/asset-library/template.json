@@ -1,0 +1,19 @@
+{
+  "id": "asset-library",
+  "type": "tool",
+  "name": "Asset Library",
+  "description": "Store and retrieve durable, versioned files shared by every agent in this repository. Assets are committed under assets/ on the managed branch without exposing GitHub credentials to agents.",
+  "version": "0.1.0",
+  "eve": ">=0.20.0",
+  "files": [
+    "lib/asset-library.ts",
+    "tools/assets-delete.ts",
+    "tools/assets-get.ts",
+    "tools/assets-list.ts",
+    "tools/assets-put.ts"
+  ],
+  "assistantSkill": "assistant-skill.md",
+  "dependencies": {
+    "zod": "^4.4.3"
+  }
+}
