@@ -16,6 +16,7 @@ import {
   listAppCredentialRows,
 } from "~/github/app-manifest.server";
 import {
+  catalogProviderEvidence,
   catalogLocator,
   packageJsonPathForRoot,
   planInstall,
@@ -341,6 +342,7 @@ export async function installMarketplaceTemplate(
       source.files["harnesst-lock.json"] ?? null,
       draftPaths,
     );
+    const catalogProviders = await catalogProviderEvidence(deps.catalog, lock);
 
     let target: InstallTarget;
     let secretAgent: Agent | null = null;
@@ -423,6 +425,7 @@ export async function installMarketplaceTemplate(
       drafts: draftPaths,
       packageJson,
       lock,
+      catalogProviders,
       rosterNames: context.roster.map((agent) => agent.name),
       model: workspaceModel.model,
       effort: workspaceModel.effort,

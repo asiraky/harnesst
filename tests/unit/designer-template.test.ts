@@ -1,7 +1,11 @@
 import { describe, expect, it } from "vitest";
 
 import { resolveTemplate } from "~/marketplace/compose.server";
-import { planInstall } from "~/marketplace/install.server";
+import {
+  catalogProviderEvidence,
+  planInstall,
+  TemplateAlreadyProvidedError,
+} from "~/marketplace/install.server";
 import {
   emptyLock,
   findInstall,
@@ -82,6 +86,94 @@ describe("Standalone Impeccable skill", () => {
           write.path === "agents/researcher/agent/sandbox/addons/impeccable.ts",
       )?.content,
     ).toContain("IMPECCABLE_NO_TELEMETRY");
+  });
+
+  it("fails loudly when a current Designer include already provides it", async () => {
+    const [impeccable, designer] = await Promise.all([
+      resolveTemplate(fixtureCatalog, "skill", "impeccable"),
+      resolvedDesigner(),
+    ]);
+    const root = "agents/designer/agent";
+    const provider: InstallEntry = {
+      id: "designer",
+      type: "agent",
+      name: "Designer",
+      version: "1.3.0",
+      hash: "designer-hash",
+      registry: "fixture",
+      member: "designer",
+      files: Object.keys(designer.files).map((path) => `${root}/${path}`),
+      includes: designer.includes,
+    };
+
+    expect(() =>
+      planInstall({
+        template: impeccable,
+        registry: "fixture",
+        repoPaths: provider.files,
+        drafts: [],
+        packageJson: null,
+        lock: upsertInstall(emptyLock(), provider),
+        target: { kind: "member", memberName: "designer", root },
+      }),
+    ).toThrowError(TemplateAlreadyProvidedError);
+    expect(() =>
+      planInstall({
+        template: impeccable,
+        registry: "fixture",
+        repoPaths: provider.files,
+        drafts: [],
+        packageJson: null,
+        lock: upsertInstall(emptyLock(), provider),
+        target: { kind: "member", memberName: "designer", root },
+      }),
+    ).toThrow(
+      "Impeccable is already provided by Designer v1.3.0 — update Designer to update this.",
+    );
+  });
+
+  it("recognizes Designer 1.2.1 ownership before includes existed", async () => {
+    const impeccable = await resolveTemplate(
+      fixtureCatalog,
+      "skill",
+      "impeccable",
+    );
+    const root = "agents/designer/agent";
+    const provider: InstallEntry = {
+      id: "designer",
+      type: "agent",
+      name: "Designer",
+      version: "1.2.1",
+      hash: "old-designer-hash",
+      registry: "fixture",
+      member: "designer",
+      files: impeccable.manifest.files.map((path) =>
+        `${root}/${path}`.replace(
+          `${root}/skills/impeccable/reference/harnesst-v1.md`,
+          `${root}/skills/impeccable/reference/designer-v1.md`,
+        ),
+      ),
+    };
+    const lock = upsertInstall(emptyLock(), provider);
+    const catalogProviders = await catalogProviderEvidence(
+      fixtureCatalog,
+      lock,
+    );
+
+    expect(() =>
+      planInstall({
+        template: impeccable,
+        registry: "fixture",
+        repoPaths: provider.files,
+        drafts: [],
+        packageJson: null,
+        lock,
+        catalogProviders,
+        target: { kind: "member", memberName: "designer", root },
+      }),
+    ).toThrow(
+      "Impeccable is already provided by Designer v1.2.1 — update Designer to update this.",
+    );
   });
 });
 
