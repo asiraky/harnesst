@@ -181,6 +181,7 @@ describe("runPublish — happy path", () => {
 
     const row = await store.workspaceTasks.findById(task.id);
     expect(row?.status).toBe("succeeded");
+    expect(row?.resultUrl).toBe(`/repos/${PROJECT}?publish=${task.id}`);
     expect(await stepStatuses(task.id)).toEqual({
       check: "succeeded",
       build: "succeeded",
@@ -466,6 +467,7 @@ describe("runPublish — assistant-config-only", () => {
 
     const row = await store.workspaceTasks.findById(task.id);
     expect(row?.status).toBe("succeeded");
+    expect(row?.resultUrl).toBe(`/repos/${PROJECT}?publish=${task.id}`);
     expect(await stepStatuses(task.id)).toEqual({
       check: "succeeded",
       build: "skipped",

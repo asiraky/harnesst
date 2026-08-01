@@ -791,7 +791,7 @@ two-source-of-truth reconciliation problem.
   single-agent repos collapse both levels into one (no `/agents/…` ever appears). Old
   `?agent=` links and retired tab URLs 301 into the hierarchy. Tab rows per context:
   single-agent = Overview · Deployment · Playground · Runs · Assistant · Settings; team
-  landing = Overview · Deployment · Playground · Settings; team member = Overview ·
+  landing = Agents · Deployment · Playground · Settings; team member = Overview ·
   Deployment · Runs · Assistant · Settings (+ member switcher).
 - **Deployment tab** = Changes + Versions merged into the pipeline story: staged changes
   (the member's drafts + shared ones, badged) → change requests (repo-wide, labeled) →
