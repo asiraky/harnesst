@@ -413,6 +413,11 @@ export function makeFakeStore(): FakeStore {
         deployments.set(did, next);
         return next;
       },
+      async updateIfStatus(did, expectedStatus, patch) {
+        const cur = deployments.get(did);
+        if (!cur || cur.status !== expectedStatus) return null;
+        return this.update(did, patch);
+      },
       async listByEnvironment(environmentId) {
         return [...deployments.values()]
           .filter((d) => d.environmentId === environmentId)

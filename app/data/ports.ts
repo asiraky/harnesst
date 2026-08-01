@@ -123,6 +123,15 @@ export interface DeploymentRepo {
     id: string,
     patch: Partial<Pick<Deployment, "status" | "url" | "errorDetail" | "trafficWeight">>,
   ): Promise<Deployment>;
+  /**
+   * Compare-and-set a deployment during background lifecycle reconciliation. Returns null when
+   * another transition already moved the row away from `expectedStatus`.
+   */
+  updateIfStatus(
+    id: string,
+    expectedStatus: string,
+    patch: Partial<Pick<Deployment, "status" | "url" | "errorDetail" | "trafficWeight">>,
+  ): Promise<Deployment | null>;
   listByEnvironment(environmentId: string): Promise<DeploymentWithRelease[]>;
   /** Set every currently-live deployment in the env to draining at weight 0 (rollback). */
   drainLive(environmentId: string): Promise<void>;

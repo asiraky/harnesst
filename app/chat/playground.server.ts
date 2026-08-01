@@ -4,6 +4,7 @@
  * the stream route enforces the exact same "live + belongs to this agent" guard the page has.
  */
 import { listDeployments } from "~/deploy/controller.server";
+import { refreshLiveDeploymentsForEnvironment } from "~/deploy/wake.server";
 import { listAgentEnvironments } from "~/db/queries.server";
 
 /** A live deployment this agent can be talked to, tagged with the release it serves. */
@@ -23,6 +24,9 @@ export async function liveTargets(agentId: string): Promise<Target[]> {
   const envs = await listAgentEnvironments(agentId);
   const perEnv = await Promise.all(
     envs.map(async (env) => {
+      // Target resolution is operational, not a passive status peek: verify persisted live rows
+      // before handing their URLs to callers. Intentionally stopped rows stay scaled to zero.
+      await refreshLiveDeploymentsForEnvironment(env.id);
       const deployments = await listDeployments(env.id);
       return deployments.flatMap((d) =>
         d.status === "live" && d.url

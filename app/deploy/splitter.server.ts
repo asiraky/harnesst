@@ -17,6 +17,7 @@ import { and, eq, inArray } from "drizzle-orm";
 import { db } from "~/db/client.server";
 import { deployments } from "~/db/schema";
 import { pickWeighted } from "./split";
+import { refreshLiveDeploymentsForEnvironment } from "./wake.server";
 
 const PORT = Number(process.env.HARNESST_SPLITTER_PORT ?? 8787);
 const COOKIE = "harnesst_split";
@@ -53,6 +54,7 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse) {
   }
   const [, environmentId, rest = "/"] = match;
 
+  await refreshLiveDeploymentsForEnvironment(environmentId);
   const live = await liveDeployments(environmentId);
   if (live.length === 0) {
     res.writeHead(503).end("No live deployments in this environment.");

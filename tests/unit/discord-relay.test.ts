@@ -4,17 +4,30 @@
  * application commands shape deterministic running-run records — all with zero network/DB.
  */
 import { generateKeyPairSync, sign as edSign } from "node:crypto";
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+const { ensureLiveDeploymentForEnvironment } = vi.hoisted(() => ({
+  ensureLiveDeploymentForEnvironment: vi.fn(),
+}));
+
+vi.mock("~/deploy/wake.server", () => ({
+  ensureLiveDeploymentForEnvironment,
+}));
 
 import type { DiscordConnection } from "~/discord/connections.server";
 import {
   discordRunStart,
+  findLiveDeployment,
   resolveRelayTarget,
   verifyDiscordSignature,
   type InteractionPayload,
   type RelayDeps,
   type RelayTarget,
 } from "~/discord/relay.server";
+
+beforeEach(() => {
+  ensureLiveDeploymentForEnvironment.mockReset();
+});
 
 /** A real Ed25519 keypair; export the raw 32-byte public key as hex (last 32 bytes of SPKI DER). */
 function keypair() {
@@ -166,6 +179,23 @@ describe("resolveRelayTarget", () => {
       deps({ listConnections: async () => [a, b] }),
     );
     expect(result).toEqual({ ok: false, reason: "no-connection" });
+  });
+});
+
+describe("findLiveDeployment", () => {
+  it("resolves Discord traffic through the liveness-aware wake path", async () => {
+    ensureLiveDeploymentForEnvironment.mockResolvedValue({
+      id: "dep_1",
+      releaseId: "rel_1",
+      url: "http://fresh.local",
+    });
+
+    await expect(findLiveDeployment("env_1")).resolves.toEqual({
+      id: "dep_1",
+      releaseId: "rel_1",
+      url: "http://fresh.local",
+    });
+    expect(ensureLiveDeploymentForEnvironment).toHaveBeenCalledWith("env_1");
   });
 });
 

@@ -11,10 +11,7 @@
  */
 import { createPublicKey, verify as cryptoVerify } from "node:crypto";
 
-import { and, eq } from "drizzle-orm";
-
-import { db } from "~/db/client.server";
-import { deployments } from "~/db/schema";
+import { ensureLiveDeploymentForEnvironment } from "~/deploy/wake.server";
 import {
   findConnectionByGuildCommand,
   listConnectionsForGuild,
@@ -157,7 +154,7 @@ export async function resolveRelayTarget(
   };
 }
 
-/** Default deps: the real connection store + a live-deployment lookup over Drizzle. */
+/** Default deps: the real connection store + liveness-aware deployment resolution. */
 export function defaultRelayDeps(): RelayDeps {
   return {
     findConnection: findConnectionByGuildCommand,
@@ -170,20 +167,7 @@ export function defaultRelayDeps(): RelayDeps {
 export async function findLiveDeployment(
   environmentId: string,
 ): Promise<LiveRelayDeployment | null> {
-  const rows = await db
-    .select({
-      id: deployments.id,
-      releaseId: deployments.releaseId,
-      url: deployments.url,
-    })
-    .from(deployments)
-    .where(
-      and(
-        eq(deployments.environmentId, environmentId),
-        eq(deployments.status, "live"),
-      ),
-    );
-  const deployment = rows.find((row) => !!row.url);
+  const deployment = await ensureLiveDeploymentForEnvironment(environmentId);
   return deployment?.url
     ? {
         id: deployment.id,
