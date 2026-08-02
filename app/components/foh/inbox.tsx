@@ -13,7 +13,7 @@ import {
   ShieldQuestion,
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
-import { useFetcher, useNavigate } from "react-router";
+import { useFetcher, useMatch, useNavigate } from "react-router";
 
 import { FohRelativeTime } from "~/components/foh/relative-time";
 import { Button } from "~/components/ui/button";
@@ -25,6 +25,7 @@ import {
 import { cn } from "~/lib/utils";
 
 import type { InboxViewItem } from "~/foh/inbox.server";
+import { inboxItemsForOpenSession } from "~/foh/unread";
 
 const ACTIVE_POLL_MS = 3000;
 const IDLE_POLL_MS = 10000;
@@ -36,9 +37,14 @@ export function InboxIndicator() {
   const { load } = fetcher;
   const navigate = useNavigate();
   const [open, setOpen] = useState(false);
+  const openSessionId =
+    useMatch("/t/:projectId/:agentId/s/:sessionId")?.params.sessionId ?? null;
 
-  const items = fetcher.data?.items ?? [];
-  const count = fetcher.data?.count ?? 0;
+  const items = inboxItemsForOpenSession(
+    fetcher.data?.items ?? [],
+    openSessionId,
+  );
+  const count = items.length;
   const anyPending = count > 0;
 
   const anyPendingRef = useRef(anyPending);

@@ -1,6 +1,6 @@
 /**
  * FOH middle pane — one agent's sessions, needs-you first (the server sorts; this renders).
- * Rows show the status dot + relative time per the §3 mock, an unread marker, and an
+ * Rows show the status dot + relative time per the §3 mock, an unread badge, and an
  * "opened by agent" hint for delegation-parked sessions. Minimal keyboard nav: focus the
  * list, j/k (or arrows) to move, Enter to open.
  */
@@ -237,7 +237,12 @@ function EditableSessionRow({
             <FohRelativeTime value={session.updatedAt} />
             {session.openedByAgent && " · opened by the agent"}
             {session.unread && (
-              <span className="ml-1 inline-block size-1.5 rounded-full bg-blue-500 align-middle" />
+              <span
+                className="ml-1 inline-flex h-4 items-center rounded-full bg-blue-500 px-1.5 align-middle text-[10px] font-semibold leading-none text-white"
+                aria-label="Unread"
+              >
+                New
+              </span>
             )}
           </span>
         </span>
