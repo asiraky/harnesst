@@ -18,6 +18,7 @@ import { ChevronLeft, Square } from "lucide-react";
 import {
   data,
   Link,
+  useFetcher,
   useRevalidator,
   type LoaderFunctionArgs,
   type ShouldRevalidateFunctionArgs,
@@ -379,19 +380,19 @@ export default function FohSession({ loaderData }: Route.ComponentProps) {
     entries,
     historyError,
   } = loaderData;
+  const read = useFetcher<{ ok: true }>({ key: "foh-session-read" });
+  const { submit: markRead } = read;
   const revalidator = useRevalidator();
 
   // Committed-navigation acknowledgement (D3/D13): the loader is prefetch-safe and
   // read-only, so the MOUNTED page posts the read mark — and again whenever new events
   // arrive while it stays open (lastEventAt advances on each revalidation).
   useEffect(() => {
-    const form = new FormData();
-    form.set("playgroundSessionId", sessionId);
-    void fetch(`/api/foh/${projectId}/read`, {
-      method: "POST",
-      body: form,
-    }).catch(() => {});
-  }, [projectId, sessionId, lastEventAt]);
+    markRead(
+      { playgroundSessionId: sessionId },
+      { method: "post", action: `/api/foh/${projectId}/read` },
+    );
+  }, [projectId, sessionId, lastEventAt, markRead]);
 
   const [live, setLive] = useState<LiveTurn | null>(null);
   const [sendError, setSendError] = useState<string | null>(null);

@@ -23,6 +23,7 @@ import { SessionList } from "~/components/foh/session-list";
 import { Button } from "~/components/ui/button";
 import { bohAgentHref } from "~/foh/boh-links";
 import { requireFohProject } from "~/foh/guard.server";
+import { suppressOpenSessionUnread } from "~/foh/unread";
 import { cn } from "~/lib/utils";
 import {
   countArchivedFohSessions,
@@ -171,6 +172,9 @@ export default function FohAgent({ loaderData }: Route.ComponentProps) {
   const newSessionFetcher = useFetcher<typeof action>();
   const basePath = `/t/${projectId}/${agentId}`;
   const openSessionId = params.sessionId ?? null;
+  // The open conversation is already being acknowledged by its child route. Hide its unread
+  // state immediately so a loader poll cannot flash a badge for a reply the viewer is watching.
+  const visibleSessions = suppressOpenSessionUnread(sessions, openSessionId);
   const archive = useArchive({ projectId, basePath, openSessionId });
   const showPending = usePendingPane(openSessionId);
   // Below md only one pane fits, and the right one is whatever the user is waiting on: the
@@ -252,7 +256,7 @@ export default function FohAgent({ loaderData }: Route.ComponentProps) {
           </p>
         ) : (
           <SessionList
-            sessions={sessions}
+            sessions={visibleSessions}
             basePath={basePath}
             selectedId={params.sessionId ?? null}
             onArchive={(session) => archive.archive(session.id)}
