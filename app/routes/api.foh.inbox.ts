@@ -8,10 +8,10 @@
  * POST intent=resolve → dismiss one `finished` item the viewer can see (tenant + D5
  * ownership guard: the item must be in scope AND theirs or team-wide — resolving another
  * user's personal item is refused by construction, since the visibility query never returns
- * it). Question/approval items are NOT resolvable here: the PRD invariant is that they
- * resolve only at the event-drain chokepoints (answer/approve → continuation, terminal
- * failure, supersession) — a bare resolve would silently clear a shared needs-you signal
- * while eve stays parked.
+ * it). Question/approval items are NOT dismissible through this generic action: they resolve
+ * through the explicit session-read acknowledgement or at event-drain chokepoints
+ * (answer/approve → continuation, terminal failure, supersession). A bare item-id resolve would
+ * otherwise clear a shared needs-you signal without proving the conversation is on screen.
  */
 import { getSessionAuth, sessionLoader } from "~/auth/session.server";
 import {
@@ -72,7 +72,8 @@ export async function action(args: ActionFunctionArgs) {
   );
   const item = visible.find((candidate) => candidate.id === itemId);
   if (!item) return { ok: false as const };
-  // Only the dismissible kind: question/approval state belongs to the drain chokepoints.
+  // Only the dismissible kind: question/approval acknowledgement belongs to the scoped read
+  // route (or the drain chokepoints), not an arbitrary item-id mutation.
   if (item.kind !== "finished") return { ok: false as const };
   await store.inboxItems.resolve(item.id);
   return { ok: true as const };

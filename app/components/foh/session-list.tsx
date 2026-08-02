@@ -239,9 +239,9 @@ function EditableSessionRow({
             {session.unread && (
               <span
                 className="ml-1 inline-flex h-4 items-center rounded-full bg-blue-500 px-1.5 align-middle text-[10px] font-semibold leading-none text-white"
-                aria-label="Unread"
+                aria-label="1 unread"
               >
-                New
+                1
               </span>
             )}
           </span>

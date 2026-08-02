@@ -3,7 +3,7 @@
  * in-memory fake store. Pins the substrate behaviors later WPs build on: requestId dedupe
  * (drain and reconcile can both observe the same eve request), D19 kind mapping
  * (confirmation → approval), D5 visibility (user-addressed vs team-wide NULL recipient),
- * and D13 finished-resolve-on-read.
+ * and D13 notification acknowledgement on read.
  */
 import { beforeEach, describe, expect, it } from "vitest";
 
@@ -13,9 +13,9 @@ import {
   listInboxForViewer,
   openInboxQuestion,
   recordInboxFinished,
-  resolveFinishedOnRead,
   resolveInboxForArchivedSession,
   resolveInboxForSession,
+  acknowledgeVisibleInboxOnRead,
 } from "~/foh/inbox.server";
 import { makeFakeStore, type FakeStore } from "../fakes/store";
 
@@ -203,8 +203,8 @@ describe("resolveInboxForArchivedSession (#278)", () => {
   });
 });
 
-describe("resolveFinishedOnRead (D13)", () => {
-  it("resolves the reader's own and team-wide finished items, not another user's", async () => {
+describe("acknowledgeVisibleInboxOnRead (D13)", () => {
+  it("resolves read-only items, acknowledges asks, and leaves another user's item alone", async () => {
     const mine = await recordInboxFinished(
       { projectId: PROJECT, sessionId: SESSION, userId: USER },
       store,
@@ -222,14 +222,31 @@ describe("resolveFinishedOnRead (D13)", () => {
       store,
     );
 
-    await resolveFinishedOnRead(SESSION, USER, store);
+    await acknowledgeVisibleInboxOnRead(SESSION, USER, store);
 
     expect(store.getInboxItem(mine.id)?.status).toBe("resolved");
     expect(store.getInboxItem(teamWide.id)?.status).toBe("resolved");
     // An admin opening a member's session must not eat the member's item.
     expect(store.getInboxItem(theirs.id)?.status).toBe("pending");
-    // Opening a session never answers its question.
-    expect(store.getInboxItem(question.id)?.status).toBe("pending");
+    // The ask stays pending for request-id dedupe and answer lifecycle, but leaves visible lists.
+    expect(store.getInboxItem(question.id)).toMatchObject({
+      status: "pending",
+      acknowledgedAt: expect.any(Date),
+    });
+    expect(
+      await store.inboxItems.listPendingForProjects([PROJECT], USER),
+    ).not.toContainEqual(expect.objectContaining({ id: question.id }));
+
+    // A drain/reconcile retry can observe the same still-parked Eve request after it was read.
+    // It must reuse the acknowledged pending row instead of minting the badge again.
+    const retried = await openInboxQuestion(
+      { projectId: PROJECT, sessionId: SESSION, userId: USER, request: request() },
+      store,
+    );
+    expect(retried.id).toBe(question.id);
+    expect(
+      await store.inboxItems.listPendingForProjects([PROJECT], USER),
+    ).not.toContainEqual(expect.objectContaining({ id: question.id }));
   });
 });
 

@@ -1,8 +1,8 @@
 /**
  * FOH read cursors against a REAL Postgres (WP7): markSessionRead advances the viewer's
  * conversation_reads cursor to the session's lastEventAt (only-advance, D3) and auto-resolves
- * the viewer's `finished` inbox items (D13) while leaving question/approval items and other
- * users' finished items pending.
+ * every inbox item visible to the viewer (D13): questions/approvals are acknowledged but remain
+ * pending for answer lifecycle, while other users' personal items remain untouched.
  *
  * Opt-in: HARNESST_DB_SMOKE=1 with DATABASE_URL pointing at a live dev database
  * (`HARNESST_DB_SMOKE=1 npx vitest run tests/integration/foh-reads.db.test.ts` with .env.local
@@ -14,7 +14,7 @@ import { describe, expect, it } from "vitest";
 const LIVE = process.env.HARNESST_DB_SMOKE === "1";
 
 describe.runIf(LIVE)("FOH read cursor against real Postgres", () => {
-  it("advances only forward and resolves the viewer's finished items on read", async () => {
+  it("advances only forward and acknowledges every inbox item visible to the viewer", async () => {
     const { db } = await import("~/db/client.server");
     const { organization, user } = await import("~/db/auth-schema");
     const { projects, agents } = await import("~/db/schema");
@@ -94,6 +94,14 @@ describe.runIf(LIVE)("FOH read cursor against real Postgres", () => {
         requestId: "req_1",
         prompt: "Which one?",
       });
+      const questionOther = await drizzleDataStore.inboxItems.insert({
+        projectId: project.id,
+        sessionId: session.id,
+        kind: "question",
+        userId: OTHER,
+        requestId: "req_2",
+        prompt: "Private to someone else",
+      });
 
       await markSessionRead(session, USER, drizzleDataStore);
 
@@ -104,15 +112,22 @@ describe.runIf(LIVE)("FOH read cursor against real Postgres", () => {
       expect(reads).toHaveLength(1);
       expect(reads[0].lastReadAt.getTime()).toBe(lastEventAt.getTime());
 
-      // The viewer's finished item resolved; the question and the OTHER user's finished
-      // item stay pending.
+      // Read-only notifications resolve; the team-wide ask stays pending but acknowledged so its
+      // request identity and answer lifecycle survive. Another user's items remain untouched.
       const pending = await drizzleDataStore.inboxItems.findPendingBySession(
         session.id,
       );
       expect(new Set(pending.map((item) => item.id))).toEqual(
-        new Set([finishedOther.id, question.id]),
+        new Set([finishedOther.id, question.id, questionOther.id]),
       );
       expect(pending.find((i) => i.id === finishedMine.id)).toBeUndefined();
+      expect(pending.find((i) => i.id === question.id)?.acknowledgedAt).toEqual(
+        expect.any(Date),
+      );
+      expect(pending.find((i) => i.id === questionOther.id)?.acknowledgedAt).toBeNull();
+      expect(
+        await drizzleDataStore.inboxItems.listPendingForProjects([project.id], USER),
+      ).toHaveLength(0);
 
       // Only-advance: a stale re-read with an older lastEventAt never rewinds the cursor.
       await markSessionRead(

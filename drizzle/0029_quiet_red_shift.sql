@@ -1,0 +1,1 @@
+ALTER TABLE "inbox_items" ADD COLUMN "acknowledged_at" timestamp with time zone;

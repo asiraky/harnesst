@@ -13,7 +13,11 @@ import {
   ShieldQuestion,
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
-import { useFetcher, useMatch, useNavigate } from "react-router";
+import {
+  useFetcher,
+  useMatch,
+  useNavigate,
+} from "react-router";
 
 import { FohRelativeTime } from "~/components/foh/relative-time";
 import { Button } from "~/components/ui/button";
@@ -25,7 +29,10 @@ import {
 import { cn } from "~/lib/utils";
 
 import type { InboxViewItem } from "~/foh/inbox.server";
-import { inboxItemsForOpenSession } from "~/foh/unread";
+import {
+  inboxItemsForOpenSession,
+  titleWithInboxCount,
+} from "~/foh/unread";
 
 const ACTIVE_POLL_MS = 3000;
 const IDLE_POLL_MS = 10000;
@@ -49,6 +56,28 @@ export function InboxIndicator() {
 
   const anyPendingRef = useRef(anyPending);
   anyPendingRef.current = anyPending;
+
+  useEffect(() => {
+    const applyCount = () => {
+      const next = titleWithInboxCount(document.title, count);
+      if (next !== document.title) document.title = next;
+    };
+    // React Router can replace route metadata on a same-location revalidation (for example,
+    // renaming the open session) without changing the inbox count. Observe the head so that
+    // replacement cannot silently drop the tab badge until the next poll or navigation.
+    const observer = new MutationObserver(applyCount);
+    observer.observe(document.head, {
+      childList: true,
+      subtree: true,
+      characterData: true,
+    });
+    applyCount();
+    return () => {
+      observer.disconnect();
+      document.title = titleWithInboxCount(document.title, 0);
+    };
+  }, [count]);
+
   useEffect(() => {
     const url = "/api/foh/inbox";
     load(url);

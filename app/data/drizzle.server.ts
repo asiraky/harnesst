@@ -780,6 +780,18 @@ export const drizzleDataStore: DataStore = {
         // The winning row was resolved between our insert and select — retry the insert.
       }
     },
+    async acknowledge(id) {
+      await db
+        .update(inboxItems)
+        .set({ acknowledgedAt: new Date(), updatedAt: new Date() })
+        .where(
+          and(
+            eq(inboxItems.id, id),
+            eq(inboxItems.status, "pending"),
+            isNull(inboxItems.acknowledgedAt),
+          ),
+        );
+    },
     async resolve(id) {
       await db
         .update(inboxItems)
@@ -819,6 +831,7 @@ export const drizzleDataStore: DataStore = {
           and(
             inArray(inboxItems.projectId, projectIds),
             eq(inboxItems.status, "pending"),
+            isNull(inboxItems.acknowledgedAt),
             // D5: personal items plus team-wide (agent-opened) items.
             or(eq(inboxItems.userId, userId), isNull(inboxItems.userId)),
           ),
@@ -834,6 +847,7 @@ export const drizzleDataStore: DataStore = {
           and(
             inArray(inboxItems.projectId, projectIds),
             eq(inboxItems.status, "pending"),
+            isNull(inboxItems.acknowledgedAt),
             or(eq(inboxItems.userId, userId), isNull(inboxItems.userId)),
           ),
         );

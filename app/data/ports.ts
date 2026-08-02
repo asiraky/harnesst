@@ -406,6 +406,8 @@ export interface InboxItemRepo {
     delegationId?: string | null;
     runId?: string | null;
   }): Promise<InboxItem>;
+  /** Hide one pending notification after its conversation is viewed, without resolving the ask. */
+  acknowledge(id: string): Promise<void>;
   /** Mark one item resolved (idempotent on already-resolved rows). */
   resolve(id: string): Promise<void>;
   /** Resolve every pending item for a session, optionally only the given kinds. */
@@ -422,8 +424,8 @@ export interface InboxItemRepo {
   /** A session's pending items, oldest first (dedupe by requestId happens here). */
   findPendingBySession(sessionId: string): Promise<InboxItem[]>;
   /**
-   * The viewer's pending items across their scoped projects, newest first: items addressed to
-   * them (`user_id = userId`) plus team-wide items (`user_id IS NULL`) — D5 visibility.
+   * The viewer's unacknowledged pending items across their scoped projects, newest first: items
+   * addressed to them (`user_id = userId`) plus team-wide items (`user_id IS NULL`) — D5.
    */
   listPendingForProjects(projectIds: string[], userId: string): Promise<InboxItem[]>;
   /** Badge count over the same visibility rule as listPendingForProjects. */

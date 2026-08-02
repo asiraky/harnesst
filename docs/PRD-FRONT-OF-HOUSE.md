@@ -261,8 +261,9 @@ agents. Email-dependent criteria go through the file mailbox driver.
       turn stream; leave mid-work and the session keeps going.
 - [ ] The agent asks a question while you're away: session shows needs-you, sidebar badge
       increments, inbox gets a pending item — even with no client connected when it parked.
-- [ ] Clicking the inbox item jumps to the session; answering inline (buttons or text)
-      resumes the agent; on completion the item resolves and badges clear.
+- [ ] Clicking the inbox item jumps to the session and immediately acknowledges its notification;
+      unanswered questions/approvals remain answerable inline without a badge. Answering resumes
+      the agent, and replies arriving while the session stays open remain read.
 
 **Delegation (agent ↔ agent ↔ human):**
 
@@ -291,4 +292,3 @@ agents. Email-dependent criteria go through the file mailbox driver.
 - [ ] Presence states (active turn / running / idle) render from real container + turn state;
       needs-you sessions sort first in every list.
 - [ ] Empty states exist for: no teams, no sessions with an agent, empty inbox, empty feed.
-
