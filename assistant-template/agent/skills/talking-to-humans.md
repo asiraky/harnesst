@@ -19,12 +19,12 @@ email, or any other channel unless the user names it.
 
 Communication rides four mechanisms:
 
-| Direction                | Mechanism                                                                                                        |
-| ------------------------ | ---------------------------------------------------------------------------------------------------------------- |
-| Human → agent            | An FOH session is an ordinary eve durable session; the human's message arrives as a normal turn.                 |
-| Agent → human (blocking) | eve's **built-in HITL**: `ask_question` (or a tool-approval gate) emits `input.requested` and parks the session. |
-| Agent → human (notify)   | The **`contact-user`** tool, baked into every image by harnesst — fire-and-forget, opens an FOH conversation.    |
-| Agent → agent            | The **`ask-teammate`** tool, which harnesst bakes into every team member's image at build time.                  |
+| Direction                 | Mechanism                                                                                                        |
+| ------------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| Human → agent             | An FOH session is an ordinary eve durable session; the human's message arrives as a normal turn.                 |
+| Agent → human (blocking)  | eve's **built-in HITL**: `ask_question` (or a tool-approval gate) emits `input.requested` and parks the session. |
+| Agent → human (notify)    | The **`contact-user`** tool, baked into every image by harnesst — fire-and-forget, opens an FOH conversation.    |
+| Agent → agent             | The **`ask-teammate`** tool, which harnesst bakes into every team member's image at build time.                  |
 
 ## Asking a human a question
 
@@ -60,7 +60,7 @@ The parked question is delivered by **whichever channel started the session**:
   `contact-user` is the escape hatch — it never parks. A blocking ask still stalls.
 
 Whether a given channel can park into FOH is documented **in that channel's installed skill**
-(`skills/harnesst-installed-<template-id>.md`) — check it before designing. `ask_question` is the only
+(`skills/installed/<template-id>.md`) — check it before designing. `ask_question` is the only
 _blocking_ agent→human API; the park is delivered by whichever channel homed the session, so the
 channel's skill is the ground truth for what happens to it. `contact-user` bypasses the channel
 entirely — it posts to FOH directly from any entry point.

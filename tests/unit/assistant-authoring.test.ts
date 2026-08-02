@@ -81,10 +81,7 @@ function harness(opts?: {
         (async () => ({ templates: [{ id: "x" }] }))) as never,
       template: (opts?.catalogTemplate ??
         (async () =>
-          ({
-            manifest: { id: "x" },
-            files: { "a.ts": "1" },
-          }) as never)) as never,
+          ({ manifest: { id: "x" }, files: { "a.ts": "1" } }) as never)) as never,
     },
   };
   return { store, deps, repoFiles };
@@ -108,7 +105,7 @@ describe("assistant authoring: bundle", () => {
     expect(bundle.model).toBe("anthropic/claude-sonnet-5");
     expect(bundle.effort).toBe("high");
     expect(bundle.files).toEqual({
-      "skills/harnesst-user-deploys.md": "# deploys",
+      "skills/user/deploys.md": "# deploys",
       "schedules/user/daily.md": "# daily",
     });
   });
@@ -124,7 +121,7 @@ describe("assistant authoring: bundle", () => {
     });
     const bundle = await assembleBundle(project, deps);
     expect(bundle.files).toEqual({
-      "skills/harnesst-installed-legal-advisor.md":
+      "skills/installed/legal-advisor.md":
         "---\ndescription: legal\n---\n\n# Legal\n",
     });
   });
@@ -145,7 +142,7 @@ describe("assistant authoring: bundle", () => {
     const bundle = await assembleBundle(project, deps);
     // github backfilled from the catalog; legal-advisor's lookup threw → silently omitted.
     expect(bundle.files).toEqual({
-      "skills/harnesst-installed-github.md": "# GitHub\n",
+      "skills/installed/github.md": "# GitHub\n",
     });
   });
 
@@ -161,31 +158,8 @@ describe("assistant authoring: bundle", () => {
     });
     const bundle = await assembleBundle(project, deps);
     expect(bundle.files).toEqual({
-      "skills/harnesst-installed-legal-advisor.md": "# root copy\n",
+      "skills/installed/legal-advisor.md": "# root copy\n",
     });
-  });
-
-  it("keeps every generated skill at Eve's discoverable top level", async () => {
-    const { deps } = harness({
-      repoFiles: {
-        ".harnesst/assistant/skills/release-check.md": "# Release check\n",
-        "harnesst-lock.json": lockWith({
-          ...LEGAL_ADVISOR,
-          assistantSkill: "---\ndescription: legal\n---\n\n# Legal\n",
-        }),
-      },
-    });
-
-    const bundle = await assembleBundle(project, deps);
-    const skillPaths = Object.keys(bundle.files).filter((file) =>
-      file.startsWith("skills/"),
-    );
-
-    expect(skillPaths).toEqual([
-      "skills/harnesst-user-release-check.md",
-      "skills/harnesst-installed-legal-advisor.md",
-    ]);
-    expect(skillPaths.every((file) => file.split("/").length === 2)).toBe(true);
   });
 
   it("ignores an unrecognized effort in manually edited published config", async () => {

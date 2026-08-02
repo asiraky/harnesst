@@ -5,7 +5,7 @@
 // config from harnesst, writes it into this fixed image, and — if any user layer was written —
 // re-runs `eve build` before `eve start`. On persistent fetch failure it starts with the fixed
 // layer only, so a control-plane hiccup never bricks the assistant.
-import { mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
 const API_URL = process.env.HARNESST_API_URL;
@@ -15,7 +15,6 @@ const INSTRUCTIONS = join(APP, "agent", "instructions.md");
 const USER_MARKER = join(APP, ".harnesst-user-layer");
 const ENV_FILE = join(APP, ".harnesst-assistant-env");
 const MARKER = "\n\n## Project instructions (user-configured)\n\n";
-const MANAGED_SKILL_PREFIXES = ["harnesst-user-", "harnesst-installed-"];
 
 /** Quote an arbitrary value as one POSIX-shell assignment without allowing expansion. */
 function shellAssignment(name, value) {
@@ -73,21 +72,6 @@ async function reset() {
     recursive: true,
     force: true,
   });
-  // Eve only accepts flat skill files or one package directory per skill. Managed skills are
-  // therefore flat files with reserved prefixes; remove the previous boot's copies before
-  // materializing the current bundle. Keep the legacy directories above so the first upgraded
-  // boot also cleans up the invalid pre-fix layout.
-  const skillsDir = join(APP, "agent", "skills");
-  const skillEntries = await readdir(skillsDir).catch(() => []);
-  const staleManagedSkills = [];
-  for (const name of skillEntries) {
-    if (MANAGED_SKILL_PREFIXES.some((prefix) => name.startsWith(prefix))) {
-      staleManagedSkills.push(
-        rm(join(skillsDir, name), { recursive: true, force: true }),
-      );
-    }
-  }
-  await Promise.all(staleManagedSkills);
   await rm(join(APP, "agent", "schedules", "user"), {
     recursive: true,
     force: true,
@@ -111,7 +95,7 @@ async function main() {
 
   let wroteUserLayer = false;
 
-  // Managed flat skills and user schedules → their validated agent-relative bundle paths.
+  // User skills / schedules → agent/skills/user/… and agent/schedules/user/…
   const files =
     bundle.files && typeof bundle.files === "object" ? bundle.files : {};
   for (const [rel, content] of Object.entries(files)) {
@@ -145,10 +129,7 @@ async function main() {
         bundle.effort,
       )
     ) {
-      environment += shellAssignment(
-        "HARNESST_ASSISTANT_EFFORT",
-        bundle.effort,
-      );
+      environment += shellAssignment("HARNESST_ASSISTANT_EFFORT", bundle.effort);
     }
     await writeFile(ENV_FILE, environment);
   }
