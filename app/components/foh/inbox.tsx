@@ -15,7 +15,6 @@ import {
 import { useEffect, useRef, useState } from "react";
 import {
   useFetcher,
-  useLocation,
   useMatch,
   useNavigate,
 } from "react-router";
@@ -44,7 +43,6 @@ export function InboxIndicator() {
   });
   const { load } = fetcher;
   const navigate = useNavigate();
-  const location = useLocation();
   const [open, setOpen] = useState(false);
   const openSessionId =
     useMatch("/t/:projectId/:agentId/s/:sessionId")?.params.sessionId ?? null;
@@ -60,13 +58,25 @@ export function InboxIndicator() {
   anyPendingRef.current = anyPending;
 
   useEffect(() => {
-    document.title = titleWithInboxCount(document.title, count);
+    const applyCount = () => {
+      const next = titleWithInboxCount(document.title, count);
+      if (next !== document.title) document.title = next;
+    };
+    // React Router can replace route metadata on a same-location revalidation (for example,
+    // renaming the open session) without changing the inbox count. Observe the head so that
+    // replacement cannot silently drop the tab badge until the next poll or navigation.
+    const observer = new MutationObserver(applyCount);
+    observer.observe(document.head, {
+      childList: true,
+      subtree: true,
+      characterData: true,
+    });
+    applyCount();
     return () => {
+      observer.disconnect();
       document.title = titleWithInboxCount(document.title, 0);
     };
-    // Route metadata can replace the title without changing the count, so location is part of
-    // the signal. The effect runs after that metadata commits and reapplies the shared badge.
-  }, [count, location.key]);
+  }, [count]);
 
   useEffect(() => {
     const url = "/api/foh/inbox";
