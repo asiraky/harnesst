@@ -87,7 +87,10 @@ function makeDeps(over: Partial<AskDeps> = {}): AskDeps {
     recordStart: async () => true,
     recordFinish: async () => {},
     resolveRunId: async () => "run_1",
-    ensureLiveDeployment: async () => null,
+    ensureLiveDeployment: async (environmentId) => {
+      const rows = await store.deployments.listByEnvironment(environmentId);
+      return rows.find((d) => d.status === "live" && d.url) ?? null;
+    },
     createSession: async (input) =>
       ({ id: "ps_1", ...input }) as unknown as PlaygroundSession,
     inferTitle: async ({ message }) => titleFromMessage(message),

@@ -17,7 +17,7 @@ import {
   Sparkles,
   TriangleAlert,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Link,
   redirect,
@@ -226,7 +226,11 @@ export const loader = (args: LoaderFunctionArgs) =>
         const fixTask = await getRuntime()
           .data.workspaceTasks.findById(fixTaskId)
           .catch(() => null);
-        if (fixTask && fixTask.projectId === project.id && fixTask.status === "failed") {
+        if (
+          fixTask &&
+          fixTask.projectId === project.id &&
+          fixTask.status === "failed"
+        ) {
           const failedStep = fixTask.steps?.find((s) => s.status === "failed");
           const error = failedStep?.error ?? fixTask.error;
           if (error) {
@@ -369,12 +373,58 @@ export default function Assistant({ loaderData }: Route.ComponentProps) {
   const [sendError, setSendError] = useState<string | null>(null);
 
   const remoteBusy = currentSessionStatus === "running";
+  // Once provisioning has been observed, keep that state latched until the loader positively
+  // reports a live (or failed) instance. A transient `resumable`/unknown snapshot must not make
+  // the surface look ready and stop its own polling (#256).
+  const readinessLatchedRef = useRef(instanceStatus === "provisioning");
+  const readinessStatusRef = useRef(instanceStatus);
+  const readinessWaiterRef = useRef<
+    ((status: "live" | "failed") => void) | null
+  >(null);
+
+  useEffect(() => {
+    readinessStatusRef.current = instanceStatus;
+    if (
+      instanceStatus === "provisioning" ||
+      provisionFetcher.state !== "idle"
+    ) {
+      readinessLatchedRef.current = true;
+      return;
+    }
+    if (instanceStatus === "live" || instanceStatus === "failed") {
+      readinessLatchedRef.current = false;
+      readinessWaiterRef.current?.(instanceStatus);
+      readinessWaiterRef.current = null;
+    }
+  }, [instanceStatus, provisionFetcher.state]);
+
+  useEffect(
+    () => () => {
+      readinessWaiterRef.current?.("failed");
+      readinessWaiterRef.current = null;
+    },
+    [],
+  );
+
+  const waitForReadiness = useCallback(() => {
+    const status = readinessStatusRef.current;
+    if (status === "live" || status === "failed")
+      return Promise.resolve(status);
+    return new Promise<"live" | "failed">((resolve) => {
+      readinessWaiterRef.current = resolve;
+    });
+  }, []);
+
   // Treat the in-flight "provision" click as provisioning for instant feedback; once the action
   // redirects, the loader reports "provisioning" from the `pending` deployment row that
   // ensureAssistantInstance now persists synchronously, so the spinner stays put and polling keeps
   // running instead of flickering back to the empty state (#17).
   const provisioning =
-    instanceStatus === "provisioning" || provisionFetcher.state !== "idle";
+    instanceStatus === "provisioning" ||
+    provisionFetcher.state !== "idle" ||
+    (readinessLatchedRef.current &&
+      instanceStatus !== "live" &&
+      instanceStatus !== "failed");
   const busy = (live !== null && !live.done) || remoteBusy || provisioning;
   const pollRemoteSession = shouldPollRemoteSession(remoteBusy, visibleLive);
   // Keep the display state separate from polling: a completed errored bubble can remain visible
@@ -390,6 +440,35 @@ export default function Assistant({ loaderData }: Route.ComponentProps) {
     }, 2_500);
     return () => window.clearInterval(id);
   }, [pollRemoteSession, provisioning, revalidator]);
+
+  // Background tabs throttle interval timers. Refresh immediately on return while readiness is
+  // unresolved, with an effect-local guard so focus + visibilitychange cannot cancel each other.
+  useEffect(() => {
+    if (!provisioning) return;
+    let refreshing = false;
+    const refresh = async () => {
+      if (
+        refreshing ||
+        document.visibilityState !== "visible" ||
+        revalidator.state !== "idle"
+      )
+        return;
+      refreshing = true;
+      try {
+        await revalidator.revalidate();
+      } finally {
+        refreshing = false;
+      }
+    };
+    const onVisibilityChange = () => void refresh();
+    const onFocus = () => void refresh();
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    window.addEventListener("focus", onFocus);
+    return () => {
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+      window.removeEventListener("focus", onFocus);
+    };
+  }, [provisioning, revalidator]);
 
   const sessionPicker = useMemo(() => {
     if (!currentSessionId || sessions.length === 0) return null;
@@ -441,21 +520,6 @@ export default function Assistant({ loaderData }: Route.ComponentProps) {
   const send = useCallback(
     async (message: string) => {
       setSendError(null);
-      setLive({
-        playgroundSessionId: currentSessionId,
-        baseEntryCount: entries.length,
-        userText: message,
-        text: "",
-        steps: [],
-        activity: "Thinking…",
-        modelId: null,
-        inputRequests: [],
-        error: null,
-        errorDetail: null,
-        errorRetryable: false,
-        done: false,
-        sync: null,
-      });
       const apply = (evt: StreamEvent) =>
         setLive((prev) => (prev ? reduceLive(prev, evt) : prev));
 
@@ -463,99 +527,152 @@ export default function Assistant({ loaderData }: Route.ComponentProps) {
       form.set("message", message);
       if (currentSessionId) form.set("playgroundSessionId", currentSessionId);
 
-      try {
-        const res = await fetch(`/api/repos/${project.id}/assistant/stream`, {
-          method: "POST",
-          body: form,
+      // A 409/provisioning response is not a failed user action. Keep this promise (and thus the
+      // draft) pending until polling positively sees `live`, then retry the exact same message.
+      for (;;) {
+        setLive({
+          playgroundSessionId: currentSessionId,
+          baseEntryCount: entries.length,
+          userText: message,
+          text: "",
+          steps: [],
+          activity: "Thinking…",
+          modelId: null,
+          inputRequests: [],
+          error: null,
+          errorDetail: null,
+          errorRetryable: false,
+          done: false,
+          sync: null,
         });
-        if (!res.ok) {
-          const detail = (await res.json().catch(() => null)) as {
-            error?: unknown;
-            provisioning?: unknown;
-          } | null;
-          const errorMessage =
-            typeof detail?.error === "string" ? detail.error : null;
-          if (detail?.provisioning === true) {
+
+        let res: Response;
+        let body: NonNullable<Response["body"]>;
+        try {
+          res = await fetch(`/api/repos/${project.id}/assistant/stream`, {
+            method: "POST",
+            body: form,
+          });
+          if (!res.ok) {
+            const detail = (await res.json().catch(() => null)) as {
+              error?: unknown;
+              provisioning?: unknown;
+            } | null;
+            const errorMessage =
+              typeof detail?.error === "string" ? detail.error : null;
+            if (detail?.provisioning === true) {
+              setLive(null);
+              readinessLatchedRef.current = true;
+              setSendError(
+                "Your assistant is starting up — your message will send when it's ready.",
+              );
+              await revalidator.revalidate();
+              const readiness = await waitForReadiness();
+              if (readiness === "live") {
+                setSendError(null);
+                continue;
+              }
+              setSendError(
+                "The assistant failed to start. Your message is still in the composer.",
+              );
+              return false;
+            }
             setLive(null);
             setSendError(
-              "Your assistant is starting up — it'll be ready in a moment.",
+              res.status === 409
+                ? (errorMessage ??
+                    "This conversation can no longer be continued. Start a new conversation.")
+                : (errorMessage ?? `Stream failed (${res.status}).`),
+            );
+            if (res.status !== 409) await revalidator.revalidate();
+            return false;
+          }
+          if (!res.body)
+            throw new Error("The stream returned no response body.");
+          body = res.body;
+        } catch (error) {
+          setLive(null);
+          setSendError((error as Error).message);
+          await revalidator.revalidate();
+          return false;
+        }
+
+        // HTTP success is the acceptance boundary. Continue consuming the durable stream in the
+        // background; returning true now lets ChatComposer clear the accepted draft immediately.
+        void (async () => {
+          try {
+            const reader = body.getReader();
+            const decoder = new TextDecoder();
+            let buf = "";
+            let nextSessionId = currentSessionId;
+            for (;;) {
+              const { done, value } = await reader.read();
+              if (done) break;
+              buf += decoder.decode(value, { stream: true });
+              const lines = buf.split("\n");
+              buf = lines.pop() ?? "";
+              for (const line of lines) {
+                if (!line.trim()) continue;
+                let evt: StreamEvent;
+                try {
+                  evt = JSON.parse(line) as StreamEvent;
+                } catch {
+                  continue;
+                }
+                if (
+                  (evt.type === "session" || evt.type === "done") &&
+                  evt.playgroundSessionId
+                ) {
+                  nextSessionId = evt.playgroundSessionId;
+                }
+                apply(evt);
+              }
+            }
+            // A transport can close without the terminal event. Settle the live view before
+            // revalidating, then let the cache handoff hide it only when rows have arrived.
+            setLive((prev) =>
+              prev && !prev.done
+                ? { ...prev, activity: null, done: true }
+                : prev,
             );
             await revalidator.revalidate();
-            return;
-          }
-          if (res.status === 409) {
-            setLive(null);
-            setSendError(
-              errorMessage ??
-                "This conversation can no longer be continued. Start a new conversation.",
+            if (!currentSessionId && nextSessionId) {
+              navigate(
+                `${base}/assistant?session=${encodeURIComponent(nextSessionId)}`,
+                { replace: true },
+              );
+            }
+          } catch (error) {
+            setLive((prev) =>
+              prev
+                ? {
+                    ...prev,
+                    error: `Lost the live stream: ${(error as Error).message}`,
+                    errorDetail: null,
+                    errorRetryable: false,
+                    activity: null,
+                    done: true,
+                  }
+                : prev,
             );
-            return;
+            setSendError(
+              "The live view dropped — the reply may still have been recorded.",
+            );
+            await revalidator.revalidate();
           }
-          throw new Error(errorMessage ?? `Stream failed (${res.status}).`);
-        }
-        if (!res.body) throw new Error("The stream returned no response body.");
-
-        const reader = res.body.getReader();
-        const decoder = new TextDecoder();
-        let buf = "";
-        let nextSessionId = currentSessionId;
-        for (;;) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          buf += decoder.decode(value, { stream: true });
-          const lines = buf.split("\n");
-          buf = lines.pop() ?? "";
-          for (const line of lines) {
-            if (!line.trim()) continue;
-            let evt: StreamEvent;
-            try {
-              evt = JSON.parse(line) as StreamEvent;
-            } catch {
-              continue;
-            }
-            if (
-              (evt.type === "session" || evt.type === "done") &&
-              evt.playgroundSessionId
-            ) {
-              nextSessionId = evt.playgroundSessionId;
-            }
-            apply(evt);
-          }
-        }
-        // A transport can close without the terminal event. Settle the live view before
-        // revalidating, then let the derived cache handoff hide it only when rows have arrived.
-        setLive((prev) =>
-          prev && !prev.done ? { ...prev, activity: null, done: true } : prev,
-        );
-        await revalidator.revalidate();
-        if (!currentSessionId && nextSessionId) {
-          navigate(
-            `${base}/assistant?session=${encodeURIComponent(nextSessionId)}`,
-            {
-              replace: true,
-            },
-          );
-        }
-      } catch (error) {
-        setLive((prev) =>
-          prev
-            ? {
-                ...prev,
-                error: `Lost the live stream: ${(error as Error).message}`,
-                errorDetail: null,
-                errorRetryable: false,
-                activity: null,
-                done: true,
-              }
-            : prev,
-        );
-        setSendError(
-          "The live view dropped — the reply may still have been recorded.",
-        );
-        await revalidator.revalidate();
+        })();
+        return true;
       }
     },
-    [base, currentSessionId, entries.length, navigate, project.id, revalidator],
+    [
+      base,
+      currentSessionId,
+      entries.length,
+      navigate,
+      project.id,
+      revalidator,
+      waitForReadiness,
+    ],
   );
 
   const headerActions = useMemo(
@@ -734,9 +851,7 @@ export default function Assistant({ loaderData }: Route.ComponentProps) {
               key={e.id}
               entry={e}
               onAnswer={
-                i === shownEntries.length - 1 && !visibleLive
-                  ? send
-                  : undefined
+                i === shownEntries.length - 1 && !visibleLive ? send : undefined
               }
               onRetry={
                 i === shownEntries.length - 1 &&
@@ -1070,12 +1185,19 @@ function SyncNote({ sync }: { sync: NonNullable<LiveTurn["sync"]> }) {
       />
       <span>
         {/* n counts what this sync actually changed; 0 means everything was already saved. */}
-        {n === 0 ? "Everything from this turn was already saved" : (
-          <>Saved {n} change{n === 1 ? "" : "s"}</>
+        {n === 0 ? (
+          "Everything from this turn was already saved"
+        ) : (
+          <>
+            Saved {n} change{n === 1 ? "" : "s"}
+          </>
         )}{" "}
         —{" "}
         {/* `?publish=1` opens the publish panel from the workspace-header Publish control. */}
-        <Link to={publishHref} className="font-medium underline underline-offset-4">
+        <Link
+          to={publishHref}
+          className="font-medium underline underline-offset-4"
+        >
           review and publish
         </Link>{" "}
         when you&apos;re ready.

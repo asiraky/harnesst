@@ -42,6 +42,7 @@ import { listProjects } from "~/db/queries.server";
 import { getAgentSource } from "~/github/cached.server";
 import { listDrafts } from "~/drafts/drafts.server";
 import { overlayLock, installedKeys } from "~/marketplace/lock";
+import { catalogProviderEvidence } from "~/marketplace/install.server";
 import { noindexMeta } from "~/lib/seo";
 import type { Route } from "./+types/marketplace";
 
@@ -151,7 +152,10 @@ async function collectInstalledKeys(
           source.files["harnesst-lock.json"] ?? null,
           drafts.map((d) => ({ path: d.path, content: d.content })),
         );
-        return installedKeys(lock);
+        return installedKeys(
+          lock,
+          await catalogProviderEvidence(getRuntime().catalog, lock),
+        );
       } catch {
         return [];
       }

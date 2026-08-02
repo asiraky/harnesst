@@ -231,7 +231,7 @@ describe("resolveTemplate — nesting", () => {
       new Set(["tools/t.ts", "skills/s.md", "agent.ts"]),
     );
     expect(resolved.manifest.dependencies).toEqual({ tl: "^1.0.0" });
-    // Provenance is the DIRECT include only (the skill), carrying the skill's own hash.
+    // Provenance is flattened through the full tree so lock-only readers can see the tool too.
     expect(resolved.includes).toEqual([
       {
         id: "s",
@@ -239,6 +239,13 @@ describe("resolveTemplate — nesting", () => {
         name: "S",
         version: "0.1.0",
         hash: templateContentHash(skill),
+      },
+      {
+        id: "t",
+        type: "tool",
+        name: "T",
+        version: "0.1.0",
+        hash: templateContentHash(tool),
       },
     ]);
   });

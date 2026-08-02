@@ -11,9 +11,6 @@ import {
   betterAuthSessionMiddleware,
   getSessionAuth,
 } from "~/auth/session.server";
-import { ensureSplitterStarted } from "~/deploy/splitter.server";
-import { ensureWorkerStarted } from "~/jobs/worker.server";
-import { ensureReconcilerStarted } from "~/observability/reconcile.server";
 import "./app.css";
 import type { Route } from "./+types/root";
 
@@ -24,10 +21,6 @@ export const middleware: Route.MiddlewareFunction[] = [
 ];
 
 export const loader = async (args: LoaderFunctionArgs) => {
-  // Boot the background singletons with the first server render (per-process guards).
-  ensureWorkerStarted();
-  ensureSplitterStarted();
-  ensureReconcilerStarted();
   const session = await getSessionAuth(args);
   return { user: session.user };
 };
