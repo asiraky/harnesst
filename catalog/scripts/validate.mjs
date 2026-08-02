@@ -28,7 +28,15 @@ import { buildIndex, loadTemplates } from "./build-index.mjs";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 
-const TYPES = ["tool", "skill", "subagent", "channel", "connection", "bundle", "agent"];
+const TYPES = [
+  "tool",
+  "skill",
+  "subagent",
+  "channel",
+  "connection",
+  "bundle",
+  "agent",
+];
 /** Types a template may `includes`-reference — everything except `agent`. */
 const INCLUDABLE = TYPES.filter((t) => t !== "agent");
 const KEBAB = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
@@ -61,7 +69,10 @@ function validateManifest(where, m) {
   if (!m.eve) fail(where, "eve range is required");
 
   // Only a bundle may ship no files of its own (pure composition — its includes carry them).
-  if (!Array.isArray(m.files) || (m.files.length === 0 && m.type !== "bundle")) {
+  if (
+    !Array.isArray(m.files) ||
+    (m.files.length === 0 && m.type !== "bundle")
+  ) {
     fail(where, "files must be a non-empty array (only a bundle may be empty)");
   } else {
     for (const p of m.files) {
@@ -75,12 +86,18 @@ function validateManifest(where, m) {
   // gate); harnesst's Zod schema keeps it optional so already-published catalogs parse during
   // rollout.
   if (m.assistantSkill === undefined) {
-    fail(where, "assistantSkill is required — every template ships an assistant skill (a stub at minimum)");
+    fail(
+      where,
+      "assistantSkill is required — every template ships an assistant skill (a stub at minimum)",
+    );
   } else {
     const reason = badPath(m.assistantSkill);
     if (reason) fail(where, `assistantSkill "${m.assistantSkill}" ${reason}`);
     else if (!m.assistantSkill.endsWith(".md")) {
-      fail(where, `assistantSkill "${m.assistantSkill}" must be a markdown file`);
+      fail(
+        where,
+        `assistantSkill "${m.assistantSkill}" must be a markdown file`,
+      );
     }
     if (Array.isArray(m.files) && m.files.includes(m.assistantSkill)) {
       fail(where, "assistantSkill must not also be listed in files");
@@ -115,7 +132,10 @@ function validateManifest(where, m) {
         }
         // A secret is either flow-set (provisioned) or harnesst-minted (generated) — never both.
         if (s?.provisioned && s?.generated) {
-          fail(where, `secret "${s.name}" can't be both provisioned and generated`);
+          fail(
+            where,
+            `secret "${s.name}" can't be both provisioned and generated`,
+          );
         }
       }
   }
@@ -125,13 +145,19 @@ function validateManifest(where, m) {
   // user-selectable permission levels. At least one of the two must be present.
   if (m.auth !== undefined) {
     if (!m.auth || typeof m.auth !== "object" || Array.isArray(m.auth)) {
-      fail(where, "auth must be an object { provider, kind, scopes?, scopeGroups? }");
+      fail(
+        where,
+        "auth must be an object { provider, kind, scopes?, scopeGroups? }",
+      );
     } else {
       if (m.type !== "connection") {
         fail(where, "auth is only valid on a connection template");
       }
       if (!KEBAB.test(m.auth.provider ?? "")) {
-        fail(where, `auth.provider "${m.auth.provider}" is not a kebab-case slug`);
+        fail(
+          where,
+          `auth.provider "${m.auth.provider}" is not a kebab-case slug`,
+        );
       }
       if (m.auth.kind !== "oauth2") {
         fail(where, `auth.kind "${m.auth.kind}" must be "oauth2"`);
@@ -141,16 +167,25 @@ function validateManifest(where, m) {
         list.length === 0 ||
         list.some((s) => typeof s !== "string" || s.length === 0);
       if (m.auth.scopes !== undefined && badScopeList(m.auth.scopes)) {
-        fail(where, "auth.scopes must be a non-empty array of non-empty strings");
+        fail(
+          where,
+          "auth.scopes must be a non-empty array of non-empty strings",
+        );
       }
       if (m.auth.scopeGroups !== undefined) {
-        if (!Array.isArray(m.auth.scopeGroups) || m.auth.scopeGroups.length === 0) {
+        if (
+          !Array.isArray(m.auth.scopeGroups) ||
+          m.auth.scopeGroups.length === 0
+        ) {
           fail(where, "auth.scopeGroups must be a non-empty array");
         } else {
           const seen = new Set();
           for (const g of m.auth.scopeGroups) {
             if (!g || typeof g !== "object" || Array.isArray(g)) {
-              fail(where, "each scope group must be an object { id, label, description, scopes }");
+              fail(
+                where,
+                "each scope group must be an object { id, label, description, scopes }",
+              );
               continue;
             }
             if (!KEBAB.test(g.id ?? "")) {
@@ -197,9 +232,15 @@ function validateManifest(where, m) {
         fail(where, "capability is only valid on a connection template");
       }
       if (m.auth === undefined) {
-        fail(where, "capability requires an auth block (the grant its operations consume)");
+        fail(
+          where,
+          "capability requires an auth block (the grant its operations consume)",
+        );
       }
-      if (!Array.isArray(m.capability.groups) || m.capability.groups.length === 0) {
+      if (
+        !Array.isArray(m.capability.groups) ||
+        m.capability.groups.length === 0
+      ) {
         fail(where, "capability.groups must be a non-empty array");
       } else {
         const seen = new Set();
@@ -207,7 +248,8 @@ function validateManifest(where, m) {
           if (!KEBAB.test(id ?? "")) {
             fail(where, `capability group id "${id}" is not a kebab-case slug`);
           }
-          if (seen.has(id)) fail(where, `duplicate capability group id "${id}"`);
+          if (seen.has(id))
+            fail(where, `duplicate capability group id "${id}"`);
           seen.add(id);
         }
       }
@@ -327,7 +369,10 @@ function validateSkillMarkdown(where, path, content) {
   const keys = frontmatterKeys(content);
   if (keys === null) {
     if (kind === "packaged") {
-      fail(where, `"${path}" needs frontmatter with a description (packaged skills require it)`);
+      fail(
+        where,
+        `"${path}" needs frontmatter with a description (packaged skills require it)`,
+      );
     }
     return; // a flat skill may omit frontmatter — eve infers the description from the first line.
   }
@@ -406,16 +451,25 @@ function main() {
     }
 
     // The assistant skill (issue #274) must exist beside files/ and pass the same eve flat-skill
-    // gate as shipped skills — it materializes at agent/skills/installed/<id>.md in the assistant
+    // gate as shipped skills — it materializes at agent/skills/harnesst-installed-<id>.md in the assistant
     // image, so an unknown frontmatter key would fail the assistant's OWN build. Its description
     // is the load trigger, so it is required even though eve tolerates flat skills without one.
-    if (typeof t.manifest.assistantSkill === "string" && !badPath(t.manifest.assistantSkill)) {
+    if (
+      typeof t.manifest.assistantSkill === "string" &&
+      !badPath(t.manifest.assistantSkill)
+    ) {
       if (t.assistantSkill == null) {
-        fail(where, `assistantSkill "${t.manifest.assistantSkill}" is missing on disk`);
+        fail(
+          where,
+          `assistantSkill "${t.manifest.assistantSkill}" is missing on disk`,
+        );
       } else {
         const keys = frontmatterKeys(t.assistantSkill);
         if (keys === null) {
-          fail(where, `assistantSkill "${t.manifest.assistantSkill}" needs frontmatter with a description`);
+          fail(
+            where,
+            `assistantSkill "${t.manifest.assistantSkill}" needs frontmatter with a description`,
+          );
         } else {
           for (const key of keys) {
             if (!SKILL_FRONTMATTER_KEYS.includes(key)) {
@@ -427,7 +481,10 @@ function main() {
             }
           }
           if (!keys.includes("description")) {
-            fail(where, `assistantSkill "${t.manifest.assistantSkill}" frontmatter must declare a description`);
+            fail(
+              where,
+              `assistantSkill "${t.manifest.assistantSkill}" frontmatter must declare a description`,
+            );
           }
         }
       }

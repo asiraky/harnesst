@@ -42,7 +42,8 @@ const installEntrySchema = z.object({
   /**
    * Snapshot of the template's assistant skill CONTENT at install time (issue #274) — the
    * markdown the harnesst assistant loads about this template, delivered to the assistant instance
-   * via the bundle (`skills/installed/<template-id>.md`), never installed into the repo tree.
+   * via the bundle (`skills/harnesst-installed-<template-id>.md`), never installed into the repo
+   * tree.
    * Snapshotted like `secrets`/`auth` so the install pins the skill it shipped with: the catalog
    * only serves its current version, and a newer template's skill may describe capabilities the
    * installed code doesn't have. Old locks without the field backfill from the catalog on bundle
@@ -459,7 +460,11 @@ export function setChannelSettings(
     if (entry.member !== member || !channelIdsForEntry(entry).includes(id)) {
       return entry;
     }
-    if (entry.settings === undefined ? !hasNext : sameSettings(entry.settings, next)) {
+    if (
+      entry.settings === undefined
+        ? !hasNext
+        : sameSettings(entry.settings, next)
+    ) {
       return entry;
     }
     changed = true;
@@ -689,7 +694,10 @@ export function setSelectedGroups(
 }
 
 /** Upsert an entry by (id, member): replaces the matching install, else appends. Pure. */
-export function upsertInstall(lock: HarnesstLock, entry: InstallEntry): HarnesstLock {
+export function upsertInstall(
+  lock: HarnesstLock,
+  entry: InstallEntry,
+): HarnesstLock {
   const rest = lock.installs.filter(
     (e) => !(e.id === entry.id && e.member === entry.member),
   );
