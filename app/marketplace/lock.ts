@@ -42,7 +42,8 @@ const installEntrySchema = z.object({
   /**
    * Snapshot of the template's assistant skill CONTENT at install time (issue #274) — the
    * markdown the harnesst assistant loads about this template, delivered to the assistant instance
-   * via the bundle (`skills/installed/<template-id>.md`), never installed into the repo tree.
+   * via the bundle (`skills/harnesst-installed-<template-id>.md`), never installed into the repo
+   * tree.
    * Snapshotted like `secrets`/`auth` so the install pins the skill it shipped with: the catalog
    * only serves its current version, and a newer template's skill may describe capabilities the
    * installed code doesn't have. Old locks without the field backfill from the catalog on bundle

@@ -288,7 +288,7 @@ export async function catalogOp(
 export interface AssistantBundle {
   /** Published `.harnesst/assistant/instructions.md`, or null. */
   instructions: string | null;
-  /** agent-relative target path → content (skills/user/*, skills/installed/*, schedules/user/*). */
+  /** Agent-relative target path → content (managed flat skills and user schedules). */
   files: Record<string, string>;
   /** Per-project model override from `.harnesst/assistant/assistant.json`, or null. */
   model: string | null;
@@ -320,7 +320,12 @@ export async function assembleBundle(
       if (rel === "instructions.md") {
         instructions = content;
       } else if (rel.startsWith("skills/") && rel.endsWith(".md")) {
-        files[`skills/user/${path.posix.basename(rel)}`] = content;
+        const id = path.posix.basename(rel, ".md");
+        // Eve treats every immediate directory under agent/skills as one packaged skill and
+        // requires a SKILL.md inside it. Keep configured skills flat so discovery accepts them.
+        if (isTemplateSlug(id)) {
+          files[`skills/harnesst-user-${id}.md`] = content;
+        }
       } else if (rel.startsWith("schedules/") && rel.endsWith(".md")) {
         files[`schedules/user/${path.posix.basename(rel)}`] = content;
       } else if (rel === "assistant.json") {
@@ -341,8 +346,9 @@ export async function assembleBundle(
   );
 
   // Installed marketplace skills (issue #274): one per install in the PUBLISHED lock, delivered
-  // to `agent/skills/installed/<template-id>.md` — a namespace user skills can't collide with and
-  // the container's reset() can wipe. Prefer the lock's install-time snapshot (the skill the
+  // as a flat `agent/skills/harnesst-installed-<template-id>.md`. A shared `skills/installed/`
+  // directory is invalid because Eve treats every immediate directory as one packaged skill.
+  // Prefer the lock's install-time snapshot (the skill the
   // install shipped with); locks that predate the field backfill from the catalog's current
   // version. A catalog outage or a skill-less template degrades to no skill, never an error.
   const lock = overlayLock(source.files[LOCK_PATH] ?? null, []);
@@ -359,7 +365,7 @@ export async function assembleBundle(
         skill = null;
       }
     }
-    if (skill) files[`skills/installed/${entry.id}.md`] = skill;
+    if (skill) files[`skills/harnesst-installed-${entry.id}.md`] = skill;
   }
 
   return { instructions, files, model, effort };

@@ -406,9 +406,10 @@ function main() {
     }
 
     // The assistant skill (issue #274) must exist beside files/ and pass the same eve flat-skill
-    // gate as shipped skills — it materializes at agent/skills/installed/<id>.md in the assistant
-    // image, so an unknown frontmatter key would fail the assistant's OWN build. Its description
-    // is the load trigger, so it is required even though eve tolerates flat skills without one.
+    // gate as shipped skills — it materializes as a flat harnesst-installed-<id>.md skill in the
+    // assistant image, so an unknown frontmatter key would fail the assistant's OWN build. Its
+    // description is the load trigger, so it is required even though eve tolerates flat skills
+    // without one.
     if (typeof t.manifest.assistantSkill === "string" && !badPath(t.manifest.assistantSkill)) {
       if (t.assistantSkill == null) {
         fail(where, `assistantSkill "${t.manifest.assistantSkill}" is missing on disk`);

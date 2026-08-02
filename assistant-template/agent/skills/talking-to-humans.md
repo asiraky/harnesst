@@ -60,7 +60,7 @@ The parked question is delivered by **whichever channel started the session**:
   `contact-user` is the escape hatch — it never parks. A blocking ask still stalls.
 
 Whether a given channel can park into FOH is documented **in that channel's installed skill**
-(`skills/installed/<template-id>.md`) — check it before designing. `ask_question` is the only
+(`skills/harnesst-installed-<template-id>.md`) — check it before designing. `ask_question` is the only
 _blocking_ agent→human API; the park is delivered by whichever channel homed the session, so the
 channel's skill is the ground truth for what happens to it. `contact-user` bypasses the channel
 entirely — it posts to FOH directly from any entry point.
