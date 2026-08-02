@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   inboxItemsForOpenSession,
   suppressOpenSessionUnread,
+  titleWithInboxCount,
 } from "~/foh/unread";
 
 describe("FOH visible unread state", () => {
@@ -19,7 +20,7 @@ describe("FOH visible unread state", () => {
     expect(suppressOpenSessionUnread(sessions, null)).toBe(sessions);
   });
 
-  it("hides acknowledged item kinds for the open session but keeps blocking asks", () => {
+  it("hides every acknowledged item for the open session", () => {
     const items = [
       { id: "finished", sessionId: "open", kind: "finished" },
       { id: "notice", sessionId: "open", kind: "notice" },
@@ -29,10 +30,21 @@ describe("FOH visible unread state", () => {
     ];
 
     expect(inboxItemsForOpenSession(items, "open").map((item) => item.id)).toEqual([
-      "question",
-      "approval",
       "other",
     ]);
     expect(inboxItemsForOpenSession(items, null)).toBe(items);
+  });
+
+  it("keeps the browser title aligned with the displayed inbox count", () => {
+    expect(titleWithInboxCount("Session · harnesst", 2)).toBe(
+      "(2) Session · harnesst",
+    );
+    expect(titleWithInboxCount("(2) Session · harnesst", 1)).toBe(
+      "(1) Session · harnesst",
+    );
+    expect(titleWithInboxCount("(1) Session · harnesst", 0)).toBe(
+      "Session · harnesst",
+    );
+    expect(titleWithInboxCount("harnesst", 100)).toBe("(99+) harnesst");
   });
 });

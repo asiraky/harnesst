@@ -4,7 +4,7 @@
  * reading until the turn is over — proving the §6 "even with no client connected" loop in DB
  * form: park ⇒ pending flag + inbox row; requestId dedupe across re-observations; the
  * send-path supersede (`beginFohTurn`); completion ⇒ items resolved + `finished` filed;
- * read ⇒ finished auto-resolved.
+ * read ⇒ visible notifications acknowledged.
  *
  * Opt-in: HARNESST_DB_SMOKE=1 with DATABASE_URL pointing at a live dev database
  * (`set -a; source .env.local; set +a; HARNESST_DB_SMOKE=1 npx vitest run
@@ -67,7 +67,7 @@ describe.runIf(LIVE)("FOH inbox drain against real Postgres", () => {
       "~/playground/sessions.server"
     );
     const { streamTurnResponse } = await import("~/chat/turn-stream.server");
-    const { beginFohTurn, resolveFinishedOnRead } = await import(
+    const { beginFohTurn, acknowledgeVisibleInboxOnRead } = await import(
       "~/foh/inbox.server"
     );
     const { drizzleDataStore } = await import("~/data/drizzle.server");
@@ -228,8 +228,8 @@ describe.runIf(LIVE)("FOH inbox drain against real Postgres", () => {
       { kind: "finished", prompt: "Done — used the blue one.", userId: USER },
     ]);
 
-    // 4. Opening the session (read) auto-resolves the finished item (D13).
-    await resolveFinishedOnRead(session.id, USER);
+    // 4. Opening the session (read) acknowledges the finished notification (D13).
+    await acknowledgeVisibleInboxOnRead(session.id, USER);
     expect(
       await drizzleDataStore.inboxItems.findPendingBySession(session.id),
     ).toHaveLength(0);

@@ -1431,9 +1431,10 @@ export const conversationReads = pgTable(
  * Front of House inbox — one row per moment a session needs (or finished for) a human:
  * a parked question/approval (eve `input.requested`) or a completed turn. Written only at the
  * needs-you chokepoints (drain, reconcile, relay); resolved on continuation send, terminal
- * failure, supersession by a newer turn, or (for `finished`) when the viewer's read cursor
- * passes the session's `last_event_at`. `user_id` NULL (agent-opened sessions) means visible
- * to every user with access to the project (D5).
+ * failure, or supersession by a newer turn. Viewing acknowledges the notification separately so
+ * a parked ask can leave every badge while remaining pending for answer lifecycle.
+ * `user_id` NULL (agent-opened sessions) means visible to every user with access to the project
+ * (D5), so the first one to open it acknowledges the shared notification.
  */
 export const inboxItems = pgTable(
   "inbox_items",
@@ -1463,6 +1464,8 @@ export const inboxItems = pgTable(
     requestId: text("request_id"),
     // pending | resolved
     status: text("status").notNull().default("pending"),
+    /** Viewed but not necessarily handled: hides a parked ask without pretending it was answered. */
+    acknowledgedAt: timestamp("acknowledged_at", { withTimezone: true }),
     resolvedAt: timestamp("resolved_at", { withTimezone: true }),
     createdAt: createdAt(),
     updatedAt: updatedAt(),

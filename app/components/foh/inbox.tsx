@@ -13,7 +13,12 @@ import {
   ShieldQuestion,
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
-import { useFetcher, useMatch, useNavigate } from "react-router";
+import {
+  useFetcher,
+  useLocation,
+  useMatch,
+  useNavigate,
+} from "react-router";
 
 import { FohRelativeTime } from "~/components/foh/relative-time";
 import { Button } from "~/components/ui/button";
@@ -25,7 +30,10 @@ import {
 import { cn } from "~/lib/utils";
 
 import type { InboxViewItem } from "~/foh/inbox.server";
-import { inboxItemsForOpenSession } from "~/foh/unread";
+import {
+  inboxItemsForOpenSession,
+  titleWithInboxCount,
+} from "~/foh/unread";
 
 const ACTIVE_POLL_MS = 3000;
 const IDLE_POLL_MS = 10000;
@@ -36,6 +44,7 @@ export function InboxIndicator() {
   });
   const { load } = fetcher;
   const navigate = useNavigate();
+  const location = useLocation();
   const [open, setOpen] = useState(false);
   const openSessionId =
     useMatch("/t/:projectId/:agentId/s/:sessionId")?.params.sessionId ?? null;
@@ -49,6 +58,16 @@ export function InboxIndicator() {
 
   const anyPendingRef = useRef(anyPending);
   anyPendingRef.current = anyPending;
+
+  useEffect(() => {
+    document.title = titleWithInboxCount(document.title, count);
+    return () => {
+      document.title = titleWithInboxCount(document.title, 0);
+    };
+    // Route metadata can replace the title without changing the count, so location is part of
+    // the signal. The effect runs after that metadata commits and reapplies the shared badge.
+  }, [count, location.key]);
+
   useEffect(() => {
     const url = "/api/foh/inbox";
     load(url);

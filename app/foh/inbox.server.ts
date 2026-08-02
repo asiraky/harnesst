@@ -4,9 +4,9 @@
  * An inbox item is the durable "a human should look at this" record behind the FOH bell:
  * a parked eve `input.requested` (kind `question`/`approval`, D19), a finished turn
  * (kind `finished`, D13), or an agent-initiated conversation (kind `notice`, #288 3c). Items
- * are written only at the needs-you chokepoints (drain, reconcile, relay, notify) and resolved
- * on continuation send, terminal failure, supersession by a newer turn, or — for
- * `finished`/`notice` — when the viewer opens the session.
+ * are written only at the needs-you chokepoints (drain, reconcile, relay, notify). They resolve
+ * on continuation send, terminal failure, or supersession by a newer turn; opening separately
+ * acknowledges the notification without answering or resuming a parked question/approval.
  *
  * Every function takes `store: DataStore = getRuntime().data` so chokepoints and route actions
  * inject a fake in unit tests.
@@ -237,20 +237,25 @@ export async function listInboxForViewer(
 }
 
 /**
- * Auto-resolve `finished` and `notice` items when a viewer opens the session (their read
- * cursor passes `last_event_at`, D13; a `contact-user` notice is acknowledged by reading it,
- * #288 3c). Only items the viewer can see resolve: their own, or team-wide (`userId` null) —
- * an admin opening a member's session must not eat the member's item.
+ * Acknowledge every notification a viewer can see when they open the session. Finished/notice
+ * items resolve; a parked question/approval remains pending and answerable but loses its claim on
+ * the bell/sidebar. Personal items belonging to another user stay untouched, while a team-wide
+ * (`userId` null) item is acknowledged by the first eligible viewer who opens it.
  */
-export async function resolveFinishedOnRead(
+export async function acknowledgeVisibleInboxOnRead(
   sessionId: string,
   userId: string,
   store: DataStore = getRuntime().data,
 ): Promise<void> {
   const pending = await store.inboxItems.findPendingBySession(sessionId);
+  const writes: Array<Promise<void>> = [];
   for (const item of pending) {
-    if (item.kind !== "finished" && item.kind !== "notice") continue;
     if (item.userId !== null && item.userId !== userId) continue;
-    await store.inboxItems.resolve(item.id);
+    writes.push(
+      item.kind === "question" || item.kind === "approval"
+        ? store.inboxItems.acknowledge(item.id)
+        : store.inboxItems.resolve(item.id),
+    );
   }
+  await Promise.all(writes);
 }

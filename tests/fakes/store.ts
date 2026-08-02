@@ -206,6 +206,7 @@ export function makeFakeStore(): FakeStore {
         prompt: i.prompt ?? null,
         requestId: i.requestId ?? null,
         status: i.status ?? "pending",
+        acknowledgedAt: i.acknowledgedAt ?? null,
         resolvedAt: i.resolvedAt ?? null,
         createdAt: i.createdAt ?? now,
         updatedAt: i.updatedAt ?? now,
@@ -925,12 +926,22 @@ export function makeFakeStore(): FakeStore {
           prompt: input.prompt ?? null,
           requestId: input.requestId ?? null,
           status: "pending",
+          acknowledgedAt: null,
           resolvedAt: null,
           createdAt: now,
           updatedAt: now,
         };
         inboxItems.set(row.id, row);
         return row;
+      },
+      async acknowledge(iid) {
+        const cur = inboxItems.get(iid);
+        if (!cur || cur.status !== "pending" || cur.acknowledgedAt) return;
+        inboxItems.set(iid, {
+          ...cur,
+          acknowledgedAt: new Date(++seq),
+          updatedAt: new Date(seq),
+        });
       },
       async resolve(iid) {
         const cur = inboxItems.get(iid);
@@ -967,6 +978,7 @@ export function makeFakeStore(): FakeStore {
             (i) =>
               scope.has(i.projectId) &&
               i.status === "pending" &&
+              i.acknowledgedAt === null &&
               (i.userId === userId || i.userId === null),
           )
           .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
@@ -978,6 +990,7 @@ export function makeFakeStore(): FakeStore {
           if (
             scope.has(i.projectId) &&
             i.status === "pending" &&
+            i.acknowledgedAt === null &&
             (i.userId === userId || i.userId === null)
           )
             n++;

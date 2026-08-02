@@ -190,7 +190,7 @@ describe.runIf(LIVE)("FOH roles and inbox visibility", () => {
       expect(finishedRow.status).toBe("resolved");
 
       // Read acknowledgement (D3/D13): opening the session posts the read action, which
-      // resolves the viewer's finished item and advances their cursor.
+      // acknowledges every notification visible to the viewer and advances their cursor.
       const finishedAgain = await recordInboxFinished({
         projectId: project.id,
         sessionId: session.id,
@@ -222,12 +222,15 @@ describe.runIf(LIVE)("FOH roles and inbox visibility", () => {
           ),
         );
       expect(cursor?.lastReadAt).not.toBeNull();
-      // The still-pending question survives the read — only `finished` auto-resolves.
+      // The question remains answerable in the transcript, but its notification is acknowledged.
       const [questionAfterRead] = await db
         .select()
         .from(inboxItems)
         .where(eq(inboxItems.id, question.id));
-      expect(questionAfterRead.status).toBe("pending");
+      expect(questionAfterRead).toMatchObject({
+        status: "pending",
+        acknowledgedAt: expect.any(Date),
+      });
     } finally {
       await cleanupWorkspace(orgId, users);
     }
