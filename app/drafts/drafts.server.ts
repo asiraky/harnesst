@@ -387,13 +387,62 @@ export async function relocateLegacyModelModuleDrafts(
   return [...byPath.values()];
 }
 
+/**
+ * Bring already-relocated agent and subagent imports up to NodeNext's emitted-file convention.
+ * #336 changed new scaffolds to `.js`, but repos published before that fix still contain an
+ * extensionless `../harnesst/model` import. Restage those generated modules whenever the member
+ * next publishes so the production repair is deploy → publish, with no hand-edited generated
+ * source required.
+ */
+export async function normalizeOrgModelImportDrafts(
+  input: NormalizeInput,
+): Promise<PublishFile[]> {
+  const byPath = new Map(
+    (await relocateLegacyModelModuleDrafts(input)).map((file) => [file.path, file]),
+  );
+  const roots = new Set<string>();
+  for (const path of byPath.keys()) {
+    const root = agentRootForStagedPath(path);
+    if (root) roots.add(root);
+  }
+  if (roots.size === 0) return [...byPath.values()];
+
+  const repo = { owner: input.project.repoOwner, repo: input.project.repoName };
+  const source = await fetchAgentSource(input.project.repoInstallationId, repo);
+  const candidates = new Set(
+    [...source.paths, ...byPath.keys()].filter((path) => {
+      const root = agentRootForAgentModule(path);
+      return root !== null && roots.has(root);
+    }),
+  );
+
+  await Promise.all(
+    [...candidates].map(async (path) => {
+      const staged = byPath.get(path)?.content;
+      if (staged === null) return;
+      const before =
+        staged ??
+        source.files[path] ??
+        (await readAgentFile(input.project.repoInstallationId, repo, path));
+      if (before === null) return;
+      const root = agentRootForAgentModule(path);
+      if (!root) return;
+      const depth = path.slice(root.length + 1).split("/").length - 1;
+      const after = rewriteOrgModelImports(before, depth);
+      if (after !== before) byPath.set(path, { path, content: after });
+    }),
+  );
+
+  return [...byPath.values()];
+}
+
 export async function normalizeOpenRouterPackageDrafts(
   input: NormalizeInput,
 ): Promise<PublishFile[]> {
-  // Relocation runs first so anything it pulls into the change-set gets the same dependency
-  // coherence as any other selected file.
+  // Generated model imports normalize first so anything pulled into the change-set gets the
+  // same dependency coherence as any other selected file.
   const byPath = new Map(
-    (await relocateLegacyModelModuleDrafts(input)).map((file) => [file.path, file]),
+    (await normalizeOrgModelImportDrafts(input)).map((file) => [file.path, file]),
   );
 
   // If a stale package draft is selected, fix it in-place before the build gate sees it.
@@ -472,4 +521,3 @@ export async function normalizeOpenRouterPackageDrafts(
 
   return [...byPath.values()];
 }
-

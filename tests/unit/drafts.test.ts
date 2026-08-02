@@ -13,6 +13,7 @@ import {
   findOrphanedDrafts,
   getDraft,
   inferBuildRoots,
+  normalizeOrgModelImportDrafts,
   listDrafts,
   normalizeOpenRouterPackageDrafts,
   relocateLegacyModelModuleDrafts,
@@ -514,6 +515,28 @@ describe("relocateLegacyModelModuleDrafts (issue #254)", () => {
 
     expect(await relocate(input)).toEqual(input);
     expect(fetchAgentSourceMock).not.toHaveBeenCalled();
+  });
+
+  it("restages an existing extensionless model import on the member's next publish", async () => {
+    seedRepo(
+      {
+        "agent/agent.ts":
+          `import { harnesstAgentModel } from '../harnesst/model';\n` +
+          `export default defineAgent({ model: harnesstAgentModel('ivy') });\n`,
+        "harnesst/model.ts": MODULE,
+      },
+      ["agent/agent.ts"],
+    );
+
+    const files = await normalizeOrgModelImportDrafts({
+      project: PROJECT,
+      files: [{ path: "agent/instructions.md", content: "hi" }],
+    });
+
+    expect(find(files, "agent/agent.ts")?.content).toContain(
+      "from '../harnesst/model.js'",
+    );
+    expect(find(files, "agent/instructions.md")?.content).toBe("hi");
   });
 
   it("ignores members the change-set doesn't touch", async () => {

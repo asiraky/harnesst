@@ -130,6 +130,18 @@ describe("rewriteOrgModelImports", () => {
     );
   });
 
+  it("adds the emitted-file extension to already-relocated imports", () => {
+    expect(rewriteOrgModelImports(`from '../harnesst/model'`, 0)).toBe(
+      `from '../harnesst/model.js'`,
+    );
+    expect(rewriteOrgModelImports(`from '../../../harnesst/model'`, 2)).toBe(
+      `from '../../../harnesst/model.js'`,
+    );
+    expect(rewriteOrgModelImports(`from '../harnesst/model.js'`, 0)).toBe(
+      `from '../harnesst/model.js'`,
+    );
+  });
+
   it("returns the source unchanged when nothing imports the module", () => {
     // Callers use identity to decide whether a file needs restaging at all — so prose that
     // merely mentions the filename must not read as an import.

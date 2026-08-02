@@ -251,7 +251,7 @@ function renderManagedSandboxModule(
   const imports = entries
     .map(
       (entry, index) =>
-        `import * as addon${index} from "./addons/${entry.id}";`,
+        `import * as addon${index} from "./addons/${entry.id}.js";`,
     )
     .join("\n");
   const addons = entries.map((_, index) => `addon${index}`).join(", ");

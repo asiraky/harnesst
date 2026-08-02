@@ -32,8 +32,9 @@ import {
   rewriteOrgModelImports,
   scaffoldOrgModelAgentModule,
 } from "~/eve/org-model-module";
-import { installedFilePath } from "~/marketplace/install.server";
+import { planInstall } from "~/marketplace/install.server";
 import { resolveTemplate } from "~/marketplace/compose.server";
+import { emptyLock } from "~/marketplace/lock";
 import {
   HARNESST_RUN_HOOK_PATH,
   HARNESST_RUN_HOOK_SOURCE,
@@ -89,20 +90,27 @@ async function materializeMatrix(root: string): Promise<number> {
       entry.id,
     );
     const files = baseFiles(entry.id);
-    for (const [templatePath, content] of Object.entries(resolved.files)) {
-      files[installedFilePath("agent", templatePath)] = content;
-    }
+    applyInstall(files, resolved);
     await writeFixture(root, `catalog-${entry.type}-${entry.id}`, files);
   }
 
-  await writeFixture(root, "kitchen-sink", {
+  const kitchenSink: FixtureFiles = {
     ...baseFiles("kitchen-sink"),
     "agent/subagents/reader/agent.ts": scaffoldOrgModelAgentModule(
       "kitchen-sink",
     ).replace("../harnesst/model.js", "../../../harnesst/model.js"),
     [ASK_TEAMMATE_TOOL_PATH]: ASK_TEAMMATE_TOOL_SOURCE,
     [TELL_TEAMMATE_TOOL_PATH]: TELL_TEAMMATE_TOOL_SOURCE,
-  });
+  };
+  for (const entry of index.templates.filter(
+    (item) => item.type === "connection",
+  )) {
+    applyInstall(
+      kitchenSink,
+      await resolveTemplate(fixtureCatalog, entry.type, entry.id),
+    );
+  }
+  await writeFixture(root, "kitchen-sink", kitchenSink);
 
   await writeFixture(root, "legacy-migration", {
     ...baseFiles("legacy"),
@@ -114,6 +122,28 @@ async function materializeMatrix(root: string): Promise<number> {
   });
 
   return index.templates.length + 2;
+}
+
+function applyInstall(
+  files: FixtureFiles,
+  template: Awaited<ReturnType<typeof resolveTemplate>>,
+): void {
+  const plan = planInstall({
+    template,
+    registry: "fixture",
+    repoPaths: [],
+    drafts: [],
+    packageJson:
+      files["package.json"] ?? '{"type":"module","dependencies":{}}\n',
+    lock: emptyLock(),
+    target: { kind: "member", memberName: null, root: "agent" },
+  });
+  if (plan.conflicts.length > 0) {
+    throw new Error(
+      `Could not compose ${template.manifest.type}/${template.manifest.id}: ${plan.conflicts.join(", ")}`,
+    );
+  }
+  for (const write of plan.writes) files[write.path] = write.content;
 }
 
 async function typescriptFiles(root: string): Promise<string[]> {
@@ -236,7 +266,18 @@ function untypedFunctionDiagnostics(
       true,
     );
     const visit = (node: ts.Node) => {
-      if (ts.isFunctionDeclaration(node)) {
+      const isConcreteFunction =
+        ts.isFunctionDeclaration(node) ||
+        ts.isFunctionExpression(node) ||
+        ts.isArrowFunction(node) ||
+        ts.isMethodDeclaration(node) ||
+        ts.isGetAccessorDeclaration(node) ||
+        ts.isSetAccessorDeclaration(node) ||
+        ts.isConstructorDeclaration(node);
+      if (
+        isConcreteFunction &&
+        (ts.isFunctionDeclaration(node) || !hasContextualFunctionType(node))
+      ) {
         for (const parameter of node.parameters) {
           if (parameter.type) continue;
           const position = sourceFile.getLineAndCharacterOfPosition(
@@ -252,6 +293,48 @@ function untypedFunctionDiagnostics(
     visit(sourceFile);
   }
   return failures;
+}
+
+/**
+ * External packages give callbacks their parameter types in the real project. The intentionally
+ * thin module stubs used by this check cannot model those APIs, so distinguish a callback living
+ * inside a typed/call context from a generated standalone function that must declare its own
+ * parameter types.
+ */
+function hasContextualFunctionType(node: ts.Node): boolean {
+  let current = node;
+  while (current.parent && !ts.isSourceFile(current.parent)) {
+    const parent = current.parent;
+    if (
+      (ts.isVariableDeclaration(parent) ||
+        ts.isPropertyDeclaration(parent) ||
+        ts.isParameter(parent)) &&
+      parent.initializer === current
+    ) {
+      return Boolean(parent.type);
+    }
+    if (
+      ts.isAsExpression(parent) ||
+      ts.isTypeAssertionExpression(parent) ||
+      ts.isSatisfiesExpression(parent)
+    ) {
+      return true;
+    }
+    if (ts.isCallExpression(parent) || ts.isNewExpression(parent)) {
+      return Boolean(parent.arguments?.includes(current as ts.Expression));
+    }
+    if (
+      parent !== node &&
+      (ts.isFunctionDeclaration(parent) ||
+        ts.isFunctionExpression(parent) ||
+        ts.isArrowFunction(parent) ||
+        ts.isMethodDeclaration(parent))
+    ) {
+      return false;
+    }
+    current = parent;
+  }
+  return false;
 }
 
 export async function typecheckComposedProjects(): Promise<number> {
