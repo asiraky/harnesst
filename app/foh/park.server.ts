@@ -35,10 +35,10 @@ import type { ChatInputOption, ChatInputRequest } from "~/chat/types";
 import type { DataStore } from "~/data/ports";
 import { buildResumeVia } from "~/foh/channel-resume";
 import { openInboxQuestion } from "~/foh/inbox.server";
+import { inferFohSessionTitle } from "~/foh/session-title.server";
 import {
   adoptChannelHomedSession,
   advanceChannelHomedSessionCursor,
-  titleFromMessage,
   type PlaygroundSession,
 } from "~/playground/sessions.server";
 import { getRuntime } from "~/seams/index.server";
@@ -57,6 +57,7 @@ export interface ParkDeps {
     target: Target;
   }) => Promise<unknown>;
   openQuestion: typeof openInboxQuestion;
+  inferTitle: typeof inferFohSessionTitle;
   /** Claim staleness cutoff handed to the adopt fence; the turn claim's own constant. */
   staleAfterMs: number;
   now: () => Date;
@@ -68,6 +69,7 @@ export function defaultParkDeps(): ParkDeps {
     adoptSession: adoptChannelHomedSession,
     advanceCursor: advanceChannelHomedSessionCursor,
     openQuestion: openInboxQuestion,
+    inferTitle: inferFohSessionTitle,
     staleAfterMs: TURN_IDLE_TIMEOUT_MS,
     now: () => new Date(),
   };
@@ -193,6 +195,13 @@ export async function parkChannelQuestion(
   const withRelease = (
     await store.deployments.listByEnvironment(environment.id)
   ).find((d) => d.id === deployment.id);
+  const suppliedTitle = input.title?.trim();
+  const sessionTitle =
+    suppliedTitle ||
+    (await deps.inferTitle({
+      message: input.requests[0].prompt,
+      project,
+    }));
 
   const now = deps.now();
   const adopted = await deps.adoptSession({
@@ -205,7 +214,7 @@ export async function parkChannelQuestion(
     // and what any future channel-side call expects. The stripped form lives in resumeVia.
     continuationToken: input.continuationToken,
     resumeVia,
-    title: input.title?.trim() || titleFromMessage(input.requests[0].prompt),
+    title: sessionTitle,
     staleAfterMs: deps.staleAfterMs,
     now,
   });

@@ -33,6 +33,7 @@ describe.runIf(LIVE)("FOH session substrate against real Postgres", () => {
       markSessionPendingInput,
       clearSessionPendingInput,
       markPlaygroundSessionStopped,
+      renameFohSession,
     } = await import("~/playground/sessions.server");
     const { drizzleDataStore } = await import("~/data/drizzle.server");
 
@@ -248,14 +249,27 @@ describe.runIf(LIVE)("FOH session substrate against real Postgres", () => {
       .from(playgroundSessions)
       .where(eq(playgroundSessions.id, fohRow.id));
     expect(cleared.pendingInputAt).toBeNull();
+    // A manual title also wins against a late inferred-title write from the turn drain.
+    await renameFohSession({
+      id: agentOpened.id,
+      projectId: project.id,
+      agentId: agent.id,
+      viewerId: OTHER,
+      title: "Manual incident name",
+    });
     // Stop wins: a late park write on a stopped session is a no-op.
-    await markPlaygroundSessionStopped({ id: agentOpened.id });
+    await markPlaygroundSessionStopped({
+      id: agentOpened.id,
+      title: "Late inferred question",
+    });
     await markSessionPendingInput(agentOpened.id);
     const [stopped] = await db
       .select()
       .from(playgroundSessions)
       .where(eq(playgroundSessions.id, agentOpened.id));
     expect(stopped.pendingInputAt).toBeNull();
+    expect(stopped.title).toBe("Manual incident name");
+    expect(stopped.titleManuallySet).toBe(true);
 
     // Inbox insert/resolve against real rows.
     const item = await drizzleDataStore.inboxItems.insert({

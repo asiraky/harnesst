@@ -24,6 +24,9 @@ const mocks = vi.hoisted(() => ({
   findWorkspaceModel: vi.fn(async () => null),
   ownsWorkspaceModelReference: vi.fn(async () => true),
   signModelDirective: vi.fn(() => "[directive]"),
+  inferFohSessionTitle: vi.fn(
+    async ({ message }: { message: string }) => message,
+  ),
   agentsFindById: vi.fn(),
 }));
 
@@ -52,7 +55,9 @@ vi.mock("~/playground/sessions.server", () => ({
   claimPlaygroundSessionForTurn: mocks.claimPlaygroundSessionForTurn,
   clearSessionHandles: mocks.clearSessionHandles,
   loadPlaygroundEntriesFromEve: mocks.loadPlaygroundEntriesFromEve,
-  titleFromMessage: (message: string) => message.slice(0, 80),
+}));
+vi.mock("~/foh/session-title.server", () => ({
+  inferFohSessionTitle: mocks.inferFohSessionTitle,
 }));
 vi.mock("~/chat/turn-stream.server", () => ({
   streamTurnResponse: mocks.streamTurnResponse,
@@ -217,6 +222,10 @@ describe("FOH stream route", () => {
 
   it("creates the FOH session (surface foh, auto-title) when none is passed", async () => {
     await action(args({ agentId: "agent_1", message: "Fix the portal 404" }));
+    expect(mocks.inferFohSessionTitle).toHaveBeenCalledWith({
+      message: "Fix the portal 404",
+      project: PROJECT,
+    });
     expect(mocks.createPlaygroundSession).toHaveBeenCalledWith(
       expect.objectContaining({
         projectId: "proj_1",

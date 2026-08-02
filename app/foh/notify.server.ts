@@ -17,11 +17,11 @@
  */
 import type { DataStore } from "~/data/ports";
 import { recordInboxNotice } from "~/foh/inbox.server";
+import { inferFohSessionTitle } from "~/foh/session-title.server";
 import {
   countAgentInitiatedFohSessions,
   createPlaygroundSession,
   deleteBareNotificationSession,
-  titleFromMessage,
 } from "~/playground/sessions.server";
 import { getRuntime } from "~/seams/index.server";
 
@@ -41,6 +41,7 @@ export interface NotifyDeps {
   openNotice: typeof recordInboxNotice;
   /** Compensation when the notice write fails after the session write succeeded. */
   deleteBareSession: typeof deleteBareNotificationSession;
+  inferTitle: typeof inferFohSessionTitle;
   now: () => Date;
 }
 
@@ -51,6 +52,7 @@ export function defaultNotifyDeps(): NotifyDeps {
     countOpenAgentSessions: countAgentInitiatedFohSessions,
     openNotice: recordInboxNotice,
     deleteBareSession: deleteBareNotificationSession,
+    inferTitle: inferFohSessionTitle,
     now: () => new Date(),
   };
 }
@@ -107,6 +109,8 @@ export async function notifyHumans(
   const withRelease = (
     await store.deployments.listByEnvironment(environment.id)
   ).find((d) => d.id === deployment.id);
+  const sessionTitle =
+    title ?? (await deps.inferTitle({ message, project }));
 
   const now = deps.now();
   const session = await deps.createSession({
@@ -120,7 +124,7 @@ export async function notifyHumans(
     surface: "foh",
     environmentId: environment.id,
     version: withRelease?.version ?? null,
-    title: title ?? titleFromMessage(message),
+    title: sessionTitle,
     openingMessage: message,
     // NO eve handles and NO pending-input park: the notice is not a blocking ask, so the row
     // reads "done" while `lastEventAt` (set to creation) drives the unread badge.
@@ -134,7 +138,7 @@ export async function notifyHumans(
         projectId: project.id,
         sessionId: session.id,
         agentId: agent.id,
-        prompt: title ?? titleFromMessage(message),
+        prompt: sessionTitle,
       },
       store,
     );

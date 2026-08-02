@@ -26,6 +26,7 @@ import { isSessionWorkspaceContinuationToken } from "~/deploy/session-workspace-
 import { ensureLiveDeploymentForEnvironment } from "~/deploy/wake.server";
 import { beginFohTurn } from "~/foh/inbox.server";
 import { requireFohProject } from "~/foh/guard.server";
+import { inferFohSessionTitle } from "~/foh/session-title.server";
 import { signModelDirective } from "~/models/model-directive.server";
 import { parseRequestedModelSelection } from "~/models/playground-selection";
 import { type ReasoningEffort } from "~/models/reasoning";
@@ -44,7 +45,6 @@ import {
   getFohSessionForViewer,
   loadPlaygroundEntriesFromEve,
   setPlaygroundSessionModel,
-  titleFromMessage,
   type PlaygroundSession,
 } from "~/playground/sessions.server";
 import { getRuntime } from "~/seams/index.server";
@@ -245,7 +245,9 @@ export async function action(args: ActionFunctionArgs) {
     );
   }
 
-  const title = session?.title ? null : titleFromMessage(message);
+  const title = session?.title
+    ? null
+    : await inferFohSessionTitle({ message, project });
   const isNewSession = !session;
   if (!session) {
     session = await createPlaygroundSession({

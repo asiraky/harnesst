@@ -49,6 +49,8 @@ import { stripSystemNotes } from "~/chat/system-note";
 import type { Target } from "~/chat/playground.server";
 import type { ReasoningEffort } from "~/models/reasoning";
 
+export { titleFromMessage } from "~/foh/session-title";
+
 export type PlaygroundSession = typeof playgroundSessions.$inferSelect;
 
 /** Which chat surface a query serves; determines the discriminator scope (D1). */
@@ -64,6 +66,17 @@ export type SessionSurface = "playground" | "assistant" | "foh";
  */
 function surfaceScope(surface: SessionSurface) {
   return eq(playgroundSessions.surface, surface);
+}
+
+/**
+ * Inference is best-effort and can finish after a human renames the row. Keep the check inside
+ * the UPDATE expression so the manual rename wins even when the two writes race.
+ */
+function inferredTitleUpdate(title: string | null | undefined) {
+  if (title == null) return undefined;
+  return sql<
+    string | null
+  >`CASE WHEN ${playgroundSessions.titleManuallySet} THEN ${playgroundSessions.title} ELSE ${title} END`;
 }
 
 /**
@@ -167,6 +180,37 @@ export async function getPlaygroundSession(input: {
     )
     .limit(1);
   return row ?? null;
+}
+
+/**
+ * Rename one visible FOH conversation. This uses the same tenancy/role predicate as the list and
+ * single-row read; a plain member cannot rename another member's private conversation. Renaming
+ * does not bump `updatedAt`: that timestamp represents conversation activity and controls list
+ * order, not metadata edits.
+ */
+export async function renameFohSession(input: {
+  id: string;
+  projectId: string;
+  agentId: string;
+  viewerId: string;
+  includeAll?: boolean;
+  title: string;
+}): Promise<{ id: string; title: string } | null> {
+  const [renamed] = await db
+    .update(playgroundSessions)
+    .set({ title: input.title, titleManuallySet: true })
+    .where(
+      and(
+        eq(playgroundSessions.id, input.id),
+        eq(playgroundSessions.projectId, input.projectId),
+        eq(playgroundSessions.agentId, input.agentId),
+        surfaceScope("foh"),
+        fohViewerScope(input.viewerId, input.includeAll),
+        isNull(playgroundSessions.archivedAt),
+      ),
+    )
+    .returning({ id: playgroundSessions.id, title: playgroundSessions.title });
+  return renamed?.title ? { id: renamed.id, title: renamed.title } : null;
 }
 
 /**
@@ -863,7 +907,7 @@ export async function adoptChannelHomedSession(input: {
         // archived would file a question into a row no FOH read can see, and lose it.
         archivedAt: null,
         archivedBy: null,
-        ...(input.title ? { title: input.title } : {}),
+        ...(input.title ? { title: inferredTitleUpdate(input.title) } : {}),
       },
       setWhere: and(
         eq(playgroundSessions.agentId, input.agentId),
@@ -1016,7 +1060,7 @@ export async function markPlaygroundSessionRunning(input: {
       environmentId: input.target.environmentId,
       worldKey: input.target.environmentId,
       lastVersion: input.target.version,
-      title: input.title ?? undefined,
+      title: inferredTitleUpdate(input.title),
       status: "running",
       updatedAt: new Date(),
     })
@@ -1052,7 +1096,7 @@ export async function claimPlaygroundSessionForTurn(input: {
       environmentId: sql`CASE WHEN ${playgroundSessions.externalSessionId} IS NULL THEN ${input.target.environmentId} ELSE ${playgroundSessions.environmentId} END`,
       worldKey: sql`CASE WHEN ${playgroundSessions.externalSessionId} IS NULL THEN ${input.target.environmentId} ELSE ${playgroundSessions.worldKey} END`,
       lastVersion: input.target.version,
-      title: input.title ?? undefined,
+      title: inferredTitleUpdate(input.title),
       status: "running",
       turnClaimId: input.claimId,
       updatedAt: new Date(),
@@ -1095,7 +1139,7 @@ export async function savePlaygroundSessionProgress(input: {
       continuationToken: input.continuationToken,
       streamIndex: input.streamIndex,
       lastVersion: input.target.version,
-      title: input.title ?? undefined,
+      title: inferredTitleUpdate(input.title),
       status: "running",
       lastEventAt: new Date(),
       updatedAt: new Date(),
@@ -1166,7 +1210,7 @@ export async function savePlaygroundSessionCursor(input: {
       continuationToken: input.continuationToken,
       streamIndex: input.streamIndex,
       lastVersion: input.target.version,
-      title: input.title ?? undefined,
+      title: inferredTitleUpdate(input.title),
       status: input.status,
       lastEventAt: new Date(),
       updatedAt: new Date(),
@@ -1311,7 +1355,7 @@ export async function markPlaygroundSessionStopped(input: {
       environmentId: input.target?.environmentId,
       worldKey: input.target?.environmentId,
       lastVersion: input.target?.version,
-      title: input.title ?? undefined,
+      title: inferredTitleUpdate(input.title),
       // Distinct from "failed": a deliberate stop shouldn't get the timed-out
       // recovery hint in the replay, and shouldn't be reconciled back to "failed"
       // (the tsx loader only reconciles "running"/"failed" sessions).
@@ -1345,12 +1389,6 @@ export async function settleAbandonedPlaygroundSession(
     )
     .returning();
   return row ?? session;
-}
-
-export function titleFromMessage(message: string): string {
-  const collapsed = message.replace(/\s+/g, " ").trim();
-  if (collapsed.length <= 80) return collapsed || "New conversation";
-  return `${collapsed.slice(0, 79)}…`;
 }
 
 /**

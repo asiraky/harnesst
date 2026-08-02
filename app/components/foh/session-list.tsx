@@ -5,8 +5,8 @@
  * list, j/k (or arrows) to move, Enter to open.
  */
 import { Archive, Loader2 } from "lucide-react";
-import { useState } from "react";
-import { NavLink, useNavigate } from "react-router";
+import { useRef, useState } from "react";
+import { NavLink, useFetcher, useNavigate } from "react-router";
 
 import { FohRelativeTime } from "~/components/foh/relative-time";
 import { cn } from "~/lib/utils";
@@ -96,79 +96,180 @@ export function SessionList({
       }}
     >
       {sessions.map((session, i) => (
-        <li key={session.id} className="group/session relative">
-          <NavLink
-            to={`${basePath}/s/${session.id}`}
-            prefetch="intent"
-            className={({ isActive }) =>
-              cn(
-                "flex items-start gap-2 py-2.5 pl-3 transition-colors hover:bg-muted/60",
-                // Reserve the archive control's gutter even when it is invisible, so a long
-                // title never runs under it on hover.
-                onArchive ? "pr-9" : "pr-3",
-                isActive && "bg-muted",
-                i === cursor && "ring-1 ring-inset ring-ring/40",
-              )
-            }
-            onClick={() => setCursor(i)}
-          >
-            <span className="mt-1.5">
-              <SessionStatusDot status={session.fohStatus} />
-            </span>
-            <span className="min-w-0 flex-1">
-              <span
-                className={cn(
-                  "block truncate text-sm",
-                  session.unread ? "font-semibold" : "font-normal",
-                )}
-              >
-                {session.title}
-              </span>
-              <span className="block text-xs text-muted-foreground">
-                {STATUS_LABEL[session.fohStatus]} ·{" "}
-                <FohRelativeTime value={session.updatedAt} />
-                {session.openedByAgent && " · opened by the agent"}
-                {session.unread && (
-                  <span className="ml-1 inline-block size-1.5 rounded-full bg-blue-500 align-middle" />
-                )}
-              </span>
-            </span>
-          </NavLink>
-          {/* Sibling of the NavLink, never inside it — a button nested in an anchor is invalid
-              markup and eats the row's keyboard focus. Hidden at rest (#246 cross-link idiom)
-              so the list stays a calm column of conversations. */}
-          {onArchive && (
-            <button
-              type="button"
-              aria-label={`Archive ${session.title}`}
-              title="Archive"
-              disabled={archivingId === session.id}
-              className={cn(
-                "absolute right-1 top-2 rounded-sm p-1 text-muted-foreground transition-opacity focus-visible:opacity-100 group-hover/session:opacity-100 hover:text-foreground",
-                archivingId === session.id ? "opacity-100" : "opacity-0",
-              )}
-              onClick={(e) => {
-                e.stopPropagation();
-                onArchive(session);
-              }}
-              // The list's j/k/Enter handler sits on the <ul>; without this, Enter on the
-              // archive button would also navigate to the cursor row.
-              onKeyDown={(e) => e.stopPropagation()}
-            >
-              {archivingId === session.id ? (
-                <Loader2 className="size-3.5 animate-spin" aria-hidden />
-              ) : (
-                <Archive className="size-3.5" aria-hidden />
-              )}
-            </button>
-          )}
-          {refusal?.sessionId === session.id && (
-            <p className="px-3 pb-2 text-xs text-destructive">
-              {refusal.message}
-            </p>
-          )}
-        </li>
+        <EditableSessionRow
+          key={session.id}
+          session={session}
+          basePath={basePath}
+          cursor={i === cursor}
+          onSelect={() => setCursor(i)}
+          onArchive={onArchive}
+          archiving={archivingId === session.id}
+          refusal={
+            refusal?.sessionId === session.id ? refusal.message : undefined
+          }
+        />
       ))}
     </ul>
+  );
+}
+
+function EditableSessionRow({
+  session,
+  basePath,
+  cursor,
+  onSelect,
+  onArchive,
+  archiving,
+  refusal,
+}: {
+  session: FohSessionRow;
+  basePath: string;
+  cursor: boolean;
+  onSelect: () => void;
+  onArchive?: (session: FohSessionRow) => void;
+  archiving: boolean;
+  refusal?: string;
+}) {
+  const rename = useFetcher<{
+    error: string | null;
+    renamed?: { id: string; title: string };
+  }>();
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(session.title);
+  const cancelling = useRef(false);
+  const submittedTitle = rename.formData?.get("title");
+  const title =
+    (typeof submittedTitle === "string" ? submittedTitle : null) ??
+    session.title;
+
+  const finishEditing = () => {
+    if (cancelling.current) {
+      cancelling.current = false;
+      setDraft(title);
+      setEditing(false);
+      return;
+    }
+    const next = draft.replace(/\s+/g, " ").trim();
+    setEditing(false);
+    if (!next || next === title) {
+      setDraft(title);
+      return;
+    }
+    rename.submit(
+      {
+        intent: "rename-session",
+        playgroundSessionId: session.id,
+        title: next,
+      },
+      { method: "post", action: basePath },
+    );
+  };
+
+  return (
+    <li className="group/session relative">
+      {/* The link is a full-row sibling, not a parent: the editable title and archive control are
+          interactive in their own right and must never be nested inside an anchor. */}
+      <NavLink
+        to={`${basePath}/s/${session.id}`}
+        prefetch="intent"
+        aria-label={`Open ${title}`}
+        className={({ isActive }) =>
+          cn(
+            "absolute inset-0 transition-colors hover:bg-muted/60",
+            isActive && "bg-muted",
+            cursor && "ring-1 ring-inset ring-ring/40",
+          )
+        }
+        onClick={onSelect}
+      />
+      <div
+        className={cn(
+          "pointer-events-none relative flex items-start gap-2 py-2.5 pl-3",
+          onArchive ? "pr-9" : "pr-3",
+        )}
+      >
+        <span className="mt-1.5">
+          <SessionStatusDot status={session.fohStatus} />
+        </span>
+        <span className="min-w-0 flex-1">
+          {editing ? (
+            <input
+              autoFocus
+              value={draft}
+              maxLength={120}
+              aria-label="Session title"
+              className="pointer-events-auto block h-5 w-full rounded-sm border bg-background px-1 text-sm outline-none focus:ring-1 focus:ring-ring"
+              onChange={(event) => setDraft(event.target.value)}
+              onFocus={(event) => event.currentTarget.select()}
+              onBlur={finishEditing}
+              onKeyDown={(event) => {
+                event.stopPropagation();
+                if (event.key === "Escape") {
+                  event.preventDefault();
+                  cancelling.current = true;
+                  event.currentTarget.blur();
+                } else if (event.key === "Enter") {
+                  event.preventDefault();
+                  event.currentTarget.blur();
+                }
+              }}
+            />
+          ) : (
+            <button
+              type="button"
+              aria-label={`Rename ${title}`}
+              title="Rename session"
+              className={cn(
+                "pointer-events-auto block max-w-full truncate rounded-sm text-left text-sm outline-none hover:underline focus-visible:ring-1 focus-visible:ring-ring",
+                session.unread ? "font-semibold" : "font-normal",
+              )}
+              onClick={() => {
+                setDraft(title);
+                setEditing(true);
+              }}
+              onKeyDown={(event) => event.stopPropagation()}
+            >
+              {title}
+            </button>
+          )}
+          <span className="block text-xs text-muted-foreground">
+            {STATUS_LABEL[session.fohStatus]} ·{" "}
+            <FohRelativeTime value={session.updatedAt} />
+            {session.openedByAgent && " · opened by the agent"}
+            {session.unread && (
+              <span className="ml-1 inline-block size-1.5 rounded-full bg-blue-500 align-middle" />
+            )}
+          </span>
+        </span>
+      </div>
+      {onArchive && (
+        <button
+          type="button"
+          aria-label={`Archive ${title}`}
+          title="Archive"
+          disabled={archiving}
+          className={cn(
+            "absolute right-1 top-2 rounded-sm p-1 text-muted-foreground opacity-0 transition-opacity focus-visible:opacity-100 group-hover/session:opacity-100 hover:text-foreground",
+            archiving && "opacity-100",
+          )}
+          onClick={(event) => {
+            event.stopPropagation();
+            onArchive(session);
+          }}
+          onKeyDown={(event) => event.stopPropagation()}
+        >
+          {archiving ? (
+            <Loader2 className="size-3.5 animate-spin" aria-hidden />
+          ) : (
+            <Archive className="size-3.5" aria-hidden />
+          )}
+        </button>
+      )}
+      {(refusal || rename.data?.error) && (
+        <p className="relative px-3 pb-2 text-xs text-destructive" role="alert">
+          {refusal ?? rename.data?.error}
+        </p>
+      )}
+    </li>
   );
 }

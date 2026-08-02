@@ -1,0 +1,1 @@
+ALTER TABLE "playground_sessions" ADD COLUMN "title_manually_set" boolean DEFAULT false NOT NULL;
