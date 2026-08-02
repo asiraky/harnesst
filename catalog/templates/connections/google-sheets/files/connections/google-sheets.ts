@@ -19,7 +19,7 @@
  */
 import { defineOpenAPIConnection } from "eve/connections";
 
-import spec from "../data/google-sheets.openapi.json";
+import spec from "../data/google-sheets.openapi.json" with { type: "json" };
 
 const TOKEN_URL = "https://oauth2.googleapis.com/token";
 

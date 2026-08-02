@@ -70,13 +70,13 @@ export function isOrgModelModulePath(path: string): boolean {
 /**
  * The import specifier for the model module from a file `depth` directories below the AGENT
  * root. The module is the agent root's SIBLING, so every specifier first climbs out of the agent
- * root: the member's `agent.ts` (depth 0) imports `../harnesst/model`, a subagent's
- * `subagents/<name>/agent.ts` (depth 2) imports `../../../harnesst/model`. The arithmetic is
+ * root: the member's `agent.ts` (depth 0) imports `../harnesst/model.js`, a subagent's
+ * `subagents/<name>/agent.ts` (depth 2) imports `../../../harnesst/model.js`. The arithmetic is
  * layout-independent — `agents/bob/agent/agent.ts` → `agents/bob/harnesst/model.ts` climbs
  * exactly as far as `agent/agent.ts` → `harnesst/model.ts`.
  */
 export function orgModelImportSpecifier(depth = 0): string {
-  return `${"../".repeat(Math.max(depth, 0) + 1)}${PLATFORM_ROOT}/${ORG_MODEL_MODULE_BASENAME}`;
+  return `${"../".repeat(Math.max(depth, 0) + 1)}${PLATFORM_ROOT}/${ORG_MODEL_MODULE_BASENAME}.js`;
 }
 
 /**

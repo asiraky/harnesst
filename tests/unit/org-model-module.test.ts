@@ -58,7 +58,7 @@ describe("scaffoldOrgModelAgentModule", () => {
     const source = scaffoldOrgModelAgentModule("bookkeeping");
     expect(source).toContain("model: harnesstAgentModel('bookkeeping')");
     // `agent.ts` sits in the agent root; the module is that root's sibling (issue #254).
-    expect(source).toContain("from '../harnesst/model'");
+    expect(source).toContain("from '../harnesst/model.js'");
     // No model id anywhere — the workspace configuration is the only source of truth.
     expect(source).not.toMatch(/anthropic|openai|openrouter|codex/);
   });
@@ -95,9 +95,9 @@ describe("module placement helpers", () => {
 
   it("builds the import specifier for the agent root and for subagents", () => {
     // Every specifier climbs OUT of the agent root first — the module is its sibling.
-    expect(orgModelImportSpecifier()).toBe("../harnesst/model");
+    expect(orgModelImportSpecifier()).toBe("../harnesst/model.js");
     // subagents/<name>/agent.ts sits two directories below the agent root.
-    expect(orgModelImportSpecifier(2)).toBe("../../../harnesst/model");
+    expect(orgModelImportSpecifier(2)).toBe("../../../harnesst/model.js");
   });
 
   it("names the legacy location the publish relocation moves away from", () => {
@@ -112,21 +112,21 @@ describe("rewriteOrgModelImports", () => {
   it("rewrites the agent-root and subagent specifiers to the relocated module", () => {
     expect(
       rewriteOrgModelImports(`import { harnesstAgentModel } from './harnesst-model';`, 0),
-    ).toBe(`import { harnesstAgentModel } from '../harnesst/model';`);
+    ).toBe(`import { harnesstAgentModel } from '../harnesst/model.js';`);
     expect(
       rewriteOrgModelImports(
         `import { harnesstAgentModel } from "../../harnesst-model";`,
         2,
       ),
-    ).toBe(`import { harnesstAgentModel } from "../../../harnesst/model";`);
+    ).toBe(`import { harnesstAgentModel } from "../../../harnesst/model.js";`);
   });
 
   it("rewrites specifiers carrying an explicit extension", () => {
     expect(rewriteOrgModelImports(`from './harnesst-model.js'`, 0)).toBe(
-      `from '../harnesst/model'`,
+      `from '../harnesst/model.js'`,
     );
     expect(rewriteOrgModelImports(`from './harnesst-model.ts'`, 0)).toBe(
-      `from '../harnesst/model'`,
+      `from '../harnesst/model.js'`,
     );
   });
 
@@ -143,7 +143,7 @@ describe("rewriteOrgModelImports", () => {
   it("rewrites every occurrence, not just the first", () => {
     const source = `import a from './harnesst-model';\nimport b from './harnesst-model';\n`;
     expect(rewriteOrgModelImports(source, 0)).toBe(
-      `import a from '../harnesst/model';\nimport b from '../harnesst/model';\n`,
+      `import a from '../harnesst/model.js';\nimport b from '../harnesst/model.js';\n`,
     );
   });
 });

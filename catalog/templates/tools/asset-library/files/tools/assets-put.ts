@@ -5,7 +5,7 @@ import {
   callAssetRelay,
   readAssetDirectory,
   validAssetId,
-} from "../lib/asset-library";
+} from "../lib/asset-library.js";
 
 export default defineTool({
   description:

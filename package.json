@@ -9,6 +9,7 @@
     "tunnel:init": "node scripts/tunnel-init.mjs",
     "start": "node ./server/production.mjs",
     "typecheck": "react-router typegen && tsc",
+    "typecheck:composed": "tsx scripts/typecheck-composed.ts",
     "db:generate": "drizzle-kit generate",
     "auth:generate": "npx --yes auth@1.6.23 generate --config ./app/lib/auth.server.ts --output ./app/db/auth-schema.ts --yes",
     "db:migrate": "drizzle-kit migrate",
