@@ -19,7 +19,12 @@ import { sql } from "drizzle-orm";
 // Type-only (erased at runtime, so no import cycle): the publish pipeline's step shape.
 import type { PipelineStep } from "~/data/ports";
 import { newId } from "~/lib/id";
-import { organization, session as authSession, team, user } from "./auth-schema";
+import {
+  organization,
+  session as authSession,
+  team,
+  user,
+} from "./auth-schema";
 import {
   boolean,
   foreignKey,
@@ -245,7 +250,9 @@ export const capabilityCalls = pgTable(
       .default(sql`'{}'::jsonb`),
     createdAt: createdAt(),
   },
-  (t) => [index("capability_calls_agent_created_idx").on(t.agentId, t.createdAt)],
+  (t) => [
+    index("capability_calls_agent_created_idx").on(t.agentId, t.createdAt),
+  ],
 );
 
 /**
@@ -1336,6 +1343,48 @@ export const assistantCheckouts = pgTable(
 );
 
 /**
+ * Short-lived authorizations for model-backed evals launched by the built-in assistant.
+ *
+ * The eval process receives only a signed reference to one row. The row pins the project,
+ * member, and exact model and carries hard expiry/concurrency/request/token ceilings. A unique
+ * project id allows at most one assistant eval process per project; the runner deletes the row
+ * when the process exits, while the expiry makes an abandoned row/token harmless.
+ */
+export const assistantEvalGrants = pgTable(
+  "assistant_eval_grants",
+  {
+    id: varchar("id", { length: 12 }).primaryKey().$defaultFn(newId),
+    orgId: text("org_id")
+      .notNull()
+      .references(() => organization.id, { onDelete: "cascade" }),
+    projectId: varchar("project_id", { length: 12 })
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    conversationId: varchar("conversation_id", { length: 12 })
+      .notNull()
+      .references(() => playgroundSessions.id, { onDelete: "cascade" }),
+    memberName: text("member_name").notNull(),
+    model: text("model").notNull(),
+    effort: text("effort"),
+    modelSource: text("model_source").notNull(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    maxConcurrentCalls: integer("max_concurrent_calls").notNull(),
+    activeCalls: integer("active_calls").notNull().default(0),
+    maxCalls: integer("max_calls").notNull(),
+    usedCalls: integer("used_calls").notNull().default(0),
+    maxTokens: integer("max_tokens").notNull(),
+    reservedTokens: integer("reserved_tokens").notNull().default(0),
+    revokedAt: timestamp("revoked_at", { withTimezone: true }),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [
+    uniqueIndex("assistant_eval_grants_project_uq").on(t.projectId),
+    index("assistant_eval_grants_expiry_idx").on(t.expiresAt),
+  ],
+);
+
+/**
  * Directed teammate-collaboration overrides (Team delegation, PRD §7.9 runtime half — D4).
  * A row exists ONLY for a (from → to) pair the human has touched; an ABSENT row means the ask
  * is allowed (default-allow). This avoids seeding on roster sync, avoids a backfill migration,
@@ -1627,7 +1676,10 @@ export const artifactVersions = pgTable(
     createdAt: createdAt(),
   },
   (t) => [
-    uniqueIndex("artifact_versions_number_uq").on(t.artifactId, t.versionNumber),
+    uniqueIndex("artifact_versions_number_uq").on(
+      t.artifactId,
+      t.versionNumber,
+    ),
     index("artifact_versions_project_idx").on(t.projectId, t.createdAt),
   ],
 );

@@ -61,6 +61,12 @@ An agent asks a human with eve's built-in `ask_question` — never a tool you wr
 
 In the project directory you changed, run `npm ci && npm run typecheck --if-present && npm run lint --if-present` (and `npx eve build` if the repo builds), fix what fails, and run again. Don't say you're done while checks fail — harnesst runs the same build as the authoritative gate when the human publishes, so failing checks block the publish anyway.
 
-Your bash shell deliberately has **no model-provider credentials**, so anything that calls a model from the shell — `npx eve` evals, ad-hoc scripts hitting a provider API — fails with a credential/`MODEL_CALL_FAILED` error. That is an environment limitation, not a defect in the code you wrote: don't chase it, don't work around it by moving to another directory, and in your summary report such evals as "not runnable here" rather than as a failure.
+Your bash shell deliberately has **no model-provider credentials**, so never run a model-backed
+`npx eve eval` or an ad-hoc provider script there. Behavioral evals are runnable through
+`harnesst_run_eval`: it launches the unpublished conversation checkout with a short-lived,
+member/model/budget-scoped broker authorization and returns structured evidence. Use that tool as
+required by `plan-implement-validate`; never move directories or inject a raw key to bypass it. A
+direct-provider rejection from the tool is an explicit unsupported-provider result to report, not
+a generic `MODEL_CALL_FAILED` or a code/build defect.
 
 For create/build/change/fix requests, follow the `plan-implement-validate` skill through implementation and behavioral checks. A compilation-only check is not enough when the requested behavior can be exercised with evals, skill-load assertions, schedule dispatch, or a running instance.

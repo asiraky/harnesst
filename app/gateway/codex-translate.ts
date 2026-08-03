@@ -44,6 +44,8 @@ export interface ChatCompletionsBody {
   parallel_tool_calls?: unknown;
   /** OpenAI-compatible request spelling; translated to the Responses API reasoning object. */
   reasoning_effort?: ReasoningEffort;
+  max_tokens?: number;
+  max_completion_tokens?: number;
   stream?: boolean;
 }
 
@@ -193,6 +195,10 @@ export function buildResponsesPayload(
   }
   if (body.reasoning_effort !== undefined) {
     payload.reasoning = { effort: body.reasoning_effort };
+  }
+  const maxOutputTokens = body.max_completion_tokens ?? body.max_tokens;
+  if (typeof maxOutputTokens === "number" && Number.isFinite(maxOutputTokens)) {
+    payload.max_output_tokens = Math.max(1, Math.floor(maxOutputTokens));
   }
   return payload;
 }

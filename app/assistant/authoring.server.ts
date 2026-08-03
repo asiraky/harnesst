@@ -80,6 +80,7 @@ export function defaultAuthoringDeps(): AuthoringDeps {
 export interface AssistantContext {
   project: AuthoringProject;
   agentId: string;
+  environmentId: string;
   deploymentId: string;
 }
 
@@ -110,6 +111,7 @@ export async function resolveAssistantContext(
   return {
     project: project as AuthoringProject,
     agentId: agent.id,
+    environmentId: env.id,
     deploymentId,
   };
 }
