@@ -10,7 +10,9 @@
  */
 import type { HarnesstLock } from "~/marketplace/lock";
 import type { SecretsProvider } from "~/seams/types";
+import { invalidateAgentEnvironments } from "~/deploy/env-reconcile.server";
 import {
+  attachmentDependents,
   deletePendingSecrets,
   deleteSharedSecret,
   getSecretRow,
@@ -77,6 +79,8 @@ export interface SecretIntentDeps {
   attach?: typeof setAttachment;
   dismiss?: typeof setRequirementDismissed;
   deleteShared?: typeof deleteSharedSecret;
+  dependents?: typeof attachmentDependents;
+  invalidate?: typeof invalidateAgentEnvironments;
 }
 
 export async function handleSecretIntent(
@@ -88,6 +92,8 @@ export async function handleSecretIntent(
   const attach = deps.attach ?? setAttachment;
   const dismiss = deps.dismiss ?? setRequirementDismissed;
   const deleteShared = deps.deleteShared ?? deleteSharedSecret;
+  const dependents = deps.dependents ?? attachmentDependents;
+  const invalidate = deps.invalidate ?? invalidateAgentEnvironments;
 
   const key = input.key.trim();
   // shared-* intents address the project-level scope (agentId null) regardless of the form.
@@ -107,9 +113,17 @@ export async function handleSecretIntent(
         return { ok: false, error: "Key must be a valid env var name (A–Z, 0–9, _)." };
       }
       if (!input.value) return { ok: false, error: "Value is required." };
+      const affectedAgents = agentId
+        ? [agentId]
+        : (await dependents(input.projectId, key)).map((row) => row.agentId);
       await deps.secrets.set(ref, input.value, {
         sandboxExposed: input.exposed,
         updatedBy: input.userId,
+      });
+      await invalidate({
+        agentIds: affectedAgents,
+        environmentId: agentId ? input.environmentId : null,
+        createdBy: input.userId,
       });
       const row: SecretRow | null = await getRow(ref);
       return {
@@ -126,6 +140,13 @@ export async function handleSecretIntent(
 
     case "secret-delete": {
       await deps.secrets.delete(ref);
+      if (agentId) {
+        await invalidate({
+          agentIds: [agentId],
+          environmentId: input.environmentId,
+          createdBy: input.userId,
+        });
+      }
       return { ok: true, deleted: { key, environmentId: input.environmentId } };
     }
 
@@ -133,12 +154,23 @@ export async function handleSecretIntent(
     case "secret-expose":
     case "shared-secret-expose-default": {
       await setExposed(ref, input.exposed ?? false, input.userId);
+      if (input.intent === "secret-expose" && agentId) {
+        await invalidate({
+          agentIds: [agentId],
+          environmentId: input.environmentId,
+          createdBy: input.userId,
+        });
+      }
       return { ok: true };
     }
 
     // Deleting a shared secret removes every env row of the name AND its attachments (§11.4).
     case "shared-secret-delete": {
+      const affectedAgents = (await dependents(input.projectId, key)).map(
+        (row) => row.agentId,
+      );
       await deleteShared(input.projectId, key);
+      await invalidate({ agentIds: affectedAgents, createdBy: input.userId });
       return { ok: true, deleted: { key, environmentId: null } };
     }
 
@@ -154,6 +186,7 @@ export async function handleSecretIntent(
         sandboxExposed: input.exposed,
         createdBy: input.userId,
       });
+      await invalidate({ agentIds: [agentId], createdBy: input.userId });
       return { ok: true };
     }
 
@@ -165,6 +198,7 @@ export async function handleSecretIntent(
         key,
         attached: false,
       });
+      await invalidate({ agentIds: [agentId], createdBy: input.userId });
       return { ok: true };
     }
 

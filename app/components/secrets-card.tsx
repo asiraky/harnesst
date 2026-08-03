@@ -69,12 +69,12 @@ export const COPY = {
   copyNameToast:
     "Name copied. Values can't be copied — harnesst stores them write-only.",
   sandboxTooltip:
-    "Adds this variable to the agent's terminal environment at deploy. Leave off for secrets only harnesst's tools should use.",
+    "Adds this variable to the agent's terminal environment. Leave off for secrets only harnesst's tools should use.",
   requiredBadge: "Required — not set",
   replaceConfirm:
     "Replacing overwrites the stored value immediately. The old value can't be recovered.",
   sharedReplaceConfirm: (n: number) =>
-    `${n} agents use this secret. The new value applies to all of them on their next deploy.`,
+    `${n} agents use this secret. The new value will be applied to all of them automatically.`,
   deployDialogTitle: "Missing required secrets",
   installDeferral:
     "Values are held securely and attached when the agent goes live. Held values are discarded if the install is cancelled.",

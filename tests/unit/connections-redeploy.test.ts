@@ -2,14 +2,11 @@
  * Auto-redeploy after connect/reconnect (issue #69). Verifies the decision logic against injected
  * fakes: it redeploys every LIVE environment (image reused) so a fresh grant reaches the running
  * container, but stays hands-off when the agent isn't deployed or has staged changes, and surfaces
- * queue errors instead of throwing.
+ * reconciliation errors instead of throwing.
  */
 import { describe, expect, it, vi } from "vitest";
 
-import {
-  redeployAfterConnect,
-  type RedeployAfterConnectDeps,
-} from "~/connections/redeploy.server";
+import { redeployAfterConnect, type RedeployAfterConnectDeps } from "~/connections/redeploy.server";
 import type { DeploymentWithRelease, DraftChange, Environment } from "~/data/ports";
 
 const PROJECT = "proj_1";
@@ -23,6 +20,7 @@ function liveDep(releaseId: string): DeploymentWithRelease {
   return {
     id: `dep_${releaseId}`,
     status: "live",
+    envRevision: 0,
     trafficWeight: 100,
     url: "http://x",
     errorDetail: null,
@@ -34,7 +32,11 @@ function liveDep(releaseId: string): DeploymentWithRelease {
 }
 
 function draft(agentId: string | null): DraftChange {
-  return { id: `draft_${agentId ?? "shared"}`, projectId: PROJECT, agentId } as unknown as DraftChange;
+  return {
+    id: `draft_${agentId ?? "shared"}`,
+    projectId: PROJECT,
+    agentId,
+  } as unknown as DraftChange;
 }
 
 function deps(over: Partial<RedeployAfterConnectDeps> = {}): RedeployAfterConnectDeps {
@@ -42,76 +44,74 @@ function deps(over: Partial<RedeployAfterConnectDeps> = {}): RedeployAfterConnec
     listDrafts: async () => [],
     listAgentEnvironments: async () => [env("env_1", "production")],
     listDeployments: async () => [liveDep("rel_1")],
-    ensureWorkerStarted: () => {},
-    queueDeploy: async () => ({}),
+    invalidate: async () => ({ environmentIds: [] }),
     ...over,
   };
 }
 
 describe("redeployAfterConnect", () => {
-  it("returns not-deployed and queues nothing when no environment is live", async () => {
-    const queueDeploy = vi.fn(async () => ({}));
+  it("returns not-deployed but invalidates desired env for a future stopped-instance wake", async () => {
+    const invalidate = vi.fn(async () => ({ environmentIds: [] }));
     const out = await redeployAfterConnect(
       { projectId: PROJECT, agentId: AGENT },
-      deps({ listDeployments: async () => [], queueDeploy }),
+      deps({ listDeployments: async () => [], invalidate }),
     );
     expect(out).toEqual({ status: "not-deployed" });
-    expect(queueDeploy).not.toHaveBeenCalled();
+    expect(invalidate).toHaveBeenCalledWith({
+      agentIds: [AGENT],
+      createdBy: null,
+    });
   });
 
   it("returns staged and queues nothing when a draft for this agent exists", async () => {
-    const queueDeploy = vi.fn(async () => ({}));
+    const invalidate = vi.fn(async () => ({ environmentIds: [] }));
     const out = await redeployAfterConnect(
       { projectId: PROJECT, agentId: AGENT },
-      deps({ listDrafts: async () => [draft(AGENT)], queueDeploy }),
+      deps({ listDrafts: async () => [draft(AGENT)], invalidate }),
     );
     expect(out).toEqual({ status: "staged" });
-    expect(queueDeploy).not.toHaveBeenCalled();
+    expect(invalidate).not.toHaveBeenCalled();
   });
 
   it("returns staged for a shared (null-agent) draft", async () => {
-    const queueDeploy = vi.fn(async () => ({}));
+    const invalidate = vi.fn(async () => ({ environmentIds: [] }));
     const out = await redeployAfterConnect(
       { projectId: PROJECT, agentId: AGENT },
-      deps({ listDrafts: async () => [draft(null)], queueDeploy }),
+      deps({ listDrafts: async () => [draft(null)], invalidate }),
     );
     expect(out).toEqual({ status: "staged" });
-    expect(queueDeploy).not.toHaveBeenCalled();
+    expect(invalidate).not.toHaveBeenCalled();
   });
 
   it("redeploys the live env (image reused) and reports it when there are no relevant drafts", async () => {
-    const queueDeploy = vi.fn(async () => ({}));
-    const ensureWorkerStarted = vi.fn();
+    const invalidate = vi.fn(async () => ({ environmentIds: ["env_1"] }));
     const out = await redeployAfterConnect(
       { projectId: PROJECT, agentId: AGENT, createdBy: "user_1" },
-      deps({ queueDeploy, ensureWorkerStarted }),
+      deps({ invalidate }),
     );
     expect(out).toEqual({ status: "redeployed", envNames: ["production"] });
-    expect(ensureWorkerStarted).toHaveBeenCalledOnce();
-    expect(queueDeploy).toHaveBeenCalledOnce();
-    expect(queueDeploy).toHaveBeenCalledWith({
-      environmentId: "env_1",
-      releaseId: "rel_1",
-      rollback: true,
+    expect(invalidate).toHaveBeenCalledOnce();
+    expect(invalidate).toHaveBeenCalledWith({
+      agentIds: [AGENT],
       createdBy: "user_1",
     });
   });
 
   it("does NOT block on a draft belonging to a different agent", async () => {
-    const queueDeploy = vi.fn(async () => ({}));
+    const invalidate = vi.fn(async () => ({ environmentIds: ["env_1"] }));
     const out = await redeployAfterConnect(
       { projectId: PROJECT, agentId: AGENT },
-      deps({ listDrafts: async () => [draft("other_agent")], queueDeploy }),
+      deps({ listDrafts: async () => [draft("other_agent")], invalidate }),
     );
     expect(out).toEqual({ status: "redeployed", envNames: ["production"] });
-    expect(queueDeploy).toHaveBeenCalledOnce();
+    expect(invalidate).toHaveBeenCalledOnce();
   });
 
-  it("returns error with the message when queueDeploy throws", async () => {
+  it("returns error with the message when invalidation throws", async () => {
     const out = await redeployAfterConnect(
       { projectId: PROJECT, agentId: AGENT },
       deps({
-        queueDeploy: async () => {
+        invalidate: async () => {
           throw new Error("queue is down");
         },
       }),
@@ -120,26 +120,22 @@ describe("redeployAfterConnect", () => {
   });
 
   it("redeploys every live environment and returns all their names", async () => {
-    const queued: { environmentId: string; releaseId: string }[] = [];
+    const invalidate = vi.fn(async () => ({
+      environmentIds: ["env_stg", "env_prod"],
+    }));
     const out = await redeployAfterConnect(
       { projectId: PROJECT, agentId: AGENT },
       deps({
-        listAgentEnvironments: async () => [
-          env("env_stg", "staging"),
-          env("env_prod", "production"),
-        ],
+        listAgentEnvironments: async () => [env("env_stg", "staging"), env("env_prod", "production")],
         listDeployments: async (environmentId) =>
           environmentId === "env_stg" ? [liveDep("rel_stg")] : [liveDep("rel_prod")],
-        queueDeploy: async (input) => {
-          queued.push({ environmentId: input.environmentId, releaseId: input.releaseId });
-          return {};
-        },
+        invalidate,
       }),
     );
-    expect(out).toEqual({ status: "redeployed", envNames: ["staging", "production"] });
-    expect(queued).toEqual([
-      { environmentId: "env_stg", releaseId: "rel_stg" },
-      { environmentId: "env_prod", releaseId: "rel_prod" },
-    ]);
+    expect(out).toEqual({
+      status: "redeployed",
+      envNames: ["staging", "production"],
+    });
+    expect(invalidate).toHaveBeenCalledOnce();
   });
 });

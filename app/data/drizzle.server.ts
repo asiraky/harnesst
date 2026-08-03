@@ -188,6 +188,7 @@ export const drizzleDataStore: DataStore = {
           releaseId: input.releaseId,
           status: input.status,
           trafficWeight: input.trafficWeight,
+          envRevision: input.envRevision ?? 0,
           createdBy: input.createdBy ?? null,
         })
         .returning();
@@ -214,6 +215,7 @@ export const drizzleDataStore: DataStore = {
         .select({
           id: deployments.id,
           status: deployments.status,
+          envRevision: deployments.envRevision,
           trafficWeight: deployments.trafficWeight,
           url: deployments.url,
           errorDetail: deployments.errorDetail,
@@ -278,6 +280,14 @@ export const drizzleDataStore: DataStore = {
         .where(eq(environments.id, id))
         .limit(1);
       return row ?? null;
+    },
+    async bumpEnvRevision(id) {
+      const [row] = await db
+        .update(environments)
+        .set({ envRevision: sql`${environments.envRevision} + 1` })
+        .where(eq(environments.id, id))
+        .returning({ envRevision: environments.envRevision });
+      return row?.envRevision ?? null;
     },
     // Creation order with id as tiebreak: seeded rows can share a createdAt (bulk insert),
     // and "first environment" is the PRIMARY (ship target, hero card) — it must be stable.

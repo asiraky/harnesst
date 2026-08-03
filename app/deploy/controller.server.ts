@@ -353,6 +353,7 @@ export async function deployRelease(
     input.deploymentId
       ? store.deployments.update(input.deploymentId, {
           status: "building",
+          envRevision: env.envRevision,
           trafficWeight: input.trafficWeight ?? 100,
         })
       : store.deployments.insert({
@@ -360,6 +361,7 @@ export async function deployRelease(
           releaseId: input.releaseId,
           status: "building",
           trafficWeight: input.trafficWeight ?? 100,
+          envRevision: env.envRevision,
           createdBy: input.createdBy ?? null,
         }),
   ]);
@@ -374,6 +376,9 @@ export async function deployRelease(
     !!agent && agent.kind === "member" && agent.root !== "agent";
 
   try {
+    // `envRevision` is captured on the deployment row immediately before resolution. A writer
+    // racing after this point bumps the environment again, so the reconciler can prove this
+    // container stale even if the underlying secret write lands while the rest of env is built.
     const scope: SecretScope = {
       projectId: release.projectId,
       agentId: release.agentId,

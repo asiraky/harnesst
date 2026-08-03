@@ -57,6 +57,7 @@ export interface FakeStore extends DataStore {
     projectId: string;
     agentId?: string;
     name?: string;
+    envRevision?: number;
   }): Environment;
   seedRun(r: Partial<Run> & { id: string; projectId: string }): Run;
   /** Inspect a run seeded into this fake after repository operations. */
@@ -162,6 +163,7 @@ export function makeFakeStore(): FakeStore {
         projectId: e.projectId,
         agentId: e.agentId ?? `agent-for-${e.projectId}`,
         name: e.name ?? "production",
+        envRevision: e.envRevision ?? 0,
         createdAt: new Date(0),
       };
       environments.set(row.id, row);
@@ -387,6 +389,7 @@ export function makeFakeStore(): FakeStore {
           trafficWeight: input.trafficWeight,
           url: null,
           errorDetail: null,
+          envRevision: input.envRevision ?? 0,
           createdBy: input.createdBy ?? null,
           createdAt: new Date(++seq),
           updatedAt: new Date(seq),
@@ -428,6 +431,7 @@ export function makeFakeStore(): FakeStore {
             return {
               id: d.id,
               status: d.status,
+              envRevision: d.envRevision,
               trafficWeight: d.trafficWeight,
               url: d.url,
               errorDetail: d.errorDetail,
@@ -466,6 +470,13 @@ export function makeFakeStore(): FakeStore {
       async findById(eid) {
         return environments.get(eid) ?? null;
       },
+      async bumpEnvRevision(eid) {
+        const env = environments.get(eid);
+        if (!env) return null;
+        const envRevision = env.envRevision + 1;
+        environments.set(eid, { ...env, envRevision });
+        return envRevision;
+      },
       async listByProject(projectId) {
         return [...environments.values()]
           .filter((e) => e.projectId === projectId)
@@ -494,6 +505,7 @@ export function makeFakeStore(): FakeStore {
           projectId,
           agentId,
           name: "default",
+          envRevision: 0,
           createdAt: new Date(++seq),
         });
       },
@@ -508,7 +520,7 @@ export function makeFakeStore(): FakeStore {
           });
         }
         const eid = id("env");
-        const row = { id: eid, ...input, createdAt: new Date(++seq) };
+        const row = { id: eid, ...input, envRevision: 0, createdAt: new Date(++seq) };
         environments.set(eid, row);
         return row;
       },

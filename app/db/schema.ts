@@ -383,6 +383,11 @@ export const environments = pgTable(
       .notNull()
       .references(() => agents.id, { onDelete: "cascade" }),
     name: text("name").notNull(),
+    /**
+     * Monotonic desired-state version for everything projected into the instance process env.
+     * Credential/config writers bump this; a deployment records the version it resolved.
+     */
+    envRevision: integer("env_revision").notNull().default(0),
     createdAt: createdAt(),
   },
   (t) => [uniqueIndex("environments_agent_name_uq").on(t.agentId, t.name)],
@@ -439,6 +444,8 @@ export const deployments = pgTable(
     url: text("url"),
     /** Why the deployment failed (build/deploy error surface for the UI). */
     errorDetail: text("error_detail"),
+    /** The environment envRevision captured immediately before this deployment resolves env. */
+    envRevision: integer("env_revision").notNull().default(0),
     createdBy: text("created_by").references(() => user.id),
     createdAt: createdAt(),
     updatedAt: updatedAt(),

@@ -9,10 +9,9 @@
  *
  * Aaron's direction (issue #69, 2026-07-10): no banner/nudge — the connect/reconnect action ITSELF
  * performs the redeployment. When the OAuth flow completes and the agent has a live deployment, we
- * queue a rollback-style redeploy: `rollback: true` reuses the already-built image (no rebuild) but
- * re-creates the container with freshly-resolved env, which re-reads the grant and re-injects the
- * fresh refresh token via `connectionGrantEnv`. The grant is per-agent (environmentId null) and
- * shared across every environment, so we redeploy EVERY live environment.
+ * invalidate every environment through the general env reconciler. It reuses the already-built
+ * image but re-creates the container with freshly-resolved env, which re-reads the grant and
+ * re-injects the fresh refresh token via `connectionGrantEnv`.
  *
  * Three guards Aaron called out:
  *  - agent not currently deployed → connect only, no redeploy ("not-deployed").
@@ -25,6 +24,7 @@
  * real server modules.
  */
 import type { DraftChange, Environment, DeploymentWithRelease } from "~/data/ports";
+import { invalidateAgentEnvironments } from "~/deploy/env-reconcile.server";
 
 export type RedeployAfterConnectOutcome =
   | { status: "not-deployed" }
@@ -36,28 +36,16 @@ export interface RedeployAfterConnectDeps {
   listDrafts: (projectId: string) => Promise<DraftChange[]>;
   listAgentEnvironments: (agentId: string) => Promise<Environment[]>;
   listDeployments: (environmentId: string) => Promise<DeploymentWithRelease[]>;
-  ensureWorkerStarted: () => void;
-  queueDeploy: (input: {
-    environmentId: string;
-    releaseId: string;
-    rollback?: boolean;
-    createdBy?: string | null;
-  }) => Promise<unknown>;
+  invalidate: typeof invalidateAgentEnvironments;
 }
 
 function defaultDeps(): RedeployAfterConnectDeps {
   return {
-    listDrafts: (projectId) =>
-      import("~/drafts/drafts.server").then((m) => m.listDrafts(projectId)),
-    listAgentEnvironments: (agentId) =>
-      import("~/db/queries.server").then((m) => m.listAgentEnvironments(agentId)),
+    listDrafts: (projectId) => import("~/drafts/drafts.server").then((m) => m.listDrafts(projectId)),
+    listAgentEnvironments: (agentId) => import("~/db/queries.server").then((m) => m.listAgentEnvironments(agentId)),
     listDeployments: (environmentId) =>
       import("~/deploy/controller.server").then((m) => m.listDeployments(environmentId)),
-    ensureWorkerStarted: () => {
-      void import("~/jobs/worker.server").then((m) => m.ensureWorkerStarted());
-    },
-    queueDeploy: (input) =>
-      import("~/deploy/controller.server").then((m) => m.queueDeploy(input)),
+    invalidate: invalidateAgentEnvironments,
   };
 }
 
@@ -77,33 +65,41 @@ export async function redeployAfterConnect(
     const deployments = await deps.listDeployments(env.id);
     const liveDep = deployments.find((d) => d.status === "live");
     if (liveDep) {
-      live.push({ envName: env.name, environmentId: env.id, releaseId: liveDep.releaseId });
+      live.push({
+        envName: env.name,
+        environmentId: env.id,
+        releaseId: liveDep.releaseId,
+      });
     }
   }
 
-  // 2. Nothing running → connect only.
-  if (live.length === 0) return { status: "not-deployed" };
+  // 2. Nothing running → still invalidate desired env so a stopped container is replaced rather
+  //    than started with stale credentials on its next wake; there is simply no live redeploy now.
+  if (live.length === 0) {
+    try {
+      await deps.invalidate({
+        agentIds: [input.agentId],
+        createdBy: input.createdBy ?? null,
+      });
+      return { status: "not-deployed" };
+    } catch (error) {
+      return { status: "error", message: (error as Error).message };
+    }
+  }
 
   // 3. Staged-changes guard: a draft affecting this agent (its own, or a shared/null-agent file)
   //    means redeploying the old committed version would ignore work the user hasn't published —
   //    hand it back to the UI to prompt, rather than silently redeploying.
   const drafts = await deps.listDrafts(input.projectId);
-  const affectsAgent = drafts.some(
-    (d) => d.agentId === input.agentId || d.agentId === null,
-  );
+  const affectsAgent = drafts.some((d) => d.agentId === input.agentId || d.agentId === null);
   if (affectsAgent) return { status: "staged" };
 
-  // 4. Queue an image-reusing redeploy per live environment (re-injects the fresh grant env).
+  // 4. Persist desired-env invalidation; the durable reconciler coalesces races and redeploys.
   try {
-    deps.ensureWorkerStarted();
-    for (const l of live) {
-      await deps.queueDeploy({
-        environmentId: l.environmentId,
-        releaseId: l.releaseId,
-        rollback: true,
-        createdBy: input.createdBy ?? null,
-      });
-    }
+    await deps.invalidate({
+      agentIds: [input.agentId],
+      createdBy: input.createdBy ?? null,
+    });
     return { status: "redeployed", envNames: live.map((l) => l.envName) };
   } catch (error) {
     return { status: "error", message: (error as Error).message };

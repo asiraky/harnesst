@@ -122,7 +122,9 @@ export async function reconcileLiveDeployments(
   for (const environment of environments) {
     const rows = await deps.store.deployments.listByEnvironment(environment.id);
     for (const row of rows.filter(
-      (deployment) => deployment.status === "live",
+      (deployment) =>
+        deployment.status === "live" &&
+        deployment.envRevision >= environment.envRevision,
     )) {
       result.checked++;
       const recovered = await recoverLiveDeployment(row, deps);

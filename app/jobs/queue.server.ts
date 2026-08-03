@@ -18,6 +18,7 @@ export type JobKind =
   | "rollback_release"
   | "assistant_deploy"
   | "assistant_restart"
+  | "reconcile_environment_env"
   | "cleanup_deployment_container"
   | "drain_deployment"
   // issue #267: keep watching a delegated turn whose relay reply stream died.
