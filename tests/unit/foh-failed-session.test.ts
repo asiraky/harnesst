@@ -23,6 +23,7 @@ const notice = (
     sessionStatus: "failed",
     liveTurnVisible: false,
     historyUnavailable: false,
+    transcriptIsPredecessorOnly: false,
     entries: [],
     ...over,
   });
@@ -93,6 +94,27 @@ describe("failedSessionNotice", () => {
     expect(result?.kind).toBe("unknown");
     expect(result?.message).toMatch(/could not be loaded/i);
     expect(result?.retryText).toBeNull();
+  });
+
+  describe("a successor whose own stream is still empty (#288 3b)", () => {
+    // The literal symptom in issue #250: the stitched predecessor transcript is ALL that
+    // renders, so reading its tail would describe the previous conversation's outcome.
+    it("never reads the predecessor's errored tail as this session's outcome", () => {
+      const result = notice({
+        transcriptIsPredecessorOnly: true,
+        entries: [user("hi"), assistant("", "the OLD turn's error")],
+      });
+      expect(result).not.toBeNull();
+      expect(result?.message).toMatch(/from the conversation it continues/i);
+    });
+
+    it("never offers to resend the predecessor's last message", () => {
+      const result = notice({
+        transcriptIsPredecessorOnly: true,
+        entries: [user("book the OLD flight")],
+      });
+      expect(result?.retryText).toBeNull();
+    });
   });
 
   it("offers no retry for a whitespace-only user message", () => {

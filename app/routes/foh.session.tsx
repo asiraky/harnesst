@@ -340,6 +340,13 @@ export const loader = (args: LoaderFunctionArgs) =>
         // Prepended at return time only: the repair block above judges eve's real tail, and
         // a synthetic notice entry must never masquerade as it.
         entries: [...openingEntries, ...entries],
+        // #288 3b + issue #250: a just-succeeded row whose own cursor is still 0 renders
+        // ONLY its predecessor's stitched stream. Nothing below the header belongs to this
+        // session, so a failure notice must not read that tail as this session's outcome —
+        // this is the shape that looks like "the pane kept the previous conversation".
+        transcriptIsPredecessorOnly:
+          currentSession.predecessorExternalSessionId != null &&
+          currentSession.streamIndex === 0,
         historyError,
       };
     },
@@ -381,6 +388,7 @@ export default function FohSession({ loaderData }: Route.ComponentProps) {
     channelLabel,
     lastEventAt,
     entries,
+    transcriptIsPredecessorOnly,
     historyError,
   } = loaderData;
   const read = useFetcher<{ ok: true }>({ key: "foh-session-read" });
@@ -481,9 +489,16 @@ export default function FohSession({ loaderData }: Route.ComponentProps) {
         sessionStatus,
         liveTurnVisible: visibleLive !== null,
         historyUnavailable: historyError !== null,
+        transcriptIsPredecessorOnly,
         entries: shownEntries,
       }),
-    [historyError, sessionStatus, shownEntries, visibleLive],
+    [
+      historyError,
+      sessionStatus,
+      shownEntries,
+      transcriptIsPredecessorOnly,
+      visibleLive,
+    ],
   );
 
   // The one request a typed composer answer would resolve (issue #282): the newest pending

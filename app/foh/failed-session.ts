@@ -9,6 +9,7 @@
  *
  * Pure so the rule is testable without a DOM: the component only maps the result to markup.
  */
+import { newestTurnEntry } from "~/foh/artifact-entries";
 
 /** The transcript slice the decision needs; `ChatEntry` satisfies it. */
 export interface FailedSessionEntry {
@@ -39,6 +40,9 @@ const MESSAGES: Record<FailedSessionNoticeKind, string> = {
 const HISTORY_UNAVAILABLE =
   "This conversation ended in an error, and its history could not be loaded.";
 
+const PREDECESSOR_ONLY =
+  "This conversation ended in an error before anything was recorded — the messages above are from the conversation it continues. Send a message to start it again.";
+
 /**
  * The failure state to render under the transcript, or null when nothing should be added.
  *
@@ -54,15 +58,25 @@ export function failedSessionNotice(input: {
   liveTurnVisible: boolean;
   /** The history read failed — the transcript says nothing about how the turn ended. */
   historyUnavailable: boolean;
+  /**
+   * Every rendered entry belongs to the conversation this one succeeded (#288 3b), because
+   * this session's own eve stream is still empty. Nothing on screen is this session's, so its
+   * tail says nothing about how THIS turn ended — and is exactly the "shows the previous
+   * conversation" shape issue #250 reports.
+   */
+  transcriptIsPredecessorOnly: boolean;
   entries: readonly FailedSessionEntry[];
 }): FailedSessionNotice | null {
   if (input.sessionStatus !== "failed" || input.liveTurnVisible) return null;
   if (input.historyUnavailable) {
     return { kind: "unknown", message: HISTORY_UNAVAILABLE, retryText: null };
   }
+  if (input.transcriptIsPredecessorOnly) {
+    return { kind: "empty", message: PREDECESSOR_ONLY, retryText: null };
+  }
   // The newest CONVERSATIONAL entry: an artifact card (#290) trails the turn that produced
   // it and says nothing about how that turn ended.
-  const last = newestConversationalEntry(input.entries);
+  const last = newestTurnEntry(input.entries);
   if (last === null) {
     return { kind: "empty", message: MESSAGES.empty, retryText: null };
   }
@@ -78,13 +92,4 @@ export function failedSessionNotice(input: {
   // badly afterwards. Resending the previous message would repeat work that already
   // happened, so the composer — not a retry button — is the next step.
   return { kind: "unknown", message: MESSAGES.unknown, retryText: null };
-}
-
-function newestConversationalEntry(
-  entries: readonly FailedSessionEntry[],
-): FailedSessionEntry | null {
-  for (let i = entries.length - 1; i >= 0; i -= 1) {
-    if (entries[i].role !== "artifact") return entries[i];
-  }
-  return null;
 }

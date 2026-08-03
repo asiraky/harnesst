@@ -96,7 +96,7 @@ export function artifactEntry(row: ArtifactRow): ChatEntry {
  * running indicator shows, and what the loader-side needs-you repair reads — has to skip cards.
  */
 export function newestTurnEntry<T extends { role: string }>(
-  entries: T[],
+  entries: readonly T[],
 ): T | null {
   for (let i = entries.length - 1; i >= 0; i -= 1) {
     if (entries[i].role !== "artifact") return entries[i];
