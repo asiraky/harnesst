@@ -7,6 +7,7 @@ import {
   runAssistantEval,
   type EvalRunnerDeps,
 } from "~/assistant/eval-runner.server";
+import { classifyEvalEvidence } from "../../assistant-template/checkout-sidecar.mjs";
 import type { Agent } from "~/data/ports";
 import type { EvalGrant } from "~/gateway/eval-grant.server";
 
@@ -91,10 +92,39 @@ describe("assistant eval runner", () => {
       "assistant-template/checkout-sidecar.mjs",
       "utf8",
     );
-    expect(source).toContain("volume-subpath=${volumeSubpath}");
+    expect(source).toContain("volume-subpath=${volumeSubpath},readonly");
+    expect(source).toContain('const source = "/workspace/source"');
+    expect(source).toContain('const work = "/workspace/work"');
+    expect(source).toContain("verbatimSymlinks: true");
     expect(source).toContain('"--cap-drop"');
     expect(source).not.toContain("/var/run/docker.sock:/var/run/docker.sock");
     expect(source).toContain("Docker passes ONLY envArgs");
+    expect(source).toContain('"--json", "--strict"');
+    expect(source).toContain('"--max-concurrency", maxConcurrency');
+  });
+
+  it("does not report skipped or below-threshold evidence as success", () => {
+    expect(
+      classifyEvalEvidence({
+        exitCode: 0,
+        timedOut: false,
+        runnerError: null,
+        summary: {
+          skipped: 1,
+          failed: 0,
+          scored: 0,
+          evals: [{ verdict: "skipped", skipReason: "judge unavailable" }],
+        },
+      }),
+    ).toMatchObject({ ok: false, outcome: "incomplete" });
+    expect(
+      classifyEvalEvidence({
+        exitCode: 1,
+        timedOut: false,
+        runnerError: null,
+        summary: { skipped: 0, failed: 0, scored: 1, evals: [] },
+      }),
+    ).toMatchObject({ ok: false, outcome: "below-threshold" });
   });
 
   it("maps only supported single/team member roots", () => {
@@ -155,6 +185,7 @@ describe("assistant eval runner", () => {
       conversationId: "convabcdefgh",
       packageRoot: "agents/researcher",
       gatewayToken: "edne_scoped",
+      maxConcurrency: 4,
     });
     expect(JSON.stringify(body)).not.toContain("provider");
     expect(result).toMatchObject({

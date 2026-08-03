@@ -10,7 +10,8 @@ export default defineTool({
     "path: harnesst starts a disposable local target and brokers its configured model without " +
     "putting reusable provider credentials in bash or repo code. Pass the exact member from " +
     "harnesst_project_context and the conversation id shown in the current checkout path. Returns " +
-    "stdout/stderr, exit status, checkout identity, exact model identity, limits, and cleanup state.",
+    "per-eval verdicts, assertion scores, session/artifact identities, stdout/stderr, exit status, " +
+    "checkout identity, exact model identity, limits, and cleanup state.",
   inputSchema: z.object({
     member: z
       .string()

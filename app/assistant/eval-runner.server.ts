@@ -198,6 +198,7 @@ export async function runAssistantEval(
         packageRoot,
         gatewayUrl: deps.gatewayUrl(),
         gatewayToken: deps.evalToken(grant.id),
+        maxConcurrency: grant.maxConcurrentCalls,
         timeoutMs: EVAL_RUN_TIMEOUT_MS,
       }),
       signal: AbortSignal.timeout(EVAL_RUN_TIMEOUT_MS + 30_000),

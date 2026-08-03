@@ -39,6 +39,145 @@ const MAX_EVAL_OUTPUT_BYTES = Number(
   process.env.HARNESST_EVAL_OUTPUT_MAX_BYTES ?? 4 * 1024 * 1024,
 );
 
+// This trusted wrapper runs inside the disposable eval container. It first copies the checkout's
+// read-only mount into the container's writable layer, then captures Eve's machine-readable output
+// and the durable artifact set before Docker removes the container. Repo code cannot forge the
+// envelope because its stdout/stderr are captured by this parent process rather than inherited.
+export const EVAL_CONTAINER_SCRIPT = String.raw`
+const { cpSync, existsSync, lstatSync, readFileSync, readdirSync, rmSync } = require("node:fs");
+const { spawnSync } = require("node:child_process");
+const { createHash } = require("node:crypto");
+const { basename, join, relative } = require("node:path");
+
+const source = "/workspace/source";
+const work = "/workspace/work";
+const packageRoot = process.argv[1];
+const maxConcurrency = process.argv[2];
+const outputLimit = 512 * 1024;
+const structuredLimit = 1024 * 1024;
+
+function capturedText(value) {
+  const full = String(value ?? "");
+  return { value: full.slice(0, outputLimit), truncated: full.length > outputLimit };
+}
+
+function parseJson(file) {
+  try { return JSON.parse(readFileSync(file, "utf8")); } catch { return null; }
+}
+
+function collectArtifacts(runDir) {
+  const artifacts = [];
+  const details = [];
+  let structuredBytes = 0;
+  function visit(dir) {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const absolute = join(dir, entry.name);
+      const info = lstatSync(absolute);
+      if (info.isSymbolicLink()) continue;
+      if (info.isDirectory()) { visit(absolute); continue; }
+      if (!info.isFile()) continue;
+      const body = readFileSync(absolute);
+      const artifactPath = relative(runDir, absolute);
+      artifacts.push({
+        path: artifactPath,
+        sizeBytes: body.length,
+        sha256: createHash("sha256").update(body).digest("hex"),
+      });
+      if (
+        artifactPath.startsWith("evals/") &&
+        artifactPath.endsWith(".json") &&
+        structuredBytes + body.length <= structuredLimit
+      ) {
+        try {
+          details.push({ path: artifactPath, value: JSON.parse(body.toString("utf8")) });
+          structuredBytes += body.length;
+        } catch {}
+      }
+    }
+  }
+  visit(runDir);
+  return { artifacts, details };
+}
+
+const envelope = {
+  runnerExitCode: null,
+  runnerSignal: null,
+  runnerError: null,
+  stdout: "",
+  stderr: "",
+  stdoutTruncated: false,
+  stderrTruncated: false,
+  artifactRunId: null,
+  summary: null,
+  results: [],
+  details: [],
+  artifacts: [],
+};
+
+try {
+  cpSync(source, work, {
+    recursive: true,
+    dereference: false,
+    // Keep relative node_modules/.bin links relative. Node otherwise rewrites their targets to the
+    // read-only source mount, which would execute Eve outside the disposable copy.
+    verbatimSymlinks: true,
+  });
+  const cwd = packageRoot === "." ? work : join(work, packageRoot);
+  // Build caches can embed checkout paths. Drop all copied Eve state so the disposable location is
+  // authoritative and the artifact directory below can only belong to this run.
+  rmSync(join(cwd, ".eve"), { recursive: true, force: true });
+  const result = spawnSync(
+    "npx",
+    [
+      "--no-install", "eve", "eval", "--json", "--strict",
+      "--max-concurrency", maxConcurrency,
+    ],
+    { cwd, env: process.env, encoding: "utf8", maxBuffer: 4 * 1024 * 1024 },
+  );
+  envelope.runnerExitCode = result.status;
+  envelope.runnerSignal = result.signal;
+  envelope.runnerError = result.error?.message ?? null;
+  const stdout = capturedText(result.stdout);
+  const stderr = capturedText(result.stderr);
+  envelope.stdout = stdout.value;
+  envelope.stderr = stderr.value;
+  envelope.stdoutTruncated = stdout.truncated;
+  envelope.stderrTruncated = stderr.truncated;
+
+  const evalRoot = join(cwd, ".eve", "evals");
+  if (existsSync(evalRoot)) {
+    const runIds = readdirSync(evalRoot, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => entry.name)
+      .sort();
+    const runId = runIds.at(-1);
+    if (runId) {
+      const runDir = join(evalRoot, runId);
+      envelope.artifactRunId = basename(runDir);
+      envelope.summary = parseJson(join(runDir, "summary.json"));
+      const resultsPath = join(runDir, "results.jsonl");
+      if (existsSync(resultsPath)) {
+        envelope.results = readFileSync(resultsPath, "utf8")
+          .split("\n")
+          .filter(Boolean)
+          .map((line) => { try { return JSON.parse(line); } catch { return null; } })
+          .filter(Boolean);
+      }
+      const collected = collectArtifacts(runDir);
+      envelope.artifacts = collected.artifacts;
+      envelope.details = collected.details;
+    }
+  }
+} catch (error) {
+  envelope.runnerError = error instanceof Error ? error.message : String(error);
+}
+
+process.stdout.write(JSON.stringify(envelope));
+process.exitCode = Number.isInteger(envelope.runnerExitCode)
+  ? envelope.runnerExitCode
+  : 2;
+`;
+
 const checkoutDir = (id) =>
   join(CHECKOUT_ROOT, id.replace(/[^A-Za-z0-9_-]/g, ""));
 const convBranch = (id) => `harnesst/conv-${id}`;
@@ -320,9 +459,14 @@ async function runEval(input) {
     )
     .digest("hex");
   const startedAt = Date.now();
+  const maxConcurrency = Math.min(
+    Math.max(Math.trunc(Number(input?.maxConcurrency) || 1), 1),
+    16,
+  );
   const execution = await spawnEval({
     conversationId,
     packageRoot,
+    maxConcurrency,
     timeoutMs,
     env: {
       PATH: "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
@@ -334,17 +478,45 @@ async function runEval(input) {
       HARNESST_MODEL_GATEWAY_TOKEN: gatewayToken,
     },
   });
+  const envelope = parseEvalEnvelope(
+    execution.stdout,
+    execution.stdoutTruncated,
+  );
+  const exitCode = envelope?.runnerExitCode ?? execution.exitCode;
+  const summary = envelope?.summary ?? null;
+  const classification = classifyEvalEvidence({
+    exitCode,
+    timedOut: execution.timedOut,
+    runnerError: envelope?.runnerError,
+    summary,
+  });
   return {
-    ok: execution.exitCode === 0 && !execution.timedOut,
-    command: "npx --no-install eve eval",
-    exitCode: execution.exitCode,
-    signal: execution.signal,
+    ...classification,
+    command:
+      "npx --no-install eve eval --json --strict --max-concurrency " +
+      maxConcurrency,
+    exitCode,
+    signal: envelope?.runnerSignal ?? execution.signal,
     timedOut: execution.timedOut,
     durationMs: Date.now() - startedAt,
-    stdout: execution.stdout,
-    stderr: execution.stderr,
-    stdoutTruncated: execution.stdoutTruncated,
-    stderrTruncated: execution.stderrTruncated,
+    stdout: envelope?.stdout ?? execution.stdout,
+    stderr: envelope?.stderr ?? execution.stderr,
+    stdoutTruncated: envelope?.stdoutTruncated ?? execution.stdoutTruncated,
+    stderrTruncated: envelope?.stderrTruncated ?? execution.stderrTruncated,
+    evidence: envelope
+      ? {
+          artifactRunId: envelope.artifactRunId,
+          summary,
+          results: envelope.results,
+          details: envelope.details,
+          artifacts: envelope.artifacts,
+        }
+      : null,
+    isolation: {
+      sourceMount: "read-only",
+      executionCopy: "disposable-container-layer",
+      cleanup: "container-removed",
+    },
     sourceIdentity: {
       kind: "unpublished-checkout",
       headSha,
@@ -354,14 +526,93 @@ async function runEval(input) {
   };
 }
 
-function spawnEval({ conversationId, packageRoot, env, timeoutMs }) {
+function parseEvalEnvelope(stdout, truncated) {
+  if (truncated) return null;
+  try {
+    const parsed = JSON.parse(stdout);
+    return parsed && typeof parsed === "object" ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Pure verdict classification kept exported so regression tests can cover false-success cases. */
+export function classifyEvalEvidence({
+  exitCode,
+  timedOut,
+  runnerError,
+  summary,
+}) {
+  if (timedOut) {
+    return {
+      ok: false,
+      outcome: "timed-out",
+      error: "The behavioral eval timed out.",
+    };
+  }
+  if (runnerError) {
+    return {
+      ok: false,
+      outcome: "runner-error",
+      error: `The eval runner failed: ${runnerError}`,
+    };
+  }
+  if (!summary || !Array.isArray(summary.evals)) {
+    return {
+      ok: false,
+      outcome: "runner-error",
+      error: "Eve did not produce a structured eval artifact summary.",
+    };
+  }
+  if (Number(summary.skipped) > 0) {
+    const reasons = summary.evals
+      .filter((item) => item?.verdict === "skipped")
+      .map((item) => item?.skipReason)
+      .filter(Boolean)
+      .slice(0, 3)
+      .join("; ");
+    return {
+      ok: false,
+      outcome: "incomplete",
+      error:
+        `${summary.skipped} eval(s) skipped, so the behavioral evidence is incomplete.` +
+        (reasons ? ` ${reasons}` : ""),
+    };
+  }
+  if (Number(summary.failed) > 0) {
+    return {
+      ok: false,
+      outcome: "failed",
+      error: `${Number(summary.failed) || 0} eval(s) failed behavioral validation.`,
+    };
+  }
+  if (Number(summary.scored) > 0) {
+    return {
+      ok: false,
+      outcome: "below-threshold",
+      error: `${summary.scored} eval(s) scored below the configured judge threshold.`,
+    };
+  }
+  if (exitCode !== 0) {
+    return {
+      ok: false,
+      outcome: "runner-error",
+      error: `Eve exited with status ${exitCode} despite reporting no failed evals.`,
+    };
+  }
+  return { ok: true, outcome: "passed" };
+}
+
+function spawnEval({
+  conversationId,
+  packageRoot,
+  maxConcurrency,
+  env,
+  timeoutMs,
+}) {
   return new Promise((resolve, reject) => {
     const containerName = `harnesst-eval-${conversationId}-${randomBytes(4).toString("hex")}`;
     const volumeSubpath = `checkouts/${conversationId}`;
-    const workdir =
-      packageRoot === "."
-        ? "/workspace/checkout"
-        : `/workspace/checkout/${packageRoot}`;
     const envArgs = Object.entries(env).flatMap(([name, value]) => [
       "-e",
       `${name}=${value}`,
@@ -387,19 +638,20 @@ function spawnEval({ conversationId, packageRoot, env, timeoutMs }) {
         "--tmpfs",
         "/tmp:rw,nosuid,size=1073741824",
         "--mount",
-        `type=volume,src=${HOME_VOLUME},dst=/workspace/checkout,volume-subpath=${volumeSubpath}`,
+        `type=volume,src=${HOME_VOLUME},dst=/workspace/source,volume-subpath=${volumeSubpath},readonly`,
         "--workdir",
-        workdir,
+        "/workspace",
         ...envArgs,
         EVAL_RUNNER_IMAGE,
         "timeout",
         "--signal=TERM",
         "--kill-after=5s",
         `${Math.ceil(timeoutMs / 1000)}s`,
-        "npx",
-        "--no-install",
-        "eve",
-        "eval",
+        "node",
+        "--eval",
+        EVAL_CONTAINER_SCRIPT,
+        packageRoot,
+        String(maxConcurrency),
       ],
       {
         // This is the trusted Docker CLI in the assistant instance. It needs the instance env to
