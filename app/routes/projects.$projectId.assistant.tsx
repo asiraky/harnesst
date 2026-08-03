@@ -245,6 +245,8 @@ export const loader = (args: LoaderFunctionArgs) =>
         project,
         fixPrefill,
         instanceStatus: snapshot.status,
+        instanceError: snapshot.error,
+        instanceRetryable: snapshot.retryable,
         provisionStage: snapshot.provisionStage,
         provisionStartedAt: snapshot.provisionStartedAt,
         sessions,
@@ -321,6 +323,8 @@ export default function Assistant({ loaderData }: Route.ComponentProps) {
     project,
     fixPrefill,
     instanceStatus,
+    instanceError,
+    instanceRetryable,
     provisionStage,
     provisionStartedAt,
     sessions,
@@ -699,11 +703,29 @@ export default function Assistant({ loaderData }: Route.ComponentProps) {
     [NewSessionForm, base, busy, newSessionFetcher.state, sessionPicker],
   );
 
+  const idle = instanceStatus === "idle";
+  const failed = instanceStatus === "failed";
+  const showsFailureCard =
+    failed && shownEntries.length === 0 && !visibleLive && !provisioning;
+
   // One slim status area with strict precedence (error > blocked > send feedback > sync note)
   // instead of a stack of full Alert boxes — the transcript never opens under a wall of chrome.
   // Provisioning isn't repeated here: the in-transcript ProvisioningCard and the composer's
   // busy hint already carry that state.
   const statusStrip = useMemo(() => {
+    if (failed && instanceError && !showsFailureCard) {
+      return (
+        <StatusStrip tone="error" title="The assistant failed to start">
+          <p>{instanceError}</p>
+          {!instanceRetryable && (
+            <p>
+              Retries are paused until the assistant build or configuration
+              changes.
+            </p>
+          )}
+        </StatusStrip>
+      );
+    }
     if (historyError) {
       return <StatusStrip tone="error">{historyError}</StatusStrip>;
     }
@@ -720,7 +742,15 @@ export default function Assistant({ loaderData }: Route.ComponentProps) {
       );
     }
     return null;
-  }, [historyError, sendError, syncWarnings]);
+  }, [
+    failed,
+    historyError,
+    instanceError,
+    instanceRetryable,
+    sendError,
+    showsFailureCard,
+    syncWarnings,
+  ]);
 
   const transcriptLead = useMemo(
     () => (
@@ -737,9 +767,6 @@ export default function Assistant({ loaderData }: Route.ComponentProps) {
     ),
     [headerActions, statusStrip],
   );
-
-  const idle = instanceStatus === "idle";
-  const failed = instanceStatus === "failed";
 
   return (
     <AppShell
@@ -770,8 +797,7 @@ export default function Assistant({ loaderData }: Route.ComponentProps) {
         forceScrollDep={visibleLive?.userText}
         lead={transcriptLead}
       >
-        {(failed || idle) &&
-          shownEntries.length === 0 &&
+        {((idle && shownEntries.length === 0) || showsFailureCard) &&
           !visibleLive &&
           !provisioning && (
             <div className="py-6">
@@ -784,19 +810,28 @@ export default function Assistant({ loaderData }: Route.ComponentProps) {
                 <AlertDescription className="space-y-3">
                   <p>
                     {failed
-                      ? "The last attempt to start the assistant failed. Try starting it again."
+                      ? (instanceError ??
+                        "The last attempt to start the assistant failed. Try starting it again.")
                       : "Start it once and it stays available. It builds and deploys as its own eve instance."}
                   </p>
-                  <ProvisionForm method="post">
-                    <input type="hidden" name="intent" value="provision" />
-                    <Button
-                      type="submit"
-                      size="sm"
-                      disabled={provisionFetcher.state !== "idle"}
-                    >
-                      {failed ? "Try again" : "Set up the assistant"}
-                    </Button>
-                  </ProvisionForm>
+                  {failed && !instanceRetryable && (
+                    <p>
+                      Retries are paused until the assistant build or
+                      configuration changes.
+                    </p>
+                  )}
+                  {(!failed || instanceRetryable) && (
+                    <ProvisionForm method="post">
+                      <input type="hidden" name="intent" value="provision" />
+                      <Button
+                        type="submit"
+                        size="sm"
+                        disabled={provisionFetcher.state !== "idle"}
+                      >
+                        {failed ? "Try again" : "Set up the assistant"}
+                      </Button>
+                    </ProvisionForm>
+                  )}
                 </AlertDescription>
               </Alert>
             </div>

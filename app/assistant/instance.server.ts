@@ -15,7 +15,13 @@ import {
   defaultAuthoringDeps,
   type AuthoringProject,
 } from "~/assistant/authoring.server";
-import type { Agent, DataStore, Environment, Release } from "~/data/ports";
+import type {
+  Agent,
+  DataStore,
+  DeploymentWithRelease,
+  Environment,
+  Release,
+} from "~/data/ports";
 import { buildAssistantImage } from "~/deploy/eve-image.server";
 import {
   recoverLiveDeployment,
@@ -43,6 +49,8 @@ import { mintAssistantToken } from "./token.server";
 const ASSISTANT_ENV = "assistant";
 const ASSISTANT_NAME = "assistant";
 const ASSISTANT_ROOT = ".harnesst/assistant";
+/** Maximum deliberate build attempts before the current template/config circuit opens. */
+const MAX_CONSECUTIVE_ASSISTANT_FAILURES = 3;
 
 /** Where the bundled template lives (mirrors the CatalogSource fixture reading <cwd>/catalog). */
 export function assistantTemplateDir(): string {
@@ -120,6 +128,20 @@ function assistantImageRef(hash: string): string {
 /** gitSha marker for a template-hash release (not a real repo commit — see docs §3). */
 function templateGitSha(hash: string, configKey: string): string {
   return `tmpl-${hash}-c${configKey}`;
+}
+
+/** Count newest-first failures for one desired image, stopping at its latest non-failure. */
+function consecutiveAssistantFailures(
+  deployments: DeploymentWithRelease[],
+  gitSha: string,
+): number {
+  let count = 0;
+  for (const deployment of deployments) {
+    if (deployment.gitSha !== gitSha) continue;
+    if (deployment.status !== "failed") break;
+    count++;
+  }
+  return count;
 }
 
 /**
@@ -520,6 +542,30 @@ export async function ensureAssistantInstance(
     };
   }
 
+  // Deployment rows are newest-first. Each deploy job gets one build attempt, so three
+  // consecutive failures mean the current template/config has exhausted its deliberate retry
+  // budget. More sends cannot change the input; return the recorded error until a new SHA resets
+  // the circuit instead of buying more identical Docker work.
+  const currentDeployments = deployments.filter(
+    (deployment) => deployment.gitSha === currentSha,
+  );
+  const failureCount = consecutiveAssistantFailures(deployments, currentSha);
+  if (failureCount >= MAX_CONSECUTIVE_ASSISTANT_FAILURES) {
+    const latestFailure = currentDeployments[0];
+    return {
+      ...base,
+      status: "failed",
+      url: null,
+      deploymentId: latestFailure.id,
+      releaseId: latestFailure.releaseId,
+      version: latestFailure.version,
+      gitSha: latestFailure.gitSha,
+      error:
+        latestFailure.errorDetail ??
+        "The assistant failed to start after three attempts.",
+    };
+  }
+
   // Nothing usable (never deployed, image changed after a harnesst upgrade, or previous failure):
   // create the `pending` deployment row synchronously, THEN queue the build+deploy. The worker's
   // runAssistantDeploy only *takes over* a pending/building row — it doesn't create one — so
@@ -572,7 +618,9 @@ export async function ensureAssistantInstance(
   await enqueue(
     "assistant_deploy",
     { projectId } satisfies AssistantDeployPayload,
-    undefined,
+    // The build input cannot change during a worker backoff. Let the user-visible circuit own the
+    // retry budget so one failed send cannot silently fan out into three identical Docker builds.
+    { maxAttempts: 1 },
     store,
   );
   return {
@@ -591,6 +639,10 @@ export interface AssistantSnapshot {
   status: "live" | "provisioning" | "resumable" | "failed" | "idle";
   agentId: string | null;
   environmentId: string | null;
+  /** The latest current-image deployment failure detail; null for non-failed snapshots. */
+  error: string | null;
+  /** Whether another explicit provision attempt is still inside the current-image retry budget. */
+  retryable: boolean;
   /** Human stage label while provisioning (e.g. "Building the assistant image…"); null otherwise. */
   provisionStage: string | null;
   /** ISO timestamp the current provisioning deployment started, for an elapsed timer; null otherwise. */
@@ -620,7 +672,12 @@ export async function peekAssistantInstance(
   projectId: string,
   store: DataStore = getRuntime().data,
 ): Promise<AssistantSnapshot> {
-  const idle = { provisionStage: null, provisionStartedAt: null } as const;
+  const idle = {
+    provisionStage: null,
+    provisionStartedAt: null,
+    error: null,
+    retryable: false,
+  } as const;
   const agent = await store.agents.findAssistant(projectId);
   if (!agent)
     return {
@@ -649,21 +706,21 @@ export async function peekAssistantInstance(
     await workspaceConfigKey(project.orgId),
   );
   const deployments = await store.deployments.listByEnvironment(env.id);
-  const live = deployments.find(
-    (d) => d.status === "live" && d.url && d.gitSha === currentSha,
-  );
-  if (live && live.url) {
+  // Rows are newest-first. The newest deployment for the desired image is authoritative: an
+  // older current-image live/stopped row must not hide a later failed replacement.
+  const latestCurrent = deployments.find((d) => d.gitSha === currentSha);
+  if (latestCurrent?.status === "live" && latestCurrent.url) {
     return {
       ...base,
       status: "live",
       target: {
-        deploymentId: live.id,
+        deploymentId: latestCurrent.id,
         environmentId: env.id,
-        releaseId: live.releaseId,
-        url: live.url,
-        version: live.version,
+        releaseId: latestCurrent.releaseId,
+        url: latestCurrent.url,
+        version: latestCurrent.version,
         environmentName: ASSISTANT_ENV,
-        gitSha: live.gitSha,
+        gitSha: latestCurrent.gitSha,
       },
     };
   }
@@ -682,24 +739,20 @@ export async function peekAssistantInstance(
       provisionStartedAt: active.createdAt.toISOString(),
     };
   }
-  // A current-template stopped/container-without-url row is still recoverable even when older
-  // failed attempts coexist with it. Prefer that positive signal over failure.
-  const currentResumable = deployments.find(
-    (d) =>
-      (d.status === "live" || d.status === "stopped") &&
-      d.gitSha === currentSha,
-  );
-  if (currentResumable) {
-    return { ...base, status: "resumable", target: null };
+  if (latestCurrent?.status === "failed") {
+    return {
+      ...base,
+      status: "failed",
+      target: null,
+      error: latestCurrent.errorDetail,
+      retryable:
+        consecutiveAssistantFailures(deployments, currentSha) <
+        MAX_CONSECUTIVE_ASSISTANT_FAILURES,
+    };
   }
-  // A failed attempt for the CURRENT desired image is a terminal readiness signal. This must win
-  // over an older live/stopped image: after an upgrade/model change fails, that stale row cannot
-  // make the newly observed provisioning state look merely resumable forever (#256).
-  const failedCurrent = deployments.find(
-    (d) => d.status === "failed" && d.gitSha === currentSha,
-  );
-  if (failedCurrent) {
-    return { ...base, status: "failed", target: null };
+  // A newest current-template stopped/container-without-url row is still recoverable.
+  if (latestCurrent?.status === "live" || latestCurrent?.status === "stopped") {
+    return { ...base, status: "resumable", target: null };
   }
   // Anything ensureAssistantInstance can transparently replace on the next turn — a live/stopped
   // row on a pre-upgrade template sha — must NOT read as "never set up": that regressed
@@ -714,7 +767,13 @@ export async function peekAssistantInstance(
     deployments.length > 0 &&
     deployments.every((d) => d.status === "failed")
   ) {
-    return { ...base, status: "failed", target: null };
+    return {
+      ...base,
+      status: "failed",
+      target: null,
+      error: deployments[0]?.errorDetail ?? null,
+      retryable: true,
+    };
   }
   return { ...base, status: "idle", target: null };
 }

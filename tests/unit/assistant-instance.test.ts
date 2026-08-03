@@ -7,28 +7,27 @@ const {
   deployHealth,
   deployStart,
   getWorkspaceAssistantSelection,
-} = vi.hoisted(
-  () => ({
-    buildAssistantImage: vi.fn(),
-    deployHealth: vi.fn(
-      async (): Promise<InstanceHealth> => ({ status: "pending" }),
-    ),
-    deployStart: vi.fn(
-      async (): Promise<InstanceHealth> => ({ status: "failed" }),
-    ),
-    getWorkspaceAssistantSelection: vi.fn(
-      async (): Promise<{ model: string | null; effort: string | null }> => ({
-        model: null,
-        effort: null,
-      }),
-    ),
-  }),
-);
+} = vi.hoisted(() => ({
+  buildAssistantImage: vi.fn(),
+  deployHealth: vi.fn(async (): Promise<InstanceHealth> => ({
+    status: "pending",
+  })),
+  deployStart: vi.fn(async (): Promise<InstanceHealth> => ({
+    status: "failed",
+  })),
+  getWorkspaceAssistantSelection: vi.fn(
+    async (): Promise<{ model: string | null; effort: string | null }> => ({
+      model: null,
+      effort: null,
+    }),
+  ),
+}));
 
 vi.mock("~/deploy/eve-image.server", () => ({ buildAssistantImage }));
 vi.mock("~/org/workspace.server", () => ({ getWorkspaceAssistantSelection }));
 vi.mock("~/seams/index.server", async (importOriginal) => {
-  const original = await importOriginal<typeof import("~/seams/index.server")>();
+  const original =
+    await importOriginal<typeof import("~/seams/index.server")>();
   return {
     ...original,
     getRuntime: () => {
@@ -52,6 +51,7 @@ import {
   peekAssistantInstance,
   runAssistantDeploy,
 } from "~/assistant/instance.server";
+import { markFailed } from "~/jobs/queue.server";
 import { makeFakeStore } from "../fakes/store";
 
 beforeEach(() => {
@@ -59,6 +59,11 @@ beforeEach(() => {
   deployHealth.mockResolvedValue({ status: "pending" });
   deployStart.mockReset();
   deployStart.mockResolvedValue({ status: "failed" });
+  getWorkspaceAssistantSelection.mockReset();
+  getWorkspaceAssistantSelection.mockResolvedValue({
+    model: null,
+    effort: null,
+  });
 });
 
 describe("assistant instance: agent + environment", () => {
@@ -131,6 +136,10 @@ describe("assistant instance: provisioning", () => {
     expect(snapshot.status).toBe("provisioning");
     const stats = await store.jobs.statsByStatus();
     expect((stats.queued ?? 0) >= 1).toBe(true);
+    expect(await store.jobs.claimNext(new Date())).toMatchObject({
+      kind: "assistant_deploy",
+      maxAttempts: 1,
+    });
   });
 
   it("marks the pending deployment failed when the assistant image build fails", async () => {
@@ -163,6 +172,8 @@ describe("assistant instance: provisioning", () => {
     });
     expect(await peekAssistantInstance("p", store)).toMatchObject({
       status: "failed",
+      error: "assistant image build exploded",
+      retryable: true,
     });
   });
 
@@ -181,6 +192,54 @@ describe("assistant instance: provisioning", () => {
     expect(second.deploymentId).toBe(first.deploymentId);
     const stats = await store.jobs.statsByStatus();
     expect(stats.queued ?? 0).toBe(1);
+  });
+
+  it("opens the circuit after three current-image failures and resets it for a new image", async () => {
+    const store = makeFakeStore();
+    store.seedProject({
+      id: "p",
+      orgId: "o",
+      repoOwner: "a",
+      repoName: "r",
+      repoInstallationId: "i",
+    });
+
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      const instance = await ensureAssistantInstance("p", store);
+      expect(instance.status).toBe("provisioning");
+      const job = await store.jobs.claimNext(new Date());
+      expect(job).toMatchObject({
+        kind: "assistant_deploy",
+        maxAttempts: 1,
+      });
+      await store.deployments.update(instance.deploymentId!, {
+        status: "failed",
+        errorDetail: `build failed ${attempt}`,
+      });
+      await markFailed(job!, `build failed ${attempt}`, store);
+    }
+
+    const blocked = await ensureAssistantInstance("p", store);
+    expect(blocked).toMatchObject({
+      status: "failed",
+      error: "build failed 3",
+    });
+    const stats = await store.jobs.statsByStatus();
+    expect(stats.failed ?? 0).toBe(3);
+    expect(stats.queued ?? 0).toBe(0);
+    expect(await peekAssistantInstance("p", store)).toMatchObject({
+      status: "failed",
+      retryable: false,
+    });
+
+    getWorkspaceAssistantSelection.mockResolvedValue({
+      model: "codex/abcdefghijkl/gpt-5.6-sol",
+      effort: null,
+    });
+    const reset = await ensureAssistantInstance("p", store);
+    expect(reset).toMatchObject({ status: "provisioning" });
+    expect(reset.deploymentId).not.toBe(blocked.deploymentId);
+    expect((await store.jobs.statsByStatus()).queued ?? 0).toBe(1);
   });
 
   it("recovers when a concurrent request wins the pending-insert race (#31)", async () => {
@@ -278,10 +337,12 @@ describe("assistant instance: stale live recovery", () => {
       deploymentId: first.deploymentId,
       url: "http://fresh.local",
     });
-    expect(await store.deployments.findById(first.deploymentId!)).toMatchObject({
-      status: "live",
-      url: "http://fresh.local",
-    });
+    expect(await store.deployments.findById(first.deploymentId!)).toMatchObject(
+      {
+        status: "live",
+        url: "http://fresh.local",
+      },
+    );
   });
 
   it("demotes an unwakeable row and provisions a replacement", async () => {
@@ -293,10 +354,12 @@ describe("assistant instance: stale live recovery", () => {
 
     expect(instance.status).toBe("provisioning");
     expect(instance.deploymentId).not.toBe(first.deploymentId);
-    expect(await store.deployments.findById(first.deploymentId!)).toMatchObject({
-      status: "stopped",
-      url: null,
-    });
+    expect(await store.deployments.findById(first.deploymentId!)).toMatchObject(
+      {
+        status: "stopped",
+        url: null,
+      },
+    );
   });
 
   it("trusts an inconclusive pending health answer", async () => {
@@ -427,10 +490,42 @@ describe("assistant instance: peek reports resumable, not first-run setup", () =
     expect(replacement.status).toBe("provisioning");
     await store.deployments.update(replacement.deploymentId!, {
       status: "failed",
+      errorDetail:
+        "invalid skill frontmatter at agent/skills/review/SKILL.md:2",
     });
 
     expect(await peekAssistantInstance("p", store)).toMatchObject({
       status: "failed",
+      error: "invalid skill frontmatter at agent/skills/review/SKILL.md:2",
+    });
+  });
+
+  it("lets a newer current-image failure override an older resumable row", async () => {
+    const store = makeFakeStore();
+    store.seedProject({
+      id: "p",
+      orgId: "o",
+      repoOwner: "a",
+      repoName: "r",
+      repoInstallationId: "i",
+    });
+    const older = await ensureAssistantInstance("p", store);
+    await store.deployments.update(older.deploymentId!, {
+      status: "stopped",
+    });
+    const failed = await store.deployments.insert({
+      environmentId: older.environmentId,
+      releaseId: older.releaseId!,
+      status: "failed",
+      trafficWeight: 0,
+    });
+    await store.deployments.update(failed.id, {
+      errorDetail: "newest build failed",
+    });
+
+    expect(await peekAssistantInstance("p", store)).toMatchObject({
+      status: "failed",
+      error: "newest build failed",
     });
   });
 
