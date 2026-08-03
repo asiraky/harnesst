@@ -48,7 +48,9 @@ import {
   type ListRepoPathsFn,
   type PublishFile,
 } from "~/drafts/drafts.server";
-import { detectAgentRoots, hasTeamLayout } from "~/eve/parse";
+import { orgResolverAgentName } from "~/eve/agentModule";
+import { detectAgentRoots, hasTeamLayout, TEAM_ROOT } from "~/eve/parse";
+import { cleanupSubagentOverrides } from "~/models/agent-model-config.server";
 import { syncProjectAgents } from "~/db/queries.server";
 import { getAgentSource, invalidateRepoSource, warmAgentSource } from "~/github/cached.server";
 import { fetchAgentSource, readAgentFile } from "~/github/repo.server";
@@ -107,6 +109,8 @@ export interface PublishPipelineDeps {
   removeProvisionalImages: typeof removeProvisionalImages;
   discardConversationCheckouts: typeof discardConversationCheckoutsForProject;
   enqueueJob: typeof enqueue;
+  /** Post-commit pruning of model overrides whose target the change-set deleted (issue #344). */
+  cleanupSubagentOverrides: typeof cleanupSubagentOverrides;
 }
 
 function defaultDeps(): PublishPipelineDeps {
@@ -141,6 +145,7 @@ function defaultDeps(): PublishPipelineDeps {
     removeProvisionalImages,
     discardConversationCheckouts: discardConversationCheckoutsForProject,
     enqueueJob: enqueue,
+    cleanupSubagentOverrides,
   };
 }
 
@@ -356,6 +361,85 @@ async function resolveLiveEnvironment(
   );
 }
 
+/** One configuration target a published change-set deleted outright (issue #344). */
+export interface RemovedModelTarget {
+  /** The member's roster name — the fallback key for its override rows. */
+  agentName: string;
+  /** The member's agent root, e.g. `agent` or `agents/planner/agent`. */
+  root: string;
+  /** `/`-joined declared-subagent segments; `""` when the whole member was removed. */
+  subagentPath: string;
+}
+
+/** `agent/subagents/a/subagents/b` → `a/b`; null when the directory is not a subagent root. */
+function subagentPathForDir(root: string, dir: string): string | null {
+  const segments = dir.slice(root.length + 1).split("/");
+  if (segments.length === 0 || segments.length % 2 !== 0) return null;
+  const path: string[] = [];
+  for (let i = 0; i < segments.length; i += 2) {
+    if (segments[i] !== "subagents" || !segments[i + 1]) return null;
+    path.push(segments[i + 1]);
+  }
+  return path.join("/");
+}
+
+/**
+ * The targets this change-set deletes OUTRIGHT: a declared subagent directory (at any depth)
+ * whose every published file is gone, and a member whose whole root is gone. Deliberately
+ * computed from what actually lands — a deletion is only irreversible once it is committed, so
+ * the override rows survive every pre-publish stage/undo of the same files.
+ *
+ * Descendants are dropped: pruning is by prefix, so the shallowest removed root covers them.
+ */
+export function removedModelTargets(
+  agents: { name: string; root: string; kind: string }[],
+  repoPaths: string[],
+  files: PublishFile[],
+): RemovedModelTarget[] {
+  const deleted = new Set(
+    files.filter((f) => f.content === null).map((f) => f.path),
+  );
+  if (deleted.size === 0) return [];
+  const surviving = [
+    ...repoPaths.filter((p) => !deleted.has(p)),
+    ...files.filter((f) => f.content !== null).map((f) => f.path),
+  ];
+  const gone = (prefix: string) => !surviving.some((p) => p.startsWith(prefix));
+  const targets: RemovedModelTarget[] = [];
+  for (const agent of agents) {
+    if (agent.kind !== "member") continue;
+    // The member's whole directory (the team root, not just the agent root, so a removed
+    // member's package.json counts) — its subagent rows go with it.
+    const memberPrefix = agent.root.startsWith(`${TEAM_ROOT}/`)
+      ? `${agent.root.slice(0, agent.root.lastIndexOf("/"))}/`
+      : `${agent.root}/`;
+    if (gone(memberPrefix)) {
+      targets.push({ agentName: agent.name, root: agent.root, subagentPath: "" });
+      continue;
+    }
+    const roots = new Set<string>();
+    for (const path of deleted) {
+      if (!path.startsWith(`${agent.root}/subagents/`)) continue;
+      const segments = path.split("/");
+      // Every `subagents/<name>` level this deletion sits under is a candidate root.
+      for (let i = agent.root.split("/").length + 2; i <= segments.length - 1; i += 2) {
+        const dir = segments.slice(0, i).join("/");
+        const subagentPath = subagentPathForDir(agent.root, dir);
+        if (subagentPath !== null && gone(`${dir}/`)) roots.add(subagentPath);
+      }
+    }
+    for (const subagentPath of roots) {
+      const shadowed = [...roots].some(
+        (other) => other !== subagentPath && subagentPath.startsWith(`${other}/`),
+      );
+      if (!shadowed) {
+        targets.push({ agentName: agent.name, root: agent.root, subagentPath });
+      }
+    }
+  }
+  return targets;
+}
+
 /** The commit message, matching the old change-set titles (§2.6: history quality unchanged). */
 function commitMessage(files: PublishFile[]): string {
   if (files.length === 1) {
@@ -542,8 +626,14 @@ export async function runPublish(
     await save();
     let files: PublishFile[];
     let envName: string | null = null;
+    // The published tree as it stood BEFORE this change-set — reused after the commit to tell a
+    // deletion that emptied a subagent directory from one that only pruned part of it.
+    let repoPaths: string[] = [];
+    // Set when the CAS retry could not re-read that snapshot: the prune then reads a tree that no
+    // longer describes the branch it committed onto, so it is skipped instead of guessing.
+    let repoPathsStale = false;
     try {
-      const repoPaths = await deps.listRepoPaths({
+      repoPaths = await deps.listRepoPaths({
         installationId,
         owner: connected.repoOwner,
         repo: connected.repoName,
@@ -661,6 +751,24 @@ export async function runPublish(
           await save();
           return outcome;
         }
+        // The head moved, so the pre-change tree snapshot taken during `check` no longer describes
+        // what this commit lands on — and the post-commit override prune reads exactly that
+        // snapshot to decide whether a target still exists (issue #344). Refresh it against the
+        // new base; if the read fails, mark it stale and skip the prune rather than pruning a
+        // target the other commit just added. Never fails the publish: the commit is the point.
+        try {
+          repoPaths = await deps.listRepoPaths({
+            installationId,
+            owner: connected.repoOwner,
+            repo: connected.repoName,
+          });
+        } catch (refreshError) {
+          repoPathsStale = true;
+          console.warn(
+            "[publish] couldn't refresh the repo tree after a CAS retry; skipping override prune:",
+            refreshError,
+          );
+        }
         commitStep.status = "running";
         delete commitStep.detail;
         await save();
@@ -700,6 +808,38 @@ export async function runPublish(
       }
     }
     await succeed("commit");
+
+    // Now — and only now — a deletion is irreversible: prune the model overrides whose target
+    // this change-set removed (issue #344). Best-effort: an orphaned override row must never
+    // turn a landed publish into a failed one.
+    try {
+      for (const target of repoPathsStale
+        ? []
+        : removedModelTargets(agents, repoPaths, files)) {
+        // Override rows are keyed by the name the MEMBER's module resolves itself by, which a
+        // rename can leave different from the roster name — prune both. Read at the PRE-COMMIT
+        // anchor: this commit is what deleted the module, so the branch head no longer has it
+        // (issue #344), and that is true for a removed member exactly as it is for a subagent.
+        const names = new Set([target.agentName]);
+        const module = await deps.readRepoFile(
+          installationId,
+          { ...repo, ref: baseHeadSha ?? undefined },
+          `${target.root}/agent.ts`,
+        );
+        const resolver = module ? orgResolverAgentName(module) : null;
+        if (resolver) names.add(resolver);
+        for (const agentName of names) {
+          await deps.cleanupSubagentOverrides(
+            connected.orgId,
+            connected.id,
+            agentName,
+            target.subagentPath,
+          );
+        }
+      }
+    } catch (error) {
+      console.warn("[publish] committed but couldn't prune model overrides:", error);
+    }
 
     // A published set touching the assistant's config restarts its instance so the entrypoint
     // re-fetches the bundle (direct commits fire no webhook — this is the only trigger).

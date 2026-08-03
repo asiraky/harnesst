@@ -250,7 +250,11 @@ export function readModel(source: string): string | null {
 // from harnesst's org configuration, so the agent file itself never carries a model string.
 // Deliberately matched on the CALL, never on the import specifier: the module moved out of the
 // agent root in #254, and a repo mid-relocation still resolves its model the same way.
-const ORG_MODEL_RESOLVER = /\bmodel\s*:\s*harnesstAgentModel\s*\(\s*(['"`])([^'"`]*)\1/;
+// The optional SECOND argument is a declared subagent's own path below the parent's agent root
+// (issue #344) — absent in every pre-#344 module, which is exactly what marks one as needing the
+// upgrade rewrite before its own selection can reach the runtime.
+const ORG_MODEL_RESOLVER =
+  /\bmodel\s*:\s*harnesstAgentModel\s*\(\s*(['"`])([^'"`]*)\1(?:\s*,\s*(['"`])([^'"`]*)\3)?/;
 
 /**
  * True when the module's model is resolved through the workspace configuration
@@ -261,10 +265,62 @@ export function usesOrgModelResolver(source: string | null | undefined): boolean
   return typeof source === "string" && ORG_MODEL_RESOLVER.test(source);
 }
 
+/**
+ * eve's DYNAMIC SUBAGENT declaration: a subagent module whose default export is
+ * `defineDynamic(...)` is offered to a session only when its predicate says so, rather than being
+ * permanently available. Deliberately anchored on the DEFAULT EXPORT — `MODEL_DYNAMIC` above
+ * matches harnesst's unrelated `model: defineDynamic(...)` wrapper, and every harnesst-written
+ * agent module carries one, so an unanchored test would call every subagent dynamic.
+ */
+const DYNAMIC_SUBAGENT = /export\s+default\s+defineDynamic\s*\(/;
+
+/**
+ * True when this subagent module is declared dynamically (see `DYNAMIC_SUBAGENT`). The UI shows
+ * a "dynamic availability" badge for these: claiming a session-dependent capability is always
+ * active would misreport what the agent can actually do (issue #344).
+ */
+export function isDynamicSubagentModule(source: string | null | undefined): boolean {
+  return typeof source === "string" && DYNAMIC_SUBAGENT.test(source);
+}
+
 /** The agent name a `model: harnesstAgentModel('<name>')` module resolves itself by, or null. */
 export function orgResolverAgentName(source: string): string | null {
   const match = source.match(ORG_MODEL_RESOLVER);
   return match ? match[2] : null;
+}
+
+/**
+ * The full configuration target a resolver module asks harnesst for: the agent name and, for a
+ * declared subagent that has been upgraded to the two-argument call, its own subagent path.
+ * A module that passes only a name reads back as `subagentPath: ""` — it resolves the AGENT's
+ * target and therefore inherits, which is what tells the write path an upgrade rewrite is due.
+ */
+export function orgResolverTarget(
+  source: string,
+): { agentName: string; subagentPath: string } | null {
+  const match = source.match(ORG_MODEL_RESOLVER);
+  return match ? { agentName: match[2], subagentPath: match[4] ?? "" } : null;
+}
+
+/**
+ * Upgrade a resolver module's call to name its own target: `harnesstAgentModel('<parent>')` →
+ * `harnesstAgentModel('<parent>', '<subagentPath>')` (and back, with `""`). Only the resolver
+ * call is touched — everything else the subagent authored is left exactly as written. Returns
+ * the source unchanged when there is no resolver call, so callers can use identity to decide
+ * whether the file needs staging at all.
+ */
+export function setOrgResolverSubagentPath(
+  source: string,
+  subagentPath: string,
+): string {
+  const safe = subagentPath.replace(/['"`\\]/g, "");
+  // The match stops at the last argument's closing quote — the call's `)` is not part of it and
+  // must not be re-emitted.
+  return source.replace(ORG_MODEL_RESOLVER, (_match, quote: string, name: string) =>
+    safe
+      ? `model: harnesstAgentModel(${quote}${name}${quote}, ${quote}${safe}${quote}`
+      : `model: harnesstAgentModel(${quote}${name}${quote}`,
+  );
 }
 
 /** Read harnesst's explicit fallback reasoning effort, or null for provider default. */

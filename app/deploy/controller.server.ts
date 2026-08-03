@@ -148,6 +148,7 @@ function isReservedModelEnvName(name: string): boolean {
     /^HARNESST_PROVIDER_.*_API_KEY$/.test(name) ||
     name === "HARNESST_MODEL_GATEWAY_URL" ||
     name === "HARNESST_MODEL_GATEWAY_TOKEN" ||
+    name === "HARNESST_PROJECT_ID" ||
     name === "HARNESST_MODEL_DIRECTIVE_SECRET"
   );
 }
@@ -478,9 +479,14 @@ export async function deployRelease(
     // shadowing like HARNESST_SANDBOX_ENV): strip any user-set values first, then set.
     delete envVars.HARNESST_MODEL_GATEWAY_URL;
     delete envVars.HARNESST_MODEL_GATEWAY_TOKEN;
+    // The project id rides along (issue #344): the gateway token proves only the ORG, so this is
+    // what scopes a model lookup to THIS repo when two repos in the workspace hold an agent of
+    // the same name. Harnesst-owned like the coordinates above.
+    delete envVars.HARNESST_PROJECT_ID;
     if (project) {
       envVars.HARNESST_MODEL_GATEWAY_URL = gatewayBaseUrl();
       envVars.HARNESST_MODEL_GATEWAY_TOKEN = mintGatewayToken(project.orgId);
+      envVars.HARNESST_PROJECT_ID = project.id;
     }
     delete envVars.HARNESST_MODEL_DIRECTIVE_SECRET;
     if (project && deps.modelDirectiveSecret) {

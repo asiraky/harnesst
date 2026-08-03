@@ -56,7 +56,7 @@ import {
 import { isReasoningEffort, type ReasoningEffort } from "~/models/reasoning";
 import {
   listAgentModelOverrides,
-  removeAgentModelOverride,
+  removeAgentModelOverrideRow,
   type AgentModelOverride,
 } from "~/models/agent-model-config.server";
 import {
@@ -87,6 +87,7 @@ import {
   tokensUsedSince,
   type SpendLimit,
 } from "~/managed/billing.server";
+import { listProjects } from "~/db/queries.server";
 import { getRuntime } from "~/seams/index.server";
 import type { auditLog } from "~/db/schema";
 import type { HarnesstMode } from "~/seams/types";
@@ -105,12 +106,19 @@ interface OrgSettingsView {
   assistantModel: string | null;
   assistantEffort: ReasoningEffort | null;
   /** Per-agent model overrides — the explicit exceptions to the workspace default. */
-  agentOverrides: AgentModelOverride[];
+  agentOverrides: AgentOverrideView[];
   /** Connected model providers (issue #28) — display metadata only, never a token. */
   connections: ModelConnection[];
   /** Better Auth organization:update permission for the active workspace. */
   canManage: boolean;
 }
+
+/**
+ * One listed override row. Two repos in a workspace may each pin the same agent name, so the row
+ * carries the repo it belongs to — both to tell them apart and because removal keys it
+ * (issue #344). `repoName` is null for a legacy row that belongs to no repo in particular.
+ */
+type AgentOverrideView = AgentModelOverride & { repoName: string | null };
 
 async function canManageWorkspace(
   organizationId: string,
@@ -158,6 +166,7 @@ export const loader = (args: LoaderFunctionArgs) =>
         agentOverrides,
         connections,
         canManage,
+        orgProjects,
       ] = await Promise.all([
         getSpendLimit(org.id),
         tokensUsedSince(org.id),
@@ -166,7 +175,9 @@ export const loader = (args: LoaderFunctionArgs) =>
         listAgentModelOverrides(org.id),
         listModelConnections(org.id),
         canManageWorkspace(org.id, auth.requestHeaders),
+        listProjects(org.id).catch(() => []),
       ]);
+      const repoNames = new Map(orgProjects.map((p) => [p.id, p.name]));
       return {
         org,
         mode: getRuntime().mode,
@@ -175,7 +186,10 @@ export const loader = (args: LoaderFunctionArgs) =>
         audit,
         assistantModel: assistantSelection.model,
         assistantEffort: assistantSelection.effort,
-        agentOverrides,
+        agentOverrides: agentOverrides.map((o) => ({
+          ...o,
+          repoName: repoNames.get(o.projectId) ?? null,
+        })),
         connections,
         canManage,
       };
@@ -269,7 +283,13 @@ export async function action(args: ActionFunctionArgs) {
         .filter(
           (o) => parseProviderModelReference(o.model)?.connectionId === id,
         )
-        .map((o) => removeAgentModelOverride(org.id, o.agentName)),
+        .map((o) =>
+          removeAgentModelOverrideRow(org.id, {
+            agentName: o.agentName,
+            subagentPath: o.subagentPath,
+            projectId: o.projectId,
+          }),
+        ),
     );
     await deleteModelConnection(org.id, id);
     await invalidateOrganizationEnvironments({
@@ -320,12 +340,22 @@ export async function action(args: ActionFunctionArgs) {
   if (intent === "remove-agent-model-override") {
     const agentName = String(form.get("agentName") ?? "").trim();
     if (!agentName) return { error: "No agent specified." };
-    await removeAgentModelOverride(org.id, agentName);
+    // The full row key: a declared subagent's row lives under the same agent name, and two repos
+    // in this workspace may each hold a row for the same name — remove exactly the listed one
+    // (issue #344). `projectId` is `''` for a legacy, repo-less row.
+    const subagentPath = String(form.get("subagentPath") ?? "").trim();
+    const projectId = String(form.get("projectId") ?? "").trim();
+    await removeAgentModelOverrideRow(org.id, {
+      agentName,
+      subagentPath,
+      projectId,
+    });
     await recordAudit({
       orgId: org.id,
       actorUserId: auth.user.id,
       action: "agent_model_override_removed",
-      target: agentName,
+      target: subagentPath ? `${agentName}/${subagentPath}` : agentName,
+      meta: { projectId: projectId || "(any repo)" },
     });
     return { ok: true as const };
   }
@@ -625,23 +655,25 @@ export default function OrgSettings({ loaderData }: Route.ComponentProps) {
 
 /**
  * Per-agent model overrides — the workspace's explicit exceptions to the default model. Each
- * row pins one agent name to a model; the X removes the pin so the agent falls back to the
- * default. Agents resolve this map at runtime by name (subagents by their parent's name), so
- * every change lands on running agents within seconds, with no repo change and no redeploy.
+ * row pins one target to a model; the X removes the pin so that target falls back to what it
+ * inherits. A target is an agent, or a declared subagent shown as `<agent> › <path>` (issue
+ * #344) — a subagent with no row of its own follows its parent and never appears here. Agents
+ * resolve this map at runtime, so every change lands on running agents within seconds, with no
+ * repo change and no redeploy.
  */
 function AgentOverridesSection({
   overrides,
   canManage,
 }: {
-  overrides: AgentModelOverride[];
+  overrides: AgentOverrideView[];
   canManage: boolean;
 }) {
   return (
     <div className="max-w-xl space-y-3 border-t pt-4">
       <Label>Per-agent model overrides</Label>
       <p className="text-xs text-muted-foreground">
-        Only agents explicitly pinned in Agent Settings appear here. Subagents
-        follow their parent agent.
+        Only targets explicitly pinned in Agent Settings appear here. A subagent
+        with no pin of its own follows its parent agent.
       </p>
       {overrides.length === 0 ? (
         <div className="rounded-lg border border-dashed p-3 text-sm text-muted-foreground">
@@ -651,7 +683,7 @@ function AgentOverridesSection({
         <ul className="divide-y rounded-lg border">
           {overrides.map((override) => (
             <AgentOverrideRow
-              key={override.agentName}
+              key={`${override.projectId}\u0000${override.agentName}\u0000${override.subagentPath}`}
               override={override}
               canManage={canManage}
             />
@@ -667,20 +699,33 @@ function AgentOverrideRow({
   override,
   canManage,
 }: {
-  override: AgentModelOverride;
+  override: AgentOverrideView;
   canManage: boolean;
 }) {
   const fetcher = useFetcher<typeof action>();
   const busy = fetcher.state !== "idle";
   return (
     <li className="flex flex-wrap items-center gap-x-4 gap-y-1 px-3 py-2">
-      <span className="min-w-28 font-mono text-sm">{override.agentName}</span>
+      <span className="min-w-28 font-mono text-sm">
+        {override.agentName}
+        {override.subagentPath && (
+          <span className="text-muted-foreground">
+            {" \u203a "}
+            {override.subagentPath}
+          </span>
+        )}
+      </span>
       <div className="min-w-0 flex-1">
         <div className="truncate font-mono text-sm text-muted-foreground">
           {override.model}
         </div>
         <div className="text-xs text-muted-foreground">
           {override.effort ?? "Provider default"} reasoning
+          {override.repoName
+            ? ` \u00b7 ${override.repoName}`
+            : override.projectId
+              ? " \u00b7 removed repo"
+              : " \u00b7 any repo (legacy)"}
         </div>
       </div>
       {canManage && (
@@ -694,6 +739,8 @@ function AgentOverrideRow({
               {
                 intent: "remove-agent-model-override",
                 agentName: override.agentName,
+                subagentPath: override.subagentPath,
+                projectId: override.projectId,
               },
               { method: "post" },
             )
