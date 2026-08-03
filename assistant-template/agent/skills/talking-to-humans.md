@@ -1,5 +1,5 @@
 ---
-description: Load before building ANY agent↔human or agent↔agent communication — an agent that talks or replies back in a session or chat, messages/notifies/updates someone, asks a question, waits for an answer, pauses for approval or sign-off, checks in, escalates, hands off, or delegates to another agent — and whenever a request mentions Front of House, sessions, the inbox, needs-you, human-in-the-loop, ask_question, contact-user, or ask-teammate. Covers how an agent reaches a human mid-task (eve's native HITL parking), how it opens a conversation itself (contact-user), how harnesst surfaces and answers it, which entry points may safely park and which stall, and the delegation contract.
+description: Load before building ANY agent↔human or agent↔agent communication — an agent that talks or replies back in a session or chat, messages/notifies/updates someone, asks a question, waits for an answer, pauses for approval or sign-off, checks in, escalates, hands off, or delegates to another agent — and whenever a request mentions Front of House, sessions, the inbox, needs-you, human-in-the-loop, ask_question, notify-user, or ask-teammate. Covers how an agent reaches a human mid-task (eve's native HITL parking), how it opens a conversation itself (notify-user), how harnesst surfaces and answers it, which entry points may safely park and which stall, and the delegation contract.
 ---
 
 # Talking to humans (and teammates) in harnesst
@@ -19,18 +19,18 @@ email, or any other channel unless the user names it.
 
 Communication rides four mechanisms:
 
-| Direction                 | Mechanism                                                                                                        |
-| ------------------------- | ---------------------------------------------------------------------------------------------------------------- |
-| Human → agent             | An FOH session is an ordinary eve durable session; the human's message arrives as a normal turn.                 |
-| Agent → human (blocking)  | eve's **built-in HITL**: `ask_question` (or a tool-approval gate) emits `input.requested` and parks the session. |
-| Agent → human (notify)    | The **`contact-user`** tool, baked into every image by harnesst — fire-and-forget, opens an FOH conversation.    |
-| Agent → agent             | The **`ask-teammate`** tool, which harnesst bakes into every team member's image at build time.                  |
+| Direction                | Mechanism                                                                                                        |
+| ------------------------ | ---------------------------------------------------------------------------------------------------------------- |
+| Human → agent            | An FOH session is an ordinary eve durable session; the human's message arrives as a normal turn.                 |
+| Agent → human (blocking) | eve's **built-in HITL**: `ask_question` (or a tool-approval gate) emits `input.requested` and parks the session. |
+| Agent → human (notify)   | The **`notify-user`** tool, baked into every image by harnesst — fire-and-forget, opens an FOH conversation.     |
+| Agent → agent            | The **`ask-teammate`** tool, which harnesst bakes into every team member's image at build time.                  |
 
 ## Asking a human a question
 
 Use eve's built-in `ask_question`. Never author a tool in the repo that POSTs a question or message
 to harnesst or anywhere else — the only agent→human tools are the ones harnesst itself generates into
-the image (`contact-user`, like `ask-teammate` below), and they are never written by hand.
+the image (`notify-user`, like `ask-teammate` below), and they are never written by hand.
 
 When it fires, eve parks the durable session and harnesst (which holds the session handle, because it
 started the turn) marks the session needs-you, files an inbox item, and badges the agent. The human
@@ -57,28 +57,30 @@ The parked question is delivered by **whichever channel started the session**:
   inbox item; whoever answers in FOH resumes the channel-homed session. ✅
 - **A schedule, or a channel with no documented park** → nobody owns the ask; the session parks
   and the run stalls with no human anywhere. ❌ If the run only needs to _tell_ the human something,
-  `contact-user` is the escape hatch — it never parks. A blocking ask still stalls.
+  `notify-user` is the escape hatch — it never parks. A blocking ask still stalls.
 
 Whether a given channel can park into FOH is documented **in that channel's installed skill**
 (`skills/harnesst-installed-<template-id>.md`) — check it before designing. `ask_question` is the only
 _blocking_ agent→human API; the park is delivered by whichever channel homed the session, so the
-channel's skill is the ground truth for what happens to it. `contact-user` bypasses the channel
+channel's skill is the ground truth for what happens to it. `notify-user` bypasses the channel
 entirely — it posts to FOH directly from any entry point.
 
-Any run, attended or not, can open a conversation with a human: `contact-user` posts a message that
+Any run, attended or not, can open a conversation with a human: `notify-user` posts a message that
 lands as an inbox notice and opens an FOH session the human picks up on their own time. Choose by
-whether the run can continue without the human: "notify me when X" is `contact-user` — fire the
+whether the run can continue without the human: "notify me when X" is `notify-user` — fire the
 notification and finish the run; the human's reply (if any) starts a fresh conversation with your
 message as context. A decision the run cannot proceed without is `ask_question` — it blocks, and it
 needs an entry point that can park (the ✅ rows above). When a human asks for "check with me before
 doing X", establish which entry point X runs on before choosing the mechanism.
 
-Completion needs no work at all: finishing a turn files a "finished" item in the human's inbox. The
-final message is what the human reads — make it a real answer, not a status ping.
+Do not invent a confirmation question to deliver a notification. A reply in an already-visible FOH
+conversation needs no extra notification; for work from another entry point, use `notify-user` when
+the human should see completion, a UAT or preview link, a finding, status change, or a blocker already
+recorded in the durable workflow ledger.
 
-## Opening a conversation with a human (`contact-user`)
+## Opening a conversation with a human (`notify-user`)
 
-`agent/tools/contact-user.ts` is **generated by harnesst into every image at build time**, with the
+`agent/tools/notify-user.ts` is **generated by harnesst into every image at build time**, with the
 notify endpoint and credentials supplied as env. Never write, copy, scaffold, or edit a file at that
 path — a repo file there overrides the generated tool and silently breaks it. It simply appears in
 every deployed agent's toolset.
@@ -90,7 +92,9 @@ with the notification as its opening context — a different session from the ru
 message must be self-contained (say what happened and what, if anything, you want from them).
 
 Use it for news, not decisions: `ask_question` when the run must stop until a human chooses;
-`contact-user` when the run can finish and the human just needs to know.
+`notify-user` when the run can finish and the human just needs to know. A notification does not
+replace durable workflow evidence: when a GitHub comment, label, or other system-of-record update is
+required, write that record as well and include its link in the self-contained notification.
 
 ## Delegating to a teammate
 
@@ -117,7 +121,7 @@ What the agent's instructions should account for:
 - "The agent should be able to ask me" needs **no new tool and no new channel** — it needs
   `ask_question` used at the right decision points, and the work reaching it through FOH, a
   delegation, or a channel whose installed skill documents FOH park.
-- "The agent should be able to message me" needs nothing either — `contact-user` is already in
+- "The agent should be able to message me" needs nothing either — `notify-user` is already in
   every image; the authoring work is deciding when a notification is worth the human's attention.
 - "The agent should be able to hand work to another agent" needs nothing either, beyond the repo being
   a team.

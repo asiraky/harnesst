@@ -1,5 +1,5 @@
 /**
- * Agent-initiated conversations (#288 3c) — the control-plane half of the baked `contact-user`
+ * Agent-initiated conversations (#288 3c) — the control-plane half of the baked `notify-user`
  * tool. An agent on any run POSTs `{message, title?}` to `/api/foh/notify`; this opens a Front
  * of House conversation carrying the message and files a `notice` inbox item so a human finds
  * it from the bell. The row has NO eve session — the human's first reply seeds a fresh

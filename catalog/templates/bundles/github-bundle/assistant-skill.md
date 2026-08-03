@@ -1,5 +1,6 @@
 ---
-description: Load when an agent uses the GitHub bundle (GitHub App channel + gh CLI + App
+description:
+  Load when an agent uses the GitHub bundle (GitHub App channel + gh CLI + App
   auth) and the request involves reacting to repo events (issues, labels, PRs, merges,
   deploys), working repos as the App, or reporting back to a human — "message me when",
   "notify me once the PR merges", "tell me when it's deployed", "check with me before".
@@ -13,9 +14,10 @@ identity).
 
 **The channel can park into Front of House.** A turn it started may call `ask_question`; the
 question lands as a team-wide needs-you inbox item, a human answers in FOH, and the session
-resumes. This is the supported way for webhook-triggered work to message a human — use it for
-notifications too: end the run with a confirmation-style ask ("Merged and deployed PR #42 —
-anything else?"). Never route to Discord/email unless asked.
+resumes. Use it only when the current run cannot continue without that answer. For a result,
+milestone, UAT packet, finding, or recorded blocker, call the generated `notify-user` tool
+instead; it opens a new unread FOH conversation without parking the run. Never invent a
+confirmation question as a notification or route to Discord/email unless asked.
 
 **What wakes the agent:** an `@mention` of the App's slug in an issue/PR comment; and, per the
 channel settings panel on the Deployment tab, configured labels being present on an issue/PR,
@@ -29,4 +31,6 @@ issue's labels snapshot instead.
    apply a configured label when X occurs; the label wakes the agent.
 2. In `instructions.md`: on that wake, verify the condition against the live GitHub state
    (don't trust the wake alone), then
-3. finish with one self-contained `ask_question` carrying links — that IS the notification.
+3. write any required durable GitHub evidence (comment, label, or other workflow state), then call
+   `notify-user` with one self-contained message carrying the relevant links and context. The
+   notification does not replace the GitHub record and returns without waiting for a reply.

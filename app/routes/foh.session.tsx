@@ -190,7 +190,7 @@ export const loader = (args: LoaderFunctionArgs) =>
         }
       }
 
-      // Agent-opened rows (#288 3c): the contact-user notification renders as the agent's
+      // Agent-opened rows (#288 3c): the notify-user notification renders as the agent's
       // opening entry — before any eve session exists (the whole transcript), and still on
       // top once a reply has seeded one (the seed block carrying it into eve is stripped
       // from replay, so without this the notification would vanish from the conversation).

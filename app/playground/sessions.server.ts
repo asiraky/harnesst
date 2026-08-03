@@ -728,7 +728,7 @@ export async function createPlaygroundSession(input: {
   status?: "running" | "waiting" | "completed" | "failed";
   pendingInputAt?: Date | null;
   lastEventAt?: Date | null;
-  /** Agent-initiated rows (#288 3c): the contact-user notification that opened the session. */
+  /** Agent-initiated rows (#288 3c): the notify-user notification that opened the session. */
   openingMessage?: string | null;
 }): Promise<PlaygroundSession> {
   const [row] = await db
