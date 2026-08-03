@@ -654,7 +654,6 @@ export function connectionCallbackLoader(
 
       const params: Record<string, string> = { connected: provider.id };
       if (outcome.status === "redeployed") params.redeploy = "queued";
-      else if (outcome.status === "staged") params.redeploy = "staged";
       else if (outcome.status === "error") {
         params.redeploy = "error";
         params.redeployError = outcome.message.slice(0, 200);

@@ -286,7 +286,6 @@ export function resourcePickerAction(
       }
       const params = new URLSearchParams({ connected: ctx.provider.id });
       if (outcome.status === "redeployed") params.set("redeploy", "queued");
-      else if (outcome.status === "staged") params.set("redeploy", "staged");
       else if (outcome.status === "error") {
         params.set("redeploy", "error");
         params.set("redeployError", outcome.message.slice(0, 200));

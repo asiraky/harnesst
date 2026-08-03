@@ -811,16 +811,18 @@ export async function deployRelease(
         dep.id,
       );
       return store.deployments.update(dep.id, {
-        status: health.status,
+        // deployRelease has no asynchronous continuation for a non-live answer, and cleanup has
+        // already torn down the attempted instance. Persisting `pending`/`stopped` here would hold
+        // the in-flight uniqueness slot forever, so every non-live result is terminally failed.
+        status: "failed",
         url: health.url ?? null,
         errorDetail:
-          health.status === "failed"
-            ? [health.detail, cleanupError && `cleanup failed: ${cleanupError}`]
-                .filter(Boolean)
-                .join("; ") || null
-            : cleanupError
-              ? `cleanup failed: ${cleanupError}`
-              : null,
+          [
+            health.detail ?? `deployment target returned ${health.status}`,
+            cleanupError && `cleanup failed: ${cleanupError}`,
+          ]
+            .filter(Boolean)
+            .join("; ") || null,
       });
     }
 

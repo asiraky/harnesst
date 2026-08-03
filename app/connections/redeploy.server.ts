@@ -13,27 +13,25 @@
  * image but re-creates the container with freshly-resolved env, which re-reads the grant and
  * re-injects the fresh refresh token via `connectionGrantEnv`.
  *
- * Three guards Aaron called out:
+ * Two outcomes remain guarded:
  *  - agent not currently deployed → connect only, no redeploy ("not-deployed").
  *  - the redeploy queue itself fails → surface it ("error"); the grant is already saved regardless.
- *  - staged drafts affecting this agent exist → do NOT silently redeploy the old committed version;
- *    return "staged" so the UI prompts the user to deliberately publish/redeploy. (Queueing an existing
- *    release never publishes drafts, but honoring the guard keeps the user in control of what goes live.)
+ * Staged drafts no longer suppress invalidation (#236): replacing a container with its already-live
+ * release does not publish those drafts, while suppressing the desired revision can freeze stale
+ * credentials indefinitely.
  *
  * Deps are injected so the decision logic is unit-testable with fakes; `defaultDeps()` wires the
  * real server modules.
  */
-import type { DraftChange, Environment, DeploymentWithRelease } from "~/data/ports";
+import type { Environment, DeploymentWithRelease } from "~/data/ports";
 import { invalidateAgentEnvironments } from "~/deploy/env-reconcile.server";
 
 export type RedeployAfterConnectOutcome =
   | { status: "not-deployed" }
-  | { status: "staged" }
   | { status: "redeployed"; envNames: string[] }
   | { status: "error"; message: string };
 
 export interface RedeployAfterConnectDeps {
-  listDrafts: (projectId: string) => Promise<DraftChange[]>;
   listAgentEnvironments: (agentId: string) => Promise<Environment[]>;
   listDeployments: (environmentId: string) => Promise<DeploymentWithRelease[]>;
   invalidate: typeof invalidateAgentEnvironments;
@@ -41,7 +39,6 @@ export interface RedeployAfterConnectDeps {
 
 function defaultDeps(): RedeployAfterConnectDeps {
   return {
-    listDrafts: (projectId) => import("~/drafts/drafts.server").then((m) => m.listDrafts(projectId)),
     listAgentEnvironments: (agentId) => import("~/db/queries.server").then((m) => m.listAgentEnvironments(agentId)),
     listDeployments: (environmentId) =>
       import("~/deploy/controller.server").then((m) => m.listDeployments(environmentId)),
@@ -87,14 +84,7 @@ export async function redeployAfterConnect(
     }
   }
 
-  // 3. Staged-changes guard: a draft affecting this agent (its own, or a shared/null-agent file)
-  //    means redeploying the old committed version would ignore work the user hasn't published —
-  //    hand it back to the UI to prompt, rather than silently redeploying.
-  const drafts = await deps.listDrafts(input.projectId);
-  const affectsAgent = drafts.some((d) => d.agentId === input.agentId || d.agentId === null);
-  if (affectsAgent) return { status: "staged" };
-
-  // 4. Persist desired-env invalidation; the durable reconciler coalesces races and redeploys.
+  // 3. Persist desired-env invalidation; the durable reconciler coalesces races and redeploys.
   try {
     await deps.invalidate({
       agentIds: [input.agentId],
