@@ -98,21 +98,31 @@ import { z } from "zod";
 // variability arrives via env — do not edit; a repo file at this path overrides it.
 
 /** Parse HARNESST_TEAMMATES defensively — any malformed value yields an empty roster. */
-function loadTeammates() {
+type Teammate = { name: string; role: string };
+
+function loadTeammates(): Teammate[] {
   try {
     const raw = process.env.HARNESST_TEAMMATES;
     if (!raw) return [];
-    const parsed = JSON.parse(raw);
+    const parsed: unknown = JSON.parse(raw);
     if (!Array.isArray(parsed)) return [];
     return parsed
-      .filter((t) => t && typeof t.name === "string")
-      .map((t) => ({ name: t.name, role: typeof t.role === "string" ? t.role : "" }));
+      .filter(
+        (teammate: unknown): teammate is { name: string; role?: unknown } =>
+          teammate !== null &&
+          typeof teammate === "object" &&
+          typeof (teammate as { name?: unknown }).name === "string",
+      )
+      .map((teammate) => ({
+        name: teammate.name,
+        role: typeof teammate.role === "string" ? teammate.role : "",
+      }));
   } catch {
     return [];
   }
 }
 
-function buildDescription(teammates) {
+function buildDescription(teammates: Teammate[]) {
   if (teammates.length === 0) {
     return ${JSON.stringify(spec.empty)};
   }
@@ -172,7 +182,9 @@ ${spec.timeoutSource}
     } catch (error) {
       return {
         ok: false,
-        error: "Couldn't reach your teammate: " + (error && error.message ? error.message : String(error)),
+        error:
+          "Couldn't reach your teammate: " +
+          (error instanceof Error ? error.message : String(error)),
       };
     }
   },
@@ -247,7 +259,9 @@ export default defineTool({
     } catch (error) {
       return {
         ok: false,
-        error: "Couldn't reach harnesst: " + (error && error.message ? error.message : String(error)),
+        error:
+          "Couldn't reach harnesst: " +
+          (error instanceof Error ? error.message : String(error)),
       };
     }
   },

@@ -36,7 +36,7 @@ describe("repo scaffold", () => {
     // The member resolves its model from harnesst's workspace configuration by NAME — no model
     // string anywhere in the repo.
     expect(agentTs).toContain("harnesstAgentModel('assistant')");
-    expect(agentTs).toContain("from '../harnesst/model'");
+    expect(agentTs).toContain("from '../harnesst/model.js'");
     const moduleTs = files.find((file) =>
       file.path.endsWith("harnesst/model.ts"),
     )?.content;

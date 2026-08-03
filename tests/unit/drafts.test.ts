@@ -13,6 +13,7 @@ import {
   findOrphanedDrafts,
   getDraft,
   inferBuildRoots,
+  normalizeOrgModelImportDrafts,
   listDrafts,
   normalizeOpenRouterPackageDrafts,
   relocateLegacyModelModuleDrafts,
@@ -481,10 +482,10 @@ describe("relocateLegacyModelModuleDrafts (issue #254)", () => {
       content: null,
     });
     expect(find(files, "agents/ivy/agent/agent.ts")?.content).toContain(
-      "from '../harnesst/model'",
+      "from '../harnesst/model.js'",
     );
     expect(find(files, "agents/ivy/agent/subagents/quinn/agent.ts")?.content).toContain(
-      "from '../../../harnesst/model'",
+      "from '../../../harnesst/model.js'",
     );
     // Untouched files ride through unchanged.
     expect(find(files, "agents/ivy/harnesst/github-channel.ts")?.content).toBe("//");
@@ -503,7 +504,7 @@ describe("relocateLegacyModelModuleDrafts (issue #254)", () => {
 
     expect(find(files, "harnesst/model.ts")?.content).toBe(MODULE);
     expect(find(files, "agent/harnesst-model.ts")?.content).toBeNull();
-    expect(find(files, "agent/agent.ts")?.content).toContain("from '../harnesst/model'");
+    expect(find(files, "agent/agent.ts")?.content).toContain("from '../harnesst/model.js'");
   });
 
   it("is a no-op — and never reads the tree — once a repo is relocated", async () => {
@@ -514,6 +515,28 @@ describe("relocateLegacyModelModuleDrafts (issue #254)", () => {
 
     expect(await relocate(input)).toEqual(input);
     expect(fetchAgentSourceMock).not.toHaveBeenCalled();
+  });
+
+  it("restages an existing extensionless model import on the member's next publish", async () => {
+    seedRepo(
+      {
+        "agent/agent.ts":
+          `import { harnesstAgentModel } from '../harnesst/model';\n` +
+          `export default defineAgent({ model: harnesstAgentModel('ivy') });\n`,
+        "harnesst/model.ts": MODULE,
+      },
+      ["agent/agent.ts"],
+    );
+
+    const files = await normalizeOrgModelImportDrafts({
+      project: PROJECT,
+      files: [{ path: "agent/instructions.md", content: "hi" }],
+    });
+
+    expect(find(files, "agent/agent.ts")?.content).toContain(
+      "from '../harnesst/model.js'",
+    );
+    expect(find(files, "agent/instructions.md")?.content).toBe("hi");
   });
 
   it("ignores members the change-set doesn't touch", async () => {
@@ -536,7 +559,7 @@ describe("relocateLegacyModelModuleDrafts (issue #254)", () => {
     expect(find(files, "agents/ivy/harnesst/model.ts")).toBeUndefined();
     expect(find(files, "agents/ivy/agent/harnesst-model.ts")?.content).toBeNull();
     expect(find(files, "agents/ivy/agent/agent.ts")?.content).toContain(
-      "from '../harnesst/model'",
+      "from '../harnesst/model.js'",
     );
   });
 
@@ -557,7 +580,7 @@ describe("relocateLegacyModelModuleDrafts (issue #254)", () => {
     ]);
 
     const agentTs = find(files, "agents/ivy/agent/agent.ts")?.content;
-    expect(agentTs).toContain("from '../harnesst/model'");
+    expect(agentTs).toContain("from '../harnesst/model.js'");
     expect(agentTs).toContain("// unpublished edit");
     expect(agentTs).not.toContain("// repo");
   });

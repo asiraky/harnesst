@@ -1,7 +1,7 @@
 import { defineTool } from "eve/tools";
 import { z } from "zod";
 
-import { callAssetRelay, validAssetId } from "../lib/asset-library";
+import { callAssetRelay, validAssetId } from "../lib/asset-library.js";
 
 export default defineTool({
   description:

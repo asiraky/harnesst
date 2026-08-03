@@ -558,7 +558,7 @@ describe("planInstall — sandbox setup", () => {
       (w) => w.path === "agents/pm/agent/sandbox/sandbox.ts",
     )!.content;
     expect(sandbox).toContain(
-      'import * as addon0 from "./addons/agent-browser";',
+      'import * as addon0 from "./addons/agent-browser.js";',
     );
     expect(sandbox).toContain("HARNESST_SANDBOX_ENV");
     expect(sandbox).toContain(
@@ -623,10 +623,10 @@ describe("planInstall — sandbox setup", () => {
       (w) => w.path === "agents/pm/agent/sandbox/sandbox.ts",
     )!.content;
     expect(sandbox).toContain(
-      'import * as addon0 from "./addons/agent-browser";',
+      'import * as addon0 from "./addons/agent-browser.js";',
     );
     expect(sandbox).toContain(
-      'import * as addon1 from "./addons/cloudflare-cli";',
+      'import * as addon1 from "./addons/cloudflare-cli.js";',
     );
     expect(sandbox).toContain("const addons = [addon0, addon1];");
   });
@@ -750,7 +750,7 @@ describe("planInstall — conflicts", () => {
     expect(
       plan.writes.find((w) => w.path === "agents/pm/agent/sandbox/sandbox.ts")!
         .content,
-    ).toContain('from "./addons/agent-browser"');
+    ).toContain('from "./addons/agent-browser.js"');
   });
 
   it("a staged WRITE over a HEAD file still occupies the path", () => {
@@ -774,7 +774,7 @@ describe("planInstall — conflicts", () => {
     );
     // Nothing is left to preserve, so the sandbox bootstrap gets wired in as normal.
     const module = plan.writes.find((w) => w.path === sandboxPath);
-    expect(module?.content).toContain('from "./addons/agent-browser"');
+    expect(module?.content).toContain('from "./addons/agent-browser.js"');
     expect(
       plan.warnings.some((w) => w.includes(sandboxPath) && w.includes("bootstrap")),
     ).toBe(false);

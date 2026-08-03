@@ -20,9 +20,9 @@
       "id": "google-sheets-bundle",
       "type": "bundle",
       "name": "Google Sheets",
-      "version": "0.2.1",
+      "version": "0.2.2",
       "description": "Everything an agent needs to work with Google Sheets: the connector (install → Connect Google → read/write spreadsheets) plus a usage skill teaching A1 notation, read-before-write, and the values vs batchUpdate operations. Recommended way to add Sheets.",
-      "hash": "f30462f82f4bdc34042441f136a0085d43c9447e"
+      "hash": "2fabc5373c0044356c7a988896bf25d19fba7712"
     },
     {
       "id": "discord",
@@ -52,25 +52,25 @@
       "id": "gmail",
       "type": "connection",
       "name": "Gmail",
-      "version": "0.1.1",
+      "version": "0.1.2",
       "description": "Read, label, and send mail from the connected Google account. One template, selectable permission levels: pick Read mail / Manage labels / Send mail at install (read-only by default), connect the mailbox on the agent's Deployment tab, and the agent gets gmail__* tools via eve's OpenAPI connection — access tokens self-refresh at runtime, and the granted level is visible to the agent so it never promises what it can't do.",
-      "hash": "2c7f5e36e63a5650037b117e7b9199395c118e85"
+      "hash": "64cab539bb2f40acd2979159f6619c268b7eccd5"
     },
     {
       "id": "google-sheets",
       "type": "connection",
       "name": "Google Sheets",
-      "version": "0.2.1",
+      "version": "0.2.2",
       "description": "Read and write Google Sheets from this agent. Install it, then click Connect Google on the agent's Deployment tab to authorize your account, and the agent gets google_sheets__* tools (read/append/update cells, metadata, batch updates) via eve's OpenAPI connection — access tokens self-refresh at runtime.",
-      "hash": "06068ffb59039ba93d436dfd98bfd00a6f2918d5"
+      "hash": "c86ccbd4372b7df015af526b210b728dc62c2cf6"
     },
     {
       "id": "mayi",
       "type": "connection",
       "name": "May I?",
-      "version": "0.2.1",
+      "version": "0.2.2",
       "description": "Human approvals for agent actions via May I? (mayi.sh). Install it, click Connect on the agent's Deployment tab (harnesst registers the OAuth client automatically — no operator app to create), and gated tools park until a human approves in the May I? app, then resume with a signed receipt. Scheduled work that may need an approval must use the handler form of an eve schedule and hand the run to the channel with receive(mayi, ...) — task-mode schedules can't park for a human.",
-      "hash": "7dbbc202750fde0a22becbb1046cb9bd71e68d29"
+      "hash": "00f36302d54b73348a57e1c720d9203eb586a6cb"
     },
     {
       "id": "xero",
@@ -156,9 +156,9 @@
       "id": "asset-library",
       "type": "tool",
       "name": "Asset Library",
-      "version": "0.1.0",
+      "version": "0.1.1",
       "description": "Store and retrieve durable, versioned files shared by every agent in this repository. Assets are committed under assets/ on the managed branch without exposing GitHub credentials to agents.",
-      "hash": "25fcc67b2617faf58c4c999f66e4d6c1f1c27997"
+      "hash": "d91739baa4776f93f157fd20fde7ae837df26b8d"
     },
     {
       "id": "discord-send-message",

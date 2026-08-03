@@ -3,7 +3,7 @@
   "type": "connection",
   "name": "May I?",
   "description": "Human approvals for agent actions via May I? (mayi.sh). Install it, click Connect on the agent's Deployment tab (harnesst registers the OAuth client automatically — no operator app to create), and gated tools park until a human approves in the May I? app, then resume with a signed receipt. Scheduled work that may need an approval must use the handler form of an eve schedule and hand the run to the channel with receive(mayi, ...) — task-mode schedules can't park for a human.",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "eve": "0.24.2",
   "files": [
     "channels/mayi.ts",

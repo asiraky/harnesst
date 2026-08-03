@@ -3,7 +3,7 @@
   "type": "connection",
   "name": "Gmail",
   "description": "Read, label, and send mail from the connected Google account. One template, selectable permission levels: pick Read mail / Manage labels / Send mail at install (read-only by default), connect the mailbox on the agent's Deployment tab, and the agent gets gmail__* tools via eve's OpenAPI connection — access tokens self-refresh at runtime, and the granted level is visible to the agent so it never promises what it can't do.",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "eve": ">=0.20.0",
   "files": [
     "connections/gmail.ts",

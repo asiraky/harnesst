@@ -21,7 +21,7 @@
  */
 import { mayiChannel } from "@mayiapp/eve";
 
-import { credentials } from "../credentials.server";
+import { credentials } from "../credentials.server.js";
 
 export default mayiChannel({
   getAccessToken: () => credentials.getAccessToken("mayi"),

@@ -14,6 +14,7 @@
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
+import ts from "typescript";
 
 import {
   ASK_TEAMMATE_TOOL_SOURCE,
@@ -29,7 +30,11 @@ interface ToolConfig {
 
 /** Evaluate a template with a given process.env, returning the defineTool config. */
 function evalTool(source: string, env: Record<string, string>): ToolConfig {
-  const body = source
+  const body = ts
+    .transpileModule(source, {
+      compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
+    })
+    .outputText
     .replace(/^import .*$/gm, "")
     .replace("export default defineTool(", "return defineTool(");
   const factory = new Function("defineTool", "z", "process", body);
