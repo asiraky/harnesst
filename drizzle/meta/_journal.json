@@ -218,6 +218,13 @@
       "when": 1785747649463,
       "tag": "0030_jittery_madame_masque",
       "breakpoints": true
+    },
+    {
+      "idx": 31,
+      "version": "7",
+      "when": 1785755338725,
+      "tag": "0031_wandering_kabuki",
+      "breakpoints": true
     }
   ]
 }
