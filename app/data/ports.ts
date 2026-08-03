@@ -41,6 +41,7 @@ export type ConversationRead = typeof conversationReads.$inferSelect;
 export interface DeploymentWithRelease {
   id: string;
   status: string;
+  envRevision: number;
   trafficWeight: number;
   url: string | null;
   errorDetail: string | null;
@@ -117,11 +118,12 @@ export interface DeploymentRepo {
     releaseId: string;
     status: string;
     trafficWeight: number;
+    envRevision?: number;
     createdBy?: string | null;
   }): Promise<Deployment>;
   update(
     id: string,
-    patch: Partial<Pick<Deployment, "status" | "url" | "errorDetail" | "trafficWeight">>,
+    patch: Partial<Pick<Deployment, "status" | "url" | "errorDetail" | "trafficWeight" | "envRevision">>,
   ): Promise<Deployment>;
   /**
    * Compare-and-set a deployment during background lifecycle reconciliation. Returns null when
@@ -130,7 +132,7 @@ export interface DeploymentRepo {
   updateIfStatus(
     id: string,
     expectedStatus: string,
-    patch: Partial<Pick<Deployment, "status" | "url" | "errorDetail" | "trafficWeight">>,
+    patch: Partial<Pick<Deployment, "status" | "url" | "errorDetail" | "trafficWeight" | "envRevision">>,
   ): Promise<Deployment | null>;
   listByEnvironment(environmentId: string): Promise<DeploymentWithRelease[]>;
   /** Set every currently-live deployment in the env to draining at weight 0 (rollback). */
@@ -146,6 +148,8 @@ export interface DeploymentRepo {
 
 export interface EnvironmentRepo {
   findById(id: string): Promise<Environment | null>;
+  /** Persist that injected credentials/config changed; returns the new desired revision. */
+  bumpEnvRevision(id: string): Promise<number | null>;
   /** All environments across a project's roster (legacy views; per-agent is the norm). */
   listByProject(projectId: string): Promise<Environment[]>;
   /**

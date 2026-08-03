@@ -9,6 +9,7 @@
  */
 import type { Agent, DataStore } from "~/data/ports";
 import { selectedCapabilityGroupIds } from "~/capabilities/enablement";
+import { invalidateAgentEnvironments } from "~/deploy/env-reconcile.server";
 import { stageDeletions, stageDraft, listDrafts } from "~/drafts/drafts.server";
 import { fetchAgentSource, readAgentFile } from "~/github/repo.server";
 import {
@@ -183,6 +184,9 @@ async function defaultApplySecretOps(
           createdBy: null,
         });
       }
+    }
+    if (ops.some((op) => op.kind === "set" || op.kind === "attach")) {
+      await invalidateAgentEnvironments({ agentIds: [agent.id] });
     }
     return;
   }

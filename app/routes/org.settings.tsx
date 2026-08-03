@@ -92,6 +92,7 @@ import type { auditLog } from "~/db/schema";
 import type { HarnesstMode } from "~/seams/types";
 import { noindexMeta } from "~/lib/seo";
 import { auth as betterAuth } from "~/lib/auth.server";
+import { invalidateOrganizationEnvironments } from "~/deploy/env-reconcile.server";
 import type { Route } from "./+types/org.settings";
 
 interface OrgSettingsView {
@@ -214,6 +215,10 @@ export async function action(args: ActionFunctionArgs) {
         apiKey,
         createdBy: auth.user.id,
       });
+      await invalidateOrganizationEnvironments({
+        orgId: org.id,
+        createdBy: auth.user.id,
+      });
       await recordAudit({
         orgId: org.id,
         actorUserId: auth.user.id,
@@ -267,6 +272,10 @@ export async function action(args: ActionFunctionArgs) {
         .map((o) => removeAgentModelOverride(org.id, o.agentName)),
     );
     await deleteModelConnection(org.id, id);
+    await invalidateOrganizationEnvironments({
+      orgId: org.id,
+      createdBy: auth.user.id,
+    });
     await recordAudit({
       orgId: org.id,
       actorUserId: auth.user.id,

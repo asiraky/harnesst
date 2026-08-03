@@ -8,10 +8,7 @@ import { makeFakeStore, type FakeStore } from "../fakes/store";
 
 let store: FakeStore;
 
-function target(
-  health: DeployTarget["health"],
-  start: DeployTarget["start"],
-): DeployTarget {
+function target(health: DeployTarget["health"], start: DeployTarget["start"]): DeployTarget {
   return { health, start } as unknown as DeployTarget;
 }
 
@@ -73,9 +70,7 @@ describe("deployment liveness recovery", () => {
     const member = await seedLive("env_member", "member");
     const assistant = await seedLive("env_assistant", "assistant");
     const health = vi.fn(async (id: string): Promise<InstanceHealth> =>
-      id === member.id
-        ? { status: "stopped" }
-        : { status: "live", url: "http://inspected.local" },
+      id === member.id ? { status: "stopped" } : { status: "live", url: "http://inspected.local" },
     );
     const start = vi.fn(async (): Promise<InstanceHealth> => ({
       status: "live",
@@ -154,5 +149,39 @@ describe("deployment liveness recovery", () => {
     });
     expect(throwing?.id).toBe(live.id);
     expect(start).not.toHaveBeenCalled();
+  });
+
+  it("replaces a stopped container whose process env revision is stale instead of starting it", async () => {
+    const stopped = await seedLive("env_member", "member");
+    await store.deployments.update(stopped.id, {
+      status: "stopped",
+      trafficWeight: 0,
+    });
+    await store.environments.bumpEnvRevision("env_member");
+    const start = vi.fn();
+    const replacement = {
+      ...stopped,
+      id: "dep_fresh",
+      envRevision: 1,
+      url: "http://fresh.local",
+    };
+    const replaceStale = vi.fn(async () => replacement);
+
+    const recovered = await ensureLiveDeploymentForEnvironment("env_member", {
+      store,
+      deployTarget: target(vi.fn(), start),
+      replaceStale,
+    });
+
+    expect(replaceStale).toHaveBeenCalledWith(
+      "env_member",
+      expect.objectContaining({
+        id: stopped.id,
+        status: "stopped",
+        envRevision: 0,
+      }),
+    );
+    expect(start).not.toHaveBeenCalled();
+    expect(recovered).toBe(replacement);
   });
 });

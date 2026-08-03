@@ -13,7 +13,7 @@ import { ensureSandboxReaperStarted } from "~/deploy/sandbox-reaper.server";
 import { PUBLISH_INTERRUPTED_MESSAGE } from "~/publish/pipeline.server";
 import { getRuntime } from "~/seams/index.server";
 import type { DeployReleasePayload, Job } from "./queue.server";
-import { claimNext, markDone, markFailed } from "./queue.server";
+import { claimNext, enqueue, markDone, markFailed } from "./queue.server";
 
 const POLL_MS = Number(process.env.HARNESST_WORKER_POLL_MS ?? 2000);
 
@@ -29,6 +29,19 @@ async function execute(job: Job): Promise<void> {
       // A deployment that records `failed` is a real outcome, not a queue error — but
       // surfacing it as a job failure gets retries for transient build/docker flakes.
       if (dep.status === "failed") {
+        // A desired-env replacement must not leave the environment permanently stale after the
+        // ordinary deploy retries are exhausted. Re-enter reconciliation later; it will no-op if
+        // another deployment fixed the revision meanwhile.
+        if (job.attempts >= job.maxAttempts) {
+          await enqueue(
+            "reconcile_environment_env",
+            {
+              environmentId: p.environmentId,
+              createdBy: p.createdBy ?? null,
+            },
+            { runAt: new Date(Date.now() + 30_000) },
+          );
+        }
         throw new Error(dep.errorDetail ?? "deployment failed");
       }
       return;
@@ -50,6 +63,18 @@ async function execute(job: Job): Promise<void> {
         await import("~/assistant/instance.server");
       const p = job.payload as { projectId: string };
       await restartAssistantInstance(p.projectId);
+      return;
+    }
+    case "reconcile_environment_env": {
+      const { reconcileEnvironmentEnv } =
+        await import("~/deploy/env-reconcile.server");
+      const p = job.payload as { environmentId?: string; createdBy?: string | null };
+      if (!p.environmentId) throw new Error("env reconcile job missing environmentId");
+      const result = await reconcileEnvironmentEnv({
+        environmentId: p.environmentId,
+        createdBy: p.createdBy,
+      });
+      console.log(`[jobs] reconciled env ${p.environmentId}: ${result.status}`);
       return;
     }
     case "cleanup_deployment_container": {
@@ -206,6 +231,16 @@ function startWorker(): { stop: () => void } {
     .then((n) => {
       if (n > 0)
         console.log(`[jobs] requeued ${n} job(s) stranded by a restart`);
+    })
+    .then(async () => {
+      const { reconcileAllEnvironmentEnv } =
+        await import("~/deploy/env-reconcile.server");
+      const result = await reconcileAllEnvironmentEnv();
+      if (result.stale > 0) {
+        console.log(
+          `[jobs] found ${result.stale} stale env deployment(s) across ${result.checked} environment(s)`,
+        );
+      }
     })
     .catch((err) => console.error("[jobs] boot recovery failed:", err))
     .finally(() => {
