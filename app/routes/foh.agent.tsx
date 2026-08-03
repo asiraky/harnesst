@@ -19,6 +19,7 @@ import {
 } from "react-router";
 
 import { getSessionAuth, sessionLoader } from "~/auth/session.server";
+import { FohPaneError } from "~/components/foh/pane-error";
 import { SessionList } from "~/components/foh/session-list";
 import { Button } from "~/components/ui/button";
 import { bohAgentHref } from "~/foh/boh-links";
@@ -282,6 +283,23 @@ export default function FohAgent({ loaderData }: Route.ComponentProps) {
         <Outlet />
       </SessionPane>
     </>
+  );
+}
+
+/**
+ * A loader failure here takes out the session list AND the conversation pane, so it renders in
+ * their place rather than at root — the FOH sidebar stays, and with it the way to another team
+ * member (issue #250). A throw from the child session route never reaches this boundary: that
+ * route declares its own.
+ */
+export function ErrorBoundary({ error }: Route.ErrorBoundaryProps) {
+  return (
+    <FohPaneError
+      error={error}
+      subject="team member"
+      backTo="/"
+      backLabel="Team"
+    />
   );
 }
 
