@@ -264,7 +264,12 @@ export async function action(args: ActionFunctionArgs) {
         .filter(
           (o) => parseProviderModelReference(o.model)?.connectionId === id,
         )
-        .map((o) => removeAgentModelOverride(org.id, o.agentName)),
+        .map((o) =>
+          removeAgentModelOverride(org.id, {
+            agentName: o.agentName,
+            subagentPath: o.subagentPath,
+          }),
+        ),
     );
     await deleteModelConnection(org.id, id);
     await recordAudit({
@@ -311,12 +316,15 @@ export async function action(args: ActionFunctionArgs) {
   if (intent === "remove-agent-model-override") {
     const agentName = String(form.get("agentName") ?? "").trim();
     if (!agentName) return { error: "No agent specified." };
-    await removeAgentModelOverride(org.id, agentName);
+    // The full target key: a declared subagent's row lives under the same agent name and is
+    // removed independently of the agent's own (issue #344).
+    const subagentPath = String(form.get("subagentPath") ?? "").trim();
+    await removeAgentModelOverride(org.id, { agentName, subagentPath });
     await recordAudit({
       orgId: org.id,
       actorUserId: auth.user.id,
       action: "agent_model_override_removed",
-      target: agentName,
+      target: subagentPath ? `${agentName}/${subagentPath}` : agentName,
     });
     return { ok: true as const };
   }
@@ -616,9 +624,11 @@ export default function OrgSettings({ loaderData }: Route.ComponentProps) {
 
 /**
  * Per-agent model overrides — the workspace's explicit exceptions to the default model. Each
- * row pins one agent name to a model; the X removes the pin so the agent falls back to the
- * default. Agents resolve this map at runtime by name (subagents by their parent's name), so
- * every change lands on running agents within seconds, with no repo change and no redeploy.
+ * row pins one target to a model; the X removes the pin so that target falls back to what it
+ * inherits. A target is an agent, or a declared subagent shown as `<agent> › <path>` (issue
+ * #344) — a subagent with no row of its own follows its parent and never appears here. Agents
+ * resolve this map at runtime, so every change lands on running agents within seconds, with no
+ * repo change and no redeploy.
  */
 function AgentOverridesSection({
   overrides,
@@ -631,8 +641,8 @@ function AgentOverridesSection({
     <div className="max-w-xl space-y-3 border-t pt-4">
       <Label>Per-agent model overrides</Label>
       <p className="text-xs text-muted-foreground">
-        Only agents explicitly pinned in Agent Settings appear here. Subagents
-        follow their parent agent.
+        Only targets explicitly pinned in Agent Settings appear here. A subagent
+        with no pin of its own follows its parent agent.
       </p>
       {overrides.length === 0 ? (
         <div className="rounded-lg border border-dashed p-3 text-sm text-muted-foreground">
@@ -642,7 +652,7 @@ function AgentOverridesSection({
         <ul className="divide-y rounded-lg border">
           {overrides.map((override) => (
             <AgentOverrideRow
-              key={override.agentName}
+              key={`${override.agentName}\u0000${override.subagentPath}`}
               override={override}
               canManage={canManage}
             />
@@ -665,7 +675,15 @@ function AgentOverrideRow({
   const busy = fetcher.state !== "idle";
   return (
     <li className="flex flex-wrap items-center gap-x-4 gap-y-1 px-3 py-2">
-      <span className="min-w-28 font-mono text-sm">{override.agentName}</span>
+      <span className="min-w-28 font-mono text-sm">
+        {override.agentName}
+        {override.subagentPath && (
+          <span className="text-muted-foreground">
+            {" \u203a "}
+            {override.subagentPath}
+          </span>
+        )}
+      </span>
       <div className="min-w-0 flex-1">
         <div className="truncate font-mono text-sm text-muted-foreground">
           {override.model}
@@ -685,6 +703,7 @@ function AgentOverrideRow({
               {
                 intent: "remove-agent-model-override",
                 agentName: override.agentName,
+                subagentPath: override.subagentPath,
               },
               { method: "post" },
             )

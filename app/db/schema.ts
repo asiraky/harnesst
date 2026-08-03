@@ -1037,14 +1037,22 @@ export const workspaceSettings = pgTable("workspace_settings", {
 });
 
 /**
- * Per-agent model overrides — the workspace's explicit exceptions to the default model.
+ * Per-agent (and per-declared-subagent) model overrides — the workspace's explicit exceptions to
+ * the default model.
  *
- * An agent whose `agent.ts` resolves through the generated `harnesst-model.ts`
+ * An agent whose `agent.ts` resolves through the generated `harnesst/model.ts`
  * (`model: harnesstAgentModel('<agent-name>')`) asks harnesst at runtime which model to run. The
- * answer is this map's entry for the agent's name when one exists, else the workspace default
- * (`workspace_settings.assistant_model`). Subagents resolve with their PARENT's name, so they
- * always run the parent's model. Removing a row falls the agent back to the workspace default
- * — no repo change, no redeploy, the running agent picks it up on its next step.
+ * answer is the row for its target when one exists, else the nearest ancestor's row, else the
+ * workspace default (`workspace_settings.assistant_model`). Removing a row falls that target back
+ * to what it inherits — no repo change, no redeploy, the running agent picks it up on its next
+ * step.
+ *
+ * A target is `(agent_name, subagent_path)`: `subagent_path = ''` is the top-level agent,
+ * `researcher/fact-checker` is a declared subagent nested under it (issue #344). Legacy
+ * deployments pass only the agent name, so they land on `''` and inherit exactly as before.
+ * `project_id` disambiguates two repos in one workspace that use the same agent name; rows
+ * written before that column existed (and by legacy call sites) keep it NULL and stay
+ * name-resolved.
  */
 export const agentModelOverrides = pgTable(
   "agent_model_overrides",
@@ -1054,13 +1062,26 @@ export const agentModelOverrides = pgTable(
       .references(() => organization.id, { onDelete: "cascade" }),
     /** The eve agent name (`harnesstAgentModel('<name>')` argument), not a harnesst row id. */
     agentName: text("agent_name").notNull(),
+    /**
+     * `/`-joined declared-subagent segments relative to the member's agent root — `''` for the
+     * agent itself, `researcher` / `researcher/fact-checker` for a nested subagent.
+     */
+    subagentPath: text("subagent_path").notNull().default(""),
+    /** The repo this target lives in; NULL for legacy rows resolved by name alone. */
+    projectId: varchar("project_id", { length: 12 }).references(
+      () => projects.id,
+      { onDelete: "cascade" },
+    ),
     /** Connection-qualified model ref, e.g. `anthropic/<connectionId>/<model>`. */
     model: text("model").notNull(),
     /** Explicit provider-agnostic reasoning effort; null delegates to the provider default. */
     effort: text("effort"),
     updatedAt: updatedAt(),
   },
-  (t) => [primaryKey({ columns: [t.orgId, t.agentName] })],
+  (t) => [
+    primaryKey({ columns: [t.orgId, t.agentName, t.subagentPath] }),
+    index("agent_model_overrides_project_idx").on(t.orgId, t.projectId),
+  ],
 );
 
 /**

@@ -18,7 +18,7 @@ import {
   PLATFORM_ROOT,
   TEAM_ROOT,
   detectAgentRoots,
-  subagentDirNames,
+  subagentModuleFiles,
   type AgentSource,
 } from "~/eve/parse";
 import { getInstallationOctokit } from "./client.server";
@@ -76,8 +76,9 @@ interface RepoRef {
 /**
  * Fetch the repo listing (under `agent/` for single-agent repos, `agents/` for teams, plus the
  * `harnesst/` platform root sibling to either) plus known file contents — instructions.md and
- * agent.ts for every detected agent root. Returns the ref actually read and whether the git tree
- * was truncated (very large repos), so callers can surface it.
+ * agent.ts for every detected agent root AND every declared subagent beneath it, at any depth.
+ * Returns the ref actually read and whether the git tree was truncated (very large repos), so
+ * callers can surface it.
  */
 export async function fetchAgentSource(
   installationId: string | number,
@@ -128,10 +129,10 @@ export async function fetchAgentSource(
     ...detectAgentRoots(paths).flatMap(({ root }) => [
       `${root}/instructions.md`,
       `${root}/agent.ts`,
-      ...subagentDirNames(paths, root).flatMap((name) => [
-        `${root}/subagents/${name}/agent.ts`,
-        `${root}/subagents/${name}/instructions.md`,
-      ]),
+      // Every subagent's module + instructions at ANY depth (issue #344): a nested
+      // configuration context renders its own description and system prompt out of `files`,
+      // and a depth-1-only read left everything below it blank with no error to explain it.
+      ...subagentModuleFiles(paths, root),
     ]),
     HARNESST_LOCK,
   ];

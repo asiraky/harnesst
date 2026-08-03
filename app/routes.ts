@@ -9,6 +9,22 @@ import { type RouteConfig, index, layout, route } from "@react-router/dev/routes
 const memberRoute = (tail: string, file: string, id: string) =>
   route(`repos/:projectId/agents/:agentName${tail}`, file, { id });
 
+/**
+ * A declared subagent is its own eve agent root (issue #344), so it gets the SAME page modules
+ * one level (or more) down: `…/sub/:subPath<tail>`, where `subPath` is the chain of subagent
+ * directory names joined by `~` (`researcher~fact-checker`). One registration under the member
+ * level and one under the repo level, mirroring `memberRoute`; `sub` is a static segment, so
+ * ranking against the dynamic siblings is unambiguous. `params.subPath` distinguishes at runtime,
+ * and only the pages a subagent can actually serve are registered — there is no nested
+ * playground, deployment or runs tab to click into a dead end.
+ */
+const subagentRoutes = (tail: string, file: string, id: string) => [
+  route(`repos/:projectId/sub/:subPath${tail}`, file, { id: `sub-${id}` }),
+  route(`repos/:projectId/agents/:agentName/sub/:subPath${tail}`, file, {
+    id: `member-sub-${id}`,
+  }),
+];
+
 export default [
   // Front of House is home (FOH PRD §2.6): the three-pane operate surface at `/`, with the
   // agent/session panes as children (D14 URLs). Sign-in when unauthenticated.
@@ -92,6 +108,7 @@ export default [
   // Param stays :projectId — internal identifiers didn't churn with the URL rename.
   route("repos/:projectId", "routes/projects.$projectId.tsx"),
   memberRoute("", "routes/projects.$projectId.tsx", "member-overview"),
+  ...subagentRoutes("", "routes/projects.$projectId.tsx", "overview"),
   route(
     "repos/:projectId/deployment",
     "routes/projects.$projectId.deployments.tsx",
@@ -106,6 +123,11 @@ export default [
     "/settings",
     "routes/projects.$projectId.settings.tsx",
     "member-settings",
+  ),
+  ...subagentRoutes(
+    "/settings",
+    "routes/projects.$projectId.settings.tsx",
+    "settings",
   ),
   route(
     "repos/:projectId/playground",
@@ -157,8 +179,14 @@ export default [
     "routes/projects.$projectId.resources.$category.tsx",
     "member-resources",
   ),
+  ...subagentRoutes(
+    "/resources/:category",
+    "routes/projects.$projectId.resources.$category.tsx",
+    "resources",
+  ),
   route("repos/:projectId/edit", "routes/projects.$projectId.edit.tsx"),
   memberRoute("/edit", "routes/projects.$projectId.edit.tsx", "member-edit"),
+  ...subagentRoutes("/edit", "routes/projects.$projectId.edit.tsx", "edit"),
   route(
     "repos/:projectId/edit/instructions",
     "routes/projects.$projectId.edit.instructions.tsx",
@@ -167,6 +195,11 @@ export default [
     "/edit/instructions",
     "routes/projects.$projectId.edit.instructions.tsx",
     "member-edit-instructions",
+  ),
+  ...subagentRoutes(
+    "/edit/instructions",
+    "routes/projects.$projectId.edit.instructions.tsx",
+    "edit-instructions",
   ),
   route(
     "repos/:projectId/edit/schedule",

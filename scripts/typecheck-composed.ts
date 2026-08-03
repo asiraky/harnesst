@@ -98,7 +98,8 @@ async function materializeMatrix(root: string): Promise<number> {
     ...baseFiles("kitchen-sink"),
     "agent/subagents/reader/agent.ts": scaffoldOrgModelAgentModule(
       "kitchen-sink",
-    ).replace("../harnesst/model.js", "../../../harnesst/model.js"),
+      { subagentPath: "reader" },
+    ),
     [ASK_TEAMMATE_TOOL_PATH]: ASK_TEAMMATE_TOOL_SOURCE,
     [TELL_TEAMMATE_TOOL_PATH]: TELL_TEAMMATE_TOOL_SOURCE,
   };

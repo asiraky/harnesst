@@ -1,10 +1,16 @@
 /**
- * Project overview — the repo-backed config surface for the ACTIVE roster member (PRD §7.9).
+ * Project overview — the repo-backed config surface for the ACTIVE configuration target
+ * (PRD §7.9; targets in issue #344).
  *
  * Single-agent repos are teams of one: no switcher, the surface reads from `agent/` exactly
  * as before the split. Team repos get a member switcher (AgentNav), per-member surfaces
  * rooted at `agents/<member>/agent/`, and roster CRUD — add/remove members save their file
  * set as drafts like every other edit; the roster row itself syncs when the publish lands.
+ *
+ * The same surface serves a DECLARED SUBAGENT at `…/sub/:subPath`: eve treats its directory as
+ * its own agent root, so it gets the same instructions/resources/sandbox page, minus the
+ * categories only a top-level agent can author (`categoriesFor`) and minus everything that
+ * belongs to the deployment — a subagent runs inside, and deploys with, its member.
  */
 import { getSessionAuth, sessionLoader } from "~/auth/session.server";
 import { Bot, Boxes, FileText, Terminal, Users, Workflow, X } from "lucide-react";
@@ -57,17 +63,27 @@ import {
 import { listDeployments, queueDeploy } from "~/deploy/controller.server";
 import { listDrafts, stageDraft } from "~/drafts/drafts.server";
 import { listAgentModelOverrides } from "~/models/agent-model-config.server";
-import { buildAgentConfig, buildSubagentSummaries } from "~/eve/parse";
+import { isDynamicSubagentModule } from "~/eve/agentModule";
+import {
+  buildAgentConfig,
+  buildSubagentSummaries,
+  overlayDrafts,
+} from "~/eve/parse";
 import {
   RESOURCE_KINDS,
   sandboxPath,
   slugifyResourceName,
 } from "~/eve/templates";
-import { AGENT_CATEGORIES, type AgentConfig, type SubagentSummary } from "~/eve/types";
+import {
+  categoriesFor,
+  type AgentCategory,
+  type AgentConfig,
+  type SubagentSummary,
+} from "~/eve/types";
 import { memberScaffold } from "~/github/create.server";
 import { getAgentSource } from "~/github/cached.server";
 import { ensureWorkerStarted } from "~/jobs/worker.server";
-import { contextPath } from "~/lib/paths";
+import { contextPath, subagentContextPath } from "~/lib/paths";
 import { RelativeTime } from "~/components/localized-values";
 import { cn } from "~/lib/utils";
 import { getWorkspaceAssistantModel } from "~/org/workspace.server";
@@ -77,6 +93,10 @@ import {
   resolveAgentContext,
   resolveSyncedAgentContext,
 } from "~/project/agent-context.server";
+import {
+  resolveConfigTarget,
+  subagentSegmentsFromParams,
+} from "~/project/config-target.server";
 import { agentRequiredSecretState } from "~/project/secrets.server";
 import { overlayLock } from "~/marketplace/lock";
 import { requireProject, requireRepo } from "~/project/guard.server";
@@ -93,10 +113,27 @@ interface MemberSummary {
   skills: number;
   schedules: number;
   channels: number;
-  /** Read-only subagent children (issue #146): they run inside this member, not as roster peers. */
+  /** Subagent children: they run inside this member, not as roster peers — each links to its
+   * own nested configuration context (issue #344). */
   subagents: SubagentSummary[];
   /** Template-required secrets still unset for this member (amber header badge, §7). */
   secretsMissing: number;
+}
+
+/** The configuration target this request renders, flattened for the client (issue #344). */
+interface TargetView {
+  kind: "agent" | "subagent";
+  /** Roster member the target belongs to — the thing that actually deploys. */
+  member: string;
+  /** Declared-subagent chain below the member; empty for a member target. */
+  subagentPath: string[];
+  /** Directory the surface reads and writes. */
+  root: string;
+  /**
+   * The target's own module default-exports `defineDynamic(...)` — availability is decided per
+   * session at runtime, so the surface says so instead of implying it is always active.
+   */
+  dynamic: boolean;
 }
 
 interface ProjectView {
@@ -115,8 +152,12 @@ interface ProjectView {
   members: MemberSummary[] | null;
   /** Team landing: whether the "this is a team" intro card was dismissed (cookie). */
   teamIntroDismissed: boolean;
-  /** Member view: the active member's parsed config. */
+  /** Member/subagent view: the resolved target, or null when the repo couldn't be read. */
+  target: TargetView | null;
+  /** Member/subagent view: the target's parsed config. */
   config: AgentConfig | null;
+  /** Member/subagent view: the target's own declared subagents (badges + nested links). */
+  subagents: SubagentSummary[];
   error: string | null;
   /**
    * True when `error` is a GitHub reauthorization failure (installation missing/unverified) —
@@ -167,7 +208,9 @@ export const loader = (args: LoaderFunctionArgs) =>
           view: "member" as const,
           members: null,
           teamIntroDismissed: false,
+          target: null,
           config: null,
+          subagents: [],
           error: "This project has no connected repo.",
           needsReconnect: false,
           draftPaths: [],
@@ -186,15 +229,57 @@ export const loader = (args: LoaderFunctionArgs) =>
 
         // Self-heal the roster from the repo (external pushes don't always hit our webhook).
         const requestedAgent = agentFromParams(args.params);
-        if (!requestedAgent) {
+        const subSegments = subagentSegmentsFromParams(args.params);
+        if (!requestedAgent && !subSegments) {
           const legacy = agentParamRedirect(args.request, project.id);
           if (legacy) throw legacy;
         }
-        const { roster, active, isTeam } = await resolveSyncedAgentContext(
-          project.id,
-          requestedAgent,
-          source.paths,
-        );
+        // Everything derived from the tree sees saved-but-unpublished work: a subagent you
+        // created a minute ago must resolve, appear, and be configurable before it publishes.
+        const draftFiles = drafts.map((d) => ({
+          path: d.path,
+          content: d.content,
+        }));
+        const overlaid = overlayDrafts(source, draftFiles);
+        const nested = subSegments
+          ? await resolveConfigTarget({
+              projectId: project.id,
+              agentName: requestedAgent,
+              subSegments,
+              source,
+              drafts: draftFiles,
+            })
+          : null;
+        const { roster, active, isTeam } =
+          nested ??
+          // Roster sync reads the BRANCH: a drafted member scaffold isn't a roster row yet.
+          (await resolveSyncedAgentContext(
+            project.id,
+            requestedAgent,
+            source.paths,
+          ));
+        const target: TargetView | null = nested
+          ? {
+              kind: nested.target.kind,
+              member: nested.target.member,
+              subagentPath:
+                nested.target.kind === "subagent"
+                  ? nested.target.subagentPath
+                  : [],
+              root: nested.target.root,
+              dynamic: isDynamicSubagentModule(
+                overlaid.files[`${nested.target.root}/agent.ts`],
+              ),
+            }
+          : active
+            ? {
+                kind: "agent",
+                member: active.name,
+                subagentPath: [],
+                root: active.root,
+                dynamic: false,
+              }
+            : null;
 
         // Model badges are workspace configuration, resolved by agent name from the control
         // plane (per-agent override else the workspace default) — never parsed from agent.ts.
@@ -202,15 +287,19 @@ export const loader = (args: LoaderFunctionArgs) =>
           getWorkspaceAssistantModel(project.orgId).catch(() => null),
           listAgentModelOverrides(project.orgId).catch(() => []),
         ]);
+        // Roster badges are about the MEMBERS: a declared subagent's own pin belongs to its
+        // nested Settings surface, not to the parent's badge (issue #344).
         const overrideModelByName = new Map(
-          agentOverrides.map((o) => [o.agentName, o.model]),
+          agentOverrides
+            .filter((o) => o.subagentPath === "")
+            .map((o) => [o.agentName, o.model]),
         );
         const teamLayout = project.layout === "team";
         // The hierarchy: a team repo LANDS on the team (roster) view; a member's config
         // surface is a drill-in (?agent=<name>). Single-agent repos go straight to their
         // one member, exactly as before teams existed.
         const view =
-          teamLayout && !requestedAgent
+          teamLayout && !requestedAgent && !subSegments
             ? ("team" as const)
             : ("member" as const);
         if (view === "member" && !active)
@@ -223,8 +312,8 @@ export const loader = (args: LoaderFunctionArgs) =>
           view === "team"
             ? await Promise.all(
                 roster.map(async (a) => {
-                  const c = buildAgentConfig(source, a.root);
-                  const subagents = buildSubagentSummaries(source, a.root);
+                  const c = buildAgentConfig(overlaid, a.root);
+                  const subagents = buildSubagentSummaries(overlaid, a.root);
                   // "N secrets missing" (§7): template-required names still unset/unattached.
                   const requiredState = await agentRequiredSecretState({
                     projectId: project.id,
@@ -251,27 +340,20 @@ export const loader = (args: LoaderFunctionArgs) =>
         ).test(args.request.headers.get("cookie") ?? "");
 
         const config =
-          view === "member" && active
-            ? buildAgentConfig(source, active.root)
+          view === "member" && target
+            ? buildAgentConfig(overlaid, target.root)
             : null;
-        const agentTsDraft = drafts.find(
-          (d) =>
-            active &&
-            d.path === `${active.root}/agent.ts` &&
-            d.content !== null,
-        );
-        // A staged agent.ts draft means the entrypoint exists even if the repo lacks it yet.
-        if (config && agentTsDraft?.content) {
-          config.hasAgentModule = true;
-        }
-
-        // Deploy status: what's running per environment (member header line).
-        let running: ProjectView["running"] = [];
-        const activeEnvs =
-          view === "member" && active
-            ? await listAgentEnvironments(active.id)
+        const subagents =
+          view === "member" && target
+            ? buildSubagentSummaries(overlaid, target.root)
             : [];
-        if (view === "member" && active) {
+
+        // Deploy status: what's running per environment (member header line). A declared
+        // subagent has no deployment of its own — it ships inside the member's.
+        const deploys = view === "member" && active && target?.kind === "agent";
+        let running: ProjectView["running"] = [];
+        const activeEnvs = deploys ? await listAgentEnvironments(active.id) : [];
+        if (deploys && active) {
           // Newest-first releases for this member, so we can flag whether each
           // env is running the latest version (matches the deployment pipeline).
           const memberReleases = (await listReleases(project.id)).filter(
@@ -307,7 +389,9 @@ export const loader = (args: LoaderFunctionArgs) =>
           view,
           members,
           teamIntroDismissed,
+          target,
           config,
+          subagents,
           error: null,
           needsReconnect: false,
           draftPaths: drafts.map((d) => d.path),
@@ -324,7 +408,9 @@ export const loader = (args: LoaderFunctionArgs) =>
           view: "member" as const,
           members: null,
           teamIntroDismissed: false,
+          target: null,
           config: null,
+          subagents: [],
           error: (error as Error).message,
           needsReconnect: isGithubReauthorizationError(error),
           draftPaths: [],
@@ -417,7 +503,9 @@ export default function ProjectDetail({
     view,
     members,
     teamIntroDismissed,
+    target,
     config,
+    subagents,
     error,
     needsReconnect,
     draftPaths,
@@ -425,9 +513,23 @@ export default function ProjectDetail({
   } = loaderData;
   const publishHref = usePublishHref();
   const base = `/repos/${project.id}`;
-  // The page's hierarchy level decides its tab set and where its links point (M5.8).
-  const level = view === "team" ? "repo" : teamLayout ? "member" : "single";
-  const ctx = contextPath(project.id, level === "member" ? active?.name : null);
+  const segments = target?.subagentPath ?? [];
+  // The page's hierarchy level decides its tab set and where its links point (M5.8/#344).
+  const level =
+    view === "team"
+      ? "repo"
+      : segments.length > 0
+        ? "subagent"
+        : teamLayout
+          ? "member"
+          : "single";
+  // Member segment for every link on the page: present on team repos below the landing view.
+  const memberSegment =
+    view === "member" && teamLayout ? (active?.name ?? null) : null;
+  const ctx = subagentContextPath(project.id, memberSegment, segments);
+  const memberCtx = contextPath(project.id, memberSegment);
+  const isSubagent = target?.kind === "subagent";
+  const subagentName = segments[segments.length - 1] ?? "";
 
   const repoLine =
     project.repoOwner && project.repoName ? (
@@ -445,13 +547,14 @@ export default function ProjectDetail({
         repoName: project.name,
         isTeam: view === "member" && teamLayout,
         agentName: active?.name,
+        subagentPath: segments,
       })}
     >
       <AgentNav
         base={ctx}
         level={level}
         roster={roster}
-        activeAgent={level === "member" ? active?.name : undefined}
+        activeAgent={memberSegment ?? undefined}
       />
       {view === "team" ? (
         <PageHeader
@@ -467,6 +570,30 @@ export default function ProjectDetail({
           }
           description={repoLine}
           actions={<AddMemberDialog />}
+        />
+      ) : isSubagent && target ? (
+        <PageHeader
+          icon={Workflow}
+          accent="brand"
+          title={
+            <span className="flex flex-wrap items-center gap-3">
+              {subagentName}
+              <Badge variant="secondary">subagent</Badge>
+              {target.dynamic && <Badge variant="outline">dynamic</Badge>}
+            </span>
+          }
+          description={
+            <span>
+              Runs inside and deploys with{" "}
+              <Link
+                to={memberCtx}
+                className="font-medium underline underline-offset-4"
+              >
+                {target.member}
+              </Link>{" "}
+              · <span className="font-mono">{target.root}</span>
+            </span>
+          }
         />
       ) : (
         <PageHeader
@@ -623,17 +750,48 @@ export default function ProjectDetail({
 
       {view === "team" && members && (
         <TeamSurface
+          projectId={project.id}
           base={base}
           members={members}
           introDismissed={teamIntroDismissed}
         />
       )}
 
-      {view === "member" && config && active && (
+      {isSubagent && target && (
+        <Alert className="mb-6">
+          <AlertTitle>Part of {target.member}</AlertTitle>
+          <AlertDescription>
+            <span>
+              This subagent has its own instructions, tools and skills, and{" "}
+              {target.dynamic
+                ? "its module decides per session whether it is available at all"
+                : `${target.member} delegates to it`}
+              . It has no deployment, channels, schedules or secrets of its own —
+              those belong to{" "}
+              <Link
+                to={`${memberCtx}/settings`}
+                className="font-medium underline underline-offset-4"
+              >
+                {target.member}&rsquo;s settings
+              </Link>
+              , and it goes live when {target.member} is published.
+            </span>
+          </AlertDescription>
+        </Alert>
+      )}
+
+      {view === "member" && config && target && (
         <AgentSurface
           config={config}
           ctx={ctx}
-          root={active.root}
+          root={target.root}
+          categories={categoriesFor(target.kind)}
+          subagentHref={(name) =>
+            subagentContextPath(project.id, memberSegment, [...segments, name])
+          }
+          dynamicSubagents={subagents
+            .filter((s) => s.dynamic)
+            .map((s) => s.name)}
           draftPaths={draftPaths}
         />
       )}
@@ -647,10 +805,12 @@ export default function ProjectDetail({
  * makes that hierarchy explicit before you drill into one member's config.
  */
 function TeamSurface({
+  projectId,
   base,
   members,
   introDismissed,
 }: {
+  projectId: string;
   base: string;
   members: MemberSummary[];
   introDismissed: boolean;
@@ -703,17 +863,27 @@ function TeamSurface({
       )}
 
       <div className="grid gap-4 sm:grid-cols-2">
-        {members.map((m) => (
-          <Link
-            key={m.name}
-            to={`${base}/agents/${encodeURIComponent(m.name)}`}
-            prefetch="intent"
-            className="group"
-          >
-            <Card className="h-full transition-colors group-hover:border-ring/60">
+        {/* The card is not one big link: its subagent rows are links of their own (issue #344),
+            and an anchor can't nest inside an anchor. The member's own link covers the title
+            and the counts, which is everything that means "open this member". */}
+        {members.map((m) => {
+          const memberHref = contextPath(projectId, m.name);
+          return (
+            <Card
+              key={m.name}
+              className="h-full transition-colors hover:border-ring/60"
+            >
               <CardHeader className="pb-3">
                 <div className="flex items-center justify-between gap-2">
-                  <CardTitle className="truncate text-base">{m.name}</CardTitle>
+                  <CardTitle className="truncate text-base">
+                    <Link
+                      to={memberHref}
+                      prefetch="intent"
+                      className="underline-offset-4 hover:underline"
+                    >
+                      {m.name}
+                    </Link>
+                  </CardTitle>
                   <span className="flex shrink-0 items-center gap-1.5">
                     {m.secretsMissing > 0 && (
                       <Badge
@@ -731,6 +901,7 @@ function TeamSurface({
                 </div>
               </CardHeader>
               <CardContent className="pt-0">
+                <Link to={memberHref} prefetch="intent" className="block">
                 <ul className="flex flex-wrap gap-x-4 gap-y-1 text-sm text-muted-foreground">
                   <li className="flex items-center gap-1.5">
                     <span
@@ -768,6 +939,7 @@ function TeamSurface({
                     {m.channels} channel{m.channels === 1 ? "" : "s"}
                   </li>
                 </ul>
+                </Link>
                 {m.subagents.length > 0 && (
                   <div className="mt-3 border-t pt-3">
                     <div className="mb-1.5 flex flex-wrap items-center gap-2">
@@ -788,7 +960,19 @@ function TeamSurface({
                           key={s.name}
                           className="flex items-baseline gap-2 text-sm"
                         >
-                          <span className="shrink-0 font-mono">{s.name}</span>
+                          <Link
+                            to={subagentContextPath(projectId, m.name, [
+                              s.name,
+                            ])}
+                            className="shrink-0 font-mono underline-offset-4 hover:underline"
+                          >
+                            {s.name}
+                          </Link>
+                          {s.dynamic && (
+                            <Badge variant="outline" className="text-[10px]">
+                              dynamic
+                            </Badge>
+                          )}
                           {s.description && (
                             <span className="truncate text-xs text-muted-foreground">
                               {s.description}
@@ -801,8 +985,8 @@ function TeamSurface({
                 )}
               </CardContent>
             </Card>
-          </Link>
-        ))}
+          );
+        })}
       </div>
     </div>
   );
@@ -885,6 +1069,7 @@ const CATEGORY_HINTS: Record<string, string> = {
   channels: "Entry points — HTTP, Slack, web chat",
   schedules: "Recurring cron-triggered runs",
   connections: "Typed external integrations",
+  hooks: "Handlers that observe the agent's runtime events",
 };
 
 /** How many items a category card previews before deferring to its list page. */
@@ -894,15 +1079,25 @@ function AgentSurface({
   config,
   ctx,
   root,
+  categories,
+  subagentHref,
+  dynamicSubagents,
   draftPaths,
 }: {
   config: AgentConfig;
-  /** The member's base path (repo base for single-agent repos) — editor links hang off it. */
+  /** The target's base path — every editor/list link on the surface hangs off it. */
   ctx: string;
-  /** Active member's agent directory ("agent" or "agents/<member>/agent"). */
+  /** The target's agent directory ("agent", "agents/<m>/agent", or a subagent's root). */
   root: string;
+  /** Categories this target may author (`categoriesFor`) — root-only ones are absent. */
+  categories: AgentCategory[];
+  /** Nested configuration context for one of this target's declared subagents. */
+  subagentHref: (name: string) => string;
+  /** Names of subagents whose module is `defineDynamic(...)` (availability is per session). */
+  dynamicSubagents: string[];
   draftPaths: string[];
 }) {
+  const dynamic = new Set(dynamicSubagents);
   const drafted = new Set(draftPaths);
 
   // Stable elements between renders (JSX props otherwise defeat memoized children).
@@ -966,13 +1161,16 @@ function AgentSurface({
       <section>
         <SectionHeader icon={Boxes} accent="cyan" title="Resources" />
         <div className="grid gap-4 sm:grid-cols-2">
-          {AGENT_CATEGORIES.map((cat) => {
+          {categories.map((cat) => {
             const meta = CATEGORY_META[cat.key];
             const CatIcon = meta.icon;
             const repoItems = config[cat.key];
             // Staged NEW files (drafts not yet in the repo) still belong in their category.
+            // Directory-backed resources (a subagent) come through their directory row, which
+            // the draft-overlaid config already carries — only loose files need adding here.
             const stagedNew = draftPaths.flatMap((p) =>
               p.startsWith(`${root}/${cat.dir}/`) &&
+              !p.slice(`${root}/${cat.dir}/`.length).includes("/") &&
               !repoItems.some((i) => i.path === p)
                 ? [{ path: p, name: p.split("/").pop()!, isDirectory: false }]
                 : [],
@@ -1014,7 +1212,15 @@ function AgentSurface({
                     <ul className="space-y-1 text-sm">
                       {items.slice(0, CARD_PREVIEW_COUNT).map((item) => (
                         <li key={item.path} className="flex items-center gap-2">
-                          {item.isDirectory ? (
+                          {cat.key === "subagents" && item.isDirectory ? (
+                            // A directory-backed subagent is its own configuration surface.
+                            <Link
+                              to={subagentHref(item.name)}
+                              className="font-mono underline-offset-4 hover:underline"
+                            >
+                              {item.name}
+                            </Link>
+                          ) : item.isDirectory ? (
                             <span className="font-mono text-muted-foreground">
                               {item.name}/
                             </span>
@@ -1026,6 +1232,12 @@ function AgentSurface({
                               {item.name}
                             </Link>
                           )}
+                          {cat.key === "subagents" &&
+                            dynamic.has(item.name) && (
+                              <Badge variant="outline" className="text-xs">
+                                dynamic
+                              </Badge>
+                            )}
                           {drafted.has(item.path) && (
                             <Badge variant="outline" className="text-xs">
                               saved

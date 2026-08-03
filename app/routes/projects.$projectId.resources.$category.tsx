@@ -5,6 +5,12 @@
  * saved change (one Publish takes them all live; a saved-only draft is just discarded).
  * Member-scoped (M5.8): team members' lists live at
  * /repos/:id/agents/:name/resources/:category; single-agent repos at the repo level.
+ *
+ * A declared subagent is its own agent root (issue #344), so the same page serves
+ * `…/sub/:subPath/resources/:category` — for the categories a subagent may author. Channels and
+ * schedules are root-only, and the 404 for them is issued in the LOADER AND THE ACTION: a
+ * category that isn't offered must not be reachable as a write surface either. The `subagents`
+ * category is where nested subagents are created (`create-subagent`) and entered.
  */
 import { getSessionAuth, sessionLoader } from "~/auth/session.server";
 import { MoreHorizontal } from "lucide-react";
@@ -58,24 +64,39 @@ import {
   listDrafts,
   stageDeletions,
 } from "~/drafts/drafts.server";
-import { buildAgentConfig } from "~/eve/parse";
-import { RESOURCE_KINDS } from "~/eve/templates";
-import { AGENT_CATEGORIES } from "~/eve/types";
+import { stageDraft } from "~/drafts/drafts.server";
+import { orgResolverAgentName } from "~/eve/agentModule";
+import { scaffoldOrgModelAgentModule } from "~/eve/org-model-module";
+import { buildAgentConfig, overlayDrafts } from "~/eve/parse";
+import { RESOURCE_KINDS, slugifyResourceName } from "~/eve/templates";
+import {
+  AGENT_CATEGORIES,
+  categoriesFor,
+  type AgentResource,
+  type TargetKind,
+} from "~/eve/types";
 import { getAgentSource, getLastCommitForPaths } from "~/github/cached.server";
 import { fetchAgentSource, type LastCommitInfo } from "~/github/repo.server";
-import { contextPath } from "~/lib/paths";
+import { contextPath, subagentContextPath } from "~/lib/paths";
 import { cn } from "~/lib/utils";
+import { agentFromParams, agentParamRedirect } from "~/project/agent-context.server";
 import {
-  agentFromParams,
-  agentParamRedirect,
-  resolveAgentContext,
-  requireActiveAgent,
-} from "~/project/agent-context.server";
-import { requireProject, requireRepo } from "~/project/guard.server";
+  resolveConfigTarget,
+  subagentSegmentsFromParams,
+} from "~/project/config-target.server";
+import {
+  confineToRoot,
+  requireProject,
+  requireRepo,
+} from "~/project/guard.server";
 import type { Route } from "./+types/projects.$projectId.resources.$category";
 
-function categoryOf(param: string | undefined) {
-  const cat = AGENT_CATEGORIES.find((c) => c.key === param);
+/**
+ * The category this URL names, for THIS target — a root-only category (channels, schedules) is
+ * a 404 at a subagent target, not merely a hidden card, so no write path exists for it either.
+ */
+function categoryOf(param: string | undefined, kind: TargetKind) {
+  const cat = categoriesFor(kind).find((c) => c.key === param);
   if (!cat) throw data("Unknown resource category", { status: 404 });
   return cat;
 }
@@ -96,40 +117,59 @@ export const loader = (args: LoaderFunctionArgs) =>
   sessionLoader(
     args,
     async ({ auth }) => {
-      const cat = categoryOf(args.params.category);
       const project = requireRepo(
         await requireProject(auth, args.params.projectId, {
           request: args.request,
         }),
       );
       const agentName = agentFromParams(args.params);
-      if (!agentName) {
+      const subSegments = subagentSegmentsFromParams(args.params);
+      if (!agentName && !subSegments) {
         const legacy = agentParamRedirect(args.request, project.id);
         if (legacy) throw legacy;
       }
-      const { roster, active, isTeam } = await resolveAgentContext(
-        project.id,
-        agentName,
-      );
-      requireActiveAgent(active, project.id);
-      // Teams have no repo-level resource lists — they exist only at the member level.
-      if (isTeam && !agentName) throw redirect(`/repos/${project.id}`);
       const repo = { owner: project.repoOwner, repo: project.repoName };
       const [source, drafts] = await Promise.all([
         getAgentSource(project.repoInstallationId, repo),
         listDrafts(project.id),
       ]);
+      const draftFiles = drafts.map((d) => ({
+        path: d.path,
+        content: d.content,
+      }));
+      const { roster, active, isTeam, target } = await resolveConfigTarget({
+        projectId: project.id,
+        agentName,
+        subSegments,
+        source,
+        drafts: draftFiles,
+      });
+      const cat = categoryOf(args.params.category, target.kind);
+      // Teams have no repo-level resource lists — they exist only at the member level.
+      if (isTeam && !agentName) throw redirect(`/repos/${project.id}`);
 
-      const config = buildAgentConfig(source, active.root);
+      // Saved-but-unpublished work is part of what this page manages, so it parses the tree
+      // with drafts applied: a subagent you created a minute ago is a directory row here.
+      // ADDITIONS only — a resource saved for deletion must keep its row (badged, undoable)
+      // until the publish that removes it actually lands.
+      const config = buildAgentConfig(
+        overlayDrafts(
+          source,
+          draftFiles.filter((d) => d.content !== null),
+        ),
+        target.root,
+      );
       const repoItems = config[cat.key];
       const draftPaths = new Set(drafts.map((d) => d.path));
       // Paths with a saved DELETION (content null) — directory resources save one per file.
       const deletionPaths = new Set(
         drafts.filter((d) => d.content === null).map((d) => d.path),
       );
+      const dir = `${target.root}/${cat.dir}/`;
       const stagedNew = drafts.flatMap((d) =>
         d.content !== null &&
-        d.path.startsWith(`${active.root}/${cat.dir}/`) &&
+        d.path.startsWith(dir) &&
+        !d.path.slice(dir.length).includes("/") &&
         !repoItems.some((i) => i.path === d.path)
           ? [
               {
@@ -141,25 +181,28 @@ export const loader = (args: LoaderFunctionArgs) =>
           : [],
       );
 
+      // A directory resource carries the state of the files under it: it is saved for deletion
+      // when any of them is, saved-new when none of them is in the repo yet.
+      const under = (paths: Iterable<string>, item: AgentResource) =>
+        item.isDirectory
+          ? [...paths].some((p) => p.startsWith(`${item.path}/`))
+          : [...paths].includes(item.path);
+      const deletionStaged = (item: AgentResource) => under(deletionPaths, item);
+      const inRepo = (item: AgentResource) => under(source.paths, item);
+
       // Last-commit metadata for repo-backed files only (best-effort; page renders without).
       const commitMeta = await getLastCommitForPaths(
         project.repoInstallationId,
         repo,
-        repoItems.map((i) => i.path),
+        repoItems.filter((i) => !i.isDirectory && inRepo(i)).map((i) => i.path),
       );
-
-      // A directory resource is "saved for deletion" when any file under it is.
-      const deletionStaged = (item: { path: string; isDirectory: boolean }) =>
-        item.isDirectory
-          ? [...deletionPaths].some((p) => p.startsWith(`${item.path}/`))
-          : deletionPaths.has(item.path);
 
       const rows: ResourceRow[] = [
         ...repoItems.map((i) => ({
           ...i,
-          staged: draftPaths.has(i.path) || deletionStaged(i),
+          staged: under(draftPaths, i) || deletionStaged(i),
           stagedDelete: deletionStaged(i),
-          inRepo: true,
+          inRepo: inRepo(i),
           lastCommit: commitMeta[i.path] ?? null,
         })),
         ...stagedNew.map((i) => ({
@@ -176,7 +219,8 @@ export const loader = (args: LoaderFunctionArgs) =>
         category: { key: cat.key, label: cat.label },
         roster: roster.map((a) => ({ name: a.name })),
         activeAgent: active.name,
-        activeRoot: active.root,
+        activeRoot: target.root,
+        subagentPath: target.kind === "subagent" ? target.subagentPath : [],
         isTeam,
         rows,
       };
@@ -184,47 +228,102 @@ export const loader = (args: LoaderFunctionArgs) =>
     { ensureSignedIn: true },
   );
 
+/**
+ * Delete / undo-delete a resource, and create a nested subagent.
+ *
+ * The target is derived from the URL (`:agentName`, `:subPath`), never from the form: a posted
+ * member name would let one member's page save deletions inside another's tree. Every path the
+ * action touches is then confined to this target's category directory.
+ */
 export async function action(args: ActionFunctionArgs) {
   const auth = await getSessionAuth(args);
   if (!auth.user) throw redirect("/login");
-  const cat = categoryOf(args.params.category);
   const project = requireRepo(
     await requireProject(auth, args.params.projectId),
   );
+  const repo = { owner: project.repoOwner, repo: project.repoName };
+
+  const [source, drafts] = await Promise.all([
+    fetchAgentSource(project.repoInstallationId, repo),
+    listDrafts(project.id),
+  ]);
+  const draftFiles = drafts.map((d) => ({ path: d.path, content: d.content }));
+  const { active, isTeam, target } = await resolveConfigTarget({
+    projectId: project.id,
+    agentName: agentFromParams(args.params),
+    subSegments: subagentSegmentsFromParams(args.params),
+    source,
+    drafts: draftFiles,
+  });
+  const cat = categoryOf(args.params.category, target.kind);
+  const dir = `${target.root}/${cat.dir}`;
+  const member = isTeam ? active.name : null;
+  const parentSegments = target.kind === "subagent" ? target.subagentPath : [];
 
   const form = await args.request.formData();
   const intent = String(form.get("intent"));
+
+  if (intent === "create-subagent") {
+    if (cat.key !== "subagents") return { error: "Unknown action." };
+    const name = slugifyResourceName(String(form.get("name") ?? ""));
+    if (!name || !/^[a-z0-9][\w.-]*$/.test(name)) {
+      return { error: "Enter a name for the subagent." };
+    }
+    const root = `${dir}/${name}`;
+    const taken = [
+      ...source.paths,
+      ...drafts.flatMap((d) => (d.content === null ? [] : [d.path])),
+    ].some((p) => p === root || p.startsWith(`${root}/`));
+    if (taken) return { error: `A subagent named ${name} already exists.` };
+
+    try {
+      // The scaffold names the PARENT member's resolver plus this subagent's own path, so it can
+      // hold its own model selection and otherwise inherits (see `org-model-module`).
+      const parentModule =
+        overlayDrafts(source, draftFiles).files[
+          `${target.deploymentRoot}/agent.ts`
+        ];
+      const resolverName =
+        (parentModule ? orgResolverAgentName(parentModule) : null) ??
+        active.name;
+      const segments = [...parentSegments, name];
+      await stageDraft({
+        projectId: project.id,
+        path: `${root}/agent.ts`,
+        content: scaffoldOrgModelAgentModule(resolverName, {
+          subagentPath: segments.join("/"),
+        }),
+        createdBy: auth.user.id,
+      });
+      await stageDraft({
+        projectId: project.id,
+        path: `${root}/instructions.md`,
+        content: `# ${name}\n\nDescribe what this subagent is for and how it should work.\n`,
+        createdBy: auth.user.id,
+      });
+    } catch (error) {
+      return { error: (error as Error).message };
+    }
+    // Land on the new subagent's own configuration surface — it is an agent root now.
+    throw redirect(subagentContextPath(project.id, member, [...parentSegments, name]));
+  }
+
   if (intent !== "delete-resource" && intent !== "undo-delete") {
     return { error: "Unknown action." };
   }
-  const target = String(form.get("path") ?? "");
-  const { active } = await resolveAgentContext(
-    project.id,
-    String(form.get("agent") ?? "") || null,
-  );
-  requireActiveAgent(active, project.id);
-  // The path must be a resource of THIS member's category — no arbitrary deletions.
-  if (
-    !target.startsWith(`${active.root}/${cat.dir}/`) ||
-    target.includes("..")
-  ) {
-    return { error: "Invalid resource path." };
-  }
+  // The path must be a resource of THIS target's category — no arbitrary deletions.
+  const path = confineToRoot(dir, String(form.get("path") ?? ""));
+  if (!path || path === dir) return { error: "Invalid resource path." };
 
-  const repo = { owner: project.repoOwner, repo: project.repoName };
-  const name = target.split("/").pop()!;
+  const name = path.split("/").pop()!;
 
   try {
-    const [source, drafts] = await Promise.all([
-      fetchAgentSource(project.repoInstallationId, repo),
-      listDrafts(project.id),
-    ]);
     // Directory resources delete every file under them; files delete themselves.
     const repoFiles = source.paths.filter(
-      (p) => p === target || p.startsWith(`${target}/`),
+      (p) => p === path || p.startsWith(`${path}/`),
     );
     const stagedHere = drafts.flatMap((d) =>
-      d.path === target || d.path.startsWith(`${target}/`) ? [d.path] : [],
+      d.path === path || d.path.startsWith(`${path}/`) ? [d.path] : [],
     );
 
     if (intent === "undo-delete") {
@@ -271,15 +370,30 @@ const CATEGORY_HINTS: Record<string, string> = {
   channels: "Entry points — HTTP, Slack, web chat",
   schedules: "Recurring cron-triggered runs",
   connections: "Typed external integrations",
+  hooks: "Handlers that observe the agent's runtime events",
 };
 
 export default function ResourceCategory({
   loaderData,
   actionData,
 }: Route.ComponentProps) {
-  const { project, category, roster, activeAgent, activeRoot, isTeam, rows } =
-    loaderData;
-  const ctx = contextPath(project.id, isTeam ? activeAgent : null);
+  const {
+    project,
+    category,
+    roster,
+    activeAgent,
+    activeRoot,
+    subagentPath,
+    isTeam,
+    rows,
+  } = loaderData;
+  const member = isTeam ? activeAgent : null;
+  const ctx = subagentContextPath(project.id, member, subagentPath);
+  // A subagents row is a directory that is its own agent root — it opens as a context, not a file.
+  const subagentHref = (name: string) =>
+    subagentContextPath(project.id, member, [...subagentPath, name]);
+  const opensAsContext = (row: ResourceRow) =>
+    category.key === "subagents" && row.isDirectory;
   const publishHref = usePublishHref();
   const submit = useSubmit();
   const navigation = useNavigation();
@@ -295,12 +409,15 @@ export default function ResourceCategory({
         repoName: project.name,
         isTeam,
         agentName: activeAgent,
+        subagentPath,
         tail: [{ label: category.label }],
       })}
     >
       <AgentNav
         base={ctx}
-        level={isTeam ? "member" : "single"}
+        level={
+          subagentPath.length > 0 ? "subagent" : isTeam ? "member" : "single"
+        }
         roster={roster}
         activeAgent={isTeam ? activeAgent : undefined}
       />
@@ -391,7 +508,14 @@ export default function ResourceCategory({
                 {rows.map((row) => (
                   <TableRow key={row.path}>
                     <TableCell>
-                      {row.isDirectory ? (
+                      {opensAsContext(row) ? (
+                        <Link
+                          to={subagentHref(row.name)}
+                          className="font-mono underline-offset-4 hover:underline"
+                        >
+                          {row.name}/
+                        </Link>
+                      ) : row.isDirectory ? (
                         <span className="font-mono">{row.name}/</span>
                       ) : (
                         <Link
@@ -427,7 +551,11 @@ export default function ResourceCategory({
                     </TableCell>
                     <TableCell className="text-right">
                       <div className="flex items-center justify-end gap-1">
-                        {!row.isDirectory && (
+                        {opensAsContext(row) ? (
+                          <Button variant="ghost" size="sm" asChild>
+                            <Link to={subagentHref(row.name)}>Open</Link>
+                          </Button>
+                        ) : row.isDirectory ? null : (
                           <Button variant="ghost" size="sm" asChild>
                             <Link
                               to={`${ctx}/edit?path=${encodeURIComponent(row.path)}`}
@@ -456,11 +584,7 @@ export default function ResourceCategory({
                                 className="w-full justify-start"
                                 onClick={() =>
                                   submit(
-                                    {
-                                      intent: "undo-delete",
-                                      path: row.path,
-                                      agent: activeAgent,
-                                    },
+                                    { intent: "undo-delete", path: row.path },
                                     { method: "post" },
                                   )
                                 }
@@ -491,11 +615,7 @@ export default function ResourceCategory({
                                 }
                                 onConfirm={() =>
                                   submit(
-                                    {
-                                      intent: "delete-resource",
-                                      path: row.path,
-                                      agent: activeAgent,
-                                    },
+                                    { intent: "delete-resource", path: row.path },
                                     { method: "post" },
                                   )
                                 }

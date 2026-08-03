@@ -4,11 +4,20 @@
  * (`harnesstAgentModel(...)`) routes a model save into the org override map with zero repo churn,
  * while a legacy module gets the dynamic wrapper staged (per-conversation directives work) with
  * package.json normalized alongside.
+ *
+ * And the declared-subagent target (issue #344): the row is keyed by the member's resolver name
+ * plus the subagent path, "same as what I inherit" compares against the PARENT (never the
+ * workspace default), dependencies still land in the MEMBER's package.json, and a subagent whose
+ * module still makes the pre-#344 one-argument call gets that call upgraded as a draft.
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { getDraft, listDrafts } from "~/drafts/drafts.server";
-import { hasDynamicModel, readModel } from "~/eve/agentModule";
+import {
+  hasDynamicModel,
+  orgResolverTarget,
+  readModel,
+} from "~/eve/agentModule";
 import {
   stageModelChange,
   type StageModelDeps,
@@ -180,11 +189,13 @@ describe("stageModelChange", () => {
     );
 
     expect(result).toEqual({ ok: true, mode: "applied" });
-    // The override is keyed by the agent NAME the module resolves itself by.
-    expect(setOverride).toHaveBeenCalledWith("org_1", "bookkeeping", {
-      model: "openai/abcdefghijkl/gpt-5.1",
-      effort: null,
-    });
+    // The override is keyed by the TARGET: the name the module resolves itself by, the agent's
+    // own (empty) subagent path, and the repo it lives in.
+    expect(setOverride).toHaveBeenCalledWith(
+      "org_1",
+      { agentName: "bookkeeping", subagentPath: "", projectId: PROJECT.id },
+      { model: "openai/abcdefghijkl/gpt-5.1", effort: null },
+    );
     expect(await listDrafts(PROJECT.id, store)).toEqual([]);
   });
 
@@ -215,7 +226,227 @@ describe("stageModelChange", () => {
     );
 
     expect(result).toEqual({ ok: true, mode: "applied" });
-    expect(removeOverride).toHaveBeenCalledWith("org_1", "bookkeeping");
+    expect(removeOverride).toHaveBeenCalledWith("org_1", {
+      agentName: "bookkeeping",
+      subagentPath: "",
+      projectId: PROJECT.id,
+    });
     expect(setOverride).not.toHaveBeenCalled();
+  });
+});
+
+/** A subagent module that still asks with only its parent's name — the pre-#344 shape. */
+const LEGACY_SUBAGENT_TS = `import { defineAgent } from 'eve';
+import { harnesstAgentModel } from '../../../harnesst/model.js';
+
+export default defineAgent({
+  description: 'Researches things',
+  model: harnesstAgentModel('bookkeeping'),
+});
+`;
+
+const SUBAGENT_INPUT = {
+  project: PROJECT,
+  root: "agent/subagents/researcher",
+  deploymentRoot: "agent",
+  subagentPath: "researcher",
+  model: "openai/abcdefghijkl/gpt-5.1",
+  effort: null,
+  createdBy: "user_1",
+} as const;
+
+describe("stageModelChange — declared subagent targets", () => {
+  it("keys the row by the member's resolver name plus the subagent path", async () => {
+    const deps = fakeDeps({
+      "agent/agent.ts": RESOLVER_AGENT_TS,
+      "agent/subagents/researcher/agent.ts": LEGACY_SUBAGENT_TS,
+      "package.json": PKG,
+    });
+    const setOverride = vi.fn().mockResolvedValue(undefined);
+    deps.setOverride = setOverride;
+    // The parent inherits the workspace default (nothing configured) — so this is a real pin.
+    deps.resolveTarget = vi.fn().mockResolvedValue(null);
+
+    const result = await stageModelChange({ ...SUBAGENT_INPUT }, store, deps);
+
+    expect(result.ok).toBe(true);
+    expect(setOverride).toHaveBeenCalledWith(
+      "org_1",
+      {
+        agentName: "bookkeeping",
+        subagentPath: "researcher",
+        projectId: PROJECT.id,
+      },
+      { model: "openai/abcdefghijkl/gpt-5.1", effort: null },
+    );
+    // Never the subagent's own directory: `agent/subagents/package.json` does not exist.
+    expect(await getDraft(PROJECT.id, "package.json", store)).toBeNull();
+    expect(
+      await getDraft(PROJECT.id, "agent/subagents/package.json", store),
+    ).toBeNull();
+  });
+
+  it("upgrades the subagent's one-argument resolver call as a draft", async () => {
+    const deps = fakeDeps({
+      "agent/agent.ts": RESOLVER_AGENT_TS,
+      "agent/subagents/researcher/agent.ts": LEGACY_SUBAGENT_TS,
+      "package.json": PKG,
+    });
+    deps.setOverride = vi.fn().mockResolvedValue(undefined);
+    deps.resolveTarget = vi.fn().mockResolvedValue(null);
+
+    const result = await stageModelChange({ ...SUBAGENT_INPUT }, store, deps);
+
+    // The row is live immediately; the running deployment needs the publish.
+    expect(result).toEqual({ ok: true, mode: "applied", upgraded: true });
+    const draft = await getDraft(
+      PROJECT.id,
+      "agent/subagents/researcher/agent.ts",
+      store,
+    );
+    expect(orgResolverTarget(draft!.content!)).toEqual({
+      agentName: "bookkeeping",
+      subagentPath: "researcher",
+    });
+    // The rest of the subagent's module is untouched.
+    expect(draft!.content).toContain("description: 'Researches things'");
+  });
+
+  it("leaves an already-upgraded module alone", async () => {
+    const upgraded = LEGACY_SUBAGENT_TS.replace(
+      "harnesstAgentModel('bookkeeping')",
+      "harnesstAgentModel('bookkeeping', 'researcher')",
+    );
+    const deps = fakeDeps({
+      "agent/agent.ts": RESOLVER_AGENT_TS,
+      "agent/subagents/researcher/agent.ts": upgraded,
+      "package.json": PKG,
+    });
+    deps.setOverride = vi.fn().mockResolvedValue(undefined);
+    deps.resolveTarget = vi.fn().mockResolvedValue(null);
+
+    const result = await stageModelChange({ ...SUBAGENT_INPUT }, store, deps);
+
+    expect(result).toEqual({ ok: true, mode: "applied" });
+    expect(await listDrafts(PROJECT.id, store)).toEqual([]);
+  });
+
+  it("scaffolds a resolver module for a subagent that has none", async () => {
+    const deps = fakeDeps({
+      "agent/agent.ts": RESOLVER_AGENT_TS,
+      "package.json": PKG,
+    });
+    deps.setOverride = vi.fn().mockResolvedValue(undefined);
+    deps.resolveTarget = vi.fn().mockResolvedValue(null);
+
+    const result = await stageModelChange({ ...SUBAGENT_INPUT }, store, deps);
+
+    expect(result).toEqual({ ok: true, mode: "applied", upgraded: true });
+    const draft = await getDraft(
+      PROJECT.id,
+      "agent/subagents/researcher/agent.ts",
+      store,
+    );
+    expect(draft!.content).toContain(
+      "model: harnesstAgentModel('bookkeeping', 'researcher')",
+    );
+    // Depth 2 below the agent root — the module is the root's sibling.
+    expect(draft!.content).toContain("from '../../../harnesst/model.js'");
+  });
+
+  it("drops the row when the subagent picks exactly what its PARENT resolves to", async () => {
+    const deps = fakeDeps({
+      "agent/agent.ts": RESOLVER_AGENT_TS,
+      "agent/subagents/researcher/agent.ts": LEGACY_SUBAGENT_TS.replace(
+        "harnesstAgentModel('bookkeeping')",
+        "harnesstAgentModel('bookkeeping', 'researcher')",
+      ),
+      "package.json": PKG,
+    });
+    const setOverride = vi.fn().mockResolvedValue(undefined);
+    const removeOverride = vi.fn().mockResolvedValue(undefined);
+    deps.setOverride = setOverride;
+    deps.removeOverride = removeOverride;
+    // The parent is pinned to this very model — and deliberately NOT the workspace default,
+    // which stays empty: the comparison must be against the parent, not the default.
+    deps.resolveTarget = vi.fn().mockResolvedValue({
+      model: "openai/abcdefghijkl/gpt-5.1",
+      effort: null,
+      source: "override",
+    });
+
+    const result = await stageModelChange({ ...SUBAGENT_INPUT }, store, deps);
+
+    expect(result).toEqual({ ok: true, mode: "applied" });
+    expect(removeOverride).toHaveBeenCalledWith("org_1", {
+      agentName: "bookkeeping",
+      subagentPath: "researcher",
+      projectId: PROJECT.id,
+    });
+    expect(setOverride).not.toHaveBeenCalled();
+    // The parent chain is what was consulted.
+    expect(deps.resolveTarget).toHaveBeenCalledWith("org_1", {
+      agentName: "bookkeeping",
+      subagentPath: "",
+      projectId: PROJECT.id,
+    });
+  });
+
+  it("stages a nested subagent's own two-argument call and asks its immediate parent", async () => {
+    const deps = fakeDeps({
+      "agent/agent.ts": RESOLVER_AGENT_TS,
+      "agent/subagents/researcher/subagents/checker/agent.ts": LEGACY_SUBAGENT_TS,
+      "package.json": PKG,
+    });
+    deps.setOverride = vi.fn().mockResolvedValue(undefined);
+    deps.resolveTarget = vi.fn().mockResolvedValue(null);
+
+    const result = await stageModelChange(
+      {
+        ...SUBAGENT_INPUT,
+        root: "agent/subagents/researcher/subagents/checker",
+        subagentPath: "researcher/checker",
+      },
+      store,
+      deps,
+    );
+
+    expect(result).toEqual({ ok: true, mode: "applied", upgraded: true });
+    expect(deps.resolveTarget).toHaveBeenCalledWith("org_1", {
+      agentName: "bookkeeping",
+      subagentPath: "researcher",
+      projectId: PROJECT.id,
+    });
+    const draft = await getDraft(
+      PROJECT.id,
+      "agent/subagents/researcher/subagents/checker/agent.ts",
+      store,
+    );
+    expect(draft!.content).toContain(
+      "harnesstAgentModel('bookkeeping', 'researcher/checker')",
+    );
+  });
+
+  it("rewrites a subagent that carries its OWN baked model, member package.json and all", async () => {
+    const deps = fakeDeps({
+      "agent/agent.ts": RESOLVER_AGENT_TS,
+      "agent/subagents/researcher/agent.ts": STATIC_AGENT_TS,
+      "package.json": PKG,
+    });
+    const setOverride = vi.fn().mockResolvedValue(undefined);
+    deps.setOverride = setOverride;
+
+    const result = await stageModelChange({ ...SUBAGENT_INPUT }, store, deps);
+
+    expect(result).toEqual({ ok: true, mode: "staged" });
+    expect(setOverride).not.toHaveBeenCalled();
+    const draft = await getDraft(
+      PROJECT.id,
+      "agent/subagents/researcher/agent.ts",
+      store,
+    );
+    expect(readModel(draft!.content!)).toBe("openai/abcdefghijkl/gpt-5.1");
+    // The MEMBER's package.json carries the dependency bump — a subagent has none.
+    expect(await getDraft(PROJECT.id, "package.json", store)).not.toBeNull();
   });
 });

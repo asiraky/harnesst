@@ -11,11 +11,14 @@ import { describe, expect, it } from "vitest";
 import {
   ensureModelProviderDependencies,
   hasDynamicModel,
+  orgResolverAgentName,
+  orgResolverTarget,
   readModel,
   readModelContextWindow,
   readReasoningEffort,
   scaffoldAgentModule,
   setModel,
+  setOrgResolverSubagentPath,
 } from "~/eve/agentModule";
 
 /**
@@ -587,5 +590,69 @@ describe("harnesstModel missing-credential deferral", () => {
     expect(routerAt).toBeGreaterThan(-1);
     expect(before.lastIndexOf("transformParams")).toBeGreaterThan(routerAt);
     expect(source).toContain("harnesst-missing-credential");
+  });
+});
+
+/**
+ * The workspace-resolver CALL is the repo-side half of a configuration target (issue #344): a
+ * one-argument call names the agent and therefore inherits, a two-argument call names a declared
+ * subagent's own target. Reading and writing that second argument is what the Settings save uses
+ * to decide whether a subagent still needs its upgrade published.
+ */
+describe("orgResolverTarget", () => {
+  const oneArg = `export default defineAgent({\n  model: harnesstAgentModel('ivy'),\n});\n`;
+  const twoArg = `export default defineAgent({\n  model: harnesstAgentModel('ivy', 'researcher/fact-checker'),\n});\n`;
+
+  it("reads a legacy one-argument call as the AGENT's target", () => {
+    expect(orgResolverTarget(oneArg)).toEqual({
+      agentName: "ivy",
+      subagentPath: "",
+    });
+    // The pre-#344 reader keeps working unchanged.
+    expect(orgResolverAgentName(oneArg)).toBe("ivy");
+  });
+
+  it("reads the subagent path off an upgraded call", () => {
+    expect(orgResolverTarget(twoArg)).toEqual({
+      agentName: "ivy",
+      subagentPath: "researcher/fact-checker",
+    });
+    expect(orgResolverAgentName(twoArg)).toBe("ivy");
+  });
+
+  it("is null for a module that does not resolve through the workspace module", () => {
+    expect(orgResolverTarget("export default defineAgent({});")).toBeNull();
+  });
+});
+
+describe("setOrgResolverSubagentPath", () => {
+  it("upgrades a one-argument call in place, touching nothing else", () => {
+    const source = `import { harnesstAgentModel } from '../../../harnesst/model.js';\n\nexport default defineAgent({\n  description: 'Researches things',\n  model: harnesstAgentModel('ivy'),\n});\n`;
+    const next = setOrgResolverSubagentPath(source, "researcher");
+    expect(next).toContain("model: harnesstAgentModel('ivy', 'researcher')");
+    expect(next).toContain("description: 'Researches things'");
+    expect(orgResolverTarget(next)?.subagentPath).toBe("researcher");
+  });
+
+  it("rewrites an existing second argument and can clear it", () => {
+    const source = `model: harnesstAgentModel("ivy", "old/path")`;
+    expect(setOrgResolverSubagentPath(source, "new/path")).toBe(
+      `model: harnesstAgentModel("ivy", "new/path")`,
+    );
+    expect(setOrgResolverSubagentPath(source, "")).toBe(
+      `model: harnesstAgentModel("ivy")`,
+    );
+  });
+
+  it("leaves a module with no resolver call untouched (callers use identity)", () => {
+    const source = "export default defineAgent({});";
+    expect(setOrgResolverSubagentPath(source, "researcher")).toBe(source);
+  });
+
+  it("strips quote characters from the path — no source injection", () => {
+    // Same filter as the scaffold: nothing can close the string literal it lands in.
+    expect(
+      setOrgResolverSubagentPath("model: harnesstAgentModel('ivy')", "a'b\"c`d\\e"),
+    ).toBe("model: harnesstAgentModel('ivy', 'abcde')");
   });
 });

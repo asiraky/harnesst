@@ -14,8 +14,11 @@ import {
   extractDescription,
   hasTeamLayout,
   isEveRepo,
+  overlayDrafts,
   subagentDirNames,
+  subagentModuleFiles,
 } from "~/eve/parse";
+import { categoriesFor } from "~/eve/types";
 
 const SINGLE = [
   "agent/instructions.md",
@@ -285,16 +288,19 @@ describe("subagents surfaced as read-only children (issue #146)", () => {
           name: "quinn",
           path: "agents/ivy/agent/subagents/quinn",
           description: "QA reviewer for the pipeline",
+          dynamic: false,
         },
         {
           name: "remy",
           path: "agents/ivy/agent/subagents/remy",
           description: "Remy",
+          dynamic: false,
         },
         {
           name: "tess",
           path: "agents/ivy/agent/subagents/tess",
           description: null,
+          dynamic: false,
         },
       ]);
     });
@@ -303,6 +309,143 @@ describe("subagents surfaced as read-only children (issue #146)", () => {
       const summaries = buildSubagentSummaries(TEAM_SUB, "agents/sam/agent");
       expect(summaries.map((s) => s.name)).toEqual(["dana"]);
     });
+
+    // A `defineDynamic` subagent is offered per session, so the surface must say so rather than
+    // claim it is always available (issue #344).
+    it("flags a defineDynamic subagent module as dynamic", () => {
+      const summaries = buildSubagentSummaries(
+        {
+          paths: ["agent/subagents/scout/agent.ts", "agent/subagents/fixed/agent.ts"],
+          files: {
+            "agent/subagents/scout/agent.ts":
+              `import { defineDynamic } from 'eve';\nexport default defineDynamic(async () => ({ description: 'Scout' }));`,
+            // harnesst writes `model: defineDynamic(...)` into every module it touches — that is
+            // the model wrapper, not a dynamic declaration.
+            "agent/subagents/fixed/agent.ts":
+              `export default defineAgent({ description: 'Fixed', model: defineDynamic({ fallback: x }) });`,
+          },
+        },
+        "agent",
+      );
+      expect(summaries.map((s) => [s.name, s.dynamic])).toEqual([
+        ["fixed", false],
+        ["scout", true],
+      ]);
+    });
+
+    // Nested contexts render their own description/instructions, so the eager read must reach
+    // every depth, scoped to the root it was asked about.
+    it("subagentModuleFiles collects modules + instructions at any depth, scoped to the root", () => {
+      const paths = [
+        ...TEAM_SUB.paths,
+        "agents/ivy/agent/subagents/quinn/subagents/deep/agent.ts",
+        "agents/ivy/agent/subagents/quinn/subagents/deep/instructions.md",
+        "agents/ivy/agent/subagents/quinn/tools/x.ts",
+        "agents/ivy/agent/instructions.md",
+      ];
+      expect(subagentModuleFiles(paths, "agents/ivy/agent")).toEqual([
+        "agents/ivy/agent/subagents/quinn/agent.ts",
+        "agents/ivy/agent/subagents/quinn/instructions.md",
+        "agents/ivy/agent/subagents/quinn/subagents/deep/agent.ts",
+        "agents/ivy/agent/subagents/quinn/subagents/deep/instructions.md",
+        "agents/ivy/agent/subagents/remy/agent.ts",
+        "agents/ivy/agent/subagents/remy/instructions.md",
+        "agents/ivy/agent/subagents/tess/agent.ts",
+      ]);
+      expect(subagentModuleFiles(paths, "agents/sam/agent")).toEqual([
+        "agents/sam/agent/subagents/dana/agent.ts",
+      ]);
+    });
+
+    // Discovery recurses by pointing the same helpers at the nested root.
+    it("discovers nested subagents by re-rooting at the parent subagent", () => {
+      const paths = [
+        "agent/subagents/researcher/agent.ts",
+        "agent/subagents/researcher/subagents/fact-checker/agent.ts",
+        "agent/subagents/researcher/subagents/summarizer/instructions.md",
+      ];
+      expect(subagentDirNames(paths, "agent")).toEqual(["researcher"]);
+      expect(subagentDirNames(paths, "agent/subagents/researcher")).toEqual([
+        "fact-checker",
+        "summarizer",
+      ]);
+    });
+  });
+});
+
+describe("overlayDrafts", () => {
+  const base = {
+    paths: ["agent/agent.ts", "agent/instructions.md"],
+    files: { "agent/instructions.md": "published" },
+  };
+
+  it("returns the source untouched when there are no drafts", () => {
+    expect(overlayDrafts(base, [])).toBe(base);
+  });
+
+  it("adds new paths, replaces content, and removes deletions", () => {
+    const overlaid = overlayDrafts(base, [
+      { path: "agent/subagents/drafty/agent.ts", content: "export default {};" },
+      { path: "agent/instructions.md", content: "saved" },
+      { path: "agent/agent.ts", content: null },
+    ]);
+    expect(overlaid.paths.sort()).toEqual([
+      "agent/instructions.md",
+      "agent/subagents/drafty/agent.ts",
+    ]);
+    expect(overlaid.files["agent/instructions.md"]).toBe("saved");
+    expect(overlaid.files["agent/subagents/drafty/agent.ts"]).toBe("export default {};");
+  });
+
+  it("does not mutate the source it overlays", () => {
+    overlayDrafts(base, [{ path: "agent/tools/x.ts", content: "x" }]);
+    expect(base.paths).toEqual(["agent/agent.ts", "agent/instructions.md"]);
+    expect(base.files).toEqual({ "agent/instructions.md": "published" });
+  });
+
+  it("makes a draft-only subagent discoverable and a draft-deleted one disappear", () => {
+    const source = {
+      paths: ["agent/subagents/old/agent.ts"],
+      files: {},
+    };
+    const overlaid = overlayDrafts(source, [
+      { path: "agent/subagents/new/agent.ts", content: "export default {};" },
+      { path: "agent/subagents/old/agent.ts", content: null },
+    ]);
+    expect(subagentDirNames(overlaid.paths, "agent")).toEqual(["new"]);
+  });
+});
+
+describe("capability matrix (issue #344)", () => {
+  it("gives a top-level agent every category, including hooks", () => {
+    expect(categoriesFor("agent").map((c) => c.key)).toEqual([
+      "tools",
+      "skills",
+      "subagents",
+      "channels",
+      "schedules",
+      "connections",
+      "hooks",
+    ]);
+  });
+
+  it("withholds the root-only categories from a declared subagent", () => {
+    // eve resolves channels and schedules at the agent root only; a subagent that offered them
+    // would render controls that can never take effect.
+    const keys = categoriesFor("subagent").map((c) => c.key);
+    expect(keys).toEqual(["tools", "skills", "subagents", "connections", "hooks"]);
+    expect(keys).not.toContain("channels");
+    expect(keys).not.toContain("schedules");
+  });
+
+  it("parses the hooks directory into the config like any other category", () => {
+    const config = buildAgentConfig(
+      { paths: ["agent/hooks/audit.ts", "agent/hooks/notes.test.ts"], files: {} },
+      "agent",
+    );
+    expect(config.hooks).toEqual([
+      { name: "audit", path: "agent/hooks/audit.ts", isDirectory: false },
+    ]);
   });
 });
 

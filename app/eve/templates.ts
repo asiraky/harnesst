@@ -135,6 +135,31 @@ export default defineMcpClientConnection({
 });
 `,
   },
+  hooks: {
+    key: "hooks",
+    label: "hook",
+    ext: ".ts",
+    // eve dispatches hook errors into the recoverable turn.failed cascade, so a throwing hook
+    // breaks the very agent it observes — the starter swallows, and says why.
+    hint: "A handler that runs on the agent's runtime events.",
+    template: (name) => `import { defineHook } from "eve/hooks";
+
+// ${titleCase(name)}: runs on the agent's runtime events, after eve has durably recorded them.
+// Subscribe to specific event types, or "*" for every one.
+export default defineHook({
+  events: {
+    "turn.completed": (event, ctx) => {
+      try {
+        // TODO: implement — \`ctx.session\` carries the session and turn this event belongs to.
+        console.log("${name}", event.type, ctx.session?.id);
+      } catch {
+        // Never rethrow: eve turns a hook error into a failed turn for the agent itself.
+      }
+    },
+  },
+});
+`,
+  },
 };
 
 /** Path a new resource of `kind` named `slug` lives at, under an agent root (§7.9). */

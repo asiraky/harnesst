@@ -1,16 +1,18 @@
 /**
  * The generated `harnesst/model.ts` workspace module + the resolver-style `agent.ts` scaffold.
  * Pins the shape both harnesst and the migration prompt rely on: one exported
- * `harnesstAgentModel(agentName)` used verbatim by agents and subagents (subagents pass the
- * PARENT's name), runtime resolution against `<HARNESST_MODEL_GATEWAY_URL>/model-config`, the
- * playground directive taking precedence, and the read-side helpers recognizing the shape
- * (so a model save writes the org map instead of rewriting the file).
+ * `harnesstAgentModel(agentName, subagentPath?)` used verbatim by agents and subagents (a
+ * declared subagent passes the PARENT's name plus its own path — issue #344), runtime resolution
+ * against `<HARNESST_MODEL_GATEWAY_URL>/model-config`, the playground directive taking
+ * precedence, and the read-side helpers recognizing the shape (so a model save writes the org map
+ * instead of rewriting the file).
  */
 import { describe, expect, it } from "vitest";
 
 import {
   hasDynamicModel,
   orgResolverAgentName,
+  orgResolverTarget,
   readModel,
   usesOrgModelResolver,
 } from "~/eve/agentModule";
@@ -28,15 +30,33 @@ describe("orgModelModuleSource", () => {
   const source = orgModelModuleSource();
 
   it("exports harnesstAgentModel and resolves through the harnesst model-config endpoint", () => {
-    expect(source).toContain("export function harnesstAgentModel(agentName: string)");
+    expect(source).toContain(
+      "export function harnesstAgentModel(agentName: string, subagentPath?: string)",
+    );
     expect(source).toContain("/model-config?agent=");
     expect(source).toContain("HARNESST_MODEL_GATEWAY_URL");
     expect(source).toContain("HARNESST_MODEL_GATEWAY_TOKEN");
   });
 
+  it("asks for the subagent target and scopes the lookup to the deployed project", () => {
+    // A declared subagent's own selection only reaches the runtime if the request names it.
+    expect(source).toContain("'&subagent=' + encodeURIComponent(subagentPath)");
+    expect(source).toContain("process.env.HARNESST_PROJECT_ID");
+    expect(source).toContain("'&project=' + encodeURIComponent(projectId)");
+  });
+
+  it("caches per TARGET, not per agent name — two subagents must not share a config", () => {
+    expect(source).toContain("const cacheKey = agentName + '#' + (subagentPath ?? '')");
+    expect(source).toContain("harnesstModelConfigCache.get(cacheKey)");
+    expect(source).toContain("harnesstModelConfigCache.set(cacheKey,");
+    expect(source).not.toContain("harnesstModelConfigCache.get(agentName)");
+  });
+
   it("checks the playground directive before the workspace configuration", () => {
     const directive = source.indexOf("harnesstSelectedModel(ctx.messages)");
-    const configured = source.indexOf("await harnesstConfiguredModel(agentName)");
+    const configured = source.indexOf(
+      "await harnesstConfiguredModel(agentName, subagentPath)",
+    );
     expect(directive).toBeGreaterThan(-1);
     expect(configured).toBeGreaterThan(directive);
   });
@@ -67,6 +87,31 @@ describe("scaffoldOrgModelAgentModule", () => {
     expect(scaffoldOrgModelAgentModule("a'b\"c`d\\e")).toContain(
       "harnesstAgentModel('abcde')",
     );
+  });
+
+  it("emits the subagent's own target and a depth-correct import", () => {
+    const source = scaffoldOrgModelAgentModule("kitchen-sink", {
+      subagentPath: "reader",
+    });
+    expect(source).toContain(
+      "model: harnesstAgentModel('kitchen-sink', 'reader')",
+    );
+    // subagents/reader/agent.ts is two directories below the agent root.
+    expect(source).toContain("from '../../../harnesst/model.js'");
+    expect(orgResolverTarget(source)).toEqual({
+      agentName: "kitchen-sink",
+      subagentPath: "reader",
+    });
+  });
+
+  it("climbs two directories per nesting level for a nested subagent", () => {
+    const source = scaffoldOrgModelAgentModule("kitchen-sink", {
+      subagentPath: "reader/skimmer",
+    });
+    expect(source).toContain(
+      "model: harnesstAgentModel('kitchen-sink', 'reader/skimmer')",
+    );
+    expect(source).toContain("from '../../../../../harnesst/model.js'");
   });
 
   it("is recognized by the read-side helpers as dynamic with no baked model", () => {

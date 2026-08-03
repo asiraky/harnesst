@@ -12,10 +12,15 @@ function renderInRouter(ui: React.ReactElement): string {
   return renderToString(<Stub initialEntries={["/"]} />);
 }
 
-const EXPECTED_LABELS: Record<"single" | "repo" | "member", string[]> = {
+const EXPECTED_LABELS: Record<
+  "single" | "repo" | "member" | "subagent",
+  string[]
+> = {
   single: ["Overview", "Deployment", "Playground", "Runs", "Assistant", "Settings"],
   repo: ["Agents", "Deployment", "Assistant", "Settings"],
   member: ["Overview", "Deployment", "Playground", "Runs", "Settings"],
+  // A declared subagent deploys with its member and has no playground/runs of its own.
+  subagent: ["Overview", "Settings"],
 };
 
 describe("AgentNav", () => {
@@ -55,6 +60,30 @@ describe("AgentNav", () => {
       expect(html).toContain(`>${label}</a>`);
     }
     expect(html).toMatch(/href="\/repos\/sQLfctIEkNIA\/agents\/pm\/settings"/);
+  });
+
+  it("offers a subagent exactly Overview and Settings — nothing it does not own", () => {
+    const base = "/repos/sQLfctIEkNIA/agents/pm/sub/researcher";
+    const html = renderInRouter(
+      <TooltipProvider>
+        <AgentNav
+          base={base}
+          level="subagent"
+          roster={[{ name: "pm" }]}
+          activeAgent="pm"
+        />
+      </TooltipProvider>,
+    );
+
+    for (const label of EXPECTED_LABELS.subagent) {
+      expect(html).toContain(`>${label}</a>`);
+    }
+    for (const label of ["Deployment", "Playground", "Runs", "Assistant"]) {
+      expect(html).not.toContain(`>${label}</a>`);
+    }
+    expect(html).toMatch(
+      /href="\/repos\/sQLfctIEkNIA\/agents\/pm\/sub\/researcher\/settings"/,
+    );
   });
 
   it("stacks the tab row above the controls on mobile (regression guard for the merged-row bug)", () => {

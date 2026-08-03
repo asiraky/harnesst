@@ -51,6 +51,7 @@ import {
 } from "~/components/ui/select";
 import { Separator } from "~/components/ui/separator";
 import { TooltipProvider } from "~/components/ui/tooltip";
+import { contextPath, subagentContextPath } from "~/lib/paths";
 import { cn } from "~/lib/utils";
 
 /** One level of the hierarchy trail. No `to` == the current page (rendered unlinked). */
@@ -60,8 +61,12 @@ export interface Crumb {
 }
 
 /**
- * Standard trail for repository pages: repo → (team member) → page. The last crumb is
- * always unlinked (it's where you are); every ancestor links up a level.
+ * Standard trail for repository pages: repo → (team member) → (subagent chain) → page. The last
+ * crumb is always unlinked (it's where you are); every ancestor links up a level.
+ *
+ * A declared subagent (issue #344) contributes TWO crumbs per level — the parent's `Subagents`
+ * list and the subagent itself — so the trail reads `ivy → Subagents → researcher` and every
+ * hop up the chain is one click.
  */
 export function repoCrumbs(opts: {
   projectId: string;
@@ -69,17 +74,30 @@ export function repoCrumbs(opts: {
   /** Team repos: the active member (adds a member crumb linking to its overview). */
   agentName?: string | null;
   isTeam?: boolean;
+  /** Declared-subagent chain below the member, e.g. ["researcher", "fact-checker"]. */
+  subagentPath?: string[];
   /** Page-level crumbs after repo/member, e.g. [{ label: "Runs" }]. */
   tail?: Crumb[];
 }): Crumb[] {
   const base = `/repos/${opts.projectId}`;
+  const member = opts.isTeam && opts.agentName ? opts.agentName : null;
   const crumbs: Crumb[] = [{ label: opts.repoName, to: base }];
-  if (opts.isTeam && opts.agentName) {
+  if (member) {
     crumbs.push({
-      label: opts.agentName,
-      to: `${base}/agents/${encodeURIComponent(opts.agentName)}`,
+      label: member,
+      to: `${base}/agents/${encodeURIComponent(member)}`,
     });
   }
+  let parent = contextPath(opts.projectId, member);
+  (opts.subagentPath ?? []).forEach((name, i) => {
+    crumbs.push({ label: "Subagents", to: `${parent}/resources/subagents` });
+    parent = subagentContextPath(
+      opts.projectId,
+      member,
+      (opts.subagentPath ?? []).slice(0, i + 1),
+    );
+    crumbs.push({ label: name, to: parent });
+  });
   crumbs.push(...(opts.tail ?? []));
   const last = crumbs[crumbs.length - 1];
   delete last.to;
@@ -510,8 +528,8 @@ export interface RosterMember {
   name: string;
 }
 
-/** Which level of the hierarchy the current page belongs to (M5.8). */
-export type NavLevel = "single" | "repo" | "member";
+/** Which level of the hierarchy the current page belongs to (M5.8; subagents in #344). */
+export type NavLevel = "single" | "repo" | "member" | "subagent";
 
 const TABS: Record<NavLevel, { path: string; label: string }[]> = {
   // Single-agent repos: the repo IS the agent — one merged row.
@@ -538,6 +556,13 @@ const TABS: Record<NavLevel, { path: string; label: string }[]> = {
     { path: "/deployment", label: "Deployment" },
     { path: "/playground", label: "Playground" },
     { path: "/runs", label: "Runs" },
+    { path: "/settings", label: "Settings" },
+  ],
+  // One declared subagent (issue #344): it is configured here but it does not deploy, chat or
+  // run on its own — it runs inside its member. Only the two surfaces that mean something at
+  // this depth exist, so no tab leads to a dead end.
+  subagent: [
+    { path: "", label: "Overview" },
     { path: "/settings", label: "Settings" },
   ],
 };
@@ -602,9 +627,11 @@ export function AgentNav({
           {(level === "single" || level === "repo") && (
             <InviteMember base={base} />
           )}
-          {level === "member" && roster && activeAgent && (
-            <AgentSwitcher roster={roster} activeAgent={activeAgent} />
-          )}
+          {(level === "member" || level === "subagent") &&
+            roster &&
+            activeAgent && (
+              <AgentSwitcher roster={roster} activeAgent={activeAgent} />
+            )}
         </div>
       </div>
       <Separator className="mt-2" />
@@ -612,7 +639,12 @@ export function AgentNav({
   );
 }
 
-/** Team member picker: swaps the `/agents/<name>` segment, keeping the current tab. */
+/**
+ * Team member picker: swaps the `/agents/<name>` segment, keeping the current tab.
+ *
+ * A nested subagent context (`…/sub/researcher`) is dropped on the way: the chosen member has
+ * its own subagents, and carrying this one's path across would land on a 404 (issue #344).
+ */
 function AgentSwitcher({
   roster,
   activeAgent,
@@ -628,10 +660,9 @@ function AgentSwitcher({
       <Select
         value={activeAgent}
         onValueChange={(name) => {
-          const pathname = location.pathname.replace(
-            /\/agents\/[^/]+/,
-            `/agents/${encodeURIComponent(name)}`,
-          );
+          const pathname = location.pathname
+            .replace(/\/sub\/[^/]+/, "")
+            .replace(/\/agents\/[^/]+/, `/agents/${encodeURIComponent(name)}`);
           navigate(`${pathname}${location.search}`);
         }}
       >

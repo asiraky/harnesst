@@ -10,6 +10,11 @@
  *    Marketplace installs, General (the GitHub connection), Run ingestion tokens, and the repo
  *    danger zone — Delete repository, a FULL harnesst-side teardown (instances stopped and
  *    destroyed, every row cascaded). The GitHub repository itself is never touched.
+ *
+ * A third level exists at `/sub/:subPath/settings` (issue #344): a declared SUBAGENT configures
+ * its own model and nothing else. Secrets, deployment, marketplace installs, rename and every
+ * danger action belong to the member that deploys it, so that level renders the Model section
+ * plus an explanation of the boundary, linking to the member's own Settings — no dead sections.
  */
 import { getSessionAuth, sessionLoader } from "~/auth/session.server";
 import {
@@ -93,7 +98,7 @@ import {
 } from "~/eve/agentModule";
 import { getAgentSource } from "~/github/cached.server";
 import { fetchAgentSource, readAgentFile } from "~/github/repo.server";
-import { contextPath } from "~/lib/paths";
+import { contextPath, subagentContextPath } from "~/lib/paths";
 import {
   catalogProviderEvidence,
   catalogLocator,
@@ -120,6 +125,7 @@ import type { TemplateType } from "~/marketplace/manifest";
 import {
   removeAgentModelOverride,
   resolveAgentModel,
+  resolveTargetModel,
 } from "~/models/agent-model-config.server";
 import { stageModelChange } from "~/models/stage-model.server";
 import { ownsWorkspaceModelReference } from "~/models/union.server";
@@ -132,6 +138,11 @@ import {
   resolveAgentContext,
   resolveSyncedAgentContext,
 } from "~/project/agent-context.server";
+import {
+  resolveConfigTarget,
+  resolveRouteTarget,
+  subagentSegmentsFromParams,
+} from "~/project/config-target.server";
 import { requireProject, requireRepo } from "~/project/guard.server";
 import type { ConnectedProject } from "~/project/guard.server";
 import { getRuntime } from "~/seams/index.server";
@@ -185,11 +196,19 @@ interface SettingsView {
   canRenameMember: boolean;
   /** Member: a saved-but-unpublished rename target, or null. */
   pendingName: string | null;
+  /** The nested subagent chain this page configures (empty at a member/repo level). */
+  subagentPath: string[];
+  /** The member that owns the deployment this target runs in (subagent level). */
+  member: string;
   /** Member: current model (staged draft wins) + staging state. */
   model: string | null;
   effort: ReasoningEffort | null;
   modelInherited: boolean;
   modelOverridden: boolean;
+  /** Which layer answered the model question — the inheritance chain copy renders from this. */
+  modelSource: "override" | "parent-override" | "workspace-default" | null;
+  /** For `parent-override`: the ancestor's subagent path (`""` = the member itself). */
+  modelInheritedFrom: string | null;
   hasAgentModule: boolean;
   modelStaged: boolean;
   /** Member: secrets scope state. */
@@ -413,7 +432,8 @@ export const loader = (args: LoaderFunctionArgs) =>
         }),
       );
       const agentName = agentFromParams(args.params);
-      if (!agentName) {
+      const subSegments = subagentSegmentsFromParams(args.params);
+      if (!agentName && !subSegments) {
         const legacy = agentParamRedirect(args.request, project.id);
         if (legacy) throw legacy;
       }
@@ -428,13 +448,33 @@ export const loader = (args: LoaderFunctionArgs) =>
         source.paths,
       );
       if (agentName && !active) throw redirect(`/repos/${project.id}`);
-      const level: NavLevel = agentName ? "member" : isTeam ? "repo" : "single";
-      const showMember = level !== "repo";
-      const showRepo = level !== "member";
       const draftPaths = drafts.map((d) => ({
         path: d.path,
         content: d.content,
       }));
+      // A nested target is re-resolved strictly (exact member, every level must exist) — that
+      // resolution IS the authorization for the subagent surface.
+      const target = subSegments
+        ? (
+            await resolveConfigTarget({
+              projectId: project.id,
+              agentName,
+              subSegments,
+              source,
+              drafts: draftPaths,
+            })
+          ).target
+        : null;
+      const level: NavLevel = target
+        ? "subagent"
+        : agentName
+          ? "member"
+          : isTeam
+            ? "repo"
+            : "single";
+      // A subagent owns neither the member sections (secrets, rename, danger) nor the repo ones.
+      const showMember = level === "member" || level === "single";
+      const showRepo = level === "repo" || level === "single";
       const lock = overlayLock(
         source.files["harnesst-lock.json"] ?? null,
         draftPaths,
@@ -495,6 +535,8 @@ export const loader = (args: LoaderFunctionArgs) =>
         activeAgent: active?.name ?? "",
         isTeam,
         level,
+        subagentPath: target?.kind === "subagent" ? target.subagentPath : [],
+        member: target?.member ?? active?.name ?? "",
         showMember,
         showRepo,
         canRemoveMember: showMember && isTeam && active?.root !== "agent",
@@ -504,6 +546,8 @@ export const loader = (args: LoaderFunctionArgs) =>
         effort: null,
         modelInherited: false,
         modelOverridden: false,
+        modelSource: null,
+        modelInheritedFrom: null,
         hasAgentModule: false,
         modelStaged: false,
         envs: [],
@@ -555,6 +599,7 @@ export const loader = (args: LoaderFunctionArgs) =>
           base.effort = resolved?.effort ?? null;
           base.modelInherited = resolved?.source === "workspace-default";
           base.modelOverridden = resolved?.source === "override";
+          base.modelSource = resolved?.source ?? null;
         } else if (agentTs) {
           // Legacy agents still carry their model in repo content. A staged draft wins over the
           // branch copy so Settings reflects a successful save immediately.
@@ -605,6 +650,48 @@ export const loader = (args: LoaderFunctionArgs) =>
         } catch (error) {
           base.secretsConfigured = false;
           base.secretsError = (error as Error).message;
+        }
+      }
+      if (level === "subagent" && target) {
+        // A subagent's model target is keyed by the MEMBER's resolver identity plus this
+        // subagent's own path — exactly the key `stageModelChange` writes — and resolves through
+        // the inheritance chain, so the UI can say WHICH level the current selection comes from.
+        const fileAt = (path: string) => {
+          const draft = drafts.find((d) => d.path === path);
+          return draft !== undefined
+            ? draft.content
+            : (source.files[path] ?? null);
+        };
+        const memberModule = fileAt(`${target.deploymentRoot}/agent.ts`);
+        const resolverName = memberModule
+          ? orgResolverAgentName(memberModule)
+          : null;
+        const subagentPath =
+          target.kind === "subagent" ? target.subagentPath.join("/") : "";
+        const resolved = resolverName
+          ? await resolveTargetModel(project.orgId, {
+              agentName: resolverName,
+              subagentPath,
+              projectId: project.id,
+            }).catch(() => null)
+          : null;
+        const ownPath = `${target.root}/agent.ts`;
+        const ownModule = fileAt(ownPath);
+        base.hasAgentModule = ownModule !== null;
+        base.modelStaged = drafts.some(
+          (d) => d.path === ownPath && d.content !== null,
+        );
+        if (ownModule && !usesOrgModelResolver(ownModule)) {
+          // A subagent carrying its own baked model is legacy repo content, like a legacy member.
+          base.model = readModel(ownModule);
+          base.effort = readReasoningEffort(ownModule);
+        } else {
+          base.model = resolved?.model ?? null;
+          base.effort = resolved?.effort ?? null;
+          base.modelSource = resolved?.source ?? null;
+          base.modelInheritedFrom = resolved?.inheritedFrom ?? null;
+          base.modelOverridden = resolved?.source === "override";
+          base.modelInherited = resolved !== null && resolved.source !== "override";
         }
       }
       if (showRepo) {
@@ -685,7 +772,11 @@ export async function action(args: ActionFunctionArgs) {
   );
   const form = await args.request.formData();
   const intent = String(form.get("intent") ?? "");
-  const back = `${contextPath(project.id, agentFromParams(args.params))}/settings`;
+  const back = `${subagentContextPath(
+    project.id,
+    agentFromParams(args.params),
+    subagentSegmentsFromParams(args.params) ?? [],
+  )}/settings`;
   const repo = { owner: project.repoOwner, repo: project.repoName };
 
   try {
@@ -698,31 +789,34 @@ export async function action(args: ActionFunctionArgs) {
         effortValue && isReasoningEffort(effortValue) ? effortValue : null;
       if (effortValue && !effort)
         return { error: "Choose a valid reasoning effort." };
-      const { active } = await resolveAgentContext(
-        project.id,
-        String(form.get("agent") ?? "") || null,
-      );
-      requireActiveAgent(active, project.id);
+      // The target is the URL's — a posted member name would let one agent's Settings write
+      // another's model (and a subagent's page must key the row by its own path).
+      const { active, target } = await resolveRouteTarget(project, args.params);
       const result = await stageModelChange({
         project,
-        root: active.root,
+        root: target.root,
+        deploymentRoot: target.deploymentRoot,
+        subagentPath:
+          target.kind === "subagent" ? target.subagentPath.join("/") : "",
+        memberName: active.name,
         model,
         effort,
         createdBy: auth.user.id,
       });
       if (!result.ok) return { error: result.error };
-      return { ok: true as const, mode: result.mode };
+      return {
+        ok: true as const,
+        mode: result.mode,
+        upgraded: result.upgraded ?? false,
+      };
     }
 
     if (intent === "clear-model-override") {
-      const { active } = await resolveAgentContext(
-        project.id,
-        String(form.get("agent") ?? "") || null,
-      );
-      requireActiveAgent(active, project.id);
+      const { target } = await resolveRouteTarget(project, args.params);
+      // The row is keyed by the MEMBER's resolver identity — a subagent inherits that name.
       const view = await resolveFileView(
         project,
-        `${active.root}/agent.ts`,
+        `${target.deploymentRoot}/agent.ts`,
         getRuntime().data,
       );
       const resolverName = view.content
@@ -731,7 +825,12 @@ export async function action(args: ActionFunctionArgs) {
       if (!resolverName) {
         return { error: "This agent does not use workspace model overrides." };
       }
-      await removeAgentModelOverride(project.orgId, resolverName);
+      await removeAgentModelOverride(project.orgId, {
+        agentName: resolverName,
+        subagentPath:
+          target.kind === "subagent" ? target.subagentPath.join("/") : "",
+        projectId: project.id,
+      });
       return { ok: true as const, mode: "applied" as const };
     }
 
@@ -1180,6 +1279,8 @@ export default function Settings({
     activeAgent,
     isTeam,
     level,
+    subagentPath,
+    member,
     showMember,
     showRepo,
     canRemoveMember,
@@ -1187,7 +1288,11 @@ export default function Settings({
     pendingName,
   } = loaderData;
   const publishHref = usePublishHref();
-  const base = contextPath(project.id, level === "member" ? activeAgent : null);
+  const nested = level === "subagent";
+  // The member segment survives at a nested level — the subagent lives inside the member's URL.
+  const memberSegment =
+    level === "member" || (nested && isTeam) ? activeAgent : null;
+  const base = subagentContextPath(project.id, memberSegment, subagentPath);
   const [params] = useSearchParams();
   const justUpdated = params.get("updated");
   const justRepaired = params.get("repaired");
@@ -1218,8 +1323,9 @@ export default function Settings({
       breadcrumbs={repoCrumbs({
         projectId: project.id,
         repoName: project.name,
-        isTeam: level === "member",
+        isTeam: memberSegment !== null,
         agentName: activeAgent,
+        subagentPath,
         tail: [{ label: "Settings" }],
       })}
     >
@@ -1227,18 +1333,26 @@ export default function Settings({
         base={base}
         level={level}
         roster={roster}
-        activeAgent={level === "member" ? activeAgent : undefined}
+        activeAgent={memberSegment ?? undefined}
       />
       <PageHeader
         icon={Settings2}
         accent="brand"
-        title={level === "member" ? `Settings — ${activeAgent}` : "Settings"}
+        title={
+          nested
+            ? `Settings — ${subagentPath[subagentPath.length - 1]}`
+            : level === "member"
+              ? `Settings — ${activeAgent}`
+              : "Settings"
+        }
         description={
-          level === "repo"
-            ? "Repository-wide configuration. Each agent's model and secrets live in the agent's own Settings."
-            : showRepo
-              ? "This agent's runtime configuration and the repository connection."
-              : "This agent's runtime configuration — model, credentials, and team collaboration."
+          nested
+            ? `This subagent's own model selection. Everything else — secrets, deployment, publishing — belongs to ${member}.`
+            : level === "repo"
+              ? "Repository-wide configuration. Each agent's model and secrets live in the agent's own Settings."
+              : showRepo
+                ? "This agent's runtime configuration and the repository connection."
+                : "This agent's runtime configuration — model, credentials, and team collaboration."
         }
       />
 
@@ -1326,7 +1440,14 @@ export default function Settings({
       )}
 
       <div className="space-y-10">
-        {showMember && <ModelSection loaderData={loaderData} />}
+        {(showMember || nested) && <ModelSection loaderData={loaderData} />}
+        {nested && (
+          <SubagentBoundarySection
+            projectId={project.id}
+            member={member}
+            isTeam={isTeam}
+          />
+        )}
         {showMember && (
           <SecretsCard
             activeAgent={activeAgent}
@@ -1364,7 +1485,7 @@ export default function Settings({
             links={loaderData.teamLinks}
           />
         )}
-        <MarketplaceInstallsSection loaderData={loaderData} />
+        {!nested && <MarketplaceInstallsSection loaderData={loaderData} />}
         {canRenameMember && (
           <RenameSection
             activeAgent={activeAgent}
@@ -1391,6 +1512,49 @@ export default function Settings({
   );
 }
 
+/**
+ * The boundary a nested target lives behind: a declared subagent runs inside its member's
+ * deployment, so everything except its model is configured once, on the member.
+ */
+function SubagentBoundarySection({
+  projectId,
+  member,
+  isTeam,
+}: {
+  projectId: string;
+  member: string;
+  isTeam: boolean;
+}) {
+  return (
+    <section>
+      <SectionHeader
+        icon={KeyRound}
+        accent="blue"
+        title="Secrets &amp; deployment"
+      />
+      <Card>
+        <CardContent className="space-y-2 py-4 text-sm text-muted-foreground">
+          <p>
+            This subagent runs inside{" "}
+            <span className="font-medium text-foreground">{member}</span> and
+            deploys with it. Secrets, environments, marketplace installs and
+            publishing are configured once, on the member — a subagent has no
+            deployment of its own.
+          </p>
+          <p>
+            <Link
+              to={`${contextPath(projectId, isTeam ? member : null)}/settings`}
+              className="font-medium text-foreground underline underline-offset-4"
+            >
+              Open {member}&rsquo;s settings →
+            </Link>
+          </p>
+        </CardContent>
+      </Card>
+    </section>
+  );
+}
+
 /** Model — the one runtime setting; saving stages agent.ts like any other edit. */
 function ModelSection({
   loaderData,
@@ -1402,14 +1566,34 @@ function ModelSection({
     effort,
     modelInherited,
     modelOverridden,
+    modelSource,
+    modelInheritedFrom,
+    subagentPath,
+    member,
     hasAgentModule,
     modelStaged,
-    activeAgent,
   } = loaderData;
+  const nested = subagentPath.length > 0;
+  // Where the current selection comes from, in the target's own words (issue #344). Only a
+  // nested target has an inheritance chain worth narrating.
+  const inheritedFrom =
+    modelInheritedFrom && modelInheritedFrom !== ""
+      ? modelInheritedFrom.split("/").pop()!
+      : member;
+  const chain = !nested
+    ? null
+    : modelSource === "override"
+      ? "Overridden here."
+      : modelSource === "parent-override"
+        ? `Inherits ${inheritedFrom}'s selection.`
+        : modelSource === "workspace-default"
+          ? "Workspace default."
+          : null;
   const fetcher = useFetcher<{
     ok?: boolean;
     error?: string;
     mode?: "staged" | "applied";
+    upgraded?: boolean;
   }>();
   const modelBadges = useMemo(
     () => (
@@ -1441,18 +1625,20 @@ function ModelSection({
         title="Model"
         badges={modelBadges}
       />
+      {chain && (
+        <p className="mb-3 text-sm text-muted-foreground">
+          {chain}
+          {modelSource !== "override" &&
+            " Picking a model here overrides it for this subagent only."}
+        </p>
+      )}
       <ModelSelection
         model={model}
         effort={effort}
         busy={fetcher.state !== "idle"}
         onCommit={(m, nextEffort) =>
           fetcher.submit(
-            {
-              intent: "set-model",
-              model: m,
-              effort: nextEffort ?? "",
-              agent: activeAgent,
-            },
+            { intent: "set-model", model: m, effort: nextEffort ?? "" },
             { method: "post" },
           )
         }
@@ -1465,16 +1651,10 @@ function ModelSection({
           className="mt-2"
           disabled={fetcher.state !== "idle"}
           onClick={() =>
-            fetcher.submit(
-              {
-                intent: "clear-model-override",
-                agent: activeAgent,
-              },
-              { method: "post" },
-            )
+            fetcher.submit({ intent: "clear-model-override" }, { method: "post" })
           }
         >
-          Use workspace default
+          {nested ? `Inherit from ${member}` : "Use workspace default"}
         </Button>
       )}
       {fetcher.data?.error && (
@@ -1482,9 +1662,11 @@ function ModelSection({
       )}
       {fetcher.data?.ok && (
         <p className="mt-2 text-sm text-muted-foreground">
-          {fetcher.data.mode === "applied"
-            ? "Saved — the agent picks this up on its next step, no redeploy needed."
-            : "Saved — publish it from the Deployment tab."}
+          {fetcher.data.upgraded
+            ? "Saved — this selection is live, and agent.ts was updated to name this subagent's own target. Publish it so the running deployment asks for it."
+            : fetcher.data.mode === "applied"
+              ? "Saved — the agent picks this up on its next step, no redeploy needed."
+              : "Saved — publish it from the Deployment tab."}
         </p>
       )}
     </section>

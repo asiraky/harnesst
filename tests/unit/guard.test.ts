@@ -8,6 +8,7 @@ import { describe, expect, it } from "vitest";
 import { isPlatformPath, platformRootForAgentRoot } from "~/eve/parse";
 import { memberFromPath } from "~/project/agent-context.server";
 import {
+  confineToRoot,
   normalizeAgentPath,
   PLATFORM_PATH_REFUSAL,
   platformPathRefusal,
@@ -82,6 +83,52 @@ describe("platform paths (issue #254)", () => {
     expect(platformPathRefusal(" /agents/ivy/harnesst/model.ts")).toBe(PLATFORM_PATH_REFUSAL);
     expect(platformPathRefusal("agent/instructions.md")).toBeNull();
     expect(platformPathRefusal(".harnesst/assistant/instructions.md")).toBeNull();
+  });
+});
+
+describe("confineToRoot (issue #344)", () => {
+  const IVY = "agents/ivy/agent";
+  const RESEARCHER = "agents/ivy/agent/subagents/researcher";
+
+  it("accepts the root itself and anything beneath it", () => {
+    expect(confineToRoot(IVY, "agents/ivy/agent/tools/x.ts")).toBe(
+      "agents/ivy/agent/tools/x.ts",
+    );
+    expect(confineToRoot(IVY, "agents/ivy/agent/instructions.md")).toBe(
+      "agents/ivy/agent/instructions.md",
+    );
+    // A member's tree legitimately contains its subagents' trees.
+    expect(confineToRoot(IVY, `${RESEARCHER}/tools/x.ts`)).toBe(`${RESEARCHER}/tools/x.ts`);
+    expect(confineToRoot(RESEARCHER, `${RESEARCHER}/instructions.md`)).toBe(
+      `${RESEARCHER}/instructions.md`,
+    );
+  });
+
+  it("rejects another member's tree", () => {
+    // The gap normalizeAgentPath leaves open: this path IS in the editable surface, just not
+    // in the surface the request is authorized for.
+    expect(normalizeAgentPath("agents/sam/agent/tools/x.ts")).not.toBeNull();
+    expect(confineToRoot(IVY, "agents/sam/agent/tools/x.ts")).toBeNull();
+  });
+
+  it("rejects a sibling subagent and the parent's own files from a subagent target", () => {
+    expect(
+      confineToRoot(RESEARCHER, "agents/ivy/agent/subagents/writer/tools/x.ts"),
+    ).toBeNull();
+    expect(confineToRoot(RESEARCHER, "agents/ivy/agent/instructions.md")).toBeNull();
+    // A prefix match that is not a path boundary must not slip through.
+    expect(
+      confineToRoot(RESEARCHER, "agents/ivy/agent/subagents/researcher-2/agent.ts"),
+    ).toBeNull();
+  });
+
+  it("still rejects traversal, platform code and the repo-root manifests", () => {
+    expect(confineToRoot(IVY, "agents/ivy/agent/../sam/agent/x.ts")).toBeNull();
+    expect(confineToRoot(IVY, "agents/ivy/harnesst/model.ts")).toBeNull();
+    // Allowlisted repo-wide by normalizeAgentPath, but not under any agent root: a target-confined
+    // site must opt into manifests explicitly rather than get them by accident.
+    expect(confineToRoot(IVY, "package.json")).toBeNull();
+    expect(confineToRoot(IVY, "agents/ivy/package.json")).toBeNull();
   });
 });
 
