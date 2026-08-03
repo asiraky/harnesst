@@ -251,24 +251,40 @@ export function orgModelModuleSource(): string {
  * the parent's name plus the subagent's own path (so the subagent can hold its own selection and
  * otherwise inherits the parent), and the import climbs the two directories each `subagents/<x>/`
  * level adds — `agent/subagents/reader/agent.ts` is depth 2, `.../reader/subagents/skim/agent.ts`
- * is depth 4.
+ * is depth 4. A declared subagent is only delegable when its module carries a `description` — eve
+ * requires one — so pass `description` for that variant; it is emitted verbatim (quotes stripped)
+ * for the author to rewrite.
  */
 export function scaffoldOrgModelAgentModule(
   agentName: string,
-  opts?: { subagentPath?: string },
+  opts?: { subagentPath?: string; description?: string },
 ): string {
   const safe = (value: string) => value.replace(/['"`\\]/g, "");
   const segments = (opts?.subagentPath ?? "").split("/").filter(Boolean);
   const target = segments.length
     ? `'${safe(agentName)}', '${safe(segments.join("/"))}'`
     : `'${safe(agentName)}'`;
+  const description = (opts?.description ?? "").replace(/\s+/g, " ").trim();
+  const descriptionLine = description
+    ? `  description: '${safe(description)}',\n`
+    : "";
   return `import { defineAgent } from 'eve';
 
 import { harnesstAgentModel } from '${orgModelImportSpecifier(2 * segments.length)}';
 
 export default defineAgent({
-  model: harnesstAgentModel(${target}),
+${descriptionLine}  model: harnesstAgentModel(${target}),
   modelContextWindowTokens: ${DEFAULT_MODEL_CONTEXT_WINDOW_TOKENS},
 });
 `;
+}
+
+/**
+ * The starter `description` a scaffolded subagent module carries. eve refuses to delegate to a
+ * subagent without one, and the create dialog collects only a name — so the scaffold ships a
+ * readable placeholder the author is expected to rewrite (issue #344).
+ */
+export function subagentStarterDescription(subagentPath: string): string {
+  const name = subagentPath.split("/").filter(Boolean).pop() ?? "this subagent";
+  return `Describe when ${name} should handle a delegated task.`;
 }

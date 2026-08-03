@@ -1047,12 +1047,17 @@ export const workspaceSettings = pgTable("workspace_settings", {
  * to what it inherits — no repo change, no redeploy, the running agent picks it up on its next
  * step.
  *
- * A target is `(agent_name, subagent_path)`: `subagent_path = ''` is the top-level agent,
- * `researcher/fact-checker` is a declared subagent nested under it (issue #344). Legacy
+ * A target is `(project_id, agent_name, subagent_path)`: `subagent_path = ''` is the top-level
+ * agent, `researcher/fact-checker` is a declared subagent nested under it (issue #344). Legacy
  * deployments pass only the agent name, so they land on `''` and inherit exactly as before.
- * `project_id` disambiguates two repos in one workspace that use the same agent name; rows
- * written before that column existed (and by legacy call sites) keep it NULL and stay
- * name-resolved.
+ *
+ * `project_id` is PART OF THE KEY, not a nullable annotation: two repos in one workspace routinely
+ * hold same-named members and subagents, and with the repo outside the key one repo's save
+ * overwrote the other's row. `''` is the legacy/unattributed row (written before the column
+ * existed, or by a name-only call site) and answers for any repo that has no row of its own; every
+ * write from a repo surface keys that repo. There is deliberately NO foreign key — `''` is not a
+ * project id — so deleting a project prunes its rows explicitly (see `removeProjectModelOverrides`)
+ * rather than by cascade. The org FK still cascades.
  */
 export const agentModelOverrides = pgTable(
   "agent_model_overrides",
@@ -1067,11 +1072,8 @@ export const agentModelOverrides = pgTable(
      * agent itself, `researcher` / `researcher/fact-checker` for a nested subagent.
      */
     subagentPath: text("subagent_path").notNull().default(""),
-    /** The repo this target lives in; NULL for legacy rows resolved by name alone. */
-    projectId: varchar("project_id", { length: 12 }).references(
-      () => projects.id,
-      { onDelete: "cascade" },
-    ),
+    /** The repo this target lives in; `''` for legacy rows resolved by name alone. */
+    projectId: varchar("project_id", { length: 12 }).notNull().default(""),
     /** Connection-qualified model ref, e.g. `anthropic/<connectionId>/<model>`. */
     model: text("model").notNull(),
     /** Explicit provider-agnostic reasoning effort; null delegates to the provider default. */
@@ -1079,8 +1081,14 @@ export const agentModelOverrides = pgTable(
     updatedAt: updatedAt(),
   },
   (t) => [
-    primaryKey({ columns: [t.orgId, t.agentName, t.subagentPath] }),
-    index("agent_model_overrides_project_idx").on(t.orgId, t.projectId),
+    // Named explicitly: the derived name for four columns exceeds Postgres' 63-byte identifier
+    // limit and would be silently truncated.
+    primaryKey({
+      name: "agent_model_overrides_pk",
+      columns: [t.orgId, t.projectId, t.agentName, t.subagentPath],
+    }),
+    // The legacy, name-only lookup (a deployment that sends no project) reads across repos.
+    index("agent_model_overrides_agent_idx").on(t.orgId, t.agentName),
   ],
 );
 

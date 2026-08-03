@@ -56,7 +56,7 @@ import {
 import { isReasoningEffort, type ReasoningEffort } from "~/models/reasoning";
 import {
   listAgentModelOverrides,
-  removeAgentModelOverride,
+  removeAgentModelOverrideRow,
   type AgentModelOverride,
 } from "~/models/agent-model-config.server";
 import {
@@ -87,6 +87,7 @@ import {
   tokensUsedSince,
   type SpendLimit,
 } from "~/managed/billing.server";
+import { listProjects } from "~/db/queries.server";
 import { getRuntime } from "~/seams/index.server";
 import type { auditLog } from "~/db/schema";
 import type { HarnesstMode } from "~/seams/types";
@@ -104,12 +105,19 @@ interface OrgSettingsView {
   assistantModel: string | null;
   assistantEffort: ReasoningEffort | null;
   /** Per-agent model overrides — the explicit exceptions to the workspace default. */
-  agentOverrides: AgentModelOverride[];
+  agentOverrides: AgentOverrideView[];
   /** Connected model providers (issue #28) — display metadata only, never a token. */
   connections: ModelConnection[];
   /** Better Auth organization:update permission for the active workspace. */
   canManage: boolean;
 }
+
+/**
+ * One listed override row. Two repos in a workspace may each pin the same agent name, so the row
+ * carries the repo it belongs to — both to tell them apart and because removal keys it
+ * (issue #344). `repoName` is null for a legacy row that belongs to no repo in particular.
+ */
+type AgentOverrideView = AgentModelOverride & { repoName: string | null };
 
 async function canManageWorkspace(
   organizationId: string,
@@ -157,6 +165,7 @@ export const loader = (args: LoaderFunctionArgs) =>
         agentOverrides,
         connections,
         canManage,
+        orgProjects,
       ] = await Promise.all([
         getSpendLimit(org.id),
         tokensUsedSince(org.id),
@@ -165,7 +174,9 @@ export const loader = (args: LoaderFunctionArgs) =>
         listAgentModelOverrides(org.id),
         listModelConnections(org.id),
         canManageWorkspace(org.id, auth.requestHeaders),
+        listProjects(org.id).catch(() => []),
       ]);
+      const repoNames = new Map(orgProjects.map((p) => [p.id, p.name]));
       return {
         org,
         mode: getRuntime().mode,
@@ -174,7 +185,10 @@ export const loader = (args: LoaderFunctionArgs) =>
         audit,
         assistantModel: assistantSelection.model,
         assistantEffort: assistantSelection.effort,
-        agentOverrides,
+        agentOverrides: agentOverrides.map((o) => ({
+          ...o,
+          repoName: repoNames.get(o.projectId) ?? null,
+        })),
         connections,
         canManage,
       };
@@ -265,9 +279,10 @@ export async function action(args: ActionFunctionArgs) {
           (o) => parseProviderModelReference(o.model)?.connectionId === id,
         )
         .map((o) =>
-          removeAgentModelOverride(org.id, {
+          removeAgentModelOverrideRow(org.id, {
             agentName: o.agentName,
             subagentPath: o.subagentPath,
+            projectId: o.projectId,
           }),
         ),
     );
@@ -316,15 +331,22 @@ export async function action(args: ActionFunctionArgs) {
   if (intent === "remove-agent-model-override") {
     const agentName = String(form.get("agentName") ?? "").trim();
     if (!agentName) return { error: "No agent specified." };
-    // The full target key: a declared subagent's row lives under the same agent name and is
-    // removed independently of the agent's own (issue #344).
+    // The full row key: a declared subagent's row lives under the same agent name, and two repos
+    // in this workspace may each hold a row for the same name — remove exactly the listed one
+    // (issue #344). `projectId` is `''` for a legacy, repo-less row.
     const subagentPath = String(form.get("subagentPath") ?? "").trim();
-    await removeAgentModelOverride(org.id, { agentName, subagentPath });
+    const projectId = String(form.get("projectId") ?? "").trim();
+    await removeAgentModelOverrideRow(org.id, {
+      agentName,
+      subagentPath,
+      projectId,
+    });
     await recordAudit({
       orgId: org.id,
       actorUserId: auth.user.id,
       action: "agent_model_override_removed",
       target: subagentPath ? `${agentName}/${subagentPath}` : agentName,
+      meta: { projectId: projectId || "(any repo)" },
     });
     return { ok: true as const };
   }
@@ -634,7 +656,7 @@ function AgentOverridesSection({
   overrides,
   canManage,
 }: {
-  overrides: AgentModelOverride[];
+  overrides: AgentOverrideView[];
   canManage: boolean;
 }) {
   return (
@@ -652,7 +674,7 @@ function AgentOverridesSection({
         <ul className="divide-y rounded-lg border">
           {overrides.map((override) => (
             <AgentOverrideRow
-              key={`${override.agentName}\u0000${override.subagentPath}`}
+              key={`${override.projectId}\u0000${override.agentName}\u0000${override.subagentPath}`}
               override={override}
               canManage={canManage}
             />
@@ -668,7 +690,7 @@ function AgentOverrideRow({
   override,
   canManage,
 }: {
-  override: AgentModelOverride;
+  override: AgentOverrideView;
   canManage: boolean;
 }) {
   const fetcher = useFetcher<typeof action>();
@@ -690,6 +712,11 @@ function AgentOverrideRow({
         </div>
         <div className="text-xs text-muted-foreground">
           {override.effort ?? "Provider default"} reasoning
+          {override.repoName
+            ? ` \u00b7 ${override.repoName}`
+            : override.projectId
+              ? " \u00b7 removed repo"
+              : " \u00b7 any repo (legacy)"}
         </div>
       </div>
       {canManage && (
@@ -704,6 +731,7 @@ function AgentOverrideRow({
                 intent: "remove-agent-model-override",
                 agentName: override.agentName,
                 subagentPath: override.subagentPath,
+                projectId: override.projectId,
               },
               { method: "post" },
             )

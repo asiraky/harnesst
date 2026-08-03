@@ -2,9 +2,17 @@
  * Repository deletion (M5.8) — the full harnesst-side teardown against in-memory fakes.
  * Verifies the ordering the feature hangs on: instance infra is destroyed BEFORE the row
  * delete (afterwards nothing could find the containers), the audit entry lands, the cascade
- * removes dependent rows, and a missing destroy() falls back to stop().
+ * removes dependent rows, and a missing destroy() falls back to stop(). Model overrides hold no
+ * FK to projects (issue #344), so their explicit pruning is verified here too.
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
+
+// The override table lives outside the fake store (raw drizzle), and deleteRepository reaches it
+// through a lazy import — stub the module so these tests stay DB-free.
+const mocks = vi.hoisted(() => ({ removeProjectModelOverrides: vi.fn() }));
+vi.mock("~/models/agent-model-config.server", () => ({
+  removeProjectModelOverrides: mocks.removeProjectModelOverrides,
+}));
 
 import { createRelease, deployRelease } from "~/deploy/controller.server";
 import {
@@ -45,6 +53,8 @@ async function seedRunningProject() {
 
 beforeEach(() => {
   store = makeFakeStore();
+  mocks.removeProjectModelOverrides.mockReset();
+  mocks.removeProjectModelOverrides.mockResolvedValue(undefined);
 });
 
 describe("deleteRepository", () => {
@@ -138,6 +148,37 @@ describe("deleteRepository", () => {
       expect(warn).toHaveBeenCalledWith(expect.stringContaining("timed out"));
     } finally {
       vi.useRealTimers();
+      warn.mockRestore();
+    }
+  });
+
+  it("prunes the repo's model overrides (no FK cascade covers them)", async () => {
+    const { project } = await seedRunningProject();
+    await deleteRepository(
+      { projectId: project.id },
+      { store, deployTarget: fakeDeployTarget() },
+    );
+    expect(mocks.removeProjectModelOverrides).toHaveBeenCalledWith(
+      ORG,
+      project.id,
+    );
+  });
+
+  it("a failing override prune never fails the delete", async () => {
+    const { project } = await seedRunningProject();
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    mocks.removeProjectModelOverrides.mockRejectedValue(new Error("db down"));
+    try {
+      await deleteRepository(
+        { projectId: project.id },
+        { store, deployTarget: fakeDeployTarget() },
+      );
+      expect(await store.projects.findById(project.id)).toBeNull();
+      expect(warn).toHaveBeenCalledWith(
+        expect.stringContaining("model override cleanup"),
+        expect.anything(),
+      );
+    } finally {
       warn.mockRestore();
     }
   });

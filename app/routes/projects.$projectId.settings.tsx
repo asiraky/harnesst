@@ -29,6 +29,7 @@ import {
 } from "lucide-react";
 import { useMemo, useState } from "react";
 import {
+  data,
   Form,
   Link,
   redirect,
@@ -179,6 +180,12 @@ const SECRET_INTENTS = new Set<string>([
   "shared-secret-delete",
   "shared-secret-expose-default",
 ]);
+
+/**
+ * The only intents a NESTED (subagent) Settings URL may run. Everything else this action handles
+ * configures the member or the repo, which a subagent does not own (issue #344).
+ */
+const SUBAGENT_INTENTS = new Set<string>(["set-model", "clear-model-override"]);
 
 const ALL = "all";
 
@@ -587,8 +594,15 @@ export const loader = (args: LoaderFunctionArgs) =>
         const resolverName = agentTs ? orgResolverAgentName(agentTs) : null;
         const [envs, resolved] = await Promise.all([
           listAgentEnvironments(active.id),
+          // Scoped to THIS repo (issue #344): another repo in the workspace may hold a
+          // same-named agent with its own pin, and that row must not be shown — or cleared —
+          // here. A legacy row belonging to no repo still answers.
           resolverName
-            ? resolveAgentModel(project.orgId, resolverName).catch(() => null)
+            ? resolveTargetModel(project.orgId, {
+                agentName: resolverName,
+                subagentPath: "",
+                projectId: project.id,
+              }).catch(() => null)
             : Promise.resolve(null),
         ]);
         if (agentTs && usesOrgModelResolver(agentTs)) {
@@ -778,6 +792,15 @@ export async function action(args: ActionFunctionArgs) {
     subagentSegmentsFromParams(args.params) ?? [],
   )}/settings`;
   const repo = { owner: project.repoOwner, repo: project.repoName };
+
+  // A subagent's Settings page owns exactly one thing: its model. Every other intent here belongs
+  // to the MEMBER or the REPO (secrets, tokens, marketplace, rename, remove, delete-repository),
+  // and the surface never renders them at a nested target — so a hand-crafted POST to a `/sub/`
+  // settings URL is refused BEFORE dispatch rather than silently executing against the member
+  // (issue #344).
+  if (subagentSegmentsFromParams(args.params) && !SUBAGENT_INTENTS.has(intent)) {
+    throw data("That action is not available on a subagent.", { status: 404 });
+  }
 
   try {
     // ── Model: stage agent.ts for the active member (same rails as every edit) ──

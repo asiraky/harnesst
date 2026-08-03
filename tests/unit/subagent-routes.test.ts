@@ -12,7 +12,8 @@
  *  - deleting a subagent saves a deletion for every file beneath it at any depth, the row stays
  *    visible and undoable until the publish lands, and undo puts every file back in one action;
  *  - a crafted request — a subagent URL hung off the wrong member, an unknown member, a posted
- *    `agent` field — is refused rather than answered from another member's tree.
+ *    `agent` field, a `path` reaching INSIDE a listed resource, a member/repo intent posted to a
+ *    nested Settings URL — is refused rather than answered from another target's tree.
  *
  * Same seam mocking as `connection-routes.test.ts`: hoisted mock bag, fake data store behind
  * `getRuntime`, GitHub reads stubbed, dynamic import after `vi.resetModules()`.
@@ -347,6 +348,10 @@ describe("create-subagent", () => {
     expect(staged[`${IVY_ROOT}/subagents/deep-scout/agent.ts`]).toContain(
       "'../../../harnesst/model.js'",
     );
+    // eve needs a description to delegate at all — the scaffold ships a rewritable one.
+    expect(staged[`${IVY_ROOT}/subagents/deep-scout/agent.ts`]).toContain(
+      "description: 'Describe when deep-scout should handle a delegated task.'",
+    );
   });
 
   it("nests under the addressed subagent at depth, with the full chain in the resolver call", async () => {
@@ -427,6 +432,37 @@ describe("path confinement", () => {
     expect(mocks.stageDeletions).toHaveBeenCalledWith(
       expect.objectContaining({ paths: [`${RESEARCHER_ROOT}/tools/cite.ts`] }),
     );
+  });
+
+  it("refuses a deletion aimed INSIDE a listed subagent, not at the row itself", async () => {
+    // The subagents page lists directories; a crafted descendant path would let it delete a file
+    // the subagent's OWN surfaces own (its tools, skills, agent.ts).
+    const { action } = await categoryRoute();
+    const result = await action(
+      formArgs(
+        "https://h.example.com/repos/p1/agents/ivy/resources/subagents",
+        { projectId: "p1", agentName: "ivy", category: "subagents" },
+        { intent: "delete-resource", path: `${RESEARCHER_ROOT}/tools/cite.ts` },
+      ),
+    );
+    expect(result).toEqual({ error: "Invalid resource path." });
+    expect(mocks.stageDeletions).not.toHaveBeenCalled();
+  });
+
+  it("refuses an undo aimed at a descendant of a listed resource", async () => {
+    const { action } = await categoryRoute();
+    const result = await action(
+      formArgs(
+        "https://h.example.com/repos/p1/agents/ivy/resources/subagents",
+        { projectId: "p1", agentName: "ivy", category: "subagents" },
+        {
+          intent: "undo-delete",
+          path: `${RESEARCHER_ROOT}/subagents/citer/agent.ts`,
+        },
+      ),
+    );
+    expect(result).toEqual({ error: "Invalid resource path." });
+    expect(mocks.discardDrafts).not.toHaveBeenCalled();
   });
 
   it("refuses an editor save aimed at another member's file", async () => {
@@ -642,5 +678,47 @@ describe("editor templates at a nested root", () => {
       ),
     );
     expect(view.isNew).toBe(true);
+  });
+});
+
+describe("intents at a nested Settings URL", () => {
+  beforeEach(() => reset());
+
+  const settingsRoute = () => import("~/routes/projects.$projectId.settings");
+
+  it.each([
+    "delete-repository",
+    "remove-agent",
+    "rename-agent",
+    "set-secret",
+    "update-install",
+  ])("404s `%s` posted to a subagent's Settings URL", async (intent) => {
+    const { action } = await settingsRoute();
+    const response = await thrownFrom(
+      action(
+        formArgs(
+          "https://h.example.com/repos/p1/agents/ivy/sub/researcher/settings",
+          { projectId: "p1", agentName: "ivy", subPath: "researcher" },
+          { intent, name: "gone", key: "K", value: "v" },
+        ),
+      ),
+    );
+    expect(response.status).toBe(404);
+    expect(mocks.stageDraft).not.toHaveBeenCalled();
+    expect(mocks.stageDeletions).not.toHaveBeenCalled();
+  });
+
+  it("lets the model intents through — the one thing a subagent owns", async () => {
+    const { action } = await settingsRoute();
+    // No model in the form, so the intent fails its own validation — the point is that it was
+    // DISPATCHED rather than refused by the nested-target gate.
+    const result = await action(
+      formArgs(
+        "https://h.example.com/repos/p1/agents/ivy/sub/researcher/settings",
+        { projectId: "p1", agentName: "ivy", subPath: "researcher" },
+        { intent: "set-model" },
+      ),
+    );
+    expect(result).toEqual({ error: "Pick or enter a model." });
   });
 });

@@ -24,7 +24,9 @@ import {
   orgModelModuleSource,
   rewriteOrgModelImports,
   scaffoldOrgModelAgentModule,
+  subagentStarterDescription,
 } from "~/eve/org-model-module";
+import { extractDescription } from "~/eve/parse";
 
 describe("orgModelModuleSource", () => {
   const source = orgModelModuleSource();
@@ -112,6 +114,40 @@ describe("scaffoldOrgModelAgentModule", () => {
       "model: harnesstAgentModel('kitchen-sink', 'reader/skimmer')",
     );
     expect(source).toContain("from '../../../../../harnesst/model.js'");
+  });
+
+  it("emits the description a declared subagent needs to be delegable", () => {
+    const source = scaffoldOrgModelAgentModule("kitchen-sink", {
+      subagentPath: "reader",
+      description: subagentStarterDescription("reader"),
+    });
+    // eve refuses to delegate to a subagent with no description, and the create dialog collects
+    // only a name — the scaffold ships a rewritable placeholder (issue #344).
+    expect(source).toContain(
+      "description: 'Describe when reader should handle a delegated task.'",
+    );
+    expect(extractDescription(source)).toBe(
+      "Describe when reader should handle a delegated task.",
+    );
+  });
+
+  it("strips quotes and collapses newlines in the description (no source injection)", () => {
+    const source = scaffoldOrgModelAgentModule("kitchen-sink", {
+      subagentPath: "reader",
+      description: "a'b\n`c` });\nexport const pwned = 1;",
+    });
+    expect(source).toContain("description: 'ab c });");
+    expect(source.split("\n").filter((l) => l.includes("description:"))).toHaveLength(1);
+  });
+
+  it("emits no description line when none is given", () => {
+    expect(scaffoldOrgModelAgentModule("bookkeeping")).not.toContain("description:");
+  });
+
+  it("names the last segment of a nested subagent path in the starter description", () => {
+    expect(subagentStarterDescription("reader/skimmer")).toBe(
+      "Describe when skimmer should handle a delegated task.",
+    );
   });
 
   it("is recognized by the read-side helpers as dynamic with no baked model", () => {

@@ -66,7 +66,10 @@ import {
 } from "~/drafts/drafts.server";
 import { stageDraft } from "~/drafts/drafts.server";
 import { orgResolverAgentName } from "~/eve/agentModule";
-import { scaffoldOrgModelAgentModule } from "~/eve/org-model-module";
+import {
+  scaffoldOrgModelAgentModule,
+  subagentStarterDescription,
+} from "~/eve/org-model-module";
 import { buildAgentConfig, overlayDrafts } from "~/eve/parse";
 import { RESOURCE_KINDS, slugifyResourceName } from "~/eve/templates";
 import {
@@ -292,6 +295,9 @@ export async function action(args: ActionFunctionArgs) {
         path: `${root}/agent.ts`,
         content: scaffoldOrgModelAgentModule(resolverName, {
           subagentPath: segments.join("/"),
+          // eve requires a description to delegate to a subagent, and the dialog collects only a
+          // name — ship a placeholder the author rewrites (issue #344).
+          description: subagentStarterDescription(name),
         }),
         createdBy: auth.user.id,
       });
@@ -314,6 +320,13 @@ export async function action(args: ActionFunctionArgs) {
   // The path must be a resource of THIS target's category — no arbitrary deletions.
   const path = confineToRoot(dir, String(form.get("path") ?? ""));
   if (!path || path === dir) return { error: "Invalid resource path." };
+  // …and it must be an IMMEDIATE child of the category directory: exactly what this page lists.
+  // Without this a crafted `path` reaches any descendant — most sharply `subagents/<name>/…`,
+  // where a declared subagent's own tools, skills, and agent.ts live and are owned by that
+  // subagent's surfaces, not by this one (issue #344).
+  if (path.slice(dir.length + 1).includes("/")) {
+    return { error: "Invalid resource path." };
+  }
 
   const name = path.split("/").pop()!;
 

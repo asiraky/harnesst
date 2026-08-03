@@ -643,8 +643,24 @@ export function AgentNav({
  * Team member picker: swaps the `/agents/<name>` segment, keeping the current tab.
  *
  * A nested subagent context (`…/sub/researcher`) is dropped on the way: the chosen member has
- * its own subagents, and carrying this one's path across would land on a 404 (issue #344).
+ * its own subagents, and carrying this one's path across would land on a 404 (issue #344). The
+ * editor's `?path=` goes with it for the same reason — it names a file inside the agent root you
+ * are leaving — while every other search param (tab state, filters) is kept.
  */
+export function switchAgentHref(
+  location: { pathname: string; search: string },
+  name: string,
+): string {
+  const pathname = location.pathname
+    .replace(/\/sub\/[^/]+/, "")
+    .replace(/\/agents\/[^/]+/, `/agents/${encodeURIComponent(name)}`);
+  const params = new URLSearchParams(location.search);
+  // `path` names a file inside the agent root being left — it cannot survive the switch.
+  params.delete("path");
+  const search = params.toString();
+  return `${pathname}${search ? `?${search}` : ""}`;
+}
+
 function AgentSwitcher({
   roster,
   activeAgent,
@@ -659,12 +675,7 @@ function AgentSwitcher({
       <Users className="h-4 w-4 text-muted-foreground" aria-hidden />
       <Select
         value={activeAgent}
-        onValueChange={(name) => {
-          const pathname = location.pathname
-            .replace(/\/sub\/[^/]+/, "")
-            .replace(/\/agents\/[^/]+/, `/agents/${encodeURIComponent(name)}`);
-          navigate(`${pathname}${location.search}`);
-        }}
+        onValueChange={(name) => navigate(switchAgentHref(location, name))}
       >
         <SelectTrigger className="h-8 min-w-36 font-mono text-xs" aria-label="Agent">
           <SelectValue />

@@ -103,6 +103,24 @@ export async function deleteRepository(
   });
   await store.projects.deleteById(project.id);
 
+  // Model overrides are keyed by (org, project, agent, subagent) but hold NO foreign key to
+  // projects — the column carries `''` for legacy, repo-agnostic rows, which a cascade would have
+  // no way to express. Drop this repo's pinned rows explicitly so a deleted repo can't leave
+  // resolvable overrides behind (issue #344). Best-effort: the repo row is already gone and the
+  // leftovers are inert, so a failure here must not fail the delete. Lazy import keeps the db
+  // client out of this module's graph for unit tests.
+  try {
+    const { removeProjectModelOverrides } = await import(
+      "~/models/agent-model-config.server"
+    );
+    await removeProjectModelOverrides(project.orgId, project.id);
+  } catch (error) {
+    console.warn(
+      `[repository.delete] model override cleanup for ${project.id} failed; continuing`,
+      error,
+    );
+  }
+
   // The repo's Better Auth team (FOH D9) is not covered by the projects cascade — remove it
   // best-effort after the row delete. Lazy import keeps the Better Auth singleton out of this
   // module's graph for unit tests; deleteProjectTeam itself never throws.

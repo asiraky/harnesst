@@ -62,11 +62,15 @@ import {
 } from "~/components/deploy-freshness";
 import { listDeployments, queueDeploy } from "~/deploy/controller.server";
 import { listDrafts, stageDraft } from "~/drafts/drafts.server";
-import { listAgentModelOverrides } from "~/models/agent-model-config.server";
+import {
+  listAgentModelOverrides,
+  UNSCOPED_PROJECT,
+} from "~/models/agent-model-config.server";
 import { isDynamicSubagentModule } from "~/eve/agentModule";
 import {
   buildAgentConfig,
   buildSubagentSummaries,
+  extractDescription,
   overlayDrafts,
 } from "~/eve/parse";
 import {
@@ -134,6 +138,12 @@ interface TargetView {
    * session at runtime, so the surface says so instead of implying it is always active.
    */
   dynamic: boolean;
+  /**
+   * The authored one-liner from the target's own `agent.ts` (`description:` literal, drafts
+   * overlaid); null when the module has none. It is what the PARENT reads to decide whether to
+   * delegate, so a subagent's overview shows it rather than only that the subagent exists.
+   */
+  description: string | null;
 }
 
 interface ProjectView {
@@ -270,6 +280,9 @@ export const loader = (args: LoaderFunctionArgs) =>
               dynamic: isDynamicSubagentModule(
                 overlaid.files[`${nested.target.root}/agent.ts`],
               ),
+              description: extractDescription(
+                overlaid.files[`${nested.target.root}/agent.ts`],
+              ),
             }
           : active
             ? {
@@ -278,6 +291,7 @@ export const loader = (args: LoaderFunctionArgs) =>
                 subagentPath: [],
                 root: active.root,
                 dynamic: false,
+                description: null,
               }
             : null;
 
@@ -287,11 +301,20 @@ export const loader = (args: LoaderFunctionArgs) =>
           getWorkspaceAssistantModel(project.orgId).catch(() => null),
           listAgentModelOverrides(project.orgId).catch(() => []),
         ]);
-        // Roster badges are about the MEMBERS: a declared subagent's own pin belongs to its
-        // nested Settings surface, not to the parent's badge (issue #344).
+        // Roster badges are about the MEMBERS of THIS repo: a declared subagent's own pin belongs
+        // to its nested Settings surface, not to the parent's badge, and another repo's row must
+        // never colour this roster just because the names collide (issue #344).
         const overrideModelByName = new Map(
           agentOverrides
-            .filter((o) => o.subagentPath === "")
+            .filter(
+              (o) =>
+                o.subagentPath === "" &&
+                (o.projectId === project.id ||
+                  o.projectId === UNSCOPED_PROJECT),
+            )
+            // Ascending projectId puts the legacy `''` row first, so this repo's pinned row
+            // overwrites it in the map — the same preference the resolver applies.
+            .sort((a, b) => a.projectId.localeCompare(b.projectId))
             .map((o) => [o.agentName, o.model]),
         );
         const teamLayout = project.layout === "team";
@@ -583,15 +606,46 @@ export default function ProjectDetail({
             </span>
           }
           description={
-            <span>
-              Runs inside and deploys with{" "}
-              <Link
-                to={memberCtx}
-                className="font-medium underline underline-offset-4"
-              >
-                {target.member}
-              </Link>{" "}
-              · <span className="font-mono">{target.root}</span>
+            <span className="block space-y-1">
+              <span className="block">
+                Runs inside and deploys with{" "}
+                <Link
+                  to={memberCtx}
+                  className="font-medium underline underline-offset-4"
+                >
+                  {target.member}
+                </Link>{" "}
+                · <span className="font-mono">{target.root}</span>
+              </span>
+              {/* The description is what {member} reads to decide whether to delegate — it is
+                  configuration, so the subagent's own overview states it (issue #344). */}
+              <span className="block">
+                {target.description ? (
+                  <span className="text-foreground">{target.description}</span>
+                ) : config?.hasAgentModule ? (
+                  <>
+                    No <span className="font-mono">description</span> in{" "}
+                    <span className="font-mono">agent.ts</span> — {target.member}{" "}
+                    needs one to know when to delegate here.
+                  </>
+                ) : (
+                  <>
+                    No <span className="font-mono">agent.ts</span> yet — choosing
+                    a model in Settings scaffolds one.
+                  </>
+                )}
+                {config?.hasAgentModule && (
+                  <>
+                    {" · "}
+                    <Link
+                      to={`${ctx}/edit?path=${encodeURIComponent(`${target.root}/agent.ts`)}`}
+                      className="font-medium underline underline-offset-4"
+                    >
+                      Edit agent.ts
+                    </Link>
+                  </>
+                )}
+              </span>
             </span>
           }
         />

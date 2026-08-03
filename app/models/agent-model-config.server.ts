@@ -11,14 +11,17 @@
  * fallback. Already-deployed agents ask with the parent name only, so they land on `""` and keep
  * resolving exactly as they did before subagent targets existed.
  *
- * `projectId` scopes a target to one repo: two repos in one workspace can hold an agent of the
- * same name, and a row pinned to project A must not answer for project B. Rows written before
- * that column existed carry NULL and stay name-resolved for everyone (see issue #344 scope note).
+ * `projectId` is part of the KEY, not a hint: two repos in one workspace routinely hold same-named
+ * members and subagents, so a row belongs to exactly one repo. Rows written before that column
+ * existed carry `''` — the legacy, unattributed row, which answers for any repo that has none of
+ * its own and is what a name-only (pre-#344) deployment resolves through. Every write from a repo
+ * surface keys that repo, so one repo's save can never overwrite another's row and one repo's
+ * "use the default" can never delete another's pin.
  *
  * `pickAgentModel` and `pickTargetModel` are pure so the ordering contract unit-tests with zero
  * I/O.
  */
-import { and, eq, inArray, isNull, or, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, or, sql, type SQL } from "drizzle-orm";
 
 import { db } from "~/db/client.server";
 import { agentModelOverrides } from "~/db/schema";
@@ -31,6 +34,12 @@ export interface AgentModelSelection {
   effort: ReasoningEffort | null;
 }
 
+/**
+ * The repo of a legacy, unattributed row. `''` rather than NULL because the column is part of the
+ * primary key — and because "no repo" is a real, resolvable target, not a missing value.
+ */
+export const UNSCOPED_PROJECT = "";
+
 /** One configuration target: an agent, or a declared subagent nested beneath it. */
 export interface ModelTargetKey {
   /** The eve agent name (`harnesstAgentModel('<name>')` argument) of the MEMBER agent. */
@@ -41,10 +50,19 @@ export interface ModelTargetKey {
   projectId?: string | null;
 }
 
+/** A stored row's full primary key — every column, including the repo it belongs to. */
+export interface ModelOverrideRowKey {
+  agentName: string;
+  subagentPath: string;
+  /** The exact stored value: a project id, or `UNSCOPED_PROJECT` for the legacy row. */
+  projectId: string;
+}
+
 export interface AgentModelOverride extends AgentModelSelection {
   agentName: string;
   subagentPath: string;
-  projectId: string | null;
+  /** `''` for a legacy row that belongs to no repo in particular. */
+  projectId: string;
 }
 
 export interface ResolvedAgentModel extends AgentModelSelection {
@@ -124,21 +142,33 @@ export function pickTargetModel(
 }
 
 /**
- * A row answers for a target when it is pinned to the same repo, or is a legacy row pinned to no
- * repo at all. A row pinned to a DIFFERENT project deliberately does not answer — that is the
- * cross-repo collision `project_id` exists to stop.
+ * A row answers for a target when it belongs to the same repo, or is the legacy row belonging to
+ * no repo at all. A row pinned to a DIFFERENT project deliberately does not answer — that is the
+ * cross-repo collision `project_id` exists to stop. An unscoped lookup (a legacy deployment that
+ * sends no project) has no filter at all: it resolves by name, as it always did.
  */
 function projectScope(projectId: string | null | undefined) {
   return projectId
-    ? or(
-        eq(agentModelOverrides.projectId, projectId),
-        isNull(agentModelOverrides.projectId),
-      )
+    ? inArray(agentModelOverrides.projectId, [projectId, UNSCOPED_PROJECT])
     : undefined;
 }
 
-/** Prefer the row pinned to this repo over the legacy, repo-less one. */
-const PROJECT_MATCH_FIRST = sql`case when ${agentModelOverrides.projectId} is null then 1 else 0 end`;
+/**
+ * Which of several matching rows answers first.
+ *
+ * Scoped: this repo's own row, then the legacy one. Unscoped: the legacy (`''`) row — it sorts
+ * before every real project id — then the lowest project id, so a name-only lookup is
+ * deterministic instead of whatever Postgres happened to return.
+ */
+function preferenceOrder(projectId: string | null | undefined): SQL[] {
+  const byProject = asc(agentModelOverrides.projectId) as SQL;
+  return projectId
+    ? [
+        sql`case when ${agentModelOverrides.projectId} = ${projectId} then 0 else 1 end`,
+        byProject,
+      ]
+    : [byProject];
+}
 
 export async function listAgentModelOverrides(
   orgId: string,
@@ -153,11 +183,15 @@ export async function listAgentModelOverrides(
     })
     .from(agentModelOverrides)
     .where(eq(agentModelOverrides.orgId, orgId))
-    .orderBy(agentModelOverrides.agentName, agentModelOverrides.subagentPath);
+    .orderBy(
+      agentModelOverrides.agentName,
+      agentModelOverrides.subagentPath,
+      agentModelOverrides.projectId,
+    );
   return rows.map((r) => ({
     agentName: r.agentName,
     subagentPath: r.subagentPath,
-    projectId: r.projectId ?? null,
+    projectId: r.projectId,
     model: r.model,
     effort: (r.effort as ReasoningEffort | null) ?? null,
   }));
@@ -181,38 +215,47 @@ export async function getAgentModelOverride(
         projectScope(key.projectId),
       ),
     )
-    .orderBy(PROJECT_MATCH_FIRST)
+    .orderBy(...preferenceOrder(key.projectId))
     .limit(1);
   return row
     ? { model: row.model, effort: (row.effort as ReasoningEffort | null) ?? null }
     : null;
 }
 
+/**
+ * Pin a target's model. The row is keyed by the CALLER's repo — never `''`: a write always comes
+ * from one repo's configuration surface, and writing the unattributed row would put it back in the
+ * business of answering for every other repo with the same agent name. The runtime never writes.
+ */
 export async function setAgentModelOverride(
   orgId: string,
   key: ModelTargetKey,
   selection: AgentModelSelection,
 ): Promise<void> {
+  const projectId = key.projectId;
+  if (!projectId) {
+    throw new Error(
+      "A model override must be written against the repo it belongs to (missing projectId).",
+    );
+  }
   await db
     .insert(agentModelOverrides)
     .values({
       orgId,
       agentName: key.agentName,
       subagentPath: key.subagentPath,
-      projectId: key.projectId ?? null,
+      projectId,
       model: selection.model,
       effort: selection.effort,
     })
     .onConflictDoUpdate({
       target: [
         agentModelOverrides.orgId,
+        agentModelOverrides.projectId,
         agentModelOverrides.agentName,
         agentModelOverrides.subagentPath,
       ],
       set: {
-        // A write always claims the repo it came from; an unscoped write leaves the existing
-        // pin alone rather than demoting a scoped row back to legacy.
-        ...(key.projectId ? { projectId: key.projectId } : {}),
         model: selection.model,
         effort: selection.effort,
         updatedAt: new Date(),
@@ -220,9 +263,40 @@ export async function setAgentModelOverride(
     });
 }
 
+/**
+ * Clear the override one repo's UI shows for a target: its own row and the legacy `''` row it
+ * would otherwise fall back to (that legacy row IS what the page was displaying). Another repo's
+ * pinned row is never touched — it is not this repo's to delete.
+ */
 export async function removeAgentModelOverride(
   orgId: string,
   key: ModelTargetKey,
+): Promise<void> {
+  const projectId = key.projectId;
+  if (!projectId) {
+    throw new Error(
+      "A model override must be cleared against the repo it belongs to (missing projectId).",
+    );
+  }
+  await db
+    .delete(agentModelOverrides)
+    .where(
+      and(
+        eq(agentModelOverrides.orgId, orgId),
+        eq(agentModelOverrides.agentName, key.agentName),
+        eq(agentModelOverrides.subagentPath, key.subagentPath),
+        inArray(agentModelOverrides.projectId, [projectId, UNSCOPED_PROJECT]),
+      ),
+    );
+}
+
+/**
+ * Delete exactly ONE stored row, by its full primary key — for org-level surfaces that list rows
+ * and remove the one the human pointed at (Org settings, connection removal).
+ */
+export async function removeAgentModelOverrideRow(
+  orgId: string,
+  key: ModelOverrideRowKey,
 ): Promise<void> {
   await db
     .delete(agentModelOverrides)
@@ -231,6 +305,26 @@ export async function removeAgentModelOverride(
         eq(agentModelOverrides.orgId, orgId),
         eq(agentModelOverrides.agentName, key.agentName),
         eq(agentModelOverrides.subagentPath, key.subagentPath),
+        eq(agentModelOverrides.projectId, key.projectId),
+      ),
+    );
+}
+
+/**
+ * Every override row belonging to one repo. `project_id` carries no foreign key (`''` is not a
+ * project id), so a deleted repo takes its rows with it here rather than by cascade.
+ */
+export async function removeProjectModelOverrides(
+  orgId: string,
+  projectId: string,
+): Promise<void> {
+  if (!projectId) return;
+  await db
+    .delete(agentModelOverrides)
+    .where(
+      and(
+        eq(agentModelOverrides.orgId, orgId),
+        eq(agentModelOverrides.projectId, projectId),
       ),
     );
 }
@@ -241,9 +335,9 @@ export async function removeAgentModelOverride(
  * deletion has actually landed on the default branch, so a pre-publish deletion stays fully
  * reversible. A prefix of `""` prunes the whole agent (a removed team member).
  *
- * Legacy rows carrying no `project_id` are pruned only below the member root: a repo-less
- * TOP-LEVEL row may be the one another repo's same-named agent is still resolving through
- * (issue #344 scope note), and losing that silently would be worse than leaving an orphan.
+ * Legacy rows belonging to no repo (`project_id = ''`) are pruned only below the member root: a
+ * repo-less TOP-LEVEL row may be the one another repo's same-named agent is still resolving
+ * through (issue #344 scope note), and losing that silently would be worse than leaving an orphan.
  */
 export async function cleanupSubagentOverrides(
   orgId: string,
@@ -266,7 +360,7 @@ export async function cleanupSubagentOverrides(
       or(
         eq(agentModelOverrides.projectId, projectId),
         and(
-          isNull(agentModelOverrides.projectId),
+          eq(agentModelOverrides.projectId, UNSCOPED_PROJECT),
           sql`${agentModelOverrides.subagentPath} <> ''`,
         ),
       ),
@@ -314,12 +408,12 @@ export async function resolveTargetModel(
           projectScope(key.projectId),
         ),
       )
-      .orderBy(PROJECT_MATCH_FIRST),
+      .orderBy(...preferenceOrder(key.projectId)),
     getWorkspaceAssistantSelection(orgId),
   ]);
   const byPath = new Map<string, AgentModelSelection>();
   for (const row of rows) {
-    // Ordered project-first, so the legacy row never displaces the repo-scoped one.
+    // Ordered by preference, so the row that answers is the first one seen per path.
     if (byPath.has(row.subagentPath)) continue;
     byPath.set(row.subagentPath, {
       model: row.model,

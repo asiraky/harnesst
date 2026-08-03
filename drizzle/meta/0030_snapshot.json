@@ -1,5 +1,5 @@
 {
-  "id": "401bdf1d-4e9a-4373-917f-924f5d715703",
+  "id": "c9081d41-f857-493f-bdd1-0406f2e6d9b0",
   "prevId": "7cf86cfd-e62d-4fe4-ab8b-2d1d71a828e3",
   "version": "7",
   "dialect": "postgresql",
@@ -150,7 +150,8 @@
           "name": "project_id",
           "type": "varchar(12)",
           "primaryKey": false,
-          "notNull": false
+          "notNull": true,
+          "default": "''"
         },
         "model": {
           "name": "model",
@@ -173,8 +174,8 @@
         }
       },
       "indexes": {
-        "agent_model_overrides_project_idx": {
-          "name": "agent_model_overrides_project_idx",
+        "agent_model_overrides_agent_idx": {
+          "name": "agent_model_overrides_agent_idx",
           "columns": [
             {
               "expression": "org_id",
@@ -183,7 +184,7 @@
               "nulls": "last"
             },
             {
-              "expression": "project_id",
+              "expression": "agent_name",
               "isExpression": false,
               "asc": true,
               "nulls": "last"
@@ -208,26 +209,14 @@
           ],
           "onDelete": "cascade",
           "onUpdate": "no action"
-        },
-        "agent_model_overrides_project_id_projects_id_fk": {
-          "name": "agent_model_overrides_project_id_projects_id_fk",
-          "tableFrom": "agent_model_overrides",
-          "tableTo": "projects",
-          "columnsFrom": [
-            "project_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {
-        "agent_model_overrides_org_id_agent_name_subagent_path_pk": {
-          "name": "agent_model_overrides_org_id_agent_name_subagent_path_pk",
+        "agent_model_overrides_pk": {
+          "name": "agent_model_overrides_pk",
           "columns": [
             "org_id",
+            "project_id",
             "agent_name",
             "subagent_path"
           ]

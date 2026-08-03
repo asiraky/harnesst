@@ -77,9 +77,12 @@ describe("cleanupSubagentOverrides", () => {
 
     const { sql, params } = lastDelete();
     expect(params).not.toContain("/%");
-    // …but a legacy, repo-less TOP-LEVEL row survives: only repo-pinned rows and nested legacy
-    // rows are in scope (`subagent_path <> ''`).
-    expect(sql).toContain('"project_id" is null');
+    // …but a legacy, repo-agnostic TOP-LEVEL row survives: only this repo's rows and nested
+    // legacy rows are in scope (`subagent_path <> ''`). The legacy pin is `project_id = ''`
+    // (part of the primary key since #344), never NULL.
+    expect(sql).toContain('"project_id" =');
+    expect(sql).not.toContain('"project_id" is null');
+    expect(params).toContain("");
     expect(sql).toContain("<> ''");
   });
 });

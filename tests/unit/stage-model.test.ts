@@ -312,6 +312,24 @@ describe("stageModelChange — declared subagent targets", () => {
     expect(draft!.content).toContain("description: 'Researches things'");
   });
 
+  it("writes the row only AFTER the module draft is staged", async () => {
+    // Ordering matters: a saved pin the deployed module can never ask for is worse than no pin.
+    const deps = fakeDeps({
+      "agent/agent.ts": RESOLVER_AGENT_TS,
+      "agent/subagents/researcher/agent.ts": LEGACY_SUBAGENT_TS,
+      "package.json": PKG,
+    });
+    const setOverride = vi.fn().mockResolvedValue(undefined);
+    deps.setOverride = setOverride;
+    deps.resolveTarget = vi.fn().mockResolvedValue(null);
+    vi.spyOn(store.drafts, "upsert").mockRejectedValue(new Error("db down"));
+
+    await expect(
+      stageModelChange({ ...SUBAGENT_INPUT }, store, deps),
+    ).rejects.toThrow("db down");
+    expect(setOverride).not.toHaveBeenCalled();
+  });
+
   it("leaves an already-upgraded module alone", async () => {
     const upgraded = LEGACY_SUBAGENT_TS.replace(
       "harnesstAgentModel('bookkeeping')",

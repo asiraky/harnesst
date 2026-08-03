@@ -33,7 +33,10 @@ import {
   setOrgResolverSubagentPath,
   usesOrgModelResolver,
 } from "~/eve/agentModule";
-import { scaffoldOrgModelAgentModule } from "~/eve/org-model-module";
+import {
+  scaffoldOrgModelAgentModule,
+  subagentStarterDescription,
+} from "~/eve/org-model-module";
 import type { ReasoningEffort } from "~/models/reasoning";
 import { packageJsonPathForRoot } from "~/marketplace/install.server";
 import {
@@ -194,6 +197,34 @@ export async function stageModelChange(
       subagentPath,
       projectId: input.project.id,
     };
+    // A subagent whose module still makes the pre-#344 call (or has no module at all) would keep
+    // asking for the PARENT's target, so the module needs upgrading to ask for its own. Stage
+    // that FIRST: if the draft write fails, the run aborts with no row written, rather than
+    // leaving a saved pin the deployed module can never ask for.
+    const upgraded =
+      subagentPath === ""
+        ? null
+        : view.content === null
+          ? scaffoldOrgModelAgentModule(resolverName, {
+              subagentPath,
+              description: subagentStarterDescription(subagentPath),
+            })
+          : usesOrgModelResolver(view.content) &&
+              orgResolverTarget(view.content)?.subagentPath !== subagentPath
+            ? setOrgResolverSubagentPath(view.content, subagentPath)
+            : null;
+    const stagedUpgrade = upgraded !== null && upgraded !== view.content;
+    if (stagedUpgrade) {
+      await stageDraft(
+        {
+          projectId: input.project.id,
+          path,
+          content: upgraded,
+          createdBy: input.createdBy,
+        },
+        store,
+      );
+    }
     if (
       inherited.model === selection.model &&
       inherited.effort === selection.effort
@@ -209,30 +240,11 @@ export async function stageModelChange(
         selection,
       );
     }
-    if (subagentPath === "") return { ok: true, mode: "applied" };
-    // The row is live for any deployment speaking the two-argument protocol. A subagent whose
-    // module still makes the pre-#344 call (or has no module at all) would keep asking for the
-    // PARENT's target, so stage the upgrade — it reaches the running agent on the next publish.
-    const upgraded =
-      view.content === null
-        ? scaffoldOrgModelAgentModule(resolverName, { subagentPath })
-        : usesOrgModelResolver(view.content) &&
-            orgResolverTarget(view.content)?.subagentPath !== subagentPath
-          ? setOrgResolverSubagentPath(view.content, subagentPath)
-          : null;
-    if (upgraded !== null && upgraded !== view.content) {
-      await stageDraft(
-        {
-          projectId: input.project.id,
-          path,
-          content: upgraded,
-          createdBy: input.createdBy,
-        },
-        store,
-      );
-      return { ok: true, mode: "applied", upgraded: true };
-    }
-    return { ok: true, mode: "applied" };
+    // The row is live for any deployment speaking the two-argument protocol; a staged upgrade
+    // reaches the running agent on the next publish.
+    return stagedUpgrade
+      ? { ok: true, mode: "applied", upgraded: true }
+      : { ok: true, mode: "applied" };
   }
   if (view.content && usesOrgModelResolver(view.content) && !resolverName) {
     return {

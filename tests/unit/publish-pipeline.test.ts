@@ -826,6 +826,111 @@ describe("runPublish — model override cleanup", () => {
     ]);
   });
 
+  it("prunes a removed MEMBER under its resolver name, read from the PRE-commit tree", async () => {
+    seedTeam();
+    const IVY_FILES = ["agents/ivy/agent/agent.ts", "agents/ivy/agent/instructions.md"];
+    await stageDrafts(Object.fromEntries(IVY_FILES.map((p) => [p, null])));
+    const task = await seedTask();
+    const cleanupSubagentOverrides = vi.fn().mockResolvedValue(undefined);
+    // The member's module resolves itself by a name a rename left behind — and this very commit
+    // deleted it, so it is only readable at the pre-commit anchor.
+    const readRepoFile = vi
+      .fn()
+      .mockResolvedValue("model: harnesstAgentModel('ivy-old')");
+    const deps = makeDeps({
+      listRepoPaths: vi
+        .fn()
+        .mockResolvedValue([...IVY_FILES, "agents/otto/agent/agent.ts"]),
+      readRepoFile,
+      cleanupSubagentOverrides,
+    });
+
+    await runPublish(payload(task.id), deps, store);
+
+    expect(await stepStatuses(task.id)).toMatchObject({ commit: "succeeded" });
+    expect(cleanupSubagentOverrides.mock.calls).toEqual([
+      ["org_1", PROJECT, "ivy", ""],
+      ["org_1", PROJECT, "ivy-old", ""],
+    ]);
+    expect(readRepoFile).toHaveBeenCalledWith(
+      "inst_1",
+      expect.objectContaining({ ref: expect.any(String) }),
+      "agents/ivy/agent/agent.ts",
+    );
+    // Not the branch head — the module is gone there.
+    const [, ref] = readRepoFile.mock.calls.at(-1)!;
+    expect((ref as { ref?: string }).ref).toBe(
+      "base0000head0000sha0000000000000000000000",
+    );
+  });
+
+  it("prunes against the REFRESHED tree after a non-fast-forward retry", async () => {
+    seedTeam();
+    const READER = "agents/ivy/agent/subagents/reader";
+    await stageDrafts({ [`${READER}/agent.ts`]: null });
+    const task = await seedTask();
+    const cleanupSubagentOverrides = vi.fn().mockResolvedValue(undefined);
+    const deps = makeDeps({
+      // The head moved between the two reads: someone else added a file under the subagent this
+      // change-set is emptying, so it is NOT gone and its override must survive.
+      listRepoPaths: vi
+        .fn()
+        .mockResolvedValueOnce([
+          "agents/ivy/agent/agent.ts",
+          `${READER}/agent.ts`,
+          "agents/otto/agent/agent.ts",
+        ])
+        .mockResolvedValue([
+          "agents/ivy/agent/agent.ts",
+          `${READER}/agent.ts`,
+          `${READER}/tools/new.ts`,
+          "agents/otto/agent/agent.ts",
+        ]),
+      commitToDefaultBranch: vi
+        .fn()
+        .mockRejectedValueOnce(new NonFastForwardError("main"))
+        .mockResolvedValue({ sha: SHA }),
+      cleanupSubagentOverrides,
+    });
+
+    await runPublish(payload(task.id), deps, store);
+
+    expect(await stepStatuses(task.id)).toMatchObject({ commit: "succeeded" });
+    expect(deps.listRepoPaths).toHaveBeenCalledTimes(2);
+    expect(cleanupSubagentOverrides).not.toHaveBeenCalled();
+  });
+
+  it("skips the prune entirely when the tree can't be re-read after a retry", async () => {
+    seedTeam();
+    const READER = "agents/ivy/agent/subagents/reader";
+    await stageDrafts({ [`${READER}/agent.ts`]: null });
+    const task = await seedTask();
+    const cleanupSubagentOverrides = vi.fn().mockResolvedValue(undefined);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const deps = makeDeps({
+      listRepoPaths: vi
+        .fn()
+        .mockResolvedValueOnce([
+          "agents/ivy/agent/agent.ts",
+          `${READER}/agent.ts`,
+          "agents/otto/agent/agent.ts",
+        ])
+        .mockRejectedValue(new Error("github down")),
+      commitToDefaultBranch: vi
+        .fn()
+        .mockRejectedValueOnce(new NonFastForwardError("main"))
+        .mockResolvedValue({ sha: SHA }),
+      cleanupSubagentOverrides,
+    });
+
+    await runPublish(payload(task.id), deps, store);
+
+    // The commit is the point — a stale snapshot costs an orphan row, never a failed publish.
+    expect((await store.workspaceTasks.findById(task.id))?.status).toBe("succeeded");
+    expect(cleanupSubagentOverrides).not.toHaveBeenCalled();
+    warn.mockRestore();
+  });
+
   it("keeps the publish green when pruning blows up", async () => {
     seedTeam();
     await stageDrafts({ "agents/ivy/agent/subagents/reader/agent.ts": null });

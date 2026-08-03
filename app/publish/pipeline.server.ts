@@ -629,6 +629,9 @@ export async function runPublish(
     // The published tree as it stood BEFORE this change-set — reused after the commit to tell a
     // deletion that emptied a subagent directory from one that only pruned part of it.
     let repoPaths: string[] = [];
+    // Set when the CAS retry could not re-read that snapshot: the prune then reads a tree that no
+    // longer describes the branch it committed onto, so it is skipped instead of guessing.
+    let repoPathsStale = false;
     try {
       repoPaths = await deps.listRepoPaths({
         installationId,
@@ -748,6 +751,24 @@ export async function runPublish(
           await save();
           return outcome;
         }
+        // The head moved, so the pre-change tree snapshot taken during `check` no longer describes
+        // what this commit lands on — and the post-commit override prune reads exactly that
+        // snapshot to decide whether a target still exists (issue #344). Refresh it against the
+        // new base; if the read fails, mark it stale and skip the prune rather than pruning a
+        // target the other commit just added. Never fails the publish: the commit is the point.
+        try {
+          repoPaths = await deps.listRepoPaths({
+            installationId,
+            owner: connected.repoOwner,
+            repo: connected.repoName,
+          });
+        } catch (refreshError) {
+          repoPathsStale = true;
+          console.warn(
+            "[publish] couldn't refresh the repo tree after a CAS retry; skipping override prune:",
+            refreshError,
+          );
+        }
         commitStep.status = "running";
         delete commitStep.detail;
         await save();
@@ -792,19 +813,21 @@ export async function runPublish(
     // this change-set removed (issue #344). Best-effort: an orphaned override row must never
     // turn a landed publish into a failed one.
     try {
-      for (const target of removedModelTargets(agents, repoPaths, files)) {
+      for (const target of repoPathsStale
+        ? []
+        : removedModelTargets(agents, repoPaths, files)) {
         // Override rows are keyed by the name the MEMBER's module resolves itself by, which a
-        // rename can leave different from the roster name — prune both.
+        // rename can leave different from the roster name — prune both. Read at the PRE-COMMIT
+        // anchor: this commit is what deleted the module, so the branch head no longer has it
+        // (issue #344), and that is true for a removed member exactly as it is for a subagent.
         const names = new Set([target.agentName]);
-        if (target.subagentPath !== "") {
-          const module = await deps.readRepoFile(
-            installationId,
-            repo,
-            `${target.root}/agent.ts`,
-          );
-          const resolver = module ? orgResolverAgentName(module) : null;
-          if (resolver) names.add(resolver);
-        }
+        const module = await deps.readRepoFile(
+          installationId,
+          { ...repo, ref: baseHeadSha ?? undefined },
+          `${target.root}/agent.ts`,
+        );
+        const resolver = module ? orgResolverAgentName(module) : null;
+        if (resolver) names.add(resolver);
         for (const agentName of names) {
           await deps.cleanupSubagentOverrides(
             connected.orgId,
