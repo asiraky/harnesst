@@ -632,7 +632,7 @@ export async function deployRelease(
       envVars.HARNESST_TEAM_TOKEN ??= mintDelegationToken(dep.id);
     }
 
-    // Agent-initiated conversations (#288 3c): where the baked `agent/tools/contact-user.ts`
+    // Agent-initiated conversations (#288 3c): where the baked `agent/tools/notify-user.ts`
     // posts its notifications. Set for EVERY deployment, no gate — the tool is baked into
     // every image (like the run hook) and messaging the humans who run you is not a per-agent
     // feature. Same delegation bearer as the relays above; the notify endpoint re-derives

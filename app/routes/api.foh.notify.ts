@@ -1,5 +1,5 @@
 /**
- * Agent-initiated conversation endpoint (#288 3c). The baked `contact-user` tool POSTs
+ * Agent-initiated conversation endpoint (#288 3c). The baked `notify-user` tool POSTs
  * `{message, title?}` here with `Authorization: Bearer <HARNESST_TEAM_TOKEN>` to open a Front
  * of House conversation with the humans who run the agent. Transport shell only — the same
  * division as `routes/api.foh.park.ts`: the token authenticates the CALLER DEPLOYMENT and

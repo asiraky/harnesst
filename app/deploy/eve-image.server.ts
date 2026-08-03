@@ -51,8 +51,8 @@ import type { BuiltArtifact } from "~/seams/types";
 import {
   ASK_TEAMMATE_TOOL_PATH,
   ASK_TEAMMATE_TOOL_SOURCE,
-  CONTACT_USER_TOOL_PATH,
-  CONTACT_USER_TOOL_SOURCE,
+  NOTIFY_USER_TOOL_PATH,
+  NOTIFY_USER_TOOL_SOURCE,
   TELL_TEAMMATE_TOOL_PATH,
   TELL_TEAMMATE_TOOL_SOURCE,
 } from "~/team/tool-template";
@@ -342,14 +342,14 @@ async function fetchSource(
     await writeFile(runHookPath, HARNESST_RUN_HOOK_SOURCE);
   }
 
-  // Agent-initiated conversations (#288 3c): bake the contact-user tool into EVERY build —
+  // Agent-initiated conversations (#288 3c): bake the notify-user tool into EVERY build —
   // unconditionally like the run hook, because messaging the humans who run you is not a
   // per-agent feature. The tool refuses politely when HARNESST_FOH_NOTIFY_URL is absent.
   // Same override rule as above: a repo file already at this path wins, always.
-  const contactUserPath = path.join(buildDir, CONTACT_USER_TOOL_PATH);
-  if (!existsSync(contactUserPath)) {
-    await mkdir(path.dirname(contactUserPath), { recursive: true });
-    await writeFile(contactUserPath, CONTACT_USER_TOOL_SOURCE);
+  const notifyUserPath = path.join(buildDir, NOTIFY_USER_TOOL_PATH);
+  if (!existsSync(notifyUserPath)) {
+    await mkdir(path.dirname(notifyUserPath), { recursive: true });
+    await writeFile(notifyUserPath, NOTIFY_USER_TOOL_SOURCE);
   }
 
   // Session workspace isolation (#315): this channel exists only in the build context. Harnesst

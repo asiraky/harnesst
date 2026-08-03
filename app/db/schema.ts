@@ -1232,7 +1232,7 @@ export const playgroundSessions = pgTable(
     /** Number of Eve stream events consumed from the durable event stream. */
     streamIndex: integer("stream_index").notNull().default(0),
     /**
-     * Agent-initiated conversations (#288 3c): the `contact-user` notification that opened this
+     * Agent-initiated conversations (#288 3c): the `notify-user` notification that opened this
      * row. Such a row has NO eve session until a human replies — the transcript renders this
      * message as the agent's opening entry, and the first reply seeds the fresh HTTP-homed
      * session with it as strippable context. Null for every other row.

@@ -2,7 +2,7 @@
  * The generated teammate delegation tools (Team delegation — D2/§5, fire-and-forget — #269). This
  * exports the SOURCE TEXT of static eve tools that harnesst bakes into an agent's image at
  * build time (never the repo): `ask-teammate` (blocking — the caller needs the answer),
- * `tell-teammate` (fire-and-forget — the caller hands work off and moves on), and `contact-user`
+ * `tell-teammate` (fire-and-forget — the caller hands work off and moves on), and `notify-user`
  * (#288 3c — fire-and-forget notification to the humans who run the agent). The two delegation
  * tools are generated from ONE template and both POST to `/api/team/ask`, differing only in the
  * `mode` they put on the wire and the prose that routes the model between them. Each file is
@@ -26,8 +26,8 @@
 /** Repo-relative paths the tools are written to inside a member's build context. */
 export const ASK_TEAMMATE_TOOL_PATH = "agent/tools/ask-teammate.ts";
 export const TELL_TEAMMATE_TOOL_PATH = "agent/tools/tell-teammate.ts";
-/** Baked into EVERY image (not just team members) — see CONTACT_USER_TOOL_SOURCE below. */
-export const CONTACT_USER_TOOL_PATH = "agent/tools/contact-user.ts";
+/** Baked into EVERY image (not just team members) — see NOTIFY_USER_TOOL_SOURCE below. */
+export const NOTIFY_USER_TOOL_PATH = "agent/tools/notify-user.ts";
 
 /**
  * The one shared caveat both descriptions carry, verbatim — a single constant so the two tools
@@ -197,15 +197,15 @@ export const ASK_TEAMMATE_TOOL_SOURCE = buildToolSource(ASK_SPEC);
 export const TELL_TEAMMATE_TOOL_SOURCE = buildToolSource(TELL_SPEC);
 
 /**
- * `contact-user` (#288 3c) — the agent-initiated conversation opener, baked into EVERY image
+ * `notify-user` (#288 3c) — the agent-initiated conversation opener, baked into EVERY image
  * (like the run-report hook, not just team members). Fire-and-forget: it POSTs `{message,
  * title?}` to `HARNESST_FOH_NOTIFY_URL` with the same per-deployment bearer as the relays, and
  * harnesst opens a Front of House conversation the humans pick up from the bell. Same contract
  * as the delegation tools: imports only `eve/tools` + `zod`, module load cannot crash, and
  * `execute` never throws. The description is the dispatch logic between this and the blocking
- * `ask_question` — tests pin it.
+ * `ask_question`; the shipped guidance carries the same semantic contract.
  */
-export const CONTACT_USER_TOOL_SOURCE = `import { defineTool } from "eve/tools";
+export const NOTIFY_USER_TOOL_SOURCE = `import { defineTool } from "eve/tools";
 import { z } from "zod";
 
 // harnesst bakes this file into every agent image (see app/team/tool-template.ts). All
@@ -213,29 +213,33 @@ import { z } from "zod";
 
 export default defineTool({
   description:
-    "Send a message to the humans who run you. It opens a conversation in their harnesst " +
-    "inbox; they read it whenever they next look, and may reply there later. Fire-and-forget: " +
-    "this returns as soon as the message is filed — you will NOT get a reply, so never wait " +
-    "for one or invent one. Use it to report a result, surface a finding, or flag something " +
-    "a human should know about. When you need an ANSWER before you can continue, use the " +
-    "ask_question tool instead.",
+    "Notify the humans who run you by opening a new unread conversation in Front of House. " +
+    "This is fire-and-forget: it does not pause the current run, and it never returns a human " +
+    "reply. Use it for non-blocking information a human should see, such as completed work, " +
+    "UAT or preview links, status changes, findings, or a blocker that has already been " +
+    "recorded in the durable workflow ledger. The humans cannot see the current conversation, " +
+    "so make the message self-contained and include all relevant links and context. A human " +
+    "may reply later in the new conversation, which starts a fresh run; do not wait for or " +
+    "invent that reply. If the current run cannot continue without a human answer, use " +
+    "ask_question instead. When the workflow requires a durable record such as a GitHub " +
+    "comment or label, write that record as well — notify-user does not replace it.",
   inputSchema: z.object({
     message: z
       .string()
       .describe(
-        "The message for the humans: complete and self-contained — they cannot see this " +
-          "conversation, so include all the context they need.",
+        "A complete, human-readable, self-contained message for the humans. They cannot see " +
+          "the current conversation, so include all relevant Markdown links and context.",
       ),
     title: z
       .string()
       .optional()
-      .describe("Optional short title for the conversation this opens."),
+      .describe("An optional short Front of House conversation title."),
   }),
   async execute({ message, title }) {
     const url = process.env.HARNESST_FOH_NOTIFY_URL;
     const token = process.env.HARNESST_TEAM_TOKEN;
     if (!url || !token) {
-      return { ok: false, error: "Contacting your humans is not configured for this agent." };
+      return { ok: false, error: "Notifying your humans is not configured for this agent." };
     }
     try {
       const res = await fetch(url, {

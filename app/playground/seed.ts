@@ -31,15 +31,15 @@ const INSTRUCTION =
 export const SUCCESSION_INSTRUCTION =
   "[harnesst] This conversation started on one of your channels (e.g. a GitHub thread) in a previous session; the human is now continuing it here directly, so this fresh session carries the transcript below as context. Continue the conversation naturally; do not mention the handover unless asked.";
 /**
- * Agent-initiated conversations (#288 3c): the row was opened by the agent's `contact-user`
+ * Agent-initiated conversations (#288 3c): the row was opened by the agent's `notify-user`
  * notification (sent from some other run) and had no eve session until this reply. The
  * notification rides in as the same strippable block so the fresh session knows what the
  * human is replying to.
  */
 const NOTICE_INSTRUCTION =
-  "[harnesst] You previously sent the notification below to the humans who run you (via your contact-user tool, from a different session). A human read it and is now replying, opening this fresh conversation. Continue naturally; do not mention the session boundary unless asked.";
+  "[harnesst] You previously sent the notification below to the humans who run you (via your notify-user tool, from a different session). A human read it and is now replying, opening this fresh conversation. Continue naturally; do not mention the session boundary unless asked.";
 
-/** Build the strippable seed block that carries a contact-user notification (#288 3c). */
+/** Build the strippable seed block that carries a notify-user notification (#288 3c). */
 export function buildNoticeSeedContext(openingMessage: string): string {
   return [
     SEED_CONTEXT_START,
