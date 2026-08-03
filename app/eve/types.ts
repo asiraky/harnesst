@@ -3,8 +3,13 @@
  *
  * An eve agent lives under `agent/` in the repo (D3 — the repo is the source of truth):
  * `instructions.md`, `agent.ts`, and directories `tools/`, `skills/`, `subagents/`,
- * `channels/`, `schedules/`, `connections/`. This type is the normalized, UI-friendly shape
- * we render read-only in M0 and, later, edit in M1.
+ * `hooks/`, `channels/`, `schedules/`, `connections/`. This type is the normalized,
+ * UI-friendly shape every configuration surface renders and edits — it is fully editable, not
+ * a read-only projection.
+ *
+ * A declared subagent directory (`<root>/subagents/<name>/`) is its own agent root in eve and
+ * inherits none of its parent's authored slots (issue #344), so the same shape describes it —
+ * filtered by the capability matrix below, because channels and schedules are root-only.
  *
  * Shared client/server (no server-only imports) so route components can type `loaderData`.
  */
@@ -48,13 +53,15 @@ export interface AgentConfig {
   channels: AgentResource[];
   schedules: AgentResource[];
   connections: AgentResource[];
+  hooks: AgentResource[];
 }
 
 /**
- * A subagent surfaced as a read-only child of its parent member (issue #146). Subagents live
- * under `<root>/subagents/<name>/`, deploy inside their parent, and are invoked by delegation —
- * they are never roster members, so we present them beneath the parent with a best-effort
- * one-line description parsed from the tree.
+ * A subagent surfaced beneath its parent member (issue #146, made editable in #344). Subagents
+ * live under `<root>/subagents/<name>/`, deploy inside their parent, and are invoked by
+ * delegation — they are never roster members, so we present them beneath the parent with a
+ * best-effort one-line description parsed from the tree, linking into their own nested
+ * configuration context (`ConfigTarget`, `app/project/config-target.server.ts`).
  */
 export interface SubagentSummary {
   /** Directory name of the subagent. */
@@ -63,21 +70,63 @@ export interface SubagentSummary {
   path: string;
   /** Best-effort one-liner from the subagent's `agent.ts` description or instructions.md; null if none. */
   description: string | null;
+  /**
+   * True when the subagent's module default-exports `defineDynamic(...)` — its availability is
+   * decided per session at runtime, so the UI must not claim it is always active.
+   */
+  dynamic: boolean;
 }
 
-/** The categories, in display order, with the subdirectory each maps to under `agent/`. */
+/**
+ * Which agent roots a category is authored under. eve's declared subagents are their own agent
+ * roots but do NOT own every slot: `channels` and `schedules` are root-only, so a subagent target
+ * must neither render nor accept writes for them (issue #344 capability matrix).
+ */
+export type CategoryScope = "root" | "any";
+
+/** The configuration surfaces harnesst can target: a top-level agent, or a declared subagent. */
+export type TargetKind = "agent" | "subagent";
+
+/**
+ * The categories, in display order, with the subdirectory each maps to under an agent root and
+ * the target kinds that may author it. This array is the single source of truth: parsing
+ * (`buildAgentConfig`), the overview cards, the category list route's 404 gate, `CATEGORY_META`
+ * and `RESOURCE_KINDS` all derive from it, so adding or removing an eve slot is a one-line change
+ * here plus its presentation metadata.
+ */
 export const AGENT_CATEGORIES = [
-  { key: "tools", dir: "tools", label: "Tools" },
-  { key: "skills", dir: "skills", label: "Skills" },
-  { key: "subagents", dir: "subagents", label: "Subagents" },
-  { key: "channels", dir: "channels", label: "Channels" },
-  { key: "schedules", dir: "schedules", label: "Schedules" },
-  { key: "connections", dir: "connections", label: "Connections" },
+  { key: "tools", dir: "tools", label: "Tools", scope: "any" },
+  { key: "skills", dir: "skills", label: "Skills", scope: "any" },
+  { key: "subagents", dir: "subagents", label: "Subagents", scope: "any" },
+  { key: "channels", dir: "channels", label: "Channels", scope: "root" },
+  { key: "schedules", dir: "schedules", label: "Schedules", scope: "root" },
+  { key: "connections", dir: "connections", label: "Connections", scope: "any" },
+  { key: "hooks", dir: "hooks", label: "Hooks", scope: "any" },
 ] as const satisfies ReadonlyArray<{
   key: keyof Pick<
     AgentConfig,
-    "tools" | "skills" | "subagents" | "channels" | "schedules" | "connections"
+    | "tools"
+    | "skills"
+    | "subagents"
+    | "channels"
+    | "schedules"
+    | "connections"
+    | "hooks"
   >;
   dir: string;
   label: string;
+  scope: CategoryScope;
 }>;
+
+export type AgentCategory = (typeof AGENT_CATEGORIES)[number];
+
+/**
+ * The categories a target of `kind` may author. Both the UI iteration and the server-side
+ * category gate go through here, so a root-only category is never merely hidden — it is
+ * unreachable as an action surface too.
+ */
+export function categoriesFor(kind: TargetKind): AgentCategory[] {
+  return AGENT_CATEGORIES.filter(
+    (category) => kind === "agent" || category.scope === "any",
+  );
+}

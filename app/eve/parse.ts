@@ -5,6 +5,7 @@
  * DeployTargets (a local checkout can feed the same shape). The GitHub layer
  * (`app/github/repo.server.ts`) is responsible for producing `AgentSource`.
  */
+import { isDynamicSubagentModule } from "./agentModule";
 import {
   AGENT_CATEGORIES,
   type AgentConfig,
@@ -213,7 +214,13 @@ export function buildAgentConfig(source: AgentSource, root: string = AGENT_ROOT)
     AGENT_CATEGORIES.map((c) => [c.key, childrenOf(paths, root, c.dir)]),
   ) as Pick<
     AgentConfig,
-    "tools" | "skills" | "subagents" | "channels" | "schedules" | "connections"
+    | "tools"
+    | "skills"
+    | "subagents"
+    | "channels"
+    | "schedules"
+    | "connections"
+    | "hooks"
   >;
 
   const agentModulePath = `${root}/agent.ts`;
@@ -264,11 +271,32 @@ export function subagentDirNames(paths: string[], root: string = AGENT_ROOT): st
 }
 
 /**
- * Read-only subagent summaries for a member (issue #146): one per subagent directory under
- * `<root>/subagents/`, with a best-effort description from the subagent's own `agent.ts`
- * (`description:` literal) or, failing that, the first line of its `instructions.md`. Descriptions
- * only populate when those files are in `source.files` (they are — see repo.server's eager fetch);
- * otherwise description is null. Purely derived from the parsed tree — no new DB rows.
+ * Every eagerly-readable subagent module/instructions path under `root`, at ANY nesting depth
+ * (`<root>/subagents/a/subagents/b/agent.ts` included). The GitHub layer reads exactly these so a
+ * nested configuration context can render its own description and instructions instead of a
+ * blank page (issue #344). Sorted, deduped; only paths present in the tree are returned.
+ */
+export function subagentModuleFiles(paths: string[], root: string = AGENT_ROOT): string[] {
+  const prefix = `${root}/`;
+  const wanted = /(?:^|\/)subagents\/[^/]+\/(?:agent\.ts|instructions\.md)$/;
+  const found = new Set<string>();
+  for (const path of paths) {
+    if (!path.startsWith(prefix)) continue;
+    if (wanted.test(path.slice(prefix.length))) found.add(path);
+  }
+  return [...found].sort((a, b) => a.localeCompare(b));
+}
+
+/**
+ * Subagent summaries for one agent root (issue #146; made clickable in #344): one per subagent
+ * directory under `<root>/subagents/`, with a best-effort description from the subagent's own
+ * `agent.ts` (`description:` literal) or, failing that, the first line of its `instructions.md`.
+ * Descriptions only populate when those files are in `source.files` (they are — see repo.server's
+ * eager fetch); otherwise description is null. `dynamic` flags a `defineDynamic(...)` module, whose
+ * availability is decided per session. Purely derived from the parsed tree — no new DB rows.
+ *
+ * Overlay drafts onto `source` first (see `overlayDrafts`) when saved-but-unpublished subagents
+ * should appear.
  */
 export function buildSubagentSummaries(
   source: AgentSource,
@@ -277,9 +305,40 @@ export function buildSubagentSummaries(
   const { paths, files } = source;
   return subagentDirNames(paths, root).map((name) => {
     const base = `${root}/subagents/${name}`;
+    const module = files[`${base}/agent.ts`];
     const description =
-      extractDescription(files[`${base}/agent.ts`]) ??
+      extractDescription(module) ??
       firstMarkdownLine(files[`${base}/instructions.md`]);
-    return { name, path: base, description };
+    return {
+      name,
+      path: base,
+      description,
+      dynamic: isDynamicSubagentModule(module),
+    };
   });
+}
+
+/**
+ * Apply a project's saved-but-unpublished changes to a repo source, so every surface derived from
+ * it (discovery, `buildAgentConfig`, target resolution) sees what the user has actually saved:
+ * a non-deletion draft adds or replaces its path and content, a deletion draft (`content: null`)
+ * removes the path entirely. Pure — the caller supplies the drafts.
+ */
+export function overlayDrafts(
+  source: AgentSource,
+  drafts: ReadonlyArray<{ path: string; content: string | null }>,
+): AgentSource {
+  if (drafts.length === 0) return source;
+  const paths = new Set(source.paths);
+  const files = { ...source.files };
+  for (const draft of drafts) {
+    if (draft.content === null) {
+      paths.delete(draft.path);
+      delete files[draft.path];
+      continue;
+    }
+    paths.add(draft.path);
+    files[draft.path] = draft.content;
+  }
+  return { paths: [...paths], files };
 }

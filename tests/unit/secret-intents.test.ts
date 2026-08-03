@@ -6,11 +6,7 @@
 import crypto from "node:crypto";
 import { beforeEach, describe, expect, it } from "vitest";
 
-import {
-  computeRequiredSecrets,
-  handleSecretIntent,
-  type SecretIntentDeps,
-} from "~/project/secrets.server";
+import { computeRequiredSecrets, handleSecretIntent, type SecretIntentDeps } from "~/project/secrets.server";
 import { makeLocalSecretsProvider } from "~/seams/oss/secrets.local.server";
 import { fingerprint } from "~/seams/oss/secretbox";
 import { makeFakeSecretKV, type FakeSecretKV } from "../fakes/secret-kv";
@@ -25,6 +21,7 @@ let deps: SecretIntentDeps;
 let attachCalls: unknown[];
 let dismissCalls: unknown[];
 let exposeCalls: unknown[];
+let invalidateCalls: unknown[];
 
 const base = {
   projectId: PROJECT,
@@ -38,6 +35,7 @@ beforeEach(() => {
   attachCalls = [];
   dismissCalls = [];
   exposeCalls = [];
+  invalidateCalls = [];
   deps = {
     secrets: makeLocalSecretsProvider(kv, () => key),
     // The Drizzle row echo is faked from the KV's meta so no DB is needed.
@@ -62,26 +60,34 @@ beforeEach(() => {
     dismiss: async (input) => {
       dismissCalls.push(input);
     },
+    dependents: async () => [],
+    invalidate: async (input) => {
+      invalidateCalls.push(input);
+      return { environmentIds: [] };
+    },
   };
 });
 
 describe("secret-set / secret-replace", () => {
   it("rejects an invalid key and an empty value with typed errors", async () => {
-    const bad = await handleSecretIntent(
-      { ...base, intent: "secret-set", key: "1BAD", value: "v" },
-      deps,
-    );
-    expect(bad).toEqual({ ok: false, error: "Key must be a valid env var name (A–Z, 0–9, _)." });
-    const empty = await handleSecretIntent(
-      { ...base, intent: "secret-set", key: "GOOD", value: "" },
-      deps,
-    );
+    const bad = await handleSecretIntent({ ...base, intent: "secret-set", key: "1BAD", value: "v" }, deps);
+    expect(bad).toEqual({
+      ok: false,
+      error: "Key must be a valid env var name (A–Z, 0–9, _).",
+    });
+    const empty = await handleSecretIntent({ ...base, intent: "secret-set", key: "GOOD", value: "" }, deps);
     expect(empty).toEqual({ ok: false, error: "Value is required." });
   });
 
   it("writes the value with sandbox set atomically and echoes metadata, never the value", async () => {
     const res = await handleSecretIntent(
-      { ...base, intent: "secret-set", key: "API_KEY", value: "s3cr3t", exposed: true },
+      {
+        ...base,
+        intent: "secret-set",
+        key: "API_KEY",
+        value: "s3cr3t",
+        exposed: true,
+      },
       deps,
     );
     expect(res.ok).toBe(true);
@@ -90,17 +96,21 @@ describe("secret-set / secret-replace", () => {
     expect(res.secret.sandboxExposed).toBe(true);
     expect(res.secret.fingerprint).toBe(fingerprint("s3cr3t"));
     expect(JSON.stringify(res)).not.toContain("s3cr3t");
+    expect(invalidateCalls).toEqual([{ agentIds: [AGENT], environmentId: null, createdBy: USER }]);
   });
 
   it("secret-replace without `exposed` leaves the existing sandbox flag untouched", async () => {
     await handleSecretIntent(
-      { ...base, intent: "secret-set", key: "API_KEY", value: "v1", exposed: true },
+      {
+        ...base,
+        intent: "secret-set",
+        key: "API_KEY",
+        value: "v1",
+        exposed: true,
+      },
       deps,
     );
-    const res = await handleSecretIntent(
-      { ...base, intent: "secret-replace", key: "API_KEY", value: "v2" },
-      deps,
-    );
+    const res = await handleSecretIntent({ ...base, intent: "secret-replace", key: "API_KEY", value: "v2" }, deps);
     if (!res.ok || !res.secret) throw new Error("expected secret echo");
     expect(res.secret.sandboxExposed).toBe(true);
     expect(res.secret.fingerprint).toBe(fingerprint("v2"));
@@ -109,25 +119,17 @@ describe("secret-set / secret-replace", () => {
 
 describe("secret-delete / secret-expose", () => {
   it("deletes scope-exactly and returns the deleted key", async () => {
-    await handleSecretIntent(
-      { ...base, intent: "secret-set", key: "API_KEY", value: "v" },
-      deps,
-    );
-    const res = await handleSecretIntent(
-      { ...base, intent: "secret-delete", key: "API_KEY" },
-      deps,
-    );
-    expect(res).toEqual({ ok: true, deleted: { key: "API_KEY", environmentId: null } });
-    expect(
-      await deps.secrets.get({ ...base, environmentId: null, key: "API_KEY" }),
-    ).toBeNull();
+    await handleSecretIntent({ ...base, intent: "secret-set", key: "API_KEY", value: "v" }, deps);
+    const res = await handleSecretIntent({ ...base, intent: "secret-delete", key: "API_KEY" }, deps);
+    expect(res).toEqual({
+      ok: true,
+      deleted: { key: "API_KEY", environmentId: null },
+    });
+    expect(await deps.secrets.get({ ...base, environmentId: null, key: "API_KEY" })).toBeNull();
   });
 
   it("secret-expose flips the flag via the store helper", async () => {
-    const res = await handleSecretIntent(
-      { ...base, intent: "secret-expose", key: "API_KEY", exposed: true },
-      deps,
-    );
+    const res = await handleSecretIntent({ ...base, intent: "secret-expose", key: "API_KEY", exposed: true }, deps);
     expect(res).toEqual({ ok: true });
     expect(exposeCalls).toHaveLength(1);
   });
@@ -135,10 +137,7 @@ describe("secret-delete / secret-expose", () => {
 
 describe("secret-attach / secret-detach / secret-dismiss", () => {
   it("attach seeds the per-attachment sandbox flag", async () => {
-    await handleSecretIntent(
-      { ...base, intent: "secret-attach", key: "GITHUB_TOKEN", exposed: true },
-      deps,
-    );
+    await handleSecretIntent({ ...base, intent: "secret-attach", key: "GITHUB_TOKEN", exposed: true }, deps);
     expect(attachCalls[0]).toMatchObject({
       agentId: AGENT,
       key: "GITHUB_TOKEN",
@@ -149,16 +148,29 @@ describe("secret-attach / secret-detach / secret-dismiss", () => {
 
   it("detach removes the attachment", async () => {
     await handleSecretIntent({ ...base, intent: "secret-detach", key: "GITHUB_TOKEN" }, deps);
-    expect(attachCalls[0]).toMatchObject({ key: "GITHUB_TOKEN", attached: false });
+    expect(attachCalls[0]).toMatchObject({
+      key: "GITHUB_TOKEN",
+      attached: false,
+    });
   });
 
   it("dismiss and restore round-trip through the dismissals store", async () => {
     await handleSecretIntent(
-      { ...base, intent: "secret-dismiss", key: "OPTIONAL_KEY", dismissed: true },
+      {
+        ...base,
+        intent: "secret-dismiss",
+        key: "OPTIONAL_KEY",
+        dismissed: true,
+      },
       deps,
     );
     await handleSecretIntent(
-      { ...base, intent: "secret-dismiss", key: "OPTIONAL_KEY", dismissed: false },
+      {
+        ...base,
+        intent: "secret-dismiss",
+        key: "OPTIONAL_KEY",
+        dismissed: false,
+      },
       deps,
     );
     expect(dismissCalls).toMatchObject([{ dismissed: true }, { dismissed: false }]);
@@ -180,18 +192,57 @@ describe("shared-secret intents (§8 — project-level scope)", () => {
     );
     expect(res.ok).toBe(true);
     // Written at the project-level (shared) scope, not the member's.
-    const sharedRef = { projectId: PROJECT, agentId: null, environmentId: null, key: "GITHUB_TOKEN" };
+    const sharedRef = {
+      projectId: PROJECT,
+      agentId: null,
+      environmentId: null,
+      key: "GITHUB_TOKEN",
+    };
     expect(await deps.secrets.get(sharedRef)).toBe("gh_x");
     expect(kv.meta(sharedRef)?.sandboxExposed).toBe(true);
     expect(
-      await deps.secrets.get({ ...sharedRef, agentId: "ignored-by-shared-intents" }),
+      await deps.secrets.get({
+        ...sharedRef,
+        agentId: "ignored-by-shared-intents",
+      }),
     ).toBeNull();
+  });
+
+  it("reconciles every agent attached to a replaced shared secret", async () => {
+    await handleSecretIntent(
+      {
+        ...base,
+        intent: "shared-secret-set",
+        agentId: null,
+        key: "SHARED_TOKEN",
+        value: "rotated",
+      },
+      {
+        ...deps,
+        dependents: async () => [
+          { agentId: "agent_a", agentName: "A" },
+          { agentId: "agent_b", agentName: "B" },
+        ],
+      },
+    );
+    expect(invalidateCalls).toEqual([
+      {
+        agentIds: ["agent_a", "agent_b"],
+        environmentId: null,
+        createdBy: USER,
+      },
+    ]);
   });
 
   it("shared-secret-delete cascades through the store helper (§11.4)", async () => {
     const deleted: Array<[string, string]> = [];
     const res = await handleSecretIntent(
-      { ...base, intent: "shared-secret-delete", agentId: null, key: "GITHUB_TOKEN" },
+      {
+        ...base,
+        intent: "shared-secret-delete",
+        agentId: null,
+        key: "GITHUB_TOKEN",
+      },
       {
         ...deps,
         deleteShared: async (projectId, key) => {
@@ -199,7 +250,10 @@ describe("shared-secret intents (§8 — project-level scope)", () => {
         },
       },
     );
-    expect(res).toEqual({ ok: true, deleted: { key: "GITHUB_TOKEN", environmentId: null } });
+    expect(res).toEqual({
+      ok: true,
+      deleted: { key: "GITHUB_TOKEN", environmentId: null },
+    });
     expect(deleted).toEqual([[PROJECT, "GITHUB_TOKEN"]]);
   });
 
@@ -225,7 +279,11 @@ describe("computeRequiredSecrets (§9 missing computation, §11.6 multi-source)"
     {
       templateId: "cloudflare-app-builder",
       secrets: [
-        { name: "CLOUDFLARE_API_TOKEN", description: "API token", sandbox: true },
+        {
+          name: "CLOUDFLARE_API_TOKEN",
+          description: "API token",
+          sandbox: true,
+        },
         { name: "GITHUB_TOKEN", description: "Repo access" },
       ],
     },
@@ -329,7 +387,10 @@ describe("computeRequiredSecrets (§9 missing computation, §11.6 multi-source)"
       const { missing, all } = computeRequiredSecrets({
         lockSecrets: [
           { templateId: "a", secrets: [{ name: "GITHUB_APP_ID" }] },
-          { templateId: "b", secrets: [{ name: "GITHUB_APP_ID", provisioned: true }] },
+          {
+            templateId: "b",
+            secrets: [{ name: "GITHUB_APP_ID", provisioned: true }],
+          },
         ],
         setNames: [],
         attachedNames: [],

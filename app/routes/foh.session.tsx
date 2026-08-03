@@ -19,6 +19,7 @@ import {
   data,
   Link,
   useFetcher,
+  useParams,
   useRevalidator,
   type LoaderFunctionArgs,
   type ShouldRevalidateFunctionArgs,
@@ -42,6 +43,7 @@ import {
   UserBubble,
 } from "~/components/chat";
 import { PreviewPanel } from "~/components/artifact-preview-panel";
+import { FohPaneError } from "~/components/foh/pane-error";
 import { SessionStatusDot } from "~/components/foh/session-list";
 import { TurnError } from "~/components/turn-error";
 import { Button } from "~/components/ui/button";
@@ -51,6 +53,7 @@ import { useArtifactPreview } from "~/foh/use-artifact-preview";
 import { requireFohProject } from "~/foh/guard.server";
 import { channelLabelFor } from "~/foh/channel-resume";
 import { archivedOpenSessionShouldRevalidate } from "~/foh/archive-revalidation";
+import { failedSessionNotice } from "~/foh/failed-session";
 import { openInboxQuestion, resolveInboxForSession } from "~/foh/inbox.server";
 import {
   composerAnswerFor,
@@ -190,7 +193,7 @@ export const loader = (args: LoaderFunctionArgs) =>
         }
       }
 
-      // Agent-opened rows (#288 3c): the contact-user notification renders as the agent's
+      // Agent-opened rows (#288 3c): the notify-user notification renders as the agent's
       // opening entry — before any eve session exists (the whole transcript), and still on
       // top once a reply has seeded one (the seed block carrying it into eve is stripped
       // from replay, so without this the notification would vanish from the conversation).
@@ -337,6 +340,13 @@ export const loader = (args: LoaderFunctionArgs) =>
         // Prepended at return time only: the repair block above judges eve's real tail, and
         // a synthetic notice entry must never masquerade as it.
         entries: [...openingEntries, ...entries],
+        // #288 3b + issue #250: a just-succeeded row whose own cursor is still 0 renders
+        // ONLY its predecessor's stitched stream. Nothing below the header belongs to this
+        // session, so a failure notice must not read that tail as this session's outcome —
+        // this is the shape that looks like "the pane kept the previous conversation".
+        transcriptIsPredecessorOnly:
+          currentSession.predecessorExternalSessionId != null &&
+          currentSession.streamIndex === 0,
         historyError,
       };
     },
@@ -378,6 +388,7 @@ export default function FohSession({ loaderData }: Route.ComponentProps) {
     channelLabel,
     lastEventAt,
     entries,
+    transcriptIsPredecessorOnly,
     historyError,
   } = loaderData;
   const read = useFetcher<{ ok: true }>({ key: "foh-session-read" });
@@ -468,6 +479,27 @@ export default function FohSession({ loaderData }: Route.ComponentProps) {
     const entry = newestTurnEntry(shownEntries);
     return { entry, index: entry ? shownEntries.indexOf(entry) : -1 };
   }, [shownEntries]);
+
+  // What a `failed` row must say about itself (issue #250) — for EVERY failure shape, not
+  // just the one that leaves a trailing user message. Null when the failure is already
+  // rendered better elsewhere (a live turn's error bubble, or an errored transcript entry).
+  const failureNotice = useMemo(
+    () =>
+      failedSessionNotice({
+        sessionStatus,
+        liveTurnVisible: visibleLive !== null,
+        historyUnavailable: historyError !== null,
+        transcriptIsPredecessorOnly,
+        entries: shownEntries,
+      }),
+    [
+      historyError,
+      sessionStatus,
+      shownEntries,
+      transcriptIsPredecessorOnly,
+      visibleLive,
+    ],
+  );
 
   // The one request a typed composer answer would resolve (issue #282): the newest pending
   // ask of the newest turn — from the live turn once it settles, else from the cached
@@ -760,12 +792,18 @@ export default function FohSession({ loaderData }: Route.ComponentProps) {
             </>
           }
         >
-          {shownEntries.length === 0 && !visibleLive && !remoteBusy && (
-            <p className="py-8 text-center text-sm text-muted-foreground">
-              Say something to {agentName} — the conversation keeps its context
-              across turns.
-            </p>
-          )}
+          {shownEntries.length === 0 &&
+            !visibleLive &&
+            !remoteBusy &&
+            !failureNotice && (
+              // Never over a failed session (issue #250): a turn that died before eve
+              // recorded anything has no entries either, and inviting the reader to start
+              // chatting is precisely the "nothing went wrong" lie this issue is about.
+              <p className="py-8 text-center text-sm text-muted-foreground">
+                Say something to {agentName} — the conversation keeps its
+                context across turns.
+              </p>
+            )}
           {shownEntries.map((e, i) =>
             e.role === "user" ? (
               <UserBubble key={e.id} text={e.text} />
@@ -811,16 +849,26 @@ export default function FohSession({ loaderData }: Route.ComponentProps) {
                 activity="Still working…"
               />
             )}
-          {sessionStatus === "failed" &&
-            !visibleLive &&
-            newestTurn.entry?.role === "user" && (
-              <AssistantBubble>
-                <p className="text-sm text-muted-foreground">
-                  This turn was interrupted before it finished. Send the message
-                  again to retry.
+          {failureNotice && (
+            <AssistantBubble>
+              <div className="space-y-2">
+                <p className="text-sm text-destructive">
+                  {failureNotice.message}
                 </p>
-              </AssistantBubble>
-            )}
+                {failureNotice.retryText && (
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    disabled={busy}
+                    onClick={() => send(failureNotice.retryText!)}
+                  >
+                    Send again
+                  </Button>
+                )}
+              </div>
+            </AssistantBubble>
+          )}
           {visibleLive && (
             <>
               <UserBubble text={visibleLive.userText} />
@@ -880,6 +928,31 @@ export default function FohSession({ loaderData }: Route.ComponentProps) {
         />
       )}
     </>
+  );
+}
+
+/**
+ * Loader failures render IN the conversation pane (issue #250). Without this the throw at the
+ * top of the loader — a 404 for an archived, deleted or someone else's session — bubbles to
+ * the root boundary, which replaces the entire three-pane shell: the reader loses the session
+ * list they clicked from and gets a bare "404" with no relation to the click they just made.
+ * The pane keeps the shell around it, so the next conversation is one click away.
+ */
+export function ErrorBoundary({ error }: Route.ErrorBoundaryProps) {
+  const params = useParams();
+  return (
+    <FohPaneError
+      error={error}
+      subject="conversation"
+      // Params survive the throw, but a boundary that renders for a malformed URL must still
+      // have somewhere to go — the team list is always reachable.
+      backTo={
+        params.projectId && params.agentId
+          ? `/t/${params.projectId}/${params.agentId}`
+          : "/"
+      }
+      backLabel="Sessions"
+    />
   );
 }
 

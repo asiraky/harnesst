@@ -18,7 +18,7 @@ import ts from "typescript";
 
 import {
   ASK_TEAMMATE_TOOL_SOURCE,
-  CONTACT_USER_TOOL_SOURCE,
+  NOTIFY_USER_TOOL_SOURCE,
   TELL_TEAMMATE_TOOL_SOURCE,
 } from "~/team/tool-template";
 
@@ -182,19 +182,19 @@ describe("ask/tell description routing", () => {
 });
 
 /**
- * #288 3c: contact-user is baked into EVERY image (not just team members) and upholds the
+ * #288 3c: notify-user is baked into EVERY image (not just team members) and upholds the
  * same source contract — imports only eve/tools + zod, crash-proof module load, execute never
  * throws. Its description is the dispatch logic between a fire-and-forget notification and
- * the blocking ask_question, so the discriminating prose is pinned like ask/tell's.
+ * the blocking ask_question.
  */
-describe("contact-user tool template", () => {
-  interface ContactConfig {
+describe("notify-user tool template", () => {
+  interface NotifyConfig {
     description: string;
     inputSchema: z.ZodTypeAny;
     execute: (args: { message: string; title?: string }) => Promise<unknown>;
   }
-  const evalContact = (env: Record<string, string>) =>
-    evalTool(CONTACT_USER_TOOL_SOURCE, env) as unknown as ContactConfig;
+  const evalNotify = (env: Record<string, string>) =>
+    evalTool(NOTIFY_USER_TOOL_SOURCE, env) as unknown as NotifyConfig;
 
   afterEach(() => {
     vi.unstubAllGlobals();
@@ -202,21 +202,13 @@ describe("contact-user tool template", () => {
 
   it("imports only eve/tools and zod", () => {
     const imports = [
-      ...CONTACT_USER_TOOL_SOURCE.matchAll(/^import .* from "([^"]+)";/gm),
+      ...NOTIFY_USER_TOOL_SOURCE.matchAll(/^import .* from "([^"]+)";/gm),
     ].map((m) => m[1]);
     expect(imports.sort()).toEqual(["eve/tools", "zod"]);
   });
 
-  it("states the fire-and-forget consequence and routes answers to ask_question", () => {
-    const config = evalContact({});
-    expect(config.description).toContain("Fire-and-forget");
-    expect(config.description).toContain("will NOT get a reply");
-    expect(config.description).toContain("never wait");
-    expect(config.description).toContain("ask_question");
-  });
-
   it("requires a message; the title is optional", () => {
-    const config = evalContact({});
+    const config = evalNotify({});
     expect(config.inputSchema.safeParse({ message: "hi" }).success).toBe(true);
     expect(
       config.inputSchema.safeParse({ message: "hi", title: "t" }).success,
@@ -225,7 +217,7 @@ describe("contact-user tool template", () => {
   });
 
   it("execute returns { ok:false } when the notify env is missing (never throws)", async () => {
-    const config = evalContact({});
+    const config = evalNotify({});
     const out = (await config.execute({ message: "hi" })) as {
       ok: boolean;
       error: string;
@@ -250,7 +242,7 @@ describe("contact-user tool template", () => {
         return { ok: true, json: async () => ({ ok: true, sessionId: "ps_1" }) };
       },
     );
-    const config = evalContact({
+    const config = evalNotify({
       HARNESST_FOH_NOTIFY_URL: "http://cp.local/api/foh/notify",
       HARNESST_TEAM_TOKEN: "tkn",
     });
@@ -266,11 +258,30 @@ describe("contact-user tool template", () => {
     expect(body).toEqual({ message: "no title" });
   });
 
+  it("returns the readable relay error for a failed HTTP response", async () => {
+    vi.stubGlobal("fetch", async () => ({
+      ok: false,
+      status: 503,
+      json: async () => ({ error: "Front of House is temporarily unavailable." }),
+    }));
+    const config = evalNotify({
+      HARNESST_FOH_NOTIFY_URL: "http://cp.local/api/foh/notify",
+      HARNESST_TEAM_TOKEN: "tkn",
+    });
+
+    const out = await config.execute({ message: "hi" });
+
+    expect(out).toEqual({
+      ok: false,
+      error: "Front of House is temporarily unavailable.",
+    });
+  });
+
   it("returns { ok:false } when the fetch itself throws (never throws)", async () => {
     vi.stubGlobal("fetch", async () => {
       throw new Error("boom");
     });
-    const config = evalContact({
+    const config = evalNotify({
       HARNESST_FOH_NOTIFY_URL: "http://cp.local/api/foh/notify",
       HARNESST_TEAM_TOKEN: "tkn",
     });

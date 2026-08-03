@@ -8,6 +8,10 @@
  * TypeScript schedules (`<name>.ts`, defineSchedule with a run() handler) always open in the
  * code editor. Save writes a draft like every other editor; publishing is the header
  * Publish control's job.
+ *
+ * Schedules are root-only (the capability matrix in `~/eve/types`), so this editor has no nested
+ * form — but loader and action still confine the file to the member the URL names (issue #344),
+ * closing the hole where a posted path could have written a schedule into another member's tree.
  */
 import { getSessionAuth, sessionLoader } from "~/auth/session.server";
 import { CalendarClock } from "lucide-react";
@@ -43,23 +47,23 @@ import {
   agentFromParams,
   agentParamRedirect,
   memberFromPath,
-  requireActiveAgent,
-  resolveAgentContext,
 } from "~/project/agent-context.server";
+import { resolveRouteTarget } from "~/project/config-target.server";
 import {
+  confineToRoot,
   normalizeAgentPath,
   requireProject,
   requireRepo,
 } from "~/project/guard.server";
 import type { Route } from "./+types/projects.$projectId.edit.schedule";
 
-/** This editor only understands markdown-form schedules (root agent or a team member). */
-function schedulePath(raw: string): string | null {
-  const path = normalizeAgentPath(raw);
-  return path &&
-    /^(?:agent|agents\/[^/]+\/agent)\/schedules\/[^/]+\.md$/.test(path)
-    ? path
-    : null;
+/** This editor only understands markdown-form schedules, inside THIS target's own root. */
+function schedulePath(root: string, raw: string): string | null {
+  const path = confineToRoot(root, raw);
+  if (!path) return null;
+  const dir = `${root}/schedules/`;
+  const name = path.startsWith(dir) ? path.slice(dir.length) : "";
+  return /^[^/]+\.md$/.test(name) ? path : null;
 }
 
 const DEFAULT_CRON = "0 9 * * 1-5";
@@ -80,16 +84,19 @@ export const loader = (args: LoaderFunctionArgs) =>
         const legacy = agentParamRedirect(args.request, project.id);
         if (legacy) throw legacy;
       }
-      const path = schedulePath(
-        new URL(args.request.url).searchParams.get("path") ?? "",
+      const requested =
+        normalizeAgentPath(
+          new URL(args.request.url).searchParams.get("path") ?? "",
+        ) ?? "";
+      const { roster, active, isTeam, target } = await resolveRouteTarget(
+        project,
+        args.params,
+        memberFromPath(requested),
       );
+      const path = schedulePath(target.root, requested);
       if (!path) throw redirect(contextPath(project.id, paramAgent));
 
-      const [view, { roster, active, isTeam }] = await Promise.all([
-        resolveFileView(project, path),
-        resolveAgentContext(project.id, paramAgent ?? memberFromPath(path)),
-      ]);
-      requireActiveAgent(active, project.id);
+      const view = await resolveFileView(project, path);
       const parsed = view.content ? parseScheduleFile(view.content) : null;
       return {
         project,
@@ -117,7 +124,15 @@ export async function action(args: ActionFunctionArgs) {
   );
 
   const form = await args.request.formData();
-  const path = schedulePath(String(form.get("path") ?? ""));
+  // The member comes from the URL (or, for legacy repo-level links, from the path itself) — the
+  // posted path is then confined to that member's own schedules.
+  const requested = normalizeAgentPath(String(form.get("path") ?? "")) ?? "";
+  const { target } = await resolveRouteTarget(
+    project,
+    args.params,
+    memberFromPath(requested),
+  );
+  const path = schedulePath(target.root, requested);
   if (!path) return { error: "Invalid schedule path." };
   const cron = String(form.get("cron") ?? "").trim();
   const message = String(form.get("message") ?? "").trim();

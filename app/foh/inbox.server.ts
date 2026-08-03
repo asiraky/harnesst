@@ -118,7 +118,7 @@ export async function recordInboxFinished(
 }
 
 /**
- * Record a `notice` item (#288 3c) — an agent opened a conversation via `contact-user` and
+ * Record a `notice` item (#288 3c) — an agent opened a conversation via `notify-user` and
  * the bell is how a human finds it. Team-wide by design (`userId: null`, the D5 rule): a
  * notification from an agent belongs to whoever is around to read it. Resolves on read, like
  * `finished` — opening the conversation IS the acknowledgement.

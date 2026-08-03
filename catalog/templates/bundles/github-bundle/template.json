@@ -3,7 +3,7 @@
   "type": "bundle",
   "name": "GitHub",
   "description": "Everything an agent needs to work GitHub as itself: the GitHub App channel (its @mention identity and credentials), the gh CLI in its sandbox, and the skill that turns the App's private key into a working token.",
-  "version": "0.5.2",
+  "version": "0.5.3",
   "eve": ">=0.20.0",
   "files": [],
   "assistantSkill": "assistant-skill.md",

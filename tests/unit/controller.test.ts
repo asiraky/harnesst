@@ -132,6 +132,39 @@ describe("deployRelease", () => {
     );
   });
 
+  it("terminalizes a non-live deploy result after cleanup instead of wedging the in-flight slot", async () => {
+    const release = await createRelease(
+      { projectId: PROJECT, agentId: AGENT, gitSha: "f".repeat(40) },
+      store,
+    );
+    const stoppedIds: string[] = [];
+    const dep = await deployRelease(
+      { environmentId: ENV, releaseId: release.id },
+      {
+        store,
+        deployTarget: fakeDeployTarget({
+          health: { status: "pending", detail: "still provisioning" },
+          stoppedIds,
+        }),
+        secrets: fakeSecrets(),
+      },
+    );
+
+    expect(dep).toMatchObject({
+      status: "failed",
+      errorDetail: "still provisioning",
+    });
+    expect(stoppedIds).toEqual([dep.id]);
+    await expect(
+      store.deployments.insert({
+        environmentId: ENV,
+        releaseId: release.id,
+        status: "pending",
+        trafficWeight: 100,
+      }),
+    ).resolves.toMatchObject({ status: "pending" });
+  });
+
   it("protects exact connection credentials while preserving standard-alias overrides", async () => {
     const release = await createRelease(
       { projectId: PROJECT, agentId: AGENT, gitSha: "a1".repeat(20) },

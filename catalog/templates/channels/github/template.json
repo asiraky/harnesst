@@ -3,7 +3,7 @@
   "type": "channel",
   "name": "GitHub",
   "description": "Talk to this agent by @mentioning it in GitHub issue and pull-request comments — a GitHub App with webhook signature verification via eve's githubChannel.",
-  "version": "0.7.2",
+  "version": "0.7.3",
   "eve": ">=0.22.0",
   "files": [
     "channels/github.ts"

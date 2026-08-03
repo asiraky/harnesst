@@ -203,6 +203,7 @@ describe("runAsk — wake-on-delegation", () => {
     const wake = vi.fn(async (): Promise<DeploymentWithRelease | null> => ({
       id: stopped.id,
       status: "live",
+      envRevision: 0,
       trafficWeight: 100,
       url: "http://woken.local",
       errorDetail: null,

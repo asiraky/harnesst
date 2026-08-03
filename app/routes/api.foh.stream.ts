@@ -351,7 +351,7 @@ export async function action(args: ActionFunctionArgs) {
       seedContext = null;
     }
   } else if (!session.externalSessionId && session.openingMessage) {
-    // Agent-opened row (#288 3c): contact-user created it with no eve session, so this first
+    // Agent-opened row (#288 3c): notify-user created it with no eve session, so this first
     // reply starts one — carry the notification in as the same strippable seed block, so the
     // fresh session knows what the human is replying to and the transcript never shows it twice.
     seedContext = buildNoticeSeedContext(session.openingMessage);

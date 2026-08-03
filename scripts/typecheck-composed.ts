@@ -43,8 +43,8 @@ import { fixtureCatalog } from "~/seams/oss/catalog.fixture.server";
 import {
   ASK_TEAMMATE_TOOL_PATH,
   ASK_TEAMMATE_TOOL_SOURCE,
-  CONTACT_USER_TOOL_PATH,
-  CONTACT_USER_TOOL_SOURCE,
+  NOTIFY_USER_TOOL_PATH,
+  NOTIFY_USER_TOOL_SOURCE,
   TELL_TEAMMATE_TOOL_PATH,
   TELL_TEAMMATE_TOOL_SOURCE,
 } from "~/team/tool-template";
@@ -76,7 +76,7 @@ function baseFiles(agentName: string): FixtureFiles {
     "agent/agent.ts": scaffoldOrgModelAgentModule(agentName),
     "harnesst/model.ts": orgModelModuleSource(),
     [HARNESST_RUN_HOOK_PATH]: HARNESST_RUN_HOOK_SOURCE,
-    [CONTACT_USER_TOOL_PATH]: CONTACT_USER_TOOL_SOURCE,
+    [NOTIFY_USER_TOOL_PATH]: NOTIFY_USER_TOOL_SOURCE,
     [SESSION_WORKSPACE_CHANNEL_PATH]: SESSION_WORKSPACE_CHANNEL_SOURCE,
   };
 }
@@ -98,7 +98,8 @@ async function materializeMatrix(root: string): Promise<number> {
     ...baseFiles("kitchen-sink"),
     "agent/subagents/reader/agent.ts": scaffoldOrgModelAgentModule(
       "kitchen-sink",
-    ).replace("../harnesst/model.js", "../../../harnesst/model.js"),
+      { subagentPath: "reader" },
+    ),
     [ASK_TEAMMATE_TOOL_PATH]: ASK_TEAMMATE_TOOL_SOURCE,
     [TELL_TEAMMATE_TOOL_PATH]: TELL_TEAMMATE_TOOL_SOURCE,
   };

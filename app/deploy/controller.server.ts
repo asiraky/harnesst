@@ -148,6 +148,7 @@ function isReservedModelEnvName(name: string): boolean {
     /^HARNESST_PROVIDER_.*_API_KEY$/.test(name) ||
     name === "HARNESST_MODEL_GATEWAY_URL" ||
     name === "HARNESST_MODEL_GATEWAY_TOKEN" ||
+    name === "HARNESST_PROJECT_ID" ||
     name === "HARNESST_MODEL_DIRECTIVE_SECRET"
   );
 }
@@ -353,6 +354,7 @@ export async function deployRelease(
     input.deploymentId
       ? store.deployments.update(input.deploymentId, {
           status: "building",
+          envRevision: env.envRevision,
           trafficWeight: input.trafficWeight ?? 100,
         })
       : store.deployments.insert({
@@ -360,6 +362,7 @@ export async function deployRelease(
           releaseId: input.releaseId,
           status: "building",
           trafficWeight: input.trafficWeight ?? 100,
+          envRevision: env.envRevision,
           createdBy: input.createdBy ?? null,
         }),
   ]);
@@ -374,6 +377,9 @@ export async function deployRelease(
     !!agent && agent.kind === "member" && agent.root !== "agent";
 
   try {
+    // `envRevision` is captured on the deployment row immediately before resolution. A writer
+    // racing after this point bumps the environment again, so the reconciler can prove this
+    // container stale even if the underlying secret write lands while the rest of env is built.
     const scope: SecretScope = {
       projectId: release.projectId,
       agentId: release.agentId,
@@ -473,9 +479,14 @@ export async function deployRelease(
     // shadowing like HARNESST_SANDBOX_ENV): strip any user-set values first, then set.
     delete envVars.HARNESST_MODEL_GATEWAY_URL;
     delete envVars.HARNESST_MODEL_GATEWAY_TOKEN;
+    // The project id rides along (issue #344): the gateway token proves only the ORG, so this is
+    // what scopes a model lookup to THIS repo when two repos in the workspace hold an agent of
+    // the same name. Harnesst-owned like the coordinates above.
+    delete envVars.HARNESST_PROJECT_ID;
     if (project) {
       envVars.HARNESST_MODEL_GATEWAY_URL = gatewayBaseUrl();
       envVars.HARNESST_MODEL_GATEWAY_TOKEN = mintGatewayToken(project.orgId);
+      envVars.HARNESST_PROJECT_ID = project.id;
     }
     delete envVars.HARNESST_MODEL_DIRECTIVE_SECRET;
     if (project && deps.modelDirectiveSecret) {
@@ -627,7 +638,7 @@ export async function deployRelease(
       envVars.HARNESST_TEAM_TOKEN ??= mintDelegationToken(dep.id);
     }
 
-    // Agent-initiated conversations (#288 3c): where the baked `agent/tools/contact-user.ts`
+    // Agent-initiated conversations (#288 3c): where the baked `agent/tools/notify-user.ts`
     // posts its notifications. Set for EVERY deployment, no gate — the tool is baked into
     // every image (like the run hook) and messaging the humans who run you is not a per-agent
     // feature. Same delegation bearer as the relays above; the notify endpoint re-derives
@@ -806,16 +817,18 @@ export async function deployRelease(
         dep.id,
       );
       return store.deployments.update(dep.id, {
-        status: health.status,
+        // deployRelease has no asynchronous continuation for a non-live answer, and cleanup has
+        // already torn down the attempted instance. Persisting `pending`/`stopped` here would hold
+        // the in-flight uniqueness slot forever, so every non-live result is terminally failed.
+        status: "failed",
         url: health.url ?? null,
         errorDetail:
-          health.status === "failed"
-            ? [health.detail, cleanupError && `cleanup failed: ${cleanupError}`]
-                .filter(Boolean)
-                .join("; ") || null
-            : cleanupError
-              ? `cleanup failed: ${cleanupError}`
-              : null,
+          [
+            health.detail ?? `deployment target returned ${health.status}`,
+            cleanupError && `cleanup failed: ${cleanupError}`,
+          ]
+            .filter(Boolean)
+            .join("; ") || null,
       });
     }
 

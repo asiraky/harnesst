@@ -36,11 +36,15 @@ export async function setWorkspaceAssistantSelection(
     if (selection.model) {
       // A pin identical to the new default is redundant and would prevent the agent from
       // inheriting the next default change. Keep the override table to genuine exceptions.
+      // TOP-LEVEL rows only (issue #344): a declared subagent inherits its PARENT, not the
+      // workspace default, so a subagent row that merely happens to equal the new default is
+      // still a deliberate exception to the parent's selection.
       await tx
         .delete(agentModelOverrides)
         .where(
           and(
             eq(agentModelOverrides.orgId, orgId),
+            eq(agentModelOverrides.subagentPath, ""),
             eq(agentModelOverrides.model, selection.model),
             effort === null
               ? isNull(agentModelOverrides.effort)

@@ -2,6 +2,8 @@ import { mkdir } from "node:fs/promises";
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import { NOTIFY_USER_TOOL_SOURCE } from "~/team/tool-template";
+
 type ExecCallback = (
   error: Error | null,
   stdout: string,
@@ -411,6 +413,36 @@ describe("ask-teammate tool injection (D2)", () => {
         String(p).endsWith("tools/tell-teammate.ts"),
     );
     expect(toolWrite).toBeUndefined();
+  });
+});
+
+/** #343 — the non-blocking FOH notification tool is platform machinery in every image. */
+describe("notify-user tool injection", () => {
+  beforeEach(() => {
+    execFile.mockClear();
+    execFile.mockImplementation(defaultExecFile);
+  });
+
+  it("bakes exactly one notification tool into single-agent and team-member builds", async () => {
+    const { buildEveImage } = await import("~/deploy/eve-image.server");
+    const fsp = await import("node:fs/promises");
+
+    for (const agentRoot of [undefined, "agents/deployer/agent"]) {
+      (fsp.writeFile as unknown as ReturnType<typeof vi.fn>).mockClear();
+      await buildEveImage({
+        projectId: "proj_1",
+        repo: { owner: "acme", repo: "agents" },
+        ref: "abc123",
+        installationId: "inst_1",
+        agentRoot,
+      }).catch(() => {});
+
+      const writes = (fsp.writeFile as unknown as ReturnType<typeof vi.fn>)
+        .mock.calls as [string, string][];
+      expect(
+        writes.filter(([, source]) => source === NOTIFY_USER_TOOL_SOURCE),
+      ).toHaveLength(1);
+    }
   });
 });
 

@@ -57,6 +57,7 @@ import {
 import { selectedCapabilityGroupIds } from "~/capabilities/enablement";
 import { getCapability } from "~/capabilities/registry.server";
 import type { Agent } from "~/data/ports";
+import { invalidateAgentEnvironments } from "~/deploy/env-reconcile.server";
 import { stageDeletions, stageDraft, listDrafts } from "~/drafts/drafts.server";
 import { ZOD_PACKAGE, ZOD_VERSION } from "~/eve/agentModule";
 import { getAgentSource } from "~/github/cached.server";
@@ -770,6 +771,12 @@ export async function action(args: ActionFunctionArgs) {
               createdBy: auth.user.id,
             });
           }
+        }
+        if (ops.some((op) => op.kind === "set" || op.kind === "attach")) {
+          await invalidateAgentEnvironments({
+            agentIds: [secretAgent.id],
+            createdBy: auth.user.id,
+          });
         }
       } else if (target.kind === "new-member") {
         // New-member install (§4.4): no agent row until the member ships — hold values

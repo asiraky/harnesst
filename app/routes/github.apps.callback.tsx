@@ -24,6 +24,7 @@ import { AppShell, PageHeader } from "~/components/shell";
 import { Alert, AlertDescription, AlertTitle } from "~/components/ui/alert";
 import { Button } from "~/components/ui/button";
 import { listAgents } from "~/db/queries.server";
+import { invalidateAgentEnvironments } from "~/deploy/env-reconcile.server";
 import { consumeOAuthStateNonce } from "~/connections/oauth-state.server";
 import {
   appInstallUrl,
@@ -165,6 +166,10 @@ export const loader = (args: LoaderFunctionArgs) => {
           { sandboxExposed, updatedBy: auth.user.id },
         );
       }
+      await invalidateAgentEnvironments({
+        agentIds: [agent.id],
+        createdBy: auth.user.id,
+      });
 
       await getRuntime().data.audit.record({
         orgId: project.orgId,

@@ -19,7 +19,10 @@
  *   - §2.8 env resolution: a single env auto-resolves and persists, a persisted value never asks,
  *     a multi-env project with no answer fails at `check`;
  *   - §2.9 dedupe: one publish per project at a time;
- *   - only project/task load failures rethrow (genuine queue errors).
+ *   - only project/task load failures rethrow (genuine queue errors);
+ *   - a change-set rooted in a declared subagent commits its nested paths verbatim and builds the
+ *     owning member only, and a committed deletion prunes the model overrides of the targets it
+ *     removed (issue #344).
  */
 import { createHash } from "node:crypto";
 
@@ -29,6 +32,7 @@ import type { PipelineStepStatus } from "~/data/ports";
 import { NonFastForwardError } from "~/github/write.server";
 import {
   initialPublishSteps,
+  removedModelTargets,
   runPublish,
   startPublish,
   type PublishPipelineDeps,
@@ -127,6 +131,7 @@ function makeDeps(over: Partial<PublishPipelineDeps> = {}): PublishPipelineDeps 
     ),
     removeProvisionalImages: vi.fn().mockResolvedValue(undefined),
     discardConversationCheckouts: vi.fn().mockResolvedValue(undefined),
+    cleanupSubagentOverrides: vi.fn().mockResolvedValue(undefined),
     enqueueJob: enqueue,
     ...over,
   } as PublishPipelineDeps;
@@ -645,5 +650,305 @@ describe("runPublish — queue-error policy", () => {
     await expect(
       runPublish({ projectId: "bare", taskId: "irrelevant" }, makeDeps(), store),
     ).rejects.toThrow(/no connected repo/);
+  });
+});
+
+describe("runPublish — a change-set rooted in a declared subagent (issue #344)", () => {
+  const READER = "agents/ivy/agent/subagents/reader";
+
+  it("commits the nested files verbatim and builds only the owning member", async () => {
+    seedTeam();
+    await stageDrafts({
+      // An instruction edit, a new nested resource, and a nested deletion — the three shapes the
+      // nested surfaces can produce, all under one subagent root.
+      [`${READER}/instructions.md`]: "# reader\n\nSummarize sources.\n",
+      [`${READER}/tools/lookup.ts`]: "export const lookup = 1;\n",
+      [`${READER}/tools/stale.ts`]: null,
+    });
+    const task = await seedTask();
+    const deps = makeDeps({
+      listRepoPaths: vi
+        .fn()
+        .mockResolvedValue([
+          "agents/ivy/agent/agent.ts",
+          `${READER}/agent.ts`,
+          `${READER}/instructions.md`,
+          `${READER}/tools/stale.ts`,
+          "agents/otto/agent/agent.ts",
+        ]),
+    });
+
+    await runPublish(payload(task.id), deps, store);
+
+    expect(await stepStatuses(task.id)).toEqual({
+      check: "succeeded",
+      build: "succeeded",
+      commit: "succeeded",
+      version: "succeeded",
+      deploy: "succeeded",
+    });
+
+    // The commit carries the nested paths exactly as staged — no rewriting to the member root,
+    // and the deletion travels as a null-content file.
+    const [, , commit] = vi.mocked(deps.commitToDefaultBranch).mock.calls[0];
+    expect(
+      Object.fromEntries(commit.files.map((f) => [f.path, f.content])),
+    ).toEqual({
+      [`${READER}/instructions.md`]: "# reader\n\nSummarize sources.\n",
+      [`${READER}/tools/lookup.ts`]: "export const lookup = 1;\n",
+      [`${READER}/tools/stale.ts`]: null,
+    });
+
+    // A subagent has no build or deployment of its own: the OWNING MEMBER is what builds, and
+    // only it — otto's untouched root never enters the build.
+    expect(
+      vi.mocked(deps.checkBuild).mock.calls.map(([req]) => req.agentRoot),
+    ).toEqual(["agents/ivy/agent"]);
+    expect((await store.releases.findByCommit("agent_ivy", SHA))?.imageRef).toBe(
+      `promoted:agents/ivy/agent@${SHA.slice(0, 12)}`,
+    );
+    expect((await store.releases.findByCommit("agent_otto", SHA))?.imageRef).toBeNull();
+
+    // Drafts are gone only because the commit landed, and the member redeploys with the change.
+    expect(await store.drafts.listByProject(PROJECT)).toEqual([]);
+    expect((await store.deployments.listByEnvironment("env_ivy_production")).length).toBe(1);
+  });
+
+  it("keeps the subagent's overrides when the subtree survives the change-set", async () => {
+    seedTeam();
+    await stageDrafts({ [`${READER}/tools/stale.ts`]: null });
+    const task = await seedTask();
+    const cleanupSubagentOverrides = vi.fn().mockResolvedValue(undefined);
+    const deps = makeDeps({
+      listRepoPaths: vi
+        .fn()
+        .mockResolvedValue([
+          "agents/ivy/agent/agent.ts",
+          `${READER}/agent.ts`,
+          `${READER}/tools/stale.ts`,
+          "agents/otto/agent/agent.ts",
+        ]),
+      cleanupSubagentOverrides,
+    });
+
+    await runPublish(payload(task.id), deps, store);
+
+    expect(await stepStatuses(task.id)).toMatchObject({ commit: "succeeded" });
+    expect(cleanupSubagentOverrides).not.toHaveBeenCalled();
+  });
+});
+
+describe("removedModelTargets", () => {
+  const IVY = { name: "ivy", root: "agents/ivy/agent", kind: "member" };
+  const REPO = [
+    "agents/ivy/agent/agent.ts",
+    "agents/ivy/agent/subagents/reader/agent.ts",
+    "agents/ivy/agent/subagents/reader/instructions.md",
+    "agents/ivy/agent/subagents/reader/subagents/skimmer/agent.ts",
+  ];
+
+  it("finds nothing when the change-set deletes nothing", () => {
+    expect(
+      removedModelTargets([IVY], REPO, [
+        { path: "agents/ivy/agent/agent.ts", content: "x" },
+      ]),
+    ).toEqual([]);
+  });
+
+  it("ignores a subagent that still has a file left", () => {
+    expect(
+      removedModelTargets([IVY], REPO, [
+        { path: "agents/ivy/agent/subagents/reader/instructions.md", content: null },
+      ]),
+    ).toEqual([]);
+  });
+
+  it("reports a subagent whose every file is gone", () => {
+    expect(
+      removedModelTargets([IVY], REPO, [
+        {
+          path: "agents/ivy/agent/subagents/reader/subagents/skimmer/agent.ts",
+          content: null,
+        },
+      ]),
+    ).toEqual([
+      { agentName: "ivy", root: "agents/ivy/agent", subagentPath: "reader/skimmer" },
+    ]);
+  });
+
+  it("collapses a removed subtree onto its shallowest root", () => {
+    expect(
+      removedModelTargets(
+        [IVY],
+        REPO,
+        REPO.filter((p) => p.includes("/subagents/")).map((path) => ({
+          path,
+          content: null,
+        })),
+      ),
+    ).toEqual([{ agentName: "ivy", root: "agents/ivy/agent", subagentPath: "reader" }]);
+  });
+
+  it("reports the whole member when its directory goes", () => {
+    expect(
+      removedModelTargets([IVY], REPO, REPO.map((path) => ({ path, content: null }))),
+    ).toEqual([{ agentName: "ivy", root: "agents/ivy/agent", subagentPath: "" }]);
+  });
+});
+
+describe("runPublish — model override cleanup", () => {
+  it("prunes a removed subagent's overrides after the commit, under both names", async () => {
+    seedTeam();
+    await stageDrafts({ "agents/ivy/agent/subagents/reader/agent.ts": null });
+    const task = await seedTask();
+    const cleanupSubagentOverrides = vi.fn().mockResolvedValue(undefined);
+    const deps = makeDeps({
+      listRepoPaths: vi
+        .fn()
+        .mockResolvedValue([
+          "agents/ivy/agent/agent.ts",
+          "agents/ivy/agent/subagents/reader/agent.ts",
+          "agents/otto/agent/agent.ts",
+        ]),
+      // The member's module resolves itself by a name a rename left behind.
+      readRepoFile: vi
+        .fn()
+        .mockResolvedValue("model: harnesstAgentModel('ivy-old')"),
+      cleanupSubagentOverrides,
+    });
+
+    await runPublish(payload(task.id), deps, store);
+
+    expect(await stepStatuses(task.id)).toMatchObject({ commit: "succeeded" });
+    expect(cleanupSubagentOverrides.mock.calls).toEqual([
+      ["org_1", PROJECT, "ivy", "reader"],
+      ["org_1", PROJECT, "ivy-old", "reader"],
+    ]);
+  });
+
+  it("prunes a removed MEMBER under its resolver name, read from the PRE-commit tree", async () => {
+    seedTeam();
+    const IVY_FILES = ["agents/ivy/agent/agent.ts", "agents/ivy/agent/instructions.md"];
+    await stageDrafts(Object.fromEntries(IVY_FILES.map((p) => [p, null])));
+    const task = await seedTask();
+    const cleanupSubagentOverrides = vi.fn().mockResolvedValue(undefined);
+    // The member's module resolves itself by a name a rename left behind — and this very commit
+    // deleted it, so it is only readable at the pre-commit anchor.
+    const readRepoFile = vi
+      .fn()
+      .mockResolvedValue("model: harnesstAgentModel('ivy-old')");
+    const deps = makeDeps({
+      listRepoPaths: vi
+        .fn()
+        .mockResolvedValue([...IVY_FILES, "agents/otto/agent/agent.ts"]),
+      readRepoFile,
+      cleanupSubagentOverrides,
+    });
+
+    await runPublish(payload(task.id), deps, store);
+
+    expect(await stepStatuses(task.id)).toMatchObject({ commit: "succeeded" });
+    expect(cleanupSubagentOverrides.mock.calls).toEqual([
+      ["org_1", PROJECT, "ivy", ""],
+      ["org_1", PROJECT, "ivy-old", ""],
+    ]);
+    expect(readRepoFile).toHaveBeenCalledWith(
+      "inst_1",
+      expect.objectContaining({ ref: expect.any(String) }),
+      "agents/ivy/agent/agent.ts",
+    );
+    // Not the branch head — the module is gone there.
+    const [, ref] = readRepoFile.mock.calls.at(-1)!;
+    expect((ref as { ref?: string }).ref).toBe(
+      "base0000head0000sha0000000000000000000000",
+    );
+  });
+
+  it("prunes against the REFRESHED tree after a non-fast-forward retry", async () => {
+    seedTeam();
+    const READER = "agents/ivy/agent/subagents/reader";
+    await stageDrafts({ [`${READER}/agent.ts`]: null });
+    const task = await seedTask();
+    const cleanupSubagentOverrides = vi.fn().mockResolvedValue(undefined);
+    const deps = makeDeps({
+      // The head moved between the two reads: someone else added a file under the subagent this
+      // change-set is emptying, so it is NOT gone and its override must survive.
+      listRepoPaths: vi
+        .fn()
+        .mockResolvedValueOnce([
+          "agents/ivy/agent/agent.ts",
+          `${READER}/agent.ts`,
+          "agents/otto/agent/agent.ts",
+        ])
+        .mockResolvedValue([
+          "agents/ivy/agent/agent.ts",
+          `${READER}/agent.ts`,
+          `${READER}/tools/new.ts`,
+          "agents/otto/agent/agent.ts",
+        ]),
+      commitToDefaultBranch: vi
+        .fn()
+        .mockRejectedValueOnce(new NonFastForwardError("main"))
+        .mockResolvedValue({ sha: SHA }),
+      cleanupSubagentOverrides,
+    });
+
+    await runPublish(payload(task.id), deps, store);
+
+    expect(await stepStatuses(task.id)).toMatchObject({ commit: "succeeded" });
+    expect(deps.listRepoPaths).toHaveBeenCalledTimes(2);
+    expect(cleanupSubagentOverrides).not.toHaveBeenCalled();
+  });
+
+  it("skips the prune entirely when the tree can't be re-read after a retry", async () => {
+    seedTeam();
+    const READER = "agents/ivy/agent/subagents/reader";
+    await stageDrafts({ [`${READER}/agent.ts`]: null });
+    const task = await seedTask();
+    const cleanupSubagentOverrides = vi.fn().mockResolvedValue(undefined);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const deps = makeDeps({
+      listRepoPaths: vi
+        .fn()
+        .mockResolvedValueOnce([
+          "agents/ivy/agent/agent.ts",
+          `${READER}/agent.ts`,
+          "agents/otto/agent/agent.ts",
+        ])
+        .mockRejectedValue(new Error("github down")),
+      commitToDefaultBranch: vi
+        .fn()
+        .mockRejectedValueOnce(new NonFastForwardError("main"))
+        .mockResolvedValue({ sha: SHA }),
+      cleanupSubagentOverrides,
+    });
+
+    await runPublish(payload(task.id), deps, store);
+
+    // The commit is the point — a stale snapshot costs an orphan row, never a failed publish.
+    expect((await store.workspaceTasks.findById(task.id))?.status).toBe("succeeded");
+    expect(cleanupSubagentOverrides).not.toHaveBeenCalled();
+    warn.mockRestore();
+  });
+
+  it("keeps the publish green when pruning blows up", async () => {
+    seedTeam();
+    await stageDrafts({ "agents/ivy/agent/subagents/reader/agent.ts": null });
+    const task = await seedTask();
+    const deps = makeDeps({
+      listRepoPaths: vi
+        .fn()
+        .mockResolvedValue([
+          "agents/ivy/agent/agent.ts",
+          "agents/ivy/agent/subagents/reader/agent.ts",
+          "agents/otto/agent/agent.ts",
+        ]),
+      cleanupSubagentOverrides: vi.fn().mockRejectedValue(new Error("db down")),
+    });
+
+    await runPublish(payload(task.id), deps, store);
+
+    const row = await store.workspaceTasks.findById(task.id);
+    expect(row?.status).toBe("succeeded");
   });
 });

@@ -297,6 +297,7 @@ describe.runIf(LIVE)("Save & Publish core loop (real routes + pipeline)", () => 
           },
           removeProvisionalImages: async () => {},
           discardConversationCheckouts: async () => {},
+          cleanupSubagentOverrides: async () => {},
           enqueueJob: async (kind, payload, opts?, store?) => {
             const id = await (await import("~/jobs/queue.server")).enqueue(
               kind,

@@ -159,3 +159,32 @@ export function normalizeAgentPath(raw: string): string | null {
   if (ASSISTANT_CONFIG_PATH.test(p)) return p;
   return null;
 }
+
+/**
+ * `normalizeAgentPath` scoped to ONE configuration target's root (issue #344). The allowlist above
+ * is repo-global — it admits any path under any member's `agent/` — so a write site that only
+ * normalizes will happily edit a sibling member's file, or a sibling subagent's, when the path
+ * arrives in a form field. Every loader/action that accepts a user-supplied path derives its
+ * target from the URL and confines against `target.root` here instead.
+ *
+ * Returns the normalized path when it IS the root or lives beneath it, null otherwise. Note that
+ * a member root legitimately contains its subagents' roots: confining to a member admits its
+ * subagents' files (they are the member's tree), while confining to a subagent admits only that
+ * subtree. Root-level manifests (`package.json`) are allowlisted repo-wide by
+ * `normalizeAgentPath` but are NOT under any agent root, so callers that must accept them keep
+ * their existing explicit allowance.
+ */
+/**
+ * True for the repo-root manifests a change-set may carry (`package.json`, its lockfile). They
+ * live under no agent root, so a site that confines to one and still wants them says so
+ * explicitly rather than widening the confinement.
+ */
+export function isRootManifestPath(raw: string): boolean {
+  return ROOT_FILE_ALLOWLIST.has(raw.trim().replace(/^\/+/, ""));
+}
+
+export function confineToRoot(root: string, raw: string): string | null {
+  const path = normalizeAgentPath(raw);
+  if (!path) return null;
+  return path === root || path.startsWith(`${root}/`) ? path : null;
+}

@@ -25,3 +25,24 @@ export function contextPath(
     ? `/repos/${projectId}/agents/${encodeURIComponent(agentName)}`
     : `/repos/${projectId}`;
 }
+
+/** Delimiter joining subagent segments in the `/sub/:subPath` URL (see config-target.server). */
+const SUBAGENT_DELIMITER = "~";
+
+/**
+ * Base path for a declared subagent's own configuration context (issue #344), at any depth:
+ * `/repos/:id/agents/:member/sub/researcher~fact-checker`, or `/repos/:id/sub/...` for a
+ * single-agent repo. The chain is joined by `~` rather than `/` so the whole nested context is
+ * one route param and every existing page module can simply be registered again beneath it.
+ *
+ * Passing no segments degrades to `contextPath` — the member IS the target then.
+ */
+export function subagentContextPath(
+  projectId: string,
+  agentName: string | null,
+  segments: string[],
+): string {
+  const base = contextPath(projectId, agentName);
+  if (segments.length === 0) return base;
+  return `${base}/sub/${encodeURIComponent(segments.join(SUBAGENT_DELIMITER))}`;
+}
