@@ -68,12 +68,23 @@ Create or update project-specific eval files under the app-root `evals/` using `
 - Use multiple `t.send(...)` calls in one test for feedback loops and conversational behavior that depends on prior turns.
 - Use `t.loadedSkill(...)` to verify that a changed skill actually triggers and loads.
 - Add content, tool-call, and other assertions that observe the requested outcome rather than merely checking that the agent answered.
+- For LLM-as-judge assertions, import `harnesstAgentModel` from `../harnesst/model` in
+  `evals/evals.config.ts` and set `judge: { model: harnesstAgentModel('<exact-member-name>') }`.
+  Use that same model value for any per-eval or per-assertion override. Never use a provider/model
+  string for a judge: Eve routes model strings through a separate provider gateway that does not
+  carry harnesst's project-scoped authorization, so the run will be reported as incomplete.
 
-Run the suite with:
+Run the suite with `harnesst_run_eval`, passing the exact target member from
+`harnesst_project_context` and the conversation id in the current checkout path. This is the only
+supported model-backed eval path from the embedded assistant: it evaluates the unpublished
+checkout through a disposable target and returns structured stdout/stderr, assertion status,
+scores, session and artifact identities, checkout identity, exact configured model, authorization
+limits, and cleanup state. Any skipped eval is returned as incomplete evidence, not success. Do not
+replace it with `npx eve eval` in bash or expose model/provider secrets to the checkout.
 
-```sh
-npx eve eval
-```
+If the tool specifically rejects a direct-provider model, report that credential-safe eval
+brokering is not available for that provider and name the configured alternative it gives. Do not
+turn that into a generic `MODEL_CALL_FAILED`, and do not work around it with a raw API key.
 
 ### Schedules
 
@@ -81,11 +92,13 @@ For a changed cron or schedule, first confirm its ID and registration in `GET /e
 
 ### Deployed smoke test
 
-Only test a deployment when its URL and credentials are available **and** it contains the change being validated. Check its health and info endpoints, then run the relevant evals against it:
+Only test a deployment when its URL and credentials are available **and** it contains the change being validated. Check its health and info endpoints, then run deterministic, non-judge evals against it when they need no local model credential:
 
 ```sh
 npx eve eval --url <url>
 ```
+
+Model-backed validation of the unpublished checkout still goes through `harnesst_run_eval`.
 
 If there is no connected live repository, deployable changed instance, URL, or required credential, state the exact untested flow and the setup needed to exercise it. Never imply that local or static success proves a deployed behavior you could not run.
 

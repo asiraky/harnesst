@@ -16,6 +16,11 @@ import type { LoaderFunctionArgs } from "react-router";
 import { resolveAgentModel } from "~/models/agent-model-config.server";
 import { findWorkspaceModel } from "~/models/union.server";
 import { bearerToken, verifyGatewayToken } from "~/gateway/token.server";
+import {
+  getActiveEvalGrant,
+  EvalGrantError,
+} from "~/gateway/eval-grant.server";
+import { verifyEvalGatewayToken } from "~/gateway/eval-token.server";
 
 function errorResponse(message: string, status: number): Response {
   return new Response(JSON.stringify({ error: { message } }), {
@@ -26,13 +31,39 @@ function errorResponse(message: string, status: number): Response {
 
 export async function loader({ request }: LoaderFunctionArgs) {
   const token = bearerToken(request);
-  const orgId = token ? verifyGatewayToken(token) : null;
-  if (!orgId) return errorResponse("Missing or invalid gateway token.", 401);
+  let orgId = token ? verifyGatewayToken(token) : null;
+  const evalGrantId = !orgId && token ? verifyEvalGatewayToken(token) : null;
+  if (!orgId && !evalGrantId)
+    return errorResponse("Missing or invalid gateway token.", 401);
 
   const agent = new URL(request.url).searchParams.get("agent")?.trim();
   if (!agent) return errorResponse("Pass ?agent=<agent-name>.", 400);
 
-  const resolved = await resolveAgentModel(orgId, agent);
+  let resolved;
+  if (evalGrantId) {
+    try {
+      const grant = await getActiveEvalGrant(evalGrantId);
+      if (grant.memberName !== agent) {
+        return errorResponse(
+          `This eval authorization is scoped to the "${grant.memberName}" member, not "${agent}".`,
+          403,
+        );
+      }
+      orgId = grant.orgId;
+      resolved = {
+        model: grant.model,
+        effort: grant.effort,
+        source: grant.modelSource,
+      } as const;
+    } catch (error) {
+      if (error instanceof EvalGrantError) {
+        return errorResponse(error.message, error.status);
+      }
+      throw error;
+    }
+  } else {
+    resolved = await resolveAgentModel(orgId!, agent);
+  }
   if (!resolved) {
     return errorResponse(
       `No model is configured for this workspace. Set a default model in harnesst's Org settings ` +
@@ -45,7 +76,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
   // model; a catalog hiccup must not take model resolution down with it.
   let contextWindowTokens: number | null = null;
   try {
-    const info = await findWorkspaceModel(orgId, resolved.model);
+    const info = await findWorkspaceModel(orgId!, resolved.model);
     contextWindowTokens = info?.contextWindow ?? null;
   } catch {
     contextWindowTokens = null;
