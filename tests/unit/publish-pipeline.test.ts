@@ -266,6 +266,44 @@ describe("runPublish — happy path", () => {
     expect((await store.workspaceTasks.findById(task.id))?.status).toBe("succeeded");
     expect(deps.discardConversationCheckouts).not.toHaveBeenCalled();
   });
+
+  it("builds every team member for a shared root change and never builds a phantom root agent", async () => {
+    seedTeam();
+    store.seedAgent({
+      id: "agent_assistant",
+      projectId: PROJECT,
+      name: "assistant",
+      root: ".harnesst/assistant",
+      kind: "assistant",
+    });
+    await stageDrafts({ "package.json": '{"private":true}' });
+    const task = await seedTask();
+    const deps = makeDeps();
+
+    await runPublish(payload(task.id), deps, store);
+
+    expect((await store.workspaceTasks.findById(task.id))?.status).toBe("succeeded");
+    expect(
+      vi.mocked(deps.checkBuild).mock.calls.map(([req]) => req.agentRoot),
+    ).toEqual(["agents/ivy/agent", "agents/otto/agent"]);
+    expect(
+      vi.mocked(deps.checkBuild).mock.calls.some(([req]) => req.agentRoot === undefined),
+    ).toBe(false);
+  });
+
+  it("builds every team member when the publish contains only repository metadata", async () => {
+    seedTeam();
+    await stageDrafts({ "harnesst-lock.json": '{"version":1,"installs":[]}' });
+    const task = await seedTask();
+    const deps = makeDeps();
+
+    await runPublish(payload(task.id), deps, store);
+
+    expect((await store.workspaceTasks.findById(task.id))?.status).toBe("succeeded");
+    expect(
+      vi.mocked(deps.checkBuild).mock.calls.map(([req]) => req.agentRoot),
+    ).toEqual(["agents/ivy/agent", "agents/otto/agent"]);
+  });
 });
 
 describe("runPublish — failures leave nothing landed", () => {

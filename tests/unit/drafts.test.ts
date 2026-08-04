@@ -231,13 +231,29 @@ describe("inferBuildRoots", () => {
     ).toEqual(["agents/pm/agent"]);
   });
 
-  it("a truly shared file forces the repo-root build (undefined)", () => {
+  it("a truly shared file builds every member instead of the repository root", () => {
     expect(
       inferBuildRoots(AGENTS, [
         draft("package.json"),
         draft("agent/tools/x.ts", "agent_1"),
       ]),
-    ).toBeUndefined();
+    ).toEqual(["agent", "agents/pm/agent"]);
+  });
+
+  it("a shared file retains a newly staged member root while widening to current members", () => {
+    expect(
+      inferBuildRoots(AGENTS, [
+        draft("package.json"),
+        draft("agents/deployer/agent/instructions.md"),
+      ]),
+    ).toEqual(["agents/deployer/agent", "agent", "agents/pm/agent"]);
+  });
+
+  it("a metadata-only change builds every current member", () => {
+    expect(inferBuildRoots(AGENTS, [draft("harnesst-lock.json")])).toEqual([
+      "agent",
+      "agents/pm/agent",
+    ]);
   });
 
   it("repo-level harnesst metadata never forces a repo-root build", () => {

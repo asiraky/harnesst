@@ -163,15 +163,21 @@ export function orphanedDraftsMessage(orphaned: DraftChange[]): string {
 }
 
 /**
- * The member roots a change-set spans — the publish build runs once per root. `undefined` means
- * the set touches a truly shared file (e.g. the root package.json), where only a repo-root
- * build can see the effect.
+ * The member roots a change-set must build. Member-scoped changes build only their owners. A
+ * truly shared file (for example the root package.json) can affect every package, so it widens the
+ * build to every current member while retaining roots for newly staged members. Metadata-only
+ * changes have no owning path and therefore build every current member too.
+ *
+ * A team repository's root is not itself an Eve project. Never represent a shared change as an
+ * undefined/root build: doing so makes the build-context injector manufacture `agent/` at the
+ * repository root, and Eve then discovers that platform-only directory instead of the members.
  */
 export function inferBuildRoots(
   agents: { id: string; root: string }[],
   drafts: DraftChange[],
-): string[] | undefined {
+): string[] {
   const roots = new Set<string>();
+  let touchesSharedFile = false;
   for (const draft of drafts) {
     // Assistant config (`.harnesst/assistant/**`) compiles into nothing — the pipeline restarts the
     // assistant instead of building. Skip it BEFORE the agentId lookup: these drafts carry the
@@ -190,7 +196,12 @@ export function inferBuildRoots(
     // (harnesst-lock.json) and the team-layout marker README (saved by a remove-member so an
     // emptied team stays detectable) have no build of their own.
     if (draft.path === "harnesst-lock.json" || draft.path === EMPTY_TEAM_MARKER) continue;
-    return undefined;
+    touchesSharedFile = true;
+  }
+  // With no member-owned draft, the change is either shared or metadata-only. Both must validate
+  // every runnable member. For a mixed shared/member set, keep staged new-member roots too.
+  if (touchesSharedFile || roots.size === 0) {
+    for (const agent of agents) roots.add(agent.root);
   }
   return [...roots];
 }
