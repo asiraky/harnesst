@@ -17,7 +17,7 @@
  * handoff can never return them. Tests pin the wording.
  *
  * Contract each source must uphold (also what the tests pin):
- *  - imports ONLY `eve/tools` + `zod` (both in every member's package.json);
+ *  - imports ONLY `eve/tools` (the only package every built agent may rely on);
  *  - module-load is crash-proof: bad/absent `HARNESST_TEAMMATES` → empty roster, tool still defines;
  *  - the description enumerates teammates + roles and tells the model asks must be self-contained;
  *  - `execute` NEVER throws — every failure path returns `{ ok: false, error }`.
@@ -92,7 +92,6 @@ const TELL_SPEC: ModeSpec = {
 /** Render one mode's full tool source. All mode-varying prose is injected as JSON literals. */
 function buildToolSource(spec: ModeSpec): string {
   return `import { defineTool } from "eve/tools";
-import { z } from "zod";
 
 // harnesst bakes this file into a team member's image (see app/team/tool-template.ts). All
 // variability arrives via env — do not edit; a repo file at this path overrides it.
@@ -144,15 +143,22 @@ const names = teammates.map((t) => t.name);
 
 export default defineTool({
   description: buildDescription(teammates),
-  inputSchema: z.object({
-    teammate: names.length ? z.enum(names) : z.string(),
-    message: z
-      .string()
-      .describe(
-        "A complete, self-contained request for the teammate. They cannot see your " +
+  inputSchema: {
+    type: "object",
+    properties: {
+      teammate: names.length
+        ? { type: "string", enum: names }
+        : { type: "string" },
+      message: {
+        type: "string",
+        description:
+          "A complete, self-contained request for the teammate. They cannot see your " +
           "conversation, so include all the context and specifics they need.",
-      ),
-  }),
+      },
+    },
+    required: ["teammate", "message"],
+    additionalProperties: false,
+  },
   async execute({ teammate, message }) {
     const baseUrl = process.env.HARNESST_TEAM_URL;
     const token = process.env.HARNESST_TEAM_TOKEN;
@@ -201,12 +207,11 @@ export const TELL_TEAMMATE_TOOL_SOURCE = buildToolSource(TELL_SPEC);
  * (like the run-report hook, not just team members). Fire-and-forget: it POSTs `{message,
  * title?}` to `HARNESST_FOH_NOTIFY_URL` with the same per-deployment bearer as the relays, and
  * harnesst opens a Front of House conversation the humans pick up from the bell. Same contract
- * as the delegation tools: imports only `eve/tools` + `zod`, module load cannot crash, and
+ * as the delegation tools: imports only `eve/tools`, module load cannot crash, and
  * `execute` never throws. The description is the dispatch logic between this and the blocking
  * `ask_question`; the shipped guidance carries the same semantic contract.
  */
 export const NOTIFY_USER_TOOL_SOURCE = `import { defineTool } from "eve/tools";
-import { z } from "zod";
 
 // harnesst bakes this file into every agent image (see app/team/tool-template.ts). All
 // variability arrives via env — do not edit; a repo file at this path overrides it.
@@ -223,18 +228,23 @@ export default defineTool({
     "invent that reply. If the current run cannot continue without a human answer, use " +
     "ask_question instead. When the workflow requires a durable record such as a GitHub " +
     "comment or label, write that record as well — notify-user does not replace it.",
-  inputSchema: z.object({
-    message: z
-      .string()
-      .describe(
-        "A complete, human-readable, self-contained message for the humans. They cannot see " +
+  inputSchema: {
+    type: "object",
+    properties: {
+      message: {
+        type: "string",
+        description:
+          "A complete, human-readable, self-contained message for the humans. They cannot see " +
           "the current conversation, so include all relevant Markdown links and context.",
-      ),
-    title: z
-      .string()
-      .optional()
-      .describe("An optional short Front of House conversation title."),
-  }),
+      },
+      title: {
+        type: "string",
+        description: "An optional short Front of House conversation title.",
+      },
+    },
+    required: ["message"],
+    additionalProperties: false,
+  },
   async execute({ message, title }) {
     const url = process.env.HARNESST_FOH_NOTIFY_URL;
     const token = process.env.HARNESST_TEAM_TOKEN;
