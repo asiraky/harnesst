@@ -13,6 +13,7 @@ import {
   ensureOpenRouterDependency,
   LEGACY_OPENROUTER_PROVIDER_PACKAGE,
   OPENROUTER_PROVIDER_PACKAGE,
+  repairHarnesstGatewayWiring,
 } from "~/eve/agentModule";
 import {
   legacyOrgModelModulePath,
@@ -439,7 +440,10 @@ export async function normalizeOrgModelImportDrafts(
       const root = agentRootForAgentModule(path);
       if (!root) return;
       const depth = path.slice(root.length + 1).split("/").length - 1;
-      const after = rewriteOrgModelImports(before, depth);
+      // Model saves before #354 could place harnesstGateway inside a multiline OpenRouter object.
+      // Heal that generated syntax during the normal publish coherence pass so an already-saved
+      // draft becomes publishable immediately after the control-plane fix is deployed.
+      const after = repairHarnesstGatewayWiring(rewriteOrgModelImports(before, depth));
       if (after !== before) byPath.set(path, { path, content: after });
     }),
   );
