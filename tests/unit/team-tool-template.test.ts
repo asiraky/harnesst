@@ -1,6 +1,6 @@
 /**
  * The generated delegation tools (Team delegation — D2/§5, fire-and-forget — #269). Each template
- * is a source STRING baked into a member's image, importing only `eve/tools` + `zod`. We evaluate
+ * is a source STRING baked into a member's image, importing only `eve/tools`. We evaluate
  * them under the env contract — stubbing `defineTool` (returns the config) and injecting a
  * `process` — to prove: the roster is parsed crash-proof from HARNESST_TEAMMATES; the description
  * enumerates teammates; and the `teammate` input is a strict enum when teammates exist and an open
@@ -13,7 +13,6 @@
  * self-contained-message caveat drift between the two.
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { z } from "zod";
 import ts from "typescript";
 
 import {
@@ -24,7 +23,7 @@ import {
 
 interface ToolConfig {
   description: string;
-  inputSchema: z.ZodTypeAny;
+  inputSchema: Record<string, unknown>;
   execute: (args: { teammate: string; message: string }) => Promise<unknown>;
 }
 
@@ -32,13 +31,15 @@ interface ToolConfig {
 function evalTool(source: string, env: Record<string, string>): ToolConfig {
   const body = ts
     .transpileModule(source, {
-      compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
+      compilerOptions: {
+        module: ts.ModuleKind.ESNext,
+        target: ts.ScriptTarget.ES2022,
+      },
     })
-    .outputText
-    .replace(/^import .*$/gm, "")
+    .outputText.replace(/^import .*$/gm, "")
     .replace("export default defineTool(", "return defineTool(");
-  const factory = new Function("defineTool", "z", "process", body);
-  return factory((config: ToolConfig) => config, z, { env }) as ToolConfig;
+  const factory = new Function("defineTool", "process", body);
+  return factory((config: ToolConfig) => config, { env }) as ToolConfig;
 }
 
 const TOOLS = [
@@ -59,11 +60,11 @@ afterEach(() => {
 });
 
 describe.each(TOOLS)("$name tool template", ({ source, mode }) => {
-  it("imports only eve/tools and zod", () => {
+  it("imports only eve/tools", () => {
     const imports = [...source.matchAll(/^import .* from "([^"]+)";/gm)].map(
       (m) => m[1],
     );
-    expect(imports.sort()).toEqual(["eve/tools", "zod"]);
+    expect(imports).toEqual(["eve/tools"]);
   });
 
   it("with HARNESST_TEAMMATES: enumerates teammates and enforces a strict enum", () => {
@@ -77,22 +78,29 @@ describe.each(TOOLS)("$name tool template", ({ source, mode }) => {
     expect(config.description).toContain("Manages the roadmap.");
     expect(config.description).toContain("deployer");
     expect(config.description).toContain("self-contained");
-    expect(config.inputSchema.safeParse({ teammate: "pm", message: "hi" }).success).toBe(true);
-    expect(config.inputSchema.safeParse({ teammate: "nobody", message: "hi" }).success).toBe(false);
-    // A message is required.
-    expect(config.inputSchema.safeParse({ teammate: "pm" }).success).toBe(false);
+    expect(
+      (config.inputSchema.properties as Record<string, { enum?: string[] }>)
+        .teammate.enum,
+    ).toEqual(["pm", "deployer"]);
+    expect(config.inputSchema.required).toEqual(["teammate", "message"]);
   });
 
   it("without HARNESST_TEAMMATES: empty roster, open string input, no crash", () => {
     const config = evalTool(source, {});
     expect(config.description).toContain("No teammates are configured");
-    expect(config.inputSchema.safeParse({ teammate: "anyone", message: "hi" }).success).toBe(true);
+    expect(
+      (config.inputSchema.properties as Record<string, { enum?: string[] }>)
+        .teammate.enum,
+    ).toBeUndefined();
   });
 
   it("survives malformed HARNESST_TEAMMATES (degrades to empty roster)", () => {
     const config = evalTool(source, { HARNESST_TEAMMATES: "{ not json" });
     expect(config.description).toContain("No teammates are configured");
-    expect(config.inputSchema.safeParse({ teammate: "x", message: "hi" }).success).toBe(true);
+    expect(
+      (config.inputSchema.properties as Record<string, { enum?: string[] }>)
+        .teammate.enum,
+    ).toBeUndefined();
   });
 
   it("execute returns { ok:false } when the relay env is missing (never throws)", async () => {
@@ -110,17 +118,14 @@ describe.each(TOOLS)("$name tool template", ({ source, mode }) => {
   it(`execute puts mode "${mode}" on the wire to /api/team/ask`, async () => {
     let url = "";
     let body: Record<string, unknown> = {};
-    vi.stubGlobal(
-      "fetch",
-      async (input: string, init: { body: string }) => {
-        url = String(input);
-        body = JSON.parse(init.body) as Record<string, unknown>;
-        return {
-          ok: true,
-          json: async () => ({ ok: true }),
-        };
-      },
-    );
+    vi.stubGlobal("fetch", async (input: string, init: { body: string }) => {
+      url = String(input);
+      body = JSON.parse(init.body) as Record<string, unknown>;
+      return {
+        ok: true,
+        json: async () => ({ ok: true }),
+      };
+    });
     const config = evalTool(source, {
       HARNESST_TEAMMATES: JSON.stringify([{ name: "pm", role: "" }]),
       HARNESST_TEAM_URL: "http://relay.local/",
@@ -183,14 +188,14 @@ describe("ask/tell description routing", () => {
 
 /**
  * #288 3c: notify-user is baked into EVERY image (not just team members) and upholds the
- * same source contract — imports only eve/tools + zod, crash-proof module load, execute never
+ * same source contract — imports only eve/tools, crash-proof module load, execute never
  * throws. Its description is the dispatch logic between a fire-and-forget notification and
  * the blocking ask_question.
  */
 describe("notify-user tool template", () => {
   interface NotifyConfig {
     description: string;
-    inputSchema: z.ZodTypeAny;
+    inputSchema: Record<string, unknown>;
     execute: (args: { message: string; title?: string }) => Promise<unknown>;
   }
   const evalNotify = (env: Record<string, string>) =>
@@ -200,20 +205,20 @@ describe("notify-user tool template", () => {
     vi.unstubAllGlobals();
   });
 
-  it("imports only eve/tools and zod", () => {
+  it("imports only eve/tools", () => {
     const imports = [
       ...NOTIFY_USER_TOOL_SOURCE.matchAll(/^import .* from "([^"]+)";/gm),
     ].map((m) => m[1]);
-    expect(imports.sort()).toEqual(["eve/tools", "zod"]);
+    expect(imports).toEqual(["eve/tools"]);
   });
 
   it("requires a message; the title is optional", () => {
     const config = evalNotify({});
-    expect(config.inputSchema.safeParse({ message: "hi" }).success).toBe(true);
-    expect(
-      config.inputSchema.safeParse({ message: "hi", title: "t" }).success,
-    ).toBe(true);
-    expect(config.inputSchema.safeParse({ title: "t" }).success).toBe(false);
+    expect(config.inputSchema.required).toEqual(["message"]);
+    expect(Object.keys(config.inputSchema.properties as object)).toEqual([
+      "message",
+      "title",
+    ]);
   });
 
   it("execute returns { ok:false } when the notify env is missing (never throws)", async () => {
@@ -239,7 +244,10 @@ describe("notify-user tool template", () => {
         url = String(input);
         body = JSON.parse(init.body) as Record<string, unknown>;
         authorization = init.headers.authorization;
-        return { ok: true, json: async () => ({ ok: true, sessionId: "ps_1" }) };
+        return {
+          ok: true,
+          json: async () => ({ ok: true, sessionId: "ps_1" }),
+        };
       },
     );
     const config = evalNotify({
@@ -262,7 +270,9 @@ describe("notify-user tool template", () => {
     vi.stubGlobal("fetch", async () => ({
       ok: false,
       status: 503,
-      json: async () => ({ error: "Front of House is temporarily unavailable." }),
+      json: async () => ({
+        error: "Front of House is temporarily unavailable.",
+      }),
     }));
     const config = evalNotify({
       HARNESST_FOH_NOTIFY_URL: "http://cp.local/api/foh/notify",
