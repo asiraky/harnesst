@@ -5,9 +5,9 @@
  */
 import { describe, expect, it } from "vitest";
 
+import { subagentRootFor } from "~/eve/parse";
 import {
   resolveConfigTarget,
-  subagentRootFor,
   subagentSegmentsFromParams,
 } from "~/project/config-target.server";
 import { makeFakeStore, type FakeStore } from "../fakes/store";

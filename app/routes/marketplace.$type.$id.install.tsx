@@ -8,9 +8,11 @@
  * whole plan on each step. The plan PREVIEW the loader returns is advisory; the action re-plans
  * from scratch server-side (never trusting the preview) before it stages anything.
  *
- * Target shapes (PRD §7.8): tool/skill/subagent install INTO an existing member; an agent
- * installs AS a new team member (team repos only). Deliberately punted here: agent → a new
- * standalone repo, and agent → subagent of an existing agent.
+ * Target shapes (PRD §7.8): tool/skill/subagent install INTO an existing member, or into one of
+ * that member's DECLARED subagents (its own agent root holds the files; the member stays the
+ * deployment root for package.json, secrets and the platform tree); an agent installs AS a new
+ * team member (team repos only). Deliberately punted here: agent → a new standalone repo, and
+ * installing an agent template as a subagent of an existing agent.
  */
 import { getSessionAuth, sessionLoader } from "~/auth/session.server";
 import { Boxes, Download, KeyRound, Layers, ShieldCheck } from "lucide-react";
@@ -60,6 +62,7 @@ import type { Agent } from "~/data/ports";
 import { invalidateAgentEnvironments } from "~/deploy/env-reconcile.server";
 import { stageDeletions, stageDraft, listDrafts } from "~/drafts/drafts.server";
 import { ZOD_PACKAGE, ZOD_VERSION } from "~/eve/agentModule";
+import { subagentDirNames, subagentRootFor } from "~/eve/parse";
 import { getAgentSource } from "~/github/cached.server";
 import { fetchAgentSource, readAgentFile } from "~/github/repo.server";
 import { contextPath } from "~/lib/paths";
@@ -134,23 +137,86 @@ async function activeWorkspaceDefaultModel(orgId: string) {
 }
 
 /**
- * Resolve a selected roster name to an install target. The single-agent repo's root agent is
+ * Separator between a member name and its `/`-joined subagent path in a picker option's value and
+ * in the `?member=` param. Both halves are eve directory names (kebab-case), so `:` can occur in
+ * neither — the value round-trips unambiguously in both directions.
+ */
+const SUBAGENT_SEPARATOR = ":";
+
+/** Split a picker value / `?member=` param into a member name and `/`-joined subagent path. */
+function decodeMemberSelection(value: string): {
+  memberName: string;
+  subagentPath: string;
+} {
+  const at = value.indexOf(SUBAGENT_SEPARATOR);
+  if (at < 0) return { memberName: value, subagentPath: "" };
+  return {
+    memberName: value.slice(0, at),
+    subagentPath: value.slice(at + SUBAGENT_SEPARATOR.length),
+  };
+}
+
+/**
+ * Every declared subagent below `memberRoot` as a `/`-joined path, parents before children.
+ * `subagentDirNames` reads ONE level of `<root>/subagents/`, so recurse it with each child's own
+ * root: a declared subagent is itself a full agent root and may declare subagents of its own.
+ */
+function declaredSubagentPaths(
+  repoPaths: string[],
+  memberRoot: string,
+  prefix = "",
+): string[] {
+  const base = subagentRootFor(memberRoot, prefix.split("/").filter(Boolean));
+  return subagentDirNames(repoPaths, base).flatMap((name) => {
+    const path = prefix ? `${prefix}/${name}` : name;
+    return [path, ...declaredSubagentPaths(repoPaths, memberRoot, path)];
+  });
+}
+
+/**
+ * Literal prefix `planInstall` puts on its root-only rejection (channels/schedules can't live in a
+ * subagent). The conflicts list otherwise carries repo paths, so the wizard needs this to render
+ * that one entry as the sentence it is instead of a broken-looking monospace path.
+ */
+const ROOT_ONLY_CONFLICT = "Channels and schedules are root-only in eve";
+
+/**
+ * Resolve a selected picker value to an install target. The single-agent repo's root agent is
  * recorded in the lock as `member: null` (its name is cosmetic); team members carry their name.
+ *
+ * A `<member>:<subagent/path>` value targets a declared subagent: the subagent's own agent root
+ * holds the FILES, while the member stays the deployment root (package.json, secrets, the
+ * platform tree). The subagent path is accepted only when it appears in the set discovered from
+ * the repo tree — the target decides which repo paths get WRITTEN, so a fabricated, stale, or
+ * root-escaping segment must resolve to nothing rather than plan writes the user never chose.
  */
 function resolveMemberTarget(
   roster: Agent[],
   isTeam: boolean,
-  selectedName: string | null,
+  selected: string | null,
+  repoPaths: string[],
 ): { target: Extract<InstallTarget, { kind: "member" }>; agent: Agent } | null {
-  if (!selectedName) return null;
-  const agent = roster.find((a) => a.name === selectedName);
+  if (!selected) return null;
+  const { memberName, subagentPath } = decodeMemberSelection(selected);
+  const agent = roster.find((a) => a.name === memberName);
   if (!agent) return null;
+  const member = {
+    kind: "member" as const,
+    memberName: isTeam ? agent.name : null,
+    root: agent.root,
+  };
+  // A member selection keeps producing today's exact shape, with neither new field set.
+  if (!subagentPath) return { agent, target: member };
+  if (!declaredSubagentPaths(repoPaths, agent.root).includes(subagentPath)) {
+    return null;
+  }
   return {
     agent,
     target: {
-      kind: "member",
-      memberName: isTeam ? agent.name : null,
-      root: agent.root,
+      ...member,
+      root: subagentRootFor(agent.root, subagentPath.split("/")),
+      deploymentRoot: agent.root,
+      subagentPath,
     },
   };
 }
@@ -316,13 +382,19 @@ export const loader = (args: LoaderFunctionArgs) =>
         projects,
         selectedProjectId: projectId,
         projectName: null as string | null,
-        roster: [] as { name: string }[],
+        /** Each member plus its declared subagents, as `/`-joined paths below the member root. */
+        roster: [] as Array<{ name: string; subagents: string[] }>,
         isTeam: false,
         newMemberTemplate: isAgentTemplate(type),
         singleAgentInvalid: false,
         missingModelDefault: false,
         selectedMember,
         newMemberName,
+        /**
+         * Set when the selection resolves to a declared subagent — the secrets step needs it to
+         * say where the value actually lands, since secrets stay deployment-scoped.
+         */
+        selectedSubagent: null as { member: string; path: string } | null,
         preview: null as PreviewData | null,
         provider: null as {
           id: string;
@@ -356,7 +428,15 @@ export const loader = (args: LoaderFunctionArgs) =>
       base.isTeam = ctx.isTeam;
       base.missingModelDefault =
         isAgentTemplate(type) && workspaceModel.model === null;
-      base.roster = ctx.roster.map((a) => ({ name: a.name }));
+      // Channels are root-only in eve, so `planInstall` refuses one at a subagent target: don't
+      // offer subagent options for a channel at all — an unofferable option is worse than none.
+      const offerSubagents = type !== "channel";
+      base.roster = ctx.roster.map((a) => ({
+        name: a.name,
+        subagents: offerSubagents
+          ? declaredSubagentPaths(source.paths, a.root)
+          : [],
+      }));
       if ((template.manifest.secrets?.length ?? 0) > 0) {
         try {
           base.sharedNames = [
@@ -424,13 +504,17 @@ export const loader = (args: LoaderFunctionArgs) =>
         return base;
       }
 
-      // Tool/skill/subagent → into an existing member.
+      // Tool/skill/subagent → into an existing member, or into one of its declared subagents.
       const resolved = resolveMemberTarget(
         ctx.roster,
         ctx.isTeam,
         selectedMember,
+        source.paths,
       );
       if (!resolved) return base;
+      base.selectedSubagent = resolved.target.subagentPath
+        ? { member: resolved.agent.name, path: resolved.target.subagentPath }
+        : null;
 
       const catalogProviders = await catalogProviderEvidence(
         getRuntime().catalog,
@@ -453,12 +537,15 @@ export const loader = (args: LoaderFunctionArgs) =>
         return base;
       }
 
-      // The target's current package.json (a staged draft wins) — needed only for the dep
-      // merge, so skip the read entirely when the template ships no dependencies.
+      // The DEPLOYMENT's current package.json (a staged draft wins) — needed only for the dep
+      // merge, so skip the read entirely when the template ships no dependencies. A subagent has
+      // no package.json of its own: its npm dependencies merge into its member's.
       const hasDeps =
         !!template.manifest.dependencies &&
         Object.keys(template.manifest.dependencies).length > 0;
-      const pkgPath = packageJsonPathForRoot(resolved.target.root);
+      const pkgPath = packageJsonPathForRoot(
+        resolved.target.deploymentRoot ?? resolved.target.root,
+      );
       const pkgDraft = drafts.find((d) => d.path === pkgPath);
       const packageJson = !hasDeps
         ? null
@@ -583,9 +670,12 @@ export async function action(args: ActionFunctionArgs) {
         ctx.roster,
         ctx.isTeam,
         selectedName,
+        source.paths,
       );
       if (!resolved) return { error: "Pick an agent to install into." };
       target = resolved.target;
+      // The roster member's agent row even for a subagent target: secrets are container env and a
+      // declared subagent shares its member's process, so they stay deployment-scoped.
       secretAgent = resolved.agent;
     }
 
@@ -594,11 +684,14 @@ export async function action(args: ActionFunctionArgs) {
         ? await catalogProviderEvidence(getRuntime().catalog, lock)
         : [];
 
-    // The target's package.json: a STAGED DRAFT wins over the branch copy — merging over the
-    // branch would silently drop dependencies a previously staged install already added.
+    // The DEPLOYMENT's package.json (a subagent has none of its own — its dependencies merge into
+    // its member's): a STAGED DRAFT wins over the branch copy, since merging over the branch would
+    // silently drop dependencies a previously staged install already added.
     let packageJson: string | null = null;
     if (secretAgent && target.kind === "member") {
-      const pkgPath = packageJsonPathForRoot(target.root);
+      const pkgPath = packageJsonPathForRoot(
+        target.deploymentRoot ?? target.root,
+      );
       const pkgDraft = drafts.find((d) => d.path === pkgPath);
       packageJson =
         pkgDraft !== undefined
@@ -846,6 +939,7 @@ export default function InstallWizard({
     singleAgentInvalid,
     missingModelDefault,
     selectedMember,
+    selectedSubagent,
     newMemberName,
     preview,
     provider,
@@ -855,6 +949,14 @@ export default function InstallWizard({
 
   const backTo = `/marketplace/${type}/${manifest.id}`;
   const hasConflicts = (preview?.conflicts.length ?? 0) > 0;
+  // The root-only rejection is one prose sentence, not a repo path — split it out so it reads as
+  // an explanation instead of a broken-looking path in the monospace list.
+  const rootOnlyConflict = preview?.conflicts.find((c) =>
+    c.startsWith(ROOT_ONLY_CONFLICT),
+  );
+  const fileConflicts = (preview?.conflicts ?? []).filter(
+    (c) => c !== rootOnlyConflict,
+  );
   // Issue #47: provisioned secrets are set by a guided harnesst flow (e.g. Create GitHub App on the
   // Deployment tab) — the wizard never collects them. Only the user-supplied ones get inputs; the
   // provisioned ones get a single muted note so the user isn't led to think they must provide them.
@@ -974,19 +1076,41 @@ export default function InstallWizard({
                 <Label>Agent</Label>
                 <Select
                   value={selectedMember ?? undefined}
-                  onValueChange={(name) => go({ member: name })}
+                  onValueChange={(value) => go({ member: value })}
                 >
                   <SelectTrigger className="w-full max-w-sm">
                     <SelectValue placeholder="Pick an agent to install into" />
                   </SelectTrigger>
                   <SelectContent>
-                    {roster.map((m) => (
+                    {/* A declared subagent is its own agent root, so it's a separate install
+                        target — listed under its member with the full hierarchy spelled out so
+                        the two scopes can't be mistaken for each other. */}
+                    {roster.flatMap((m) => [
                       <SelectItem key={m.name} value={m.name}>
                         {m.name}
-                      </SelectItem>
-                    ))}
+                      </SelectItem>,
+                      ...m.subagents.map((path) => (
+                        <SelectItem
+                          key={`${m.name}/${path}`}
+                          value={`${m.name}${SUBAGENT_SEPARATOR}${path}`}
+                        >
+                          {[m.name, ...path.split("/")].join(" › ")}
+                        </SelectItem>
+                      )),
+                    ])}
                   </SelectContent>
                 </Select>
+                {selectedSubagent && (
+                  <p className="text-xs text-muted-foreground">
+                    Files land in the{" "}
+                    <span className="font-mono">{selectedSubagent.path}</span>{" "}
+                    subagent; npm dependencies and secrets stay on{" "}
+                    <span className="font-medium">
+                      {selectedSubagent.member}
+                    </span>
+                    , which deploys it.
+                  </p>
+                )}
               </div>
             )}
 
@@ -1108,7 +1232,14 @@ export default function InstallWizard({
               </div>
             </CardHeader>
             <CardContent className="space-y-5">
-              {preview.conflicts.length > 0 && (
+              {rootOnlyConflict && (
+                <Alert variant="destructive">
+                  <AlertTitle>Can’t install into a subagent</AlertTitle>
+                  <AlertDescription>{rootOnlyConflict}</AlertDescription>
+                </Alert>
+              )}
+
+              {fileConflicts.length > 0 && (
                 <Alert variant="destructive">
                   <AlertTitle>Blocked by conflicts</AlertTitle>
                   <AlertDescription>
@@ -1117,7 +1248,7 @@ export default function InstallWizard({
                       automatically. Resolve them before installing:
                     </p>
                     <ul className="space-y-1 font-mono text-xs">
-                      {preview.conflicts.map((c) => (
+                      {fileConflicts.map((c) => (
                         <li key={c}>{c}</li>
                       ))}
                     </ul>
@@ -1387,6 +1518,10 @@ export default function InstallWizard({
                     {newMemberTemplate
                       ? `This agent needs ${userSecrets.length} secret${userSecrets.length === 1 ? "" : "s"}. Enter them now — they'll be attached when the agent goes live. Values are encrypted write-only.`
                       : "Stored per-agent, agent-wide. Values are encrypted write-only. Leave blank to set later in Settings."}
+                    {/* Secrets are container env and a declared subagent shares its member's
+                        process, so name the deployment rather than implying its own environment. */}
+                    {selectedSubagent &&
+                      ` These land on ${selectedSubagent.member}'s deployment, which the ${selectedSubagent.path} subagent runs inside.`}
                   </CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-5">

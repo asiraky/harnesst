@@ -21,6 +21,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { makeFakeStore, type FakeStore } from "../fakes/store";
+import type { CatalogSource, CatalogTemplate } from "~/seams/types";
 
 const mocks = vi.hoisted(() => ({
   auth: {
@@ -39,6 +40,7 @@ const mocks = vi.hoisted(() => ({
   resolveFileView: vi.fn(),
   stageDeletions: vi.fn(),
   stageDraft: vi.fn(),
+  catalog: { current: null as CatalogSource | null },
   store: { current: null as FakeStore | null },
 }));
 
@@ -77,7 +79,10 @@ vi.mock("~/project/guard.server", async (importOriginal) => ({
 }));
 
 vi.mock("~/seams/index.server", () => ({
-  getRuntime: () => ({ data: mocks.store.current }),
+  getRuntime: () => ({
+    data: mocks.store.current,
+    catalog: mocks.catalog.current,
+  }),
 }));
 
 const PROJECT = {
@@ -173,6 +178,8 @@ function reset(drafts: { path: string; content: string | null }[] = []) {
     root: "agents/sam/agent",
   });
   mocks.store.current = store;
+  // No catalog by default: the Settings loader only reaches for it once the lock has installs.
+  mocks.catalog.current = null;
   const source = { paths: PATHS, files: FILES };
   mocks.discardDrafts.mockReset().mockResolvedValue(undefined);
   mocks.fetchAgentSource.mockReset().mockResolvedValue(source);
@@ -201,6 +208,7 @@ function reset(drafts: { path: string; content: string | null }[] = []) {
 const categoryRoute = () =>
   import("~/routes/projects.$projectId.resources.$category");
 const editRoute = () => import("~/routes/projects.$projectId.edit");
+const settingsRoute = () => import("~/routes/projects.$projectId.settings");
 
 describe("capability matrix at the route boundary", () => {
   beforeEach(() => reset());
@@ -684,14 +692,11 @@ describe("editor templates at a nested root", () => {
 describe("intents at a nested Settings URL", () => {
   beforeEach(() => reset());
 
-  const settingsRoute = () => import("~/routes/projects.$projectId.settings");
-
   it.each([
     "delete-repository",
     "remove-agent",
     "rename-agent",
     "set-secret",
-    "update-install",
   ])("404s `%s` posted to a subagent's Settings URL", async (intent) => {
     const { action } = await settingsRoute();
     const response = await thrownFrom(
@@ -720,5 +725,206 @@ describe("intents at a nested Settings URL", () => {
       ),
     );
     expect(result).toEqual({ error: "Pick or enter a model." });
+  });
+
+  it.each([
+    ["update-install", "Missing install to update."],
+    ["uninstall", "Missing install to remove."],
+  ])(
+    "lets `%s` through — a declared subagent owns its own installs",
+    async (intent, error) => {
+      const { action } = await settingsRoute();
+      // Same shape as the model case: the intent fails its OWN validation, proving the
+      // nested-target gate dispatched it instead of refusing it.
+      const result = await action(
+        formArgs(
+          "https://h.example.com/repos/p1/agents/ivy/sub/researcher/settings",
+          { projectId: "p1", agentName: "ivy", subPath: "researcher" },
+          { intent },
+        ),
+      );
+      expect(result).toEqual({ error });
+    },
+  );
+});
+
+/**
+ * A declared subagent is its own agent root, so a marketplace install can target it — and the
+ * pre-feature locks that were hand-moved into one must not be dragged back to the member root.
+ */
+describe("marketplace installs at a nested Settings URL", () => {
+  const CITE_TOOL = `${RESEARCHER_ROOT}/tools/cite.ts`;
+
+  const citer: CatalogTemplate = {
+    assistantSkill: null,
+    manifest: {
+      id: "citer",
+      type: "connection",
+      name: "Citer",
+      description: "Cites things.",
+      version: "2.0.0",
+      eve: ">=0.22.0",
+      files: ["tools/cite.ts"],
+      dependencies: { "citer-sdk": "^1.0.0" },
+    },
+    files: { "tools/cite.ts": "export default {};\n" },
+  };
+
+  function lockWith(installs: object[]) {
+    return JSON.stringify({ version: 1, installs });
+  }
+
+  const BASE_ENTRY = {
+    id: "citer",
+    type: "connection",
+    name: "Citer",
+    version: "1.0.0",
+    hash: "h1",
+    registry: "fixture",
+    member: "ivy",
+  };
+
+  /** Re-point the repo reads at a tree that carries a lock and the member's package.json. */
+  function withLock(lockJson: string) {
+    const source = {
+      paths: [...PATHS, "agents/ivy/package.json"],
+      files: { ...FILES, "harnesst-lock.json": lockJson },
+    };
+    mocks.fetchAgentSource.mockResolvedValue(source);
+    mocks.getAgentSource.mockResolvedValue(source);
+    mocks.readAgentFile.mockResolvedValue(
+      JSON.stringify({ name: "ivy", private: true, dependencies: {} }) + "\n",
+    );
+    mocks.catalog.current = {
+      name: "test",
+      index: async () => ({
+        templates: [
+          {
+            id: "citer",
+            type: "connection" as const,
+            name: "Citer",
+            version: "2.0.0",
+            description: "A citation connection.",
+            hash: "h2",
+          },
+        ],
+      }),
+      template: async () => citer,
+    };
+  }
+
+  /** Every path staged as a write, and the content of one of them. */
+  function staged() {
+    const writes = mocks.stageDraft.mock.calls.map(([call]) => call);
+    return {
+      paths: writes.map((write) => write.path),
+      content: (path: string) =>
+        writes.find((write) => write.path === path)?.content ?? "",
+      deletions: mocks.stageDeletions.mock.calls.flatMap(([call]) => call.paths),
+    };
+  }
+
+  beforeEach(() => reset());
+
+  // The row is member-scoped, so it renders on the MEMBER's page — and it is still the
+  // subagent's install. Both surfaces have to correct it in place rather than fork a copy.
+  it.each([
+    [
+      "the subagent's own page",
+      "https://h.example.com/repos/p1/agents/ivy/sub/researcher/settings",
+      { projectId: "p1", agentName: "ivy", subPath: "researcher" },
+    ],
+    [
+      "the member's page",
+      "https://h.example.com/repos/p1/agents/ivy/settings",
+      { projectId: "p1", agentName: "ivy" },
+    ],
+  ])(
+    "updates a legacy member-scoped install at the subagent it was moved into, from %s",
+    async (_label, url, params) => {
+      // The customer's damage in lock form: the row claims member scope, every file it owns is
+      // already inside the subagent. Recomputing paths from the member root would delete them.
+      withLock(lockWith([{ ...BASE_ENTRY, files: [CITE_TOOL] }]));
+      const { action } = await settingsRoute();
+      const response = await thrownFrom(
+        action(
+          formArgs(url, params, {
+            intent: "update-install",
+            type: "connection",
+            id: "citer",
+            member: "ivy",
+          }),
+        ),
+      );
+      expect(response.status).toBe(302);
+      const { paths, content, deletions } = staged();
+      expect(paths).toContain(CITE_TOOL);
+      expect(paths).not.toContain(`${IVY_ROOT}/tools/cite.ts`);
+      expect(deletions).not.toContain(CITE_TOOL);
+      // Dependencies belong to the deployment — the member's package.json, not the subagent's.
+      expect(content("agents/ivy/package.json")).toContain("citer-sdk");
+      // The inferred scope rides along in the staged lock, so a human reviews the correction.
+      const lock = JSON.parse(content("harnesst-lock.json"));
+      expect(lock.installs).toMatchObject([
+        { subagent: "researcher", version: "2.0.0", files: [CITE_TOOL] },
+      ]);
+    },
+  );
+
+  it("uninstalls the subagent's row and leaves the member's same-id install alone", async () => {
+    withLock(
+      lockWith([
+        { ...BASE_ENTRY, files: [`${IVY_ROOT}/tools/cite.ts`] },
+        { ...BASE_ENTRY, subagent: "researcher", files: [CITE_TOOL] },
+      ]),
+    );
+    const { action } = await settingsRoute();
+    const response = await thrownFrom(
+      action(
+        formArgs(
+          "https://h.example.com/repos/p1/agents/ivy/sub/researcher/settings",
+          { projectId: "p1", agentName: "ivy", subPath: "researcher" },
+          {
+            intent: "uninstall",
+            id: "citer",
+            member: "ivy",
+            subagent: "researcher",
+          },
+        ),
+      ),
+    );
+    expect(response.status).toBe(302);
+    const { content, deletions } = staged();
+    expect(deletions).toEqual([CITE_TOOL]);
+    const lock = JSON.parse(content("harnesst-lock.json"));
+    expect(lock.installs).toHaveLength(1);
+    expect(lock.installs[0].subagent).toBeUndefined();
+    expect(lock.installs[0].files).toEqual([`${IVY_ROOT}/tools/cite.ts`]);
+  });
+
+  it("lists each surface's own installs", async () => {
+    withLock(
+      lockWith([
+        { ...BASE_ENTRY, files: [`${IVY_ROOT}/tools/cite.ts`] },
+        { ...BASE_ENTRY, subagent: "researcher", files: [CITE_TOOL] },
+      ]),
+    );
+    const { loader } = await settingsRoute();
+    const nested = await loader(
+      routeArgs(
+        "https://h.example.com/repos/p1/agents/ivy/sub/researcher/settings",
+        { projectId: "p1", agentName: "ivy", subPath: "researcher" },
+      ),
+    );
+    expect(nested.installs.map((install) => install.subagent)).toEqual([
+      "researcher",
+    ]);
+    const member = await loader(
+      routeArgs("https://h.example.com/repos/p1/agents/ivy/settings", {
+        projectId: "p1",
+        agentName: "ivy",
+      }),
+    );
+    expect(member.installs.map((install) => install.subagent)).toEqual([""]);
   });
 });

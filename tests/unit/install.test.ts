@@ -14,6 +14,7 @@ import {
   installedFilePath,
   planInstall,
   planUninstall,
+  type InstallPlan,
   type PlanContext,
 } from "~/marketplace/install.server";
 import { platformPathsUnderCheck } from "~/marketplace/platform";
@@ -2008,5 +2009,364 @@ describe("planUninstall", () => {
       plan.writes.find((w) => w.path === "agents/pm/agent/sandbox/sandbox.ts")!
         .content,
     ).toContain("const addons = [];");
+  });
+});
+
+/**
+ * Installs targeting a DECLARED eve subagent (issue #344). A subagent root is its own agent root
+ * and inherits nothing from its parent, so a connection's files have to land INSIDE it — while
+ * package.json, the sibling `harnesst/` platform tree and the sandbox stay at the member's
+ * DEPLOYMENT root, because a subagent runs inside and ships with its member's container. The
+ * optional `deploymentRoot`/`subagentPath` carry exactly that split, and their absence has to keep
+ * every pre-existing caller planning what it always planned.
+ */
+const SUBAGENT_ROOT = "agents/pm/agent/subagents/reader";
+
+/** A tool that also ships a platform file — the pair that must split across the two roots. */
+const platformToolTpl: CatalogTemplate = {
+  assistantSkill: null,
+  manifest: {
+    id: "agentmail",
+    type: "tool",
+    name: "AgentMail",
+    description: "Read and send mail.",
+    version: "0.1.0",
+    eve: ">=0.1.0",
+    files: ["tools/agentmail-send.ts", "harnesst/agentmail-runtime.ts"],
+  },
+  files: {
+    "tools/agentmail-send.ts": "export default {};\n",
+    "harnesst/agentmail-runtime.ts": "export function runtime() {}\n",
+  },
+};
+
+/** A tool that also ships a schedule — root-only in eve, exactly like a channel. */
+const scheduledToolTpl: CatalogTemplate = {
+  assistantSkill: null,
+  manifest: {
+    id: "daily-digest",
+    type: "tool",
+    name: "Daily Digest",
+    description: "Summarize the day.",
+    version: "0.1.0",
+    eve: ">=0.1.0",
+    files: ["tools/digest.ts", "schedules/daily.ts"],
+  },
+  files: {
+    "tools/digest.ts": "export default {};\n",
+    "schedules/daily.ts": "export default {};\n",
+  },
+};
+
+/**
+ * A member target whose FILES land in a declared subagent of `pm`, which still deploys with `pm`.
+ * `root` is the subagent's own directory: one `subagents/<name>` level per path segment.
+ */
+function subagentTarget(subagentPath: string): PlanContext["target"] {
+  const segments = subagentPath.split("/").map((name) => `subagents/${name}`);
+  return {
+    kind: "member",
+    memberName: "pm",
+    root: ["agents/pm/agent", ...segments].join("/"),
+    deploymentRoot: "agents/pm/agent",
+    subagentPath,
+  };
+}
+
+function subagentCtx(over: Partial<PlanContext> = {}): PlanContext {
+  return memberCtx({ target: subagentTarget("reader"), ...over });
+}
+
+/** The next lock, parsed back out of a plan's staged `harnesst-lock.json` write. */
+function lockFrom(plan: InstallPlan): HarnesstLock {
+  return parseLock(
+    JSON.parse(
+      plan.writes.find((w) => w.path === "harnesst-lock.json")!.content,
+    ),
+  );
+}
+
+describe("planInstall — subagent targets (issue #344)", () => {
+  it("plans a plain member target exactly as before the fields existed", () => {
+    const plan = planInstall(memberCtx());
+    expect(plan.writes.map((w) => w.path)).toEqual([
+      "agents/pm/agent/tools/cloudflare-deploy.ts",
+      "agents/pm/package.json",
+      "harnesst-lock.json",
+    ]);
+    const lockWrite = plan.writes.find((w) => w.path === "harnesst-lock.json")!;
+    const entry = findInstall(
+      parseLock(JSON.parse(lockWrite.content)),
+      "cloudflare-deploy",
+      "pm",
+    )!;
+    expect(entry.files).toEqual(["agents/pm/agent/tools/cloudflare-deploy.ts"]);
+    // OMITTED, not `""`. A member-level install must serialize byte-identically to what it did
+    // before subagents existed, so the key may not appear in the entry at all — an empty-string
+    // default would rewrite every lock in every customer repo on the next touch.
+    expect("subagent" in entry).toBe(false);
+    expect(lockWrite.content).not.toContain("subagent");
+  });
+
+  it("lands the template's files inside the subagent, deps in the member's package.json", () => {
+    const plan = planInstall(subagentCtx());
+    const paths = plan.writes.map((w) => w.path);
+    expect(paths).toContain(`${SUBAGENT_ROOT}/tools/cloudflare-deploy.ts`);
+    expect(paths).not.toContain("agents/pm/agent/tools/cloudflare-deploy.ts");
+    // The subagent has no npm project of its own — it deploys with `pm`, so the dep merges there.
+    expect(paths).toContain("agents/pm/package.json");
+    expect(JSON.parse(
+      plan.writes.find((w) => w.path === "agents/pm/package.json")!.content,
+    ).dependencies).toEqual({ wrangler: "^3.0.0", zod: "^3.23.0" });
+    expect(plan.conflicts).toEqual([]);
+
+    const entry = findInstall(lockFrom(plan), "cloudflare-deploy", "pm", "reader")!;
+    expect(entry.subagent).toBe("reader");
+    expect(entry.files).toEqual([`${SUBAGENT_ROOT}/tools/cloudflare-deploy.ts`]);
+  });
+
+  it("nests one `subagents/` level per path segment and scopes the lock row to the chain", () => {
+    const plan = planInstall(
+      subagentCtx({ target: subagentTarget("reader/skim") }),
+    );
+    expect(plan.writes.map((w) => w.path)).toContain(
+      "agents/pm/agent/subagents/reader/subagents/skim/tools/cloudflare-deploy.ts",
+    );
+    const lock = lockFrom(plan);
+    expect(
+      findInstall(lock, "cloudflare-deploy", "pm", "reader/skim")!.subagent,
+    ).toBe("reader/skim");
+    // Identity is (id, member, subagent): neither the member nor the parent subagent owns this.
+    expect(findInstall(lock, "cloudflare-deploy", "pm")).toBeUndefined();
+    expect(findInstall(lock, "cloudflare-deploy", "pm", "reader")).toBeUndefined();
+  });
+
+  it("keeps the sandbox add-on and the managed module at the deployment root", () => {
+    const plan = planInstall(
+      subagentCtx({ template: browserSkillTpl, packageJson: null }),
+    );
+    const paths = plan.writes.map((w) => w.path);
+    expect(paths).toContain(`${SUBAGENT_ROOT}/skills/agent-browser.md`);
+    // A marketplace template's sandbox setup belongs to the deployment that runs it, and a
+    // subagent has no container of its own.
+    expect(paths).toContain("agents/pm/agent/sandbox/addons/agent-browser.ts");
+    expect(paths).toContain("agents/pm/agent/sandbox/sandbox.ts");
+    expect(paths.some((p) => p.startsWith(`${SUBAGENT_ROOT}/sandbox/`))).toBe(
+      false,
+    );
+    // The member's module still imports it — `sandboxEntries` sees the whole deployment.
+    expect(
+      plan.writes.find((w) => w.path === "agents/pm/agent/sandbox/sandbox.ts")!
+        .content,
+    ).toContain('import * as addon0 from "./addons/agent-browser.js";');
+  });
+
+  it("resolves a `harnesst/` platform file to the MEMBER's sibling platform root", () => {
+    const plan = planInstall(
+      subagentCtx({ template: platformToolTpl, packageJson: null }),
+    );
+    const paths = plan.writes.map((w) => w.path);
+    expect(paths).toContain(`${SUBAGENT_ROOT}/tools/agentmail-send.ts`);
+    expect(paths).toContain("agents/pm/harnesst/agentmail-runtime.ts");
+    // Deriving the platform root from the subagent root yields
+    // `agents/pm/agent/subagents/harnesst` — harnesst's own code smuggled into an eve subagent
+    // tree, which eve hard-errors on. Neither that nor a `harnesst/` dir inside the subagent.
+    expect(paths.some((p) => p.includes("subagents/harnesst"))).toBe(false);
+    expect(paths.some((p) => p.startsWith(`${SUBAGENT_ROOT}/harnesst/`))).toBe(
+      false,
+    );
+    expect(
+      Object.keys(
+        findInstall(lockFrom(plan), "agentmail", "pm", "reader")!.platformFiles ?? {},
+      ),
+    ).toEqual(["agents/pm/harnesst/agentmail-runtime.ts"]);
+  });
+
+  it("installedFilePath takes the deployment root explicitly; two args still mean one root", () => {
+    expect(
+      installedFilePath(SUBAGENT_ROOT, "tools/x.ts", "agents/pm/agent"),
+    ).toBe(`${SUBAGENT_ROOT}/tools/x.ts`);
+    expect(
+      installedFilePath(SUBAGENT_ROOT, "harnesst/x.ts", "agents/pm/agent"),
+    ).toBe("agents/pm/harnesst/x.ts");
+    expect(installedFilePath(SUBAGENT_ROOT, "harnesst/x.ts")).toBe(
+      "agents/pm/agent/subagents/harnesst/x.ts",
+    );
+  });
+
+  it("installs the same template at a member and at its subagent as two independent rows", () => {
+    const memberPlan = planInstall(memberCtx());
+    const subPlan = planInstall(
+      subagentCtx({
+        lock: lockFrom(memberPlan),
+        repoPaths: ["agents/pm/agent/tools/cloudflare-deploy.ts"],
+      }),
+    );
+    // A different agent root is a FIRST install, not an update of the member's.
+    expect(subPlan.isUpdate).toBe(false);
+    expect(subPlan.conflicts).toEqual([]);
+    expect(subPlan.deletions).toEqual([]);
+
+    const lock = lockFrom(subPlan);
+    expect(lock.installs).toHaveLength(2);
+    const atMember = findInstall(lock, "cloudflare-deploy", "pm")!;
+    const atReader = findInstall(lock, "cloudflare-deploy", "pm", "reader")!;
+    expect(atMember.files).toEqual([
+      "agents/pm/agent/tools/cloudflare-deploy.ts",
+    ]);
+    expect(atReader.files).toEqual([
+      `${SUBAGENT_ROOT}/tools/cloudflare-deploy.ts`,
+    ]);
+    expect("subagent" in atMember).toBe(false);
+    expect(atReader.subagent).toBe("reader");
+  });
+
+  it("updates a subagent-scoped install in place instead of relocating it to the member", () => {
+    const prior: InstallEntry = {
+      id: "cloudflare-deploy",
+      type: "tool",
+      name: "Cloudflare Deploy",
+      version: "0.0.9",
+      hash: "old",
+      registry: REGISTRY,
+      member: "pm",
+      subagent: "reader",
+      files: [`${SUBAGENT_ROOT}/tools/cloudflare-deploy.ts`],
+      dependencies: { wrangler: "^3.0.0" },
+    };
+    const plan = planInstall(
+      subagentCtx({
+        lock: upsertInstall(emptyLock(), prior),
+        repoPaths: prior.files,
+      }),
+    );
+    expect(plan.isUpdate).toBe(true);
+    // The bug the feature exists to kill: recomputing paths from the MEMBER root planned a
+    // deletion of every subagent file and re-created them one level up, silently stripping the
+    // subagent's tools on a routine version bump.
+    expect(plan.deletions).toEqual([]);
+    expect(plan.conflicts).toEqual([]);
+    expect(plan.writes.map((w) => w.path)).toContain(
+      `${SUBAGENT_ROOT}/tools/cloudflare-deploy.ts`,
+    );
+    const lock = lockFrom(plan);
+    expect(lock.installs).toHaveLength(1);
+    const entry = findInstall(lock, "cloudflare-deploy", "pm", "reader")!;
+    expect(entry.version).toBe("0.1.0");
+    expect(entry.files).toEqual(prior.files);
+  });
+});
+
+describe("planInstall — channels and schedules are root-only (issue #344)", () => {
+  const ROOT_ONLY = "Channels and schedules are root-only in eve";
+
+  it("refuses a channel template at a subagent target and stages nothing", () => {
+    const plan = planInstall(
+      subagentCtx({ template: foldedChannelTpl, packageJson: null }),
+    );
+    expect(plan.conflicts).toHaveLength(1);
+    expect(plan.conflicts[0]).toContain(ROOT_ONLY);
+    expect(plan.conflicts[0]).toContain("reader");
+    // eve wires channels from the member's own config; a half-written install is worse than none.
+    expect(plan.writes).toEqual([]);
+    expect(plan.deletions).toEqual([]);
+    // "Keep existing files" cannot rescue this — the files have nowhere valid to go.
+    expect(plan.canKeepExistingFiles).toBe(false);
+  });
+
+  it("refuses a template shipping a `schedules/` file at a subagent target", () => {
+    const plan = planInstall(
+      subagentCtx({ template: scheduledToolTpl, packageJson: null }),
+    );
+    expect(plan.conflicts).toHaveLength(1);
+    expect(plan.conflicts[0]).toContain(ROOT_ONLY);
+    expect(plan.writes).toEqual([]);
+  });
+
+  it("installs both of them normally at the member itself", () => {
+    const channel = planInstall(
+      memberCtx({ template: foldedChannelTpl, packageJson: null }),
+    );
+    expect(channel.conflicts).toEqual([]);
+    expect(channel.writes.map((w) => w.path)).toContain(
+      "agents/pm/agent/channels/github.ts",
+    );
+
+    const scheduled = planInstall(
+      memberCtx({ template: scheduledToolTpl, packageJson: null }),
+    );
+    expect(scheduled.conflicts).toEqual([]);
+    expect(scheduled.writes.map((w) => w.path)).toContain(
+      "agents/pm/agent/schedules/daily.ts",
+    );
+  });
+});
+
+describe("planUninstall — subagent scope (issue #344)", () => {
+  const atMember: InstallEntry = {
+    id: "cloudflare-deploy",
+    type: "tool",
+    name: "Cloudflare Deploy",
+    version: "0.1.0",
+    hash: "abc",
+    registry: REGISTRY,
+    member: "pm",
+    files: ["agents/pm/agent/tools/cloudflare-deploy.ts"],
+    dependencies: { wrangler: "^3.0.0" },
+  };
+  const atReader: InstallEntry = {
+    ...atMember,
+    subagent: "reader",
+    files: [
+      `${SUBAGENT_ROOT}/tools/cloudflare-deploy.ts`,
+      `${SUBAGENT_ROOT}/tools/helper.ts`,
+    ],
+  };
+  const lock: HarnesstLock = upsertInstall(
+    upsertInstall(emptyLock(), atMember),
+    atReader,
+  );
+  const repoPaths = [...atMember.files, ...atReader.files];
+
+  it("deletes only the subagent's files and leaves the member's install standing", () => {
+    const plan = planUninstall({
+      lock,
+      id: "cloudflare-deploy",
+      memberName: "pm",
+      subagentPath: "reader",
+      repoPaths,
+    });
+    expect(plan.notFound).toBe(false);
+    expect(plan.deletions).toEqual(atReader.files);
+    const parsed = parseLock(JSON.parse(plan.lockWrite.content));
+    expect(findInstall(parsed, "cloudflare-deploy", "pm", "reader")).toBeUndefined();
+    expect(findInstall(parsed, "cloudflare-deploy", "pm")).toEqual(atMember);
+  });
+
+  it("a member-scope uninstall never touches the subagent's copy", () => {
+    const plan = planUninstall({
+      lock,
+      id: "cloudflare-deploy",
+      memberName: "pm",
+      repoPaths,
+    });
+    expect(plan.deletions).toEqual(atMember.files);
+    const parsed = parseLock(JSON.parse(plan.lockWrite.content));
+    expect(findInstall(parsed, "cloudflare-deploy", "pm")).toBeUndefined();
+    expect(findInstall(parsed, "cloudflare-deploy", "pm", "reader")).toEqual(
+      atReader,
+    );
+  });
+
+  it("reports notFound for a scope that has no install, even when the member does", () => {
+    const plan = planUninstall({
+      lock: upsertInstall(emptyLock(), atMember),
+      id: "cloudflare-deploy",
+      memberName: "pm",
+      subagentPath: "reader",
+      repoPaths,
+    });
+    expect(plan.notFound).toBe(true);
+    expect(plan.deletions).toEqual([]);
   });
 });

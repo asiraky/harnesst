@@ -20,6 +20,7 @@
     "catalog:validate": "node catalog/scripts/validate.mjs",
     "lint:shipped": "tsx scripts/lint-shipped.ts",
     "smoke:agent-image": "tsx scripts/smoke-agent-image.ts",
+    "smoke:subagent-install": "tsx scripts/smoke-subagent-install.ts",
     "catalog:index": "node catalog/scripts/build-index.mjs",
     "doctor": "npx react-doctor@latest",
     "email:dev": "email dev --dir app/email/templates --port 8092"

@@ -254,6 +254,15 @@ function firstMarkdownLine(markdown: string | undefined): string | null {
 }
 
 /**
+ * The repo-relative root of a declared subagent: the owning agent root with a `subagents/` level
+ * interleaved per segment. eve marks a subagent purely by its location under `subagents/`, so this
+ * one-line convention is what every surface that addresses a nested agent root must agree on.
+ */
+export function subagentRootFor(agentRoot: string, segments: string[]): string {
+  return [agentRoot, ...segments.flatMap((name) => ["subagents", name])].join("/");
+}
+
+/**
  * The directory-backed subagent names under `<root>/subagents/`, deduped and sorted. Matches
  * childrenOf's "directory child" rule so it agrees with buildAgentConfig's `subagents` list.
  */
