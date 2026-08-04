@@ -555,6 +555,34 @@ describe("relocateLegacyModelModuleDrafts (issue #254)", () => {
     expect(find(files, "agent/instructions.md")?.content).toBe("hi");
   });
 
+  it("repairs a staged gateway declaration misplaced inside a multiline provider factory", async () => {
+    const malformed = `import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
+const openrouter = createOpenAICompatible({
+const harnesstGateway = createOpenAICompatible({ name: 'harnesst', baseURL: process.env.HARNESST_MODEL_GATEWAY_URL ?? '', apiKey: process.env.HARNESST_MODEL_GATEWAY_TOKEN ?? '' });
+  name: "openrouter",
+});
+`;
+    seedRepo({ "agents/ivy/agent/subagents/legal-advisor/agent.ts": malformed });
+
+    const files = await normalizeOpenRouterPackageDrafts({
+      project: PROJECT,
+      files: [
+        {
+          path: "agents/ivy/agent/subagents/legal-advisor/agent.ts",
+          content: malformed,
+        },
+      ],
+    });
+
+    const repaired = find(
+      files,
+      "agents/ivy/agent/subagents/legal-advisor/agent.ts",
+    )?.content;
+    expect(repaired?.indexOf("const harnesstGateway")).toBeLessThan(
+      repaired?.indexOf("const openrouter") ?? -1,
+    );
+  });
+
   it("ignores members the change-set doesn't touch", async () => {
     seedRepo({ "agents/sam/agent/harnesst-model.ts": MODULE });
 

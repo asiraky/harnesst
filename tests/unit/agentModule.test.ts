@@ -7,6 +7,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 
 import { describe, expect, it } from "vitest";
+import ts from "typescript";
 
 import {
   ensureModelProviderDependencies,
@@ -16,10 +17,21 @@ import {
   readModel,
   readModelContextWindow,
   readReasoningEffort,
+  repairHarnesstGatewayWiring,
   scaffoldAgentModule,
   setModel,
   setOrgResolverSubagentPath,
 } from "~/eve/agentModule";
+
+function expectSyntacticallyValid(source: string): void {
+  const result = ts.transpileModule(source, {
+    compilerOptions: { target: ts.ScriptTarget.ES2022 },
+    reportDiagnostics: true,
+  });
+  expect(result.diagnostics?.filter((d) => d.category === ts.DiagnosticCategory.Error)).toEqual(
+    [],
+  );
+}
 
 /**
  * An agent.ts in the shape customer repos hold it — harnesst's router and directive selector,
@@ -311,6 +323,45 @@ export default defineAgent({
       "const harnesstGateway = createOpenAICompatible({ name: 'harnesst', baseURL: process.env.HARNESST_MODEL_GATEWAY_URL ?? '', apiKey: process.env.HARNESST_MODEL_GATEWAY_TOKEN ?? '' });",
     );
     expect(readModel(next)).toBe(id);
+  });
+
+  it("keeps the gateway top-level when the existing OpenRouter factory is multiline", () => {
+    const source = `import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
+import { defineAgent } from "eve";
+
+const openrouter = createOpenAICompatible({
+  name: "openrouter",
+  baseURL: "https://openrouter.ai/api/v1",
+  apiKey: process.env.OPENROUTER_API_KEY ?? "",
+});
+
+export default defineAgent({
+  model: openrouter.chatModel("openai/gpt-5.6-sol"),
+});
+`;
+
+    const next = setModel(source, "codex/abcdefghijkl/gpt-5.5");
+
+    expectSyntacticallyValid(next);
+    expect(next.indexOf("const harnesstGateway")).toBeLessThan(
+      next.indexOf("const openrouter"),
+    );
+  });
+
+  it("repairs the previously generated gateway declaration inside an OpenRouter object", () => {
+    const malformed = `import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
+const openrouter = createOpenAICompatible({
+const harnesstGateway = createOpenAICompatible({ name: 'harnesst', baseURL: process.env.HARNESST_MODEL_GATEWAY_URL ?? '', apiKey: process.env.HARNESST_MODEL_GATEWAY_TOKEN ?? '' });
+  name: "openrouter",
+});
+`;
+
+    const repaired = repairHarnesstGatewayWiring(malformed);
+
+    expectSyntacticallyValid(repaired);
+    expect(repaired.indexOf("const harnesstGateway")).toBeLessThan(
+      repaired.indexOf("const openrouter"),
+    );
   });
 
   it("upgrades pre-#112 generated wiring for a Codex model", () => {

@@ -368,6 +368,22 @@ function insertProviderImport(source: string, statement: string): string {
   return `${source.slice(0, at)}${statement}${source.slice(at)}`;
 }
 
+/**
+ * Repair the one malformed shape emitted before #354: the generated gateway declaration was
+ * inserted immediately after a multiline OpenRouter factory's opening `{`, making it an object
+ * member. This is deliberately narrow to harnesst's own declaration (the gateway env var is the
+ * provenance marker), so publish-time coherence never moves user-authored code.
+ */
+export function repairHarnesstGatewayWiring(source: string): string {
+  const misplaced =
+    /(const\s+openrouter\s*=\s*createOpenAICompatible\s*\(\s*\{[ \t]*\r?\n)([ \t]*const\s+harnesstGateway\s*=\s*createOpenAICompatible\([^\r\n]*HARNESST_MODEL_GATEWAY_URL[^\r\n]*\);[ \t]*\r?\n)/;
+  const match = source.match(misplaced);
+  if (!match) return source;
+  const declaration = match[2].trimStart();
+  const withoutMisplacedDeclaration = source.replace(misplaced, "$1");
+  return insertProviderImport(withoutMisplacedDeclaration, declaration);
+}
+
 function withNamedProviderImport(
   source: string,
   packageName: string,
@@ -443,24 +459,15 @@ function withModelProviderWiring(source: string): string {
 
 /**
  * Ensure the `harnesstGateway` factory const exists (issue #28) so a `codex/*` fallback/directive can
- * route through harnesst's model gateway. Runs after `withModelProviderWiring` (which guarantees the
- * openrouter factory), inserting the gateway factory right after it; the `harnesstModel` router itself
- * ships in HARNESST_MODEL_HELPER via `withHarnesstDynamicWiring`.
+ * route through harnesst's model gateway. Runs after `withModelProviderWiring`, which guarantees the
+ * provider import. Insert after the imports: that position is unambiguously top-level for both
+ * one-line and multiline provider factories. The `harnesstModel` router itself ships in
+ * HARNESST_MODEL_HELPER via `withHarnesstDynamicWiring`.
  */
 function withHarnesstGatewayWiring(source: string): string {
-  if (/\bharnesstGateway\s*=/.test(source)) return source;
-  const factory = source.match(/const\s+openrouter\s*=[^\n]*\n/);
-  if (factory && factory.index !== undefined) {
-    const at = factory.index + factory[0].length;
-    return `${source.slice(0, at)}${HARNESST_GATEWAY_FACTORY}${source.slice(at)}`;
-  }
-  const imports = importDeclarations(source);
-  if (imports.length > 0) {
-    const last = imports[imports.length - 1];
-    const at = (last.index ?? 0) + last[0].length;
-    return `${source.slice(0, at)}\n${HARNESST_GATEWAY_FACTORY}${source.slice(at)}`;
-  }
-  return `${HARNESST_GATEWAY_FACTORY}\n${source}`;
+  const repaired = repairHarnesstGatewayWiring(source);
+  if (/\bharnesstGateway\s*=/.test(repaired)) return repaired;
+  return insertProviderImport(repaired, HARNESST_GATEWAY_FACTORY);
 }
 
 function withContextWindow(source: string, tokens: number): string {
