@@ -560,11 +560,14 @@ export async function runPublish(
    */
   const runBuildStep = async (files: PublishFile[]): Promise<boolean> => {
     const buildStep = step("build");
-    const roots = inferBuildRoots(agents, drafts);
-    const buildRoots = !roots || roots.length === 0 ? [undefined] : roots;
-    const labelFor = (root: string | undefined): string =>
+    // The data port returns internal rows too. Only roster members are runnable Eve projects; the
+    // built-in assistant has its own image lifecycle and its `.harnesst/assistant` config was
+    // already excluded by inferBuildRoots.
+    const buildAgents = agents.filter((agent) => agent.kind === "member");
+    const buildRoots = inferBuildRoots(buildAgents, drafts);
+    const labelFor = (root: string): string =>
       agents.find((a) => a.root === root)?.name ??
-      root?.match(/^agents\/([^/]+)\//)?.[1] ??
+      root.match(/^agents\/([^/]+)\//)?.[1] ??
       "the repository";
     buildStep.status = "running";
     const subs = buildRoots.map((root) => ({
