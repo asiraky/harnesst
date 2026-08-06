@@ -1,5 +1,6 @@
 {
   "id": "xero",
+  "subagentCompatible": true,
   "type": "connection",
   "name": "Xero",
   "description": "Bookkeeping operations against a Xero organisation through harnesst's brokered-capability framework: the agent's container never holds any Xero credential. harnesst keeps the OAuth grant and executes only a whitelisted set of operations — read reference data, search bills, look up and create contacts, and create DRAFT bills (a human approves them in Xero) with attached source files. Which operation groups are enabled is your choice at install time and editable any time from the Deployment tab, with instant effect.",

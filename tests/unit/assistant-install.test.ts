@@ -20,6 +20,7 @@ const connection: CatalogTemplate = {
     description: "Connects to Example.",
     version: "1.0.0",
     eve: ">=0.22.0",
+    subagentCompatible: true,
     files: ["tools/example-api.ts"],
     dependencies: { "example-sdk": "^2.0.0" },
     secrets: [{ name: "EXAMPLE_TOKEN", sandbox: true }],
@@ -60,6 +61,7 @@ const bundle: CatalogTemplate = {
     description: "The full Example integration.",
     version: "1.0.0",
     eve: ">=0.22.0",
+    subagentCompatible: true,
     files: [],
     includes: [{ type: "connection", id: "example-api" }],
   },
@@ -75,9 +77,12 @@ const agent: CatalogTemplate = {
     description: "A ready-made teammate.",
     version: "1.0.0",
     eve: ">=0.22.0",
+    subagentCompatible: false,
     files: ["agent.ts"],
   },
-  files: { "agent.ts": 'export default defineAgent({ model: "anthropic/x" });\n' },
+  files: {
+    "agent.ts": 'export default defineAgent({ model: "anthropic/x" });\n',
+  },
 };
 
 function harness(options?: {
@@ -129,7 +134,12 @@ function harness(options?: {
     catalog,
     fetchSource: async () => ({
       paths: options?.team
-        ? ["agents/pm/agent/agent.ts", "agents/pm/package.json"]
+        ? [
+            "agents/pm/agent/agent.ts",
+            "agents/pm/package.json",
+            // A declared subagent of `pm`, so a subagent-targeted install has somewhere to land.
+            "agents/pm/agent/subagents/reader/agent.ts",
+          ]
         : [
             "agent/agent.ts",
             "package.json",
@@ -198,7 +208,9 @@ describe("assistant marketplace install", () => {
     ]);
 
     const drafts = await listDrafts(project.id, store);
-    const lockDraft = drafts.find((draft) => draft.path === "harnesst-lock.json");
+    const lockDraft = drafts.find(
+      (draft) => draft.path === "harnesst-lock.json",
+    );
     const lock = parseLock(JSON.parse(lockDraft?.content ?? "null"));
     expect(lock.installs[0]).toMatchObject({
       id: "example-bundle",
@@ -256,7 +268,9 @@ describe("assistant marketplace install", () => {
     expect(update).toMatchObject({ ok: true, isUpdate: true });
 
     const drafts = await listDrafts(project.id, store);
-    const lockDraft = drafts.find((draft) => draft.path === "harnesst-lock.json");
+    const lockDraft = drafts.find(
+      (draft) => draft.path === "harnesst-lock.json",
+    );
     const lock = parseLock(JSON.parse(lockDraft?.content ?? "null"));
     expect(lock.installs[0].auth?.[0].selectedGroups).toEqual(["write"]);
   });
@@ -282,7 +296,9 @@ describe("assistant marketplace install", () => {
       { kind: "set", name: "EXAMPLE_TOKEN", value: "s3cr3t", sandbox: true },
     ]);
     const drafts = await listDrafts(project.id, store);
-    expect(drafts.some((draft) => draft.path === "harnesst-lock.json")).toBe(true);
+    expect(drafts.some((draft) => draft.path === "harnesst-lock.json")).toBe(
+      true,
+    );
   });
 
   it("stages nothing when the GitHub-App credential guard rejects the install", async () => {
@@ -290,7 +306,10 @@ describe("assistant marketplace install", () => {
     const result = await installMarketplaceTemplate(
       project,
       { type: "connection", id: "example-api", member: "agent" },
-      { ...deps, credentialConflict: async () => "Another agent uses this App." },
+      {
+        ...deps,
+        credentialConflict: async () => "Another agent uses this App.",
+      },
     );
 
     expect(result).toMatchObject({
@@ -362,4 +381,64 @@ describe("assistant marketplace install", () => {
       error: expect.stringContaining("type"),
     });
   });
+
+  it("installs into a declared subagent, with dependencies at the member", async () => {
+    const { project, store, deps } = harness({ team: true });
+    const result = await installMarketplaceTemplate(
+      project,
+      {
+        type: "connection",
+        id: "example-api",
+        member: "pm",
+        subagent: "reader",
+      },
+      deps,
+    );
+
+    expect(result).toMatchObject({ ok: true });
+    if (!result.ok) return;
+    // A declared subagent is its own agent root — the tool belongs inside it, the npm dependency
+    // belongs to the deployment that runs it.
+    expect(result.writes).toContain(
+      "agents/pm/agent/subagents/reader/tools/example-api.ts",
+    );
+    expect(result.writes).toContain("agents/pm/package.json");
+    const drafts = await listDrafts(project.id, store);
+    const lock = parseLock(
+      JSON.parse(
+        drafts.find((draft) => draft.path === "harnesst-lock.json")?.content ??
+          "null",
+      ),
+    );
+    expect(lock.installs).toMatchObject([
+      {
+        id: "example-api",
+        member: "pm",
+        subagent: "reader",
+        files: expect.arrayContaining([
+          "agents/pm/agent/subagents/reader/tools/example-api.ts",
+          // The sandbox the tool runs in is the member's, so its add-on stays at the member root.
+          "agents/pm/agent/subagents/reader/sandbox/addons/example-api.ts",
+        ]),
+      },
+    ]);
+  });
+
+  it.each(["ghost", "../../sam", "reader/ghost"])(
+    "refuses the undeclared subagent path %s rather than creating it",
+    async (subagent) => {
+      const { project, store, deps } = harness({ team: true });
+      const result = await installMarketplaceTemplate(
+        project,
+        { type: "connection", id: "example-api", member: "pm", subagent },
+        deps,
+      );
+
+      expect(result).toMatchObject({
+        ok: false,
+        error: expect.stringContaining("No subagent named"),
+      });
+      expect(await listDrafts(project.id, store)).toEqual([]);
+    },
+  );
 });

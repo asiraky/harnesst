@@ -1,5 +1,6 @@
 {
   "id": "impeccable",
+  "subagentCompatible": true,
   "type": "skill",
   "name": "Impeccable",
   "description": "A comprehensive frontend design skill for creating, critiquing, refining, and quality-checking polished interfaces inside harnesst/eve agents.",

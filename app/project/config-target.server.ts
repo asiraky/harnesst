@@ -14,7 +14,12 @@ import { data } from "react-router";
 
 import type { Agent, DataStore } from "~/data/ports";
 import { listDrafts } from "~/drafts/drafts.server";
-import { overlayDrafts, subagentDirNames, type AgentSource } from "~/eve/parse";
+import {
+  overlayDrafts,
+  subagentDirNames,
+  subagentRootFor,
+  type AgentSource,
+} from "~/eve/parse";
 import { getAgentSource } from "~/github/cached.server";
 import {
   agentFromParams,
@@ -55,11 +60,6 @@ export const SUBAGENT_PATH_DELIMITER = "~";
  * excludes `.`, `..`, empty segments, slashes and the `~` delimiter by construction.
  */
 const SEGMENT = /^[A-Za-z0-9][\w.-]*$/;
-
-/** The repo-relative root of a subagent: member root with `subagents/` interleaved. */
-export function subagentRootFor(memberRoot: string, segments: string[]): string {
-  return [memberRoot, ...segments.flatMap((name) => ["subagents", name])].join("/");
-}
 
 /**
  * The subagent chain a route's `:subPath` param names, or null when the route has no nested

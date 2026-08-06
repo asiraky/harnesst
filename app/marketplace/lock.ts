@@ -37,6 +37,19 @@ const installEntrySchema = z.object({
   registry: z.string().min(1),
   /** Owning roster member; null = the single-agent repo's root agent. */
   member: z.string().nullable(),
+  /**
+   * The `/`-joined declared-subagent path below the member's agent root that this install's files
+   * live under — `"reader"` for `<memberRoot>/subagents/reader/…`, `"reader/skim"` for a nested
+   * one. Omitted (never `""`) means the member agent itself, so every lock written before installs
+   * could target a subagent stays byte-identical. LOCK_VERSION stays 1 — optional, old locks parse
+   * fine.
+   *
+   * This is part of the install IDENTITY alongside `(id, member)`, not an annotation: eve treats a
+   * declared subagent as its own agent root that inherits nothing from its parent, so the same
+   * template legitimately installs on both a member and that member's subagent, and those two rows
+   * must not clobber each other on upsert, uninstall or update.
+   */
+  subagent: z.string().min(1).optional(),
   /** FINAL repo-relative paths the install owns (excludes package.json / harnesst-lock.json). */
   files: z.array(z.string().min(1)),
   /**
@@ -245,13 +258,22 @@ export function overlayLock(
   }
 }
 
-/** An install is identified by (id, member) — the same template can live under two members. */
+/**
+ * An install is identified by (id, member, subagent) — the same template can live under two
+ * members, and under a member AND one of that member's declared subagents (separate agent roots
+ * that inherit nothing from each other). `subagent` defaults to `""`, the member agent itself,
+ * which is what every member-level caller already means.
+ */
 export function findInstall(
   lock: HarnesstLock,
   id: string,
   member: string | null,
+  subagent: string = "",
 ): InstallEntry | undefined {
-  return lock.installs.find((e) => e.id === id && e.member === member);
+  return lock.installs.find(
+    (e) =>
+      e.id === id && e.member === member && (e.subagent ?? "") === subagent,
+  );
 }
 
 export interface TemplateProvider {
@@ -262,10 +284,13 @@ export interface TemplateProvider {
 /**
  * Current-catalog evidence for one installed parent. `ownedPaths` are the included template's
  * resolved final repo paths, used to prove an older lock actually materialized that child rather
- * than merely sharing an id with something added to a later parent version.
+ * than merely sharing an id with something added to a later parent version. `provider.subagent`
+ * keeps that proof scoped: a member and its declared subagent can both install the same composite,
+ * and each row's paths are resolved against its OWN agent root, so matching evidence across the two
+ * would compare a subagent entry's files against member-root paths and silently find nothing.
  */
 export interface CatalogProviderEvidence {
-  provider: Pick<InstallEntry, "id" | "type" | "member">;
+  provider: Pick<InstallEntry, "id" | "type" | "member" | "subagent">;
   includes: Array<{
     id: string;
     type: TemplateType;
@@ -282,6 +307,10 @@ export interface CatalogProviderEvidence {
  * channels/tools: those identities gate park/publish URLs and delegation tokens. Legacy inference
  * catalog fallback also matches `(type, id)` and requires at least one path the parent lock owns;
  * catalog membership alone cannot claim a child that was introduced only in a newer version.
+ *
+ * Scoped to ONE agent root: `subagent` (default `""` = the member agent itself) narrows to the rows
+ * installed under that declared subagent, because a subagent is its own agent root — a member-level
+ * row must not answer for a template installed on the subagent, nor the reverse.
  */
 export function findTemplateProvider(
   lock: HarnesstLock,
@@ -289,8 +318,11 @@ export function findTemplateProvider(
   id: string,
   member: string | null,
   catalogProviders: readonly CatalogProviderEvidence[] = [],
+  subagent: string = "",
 ): TemplateProvider | undefined {
-  const memberInstalls = lock.installs.filter((e) => e.member === member);
+  const memberInstalls = lock.installs.filter(
+    (e) => e.member === member && (e.subagent ?? "") === subagent,
+  );
   const direct = memberInstalls.find((e) => e.type === type && e.id === id);
   if (direct) return { install: direct, via: "direct" };
 
@@ -304,7 +336,8 @@ export function findTemplateProvider(
       (candidate) =>
         candidate.provider.id === entry.id &&
         candidate.provider.type === entry.type &&
-        candidate.provider.member === entry.member,
+        candidate.provider.member === entry.member &&
+        (candidate.provider.subagent ?? "") === (entry.subagent ?? ""),
     );
     const include = evidence?.includes.find(
       (candidate) => candidate.type === type && candidate.id === id,
@@ -357,6 +390,10 @@ export function channelIdsForEntry(entry: InstallEntry): string[] {
  * Same bundle-blindness fix as `hasChannelInstalled` (a composite install drops its parts' own lock
  * rows), and the same insistence on the type: this decides who receives a publish URL and a
  * delegation token (#290), so a channel or hook that merely shares the name gets nothing.
+ *
+ * Deliberately matches on `member` alone, so it SEES subagent rows: it gates the deployment env
+ * vars (`HARNESST_FOH_ARTIFACTS_URL`, `HARNESST_ASSETS_URL`) that a tool needs at runtime, and a
+ * tool installed on a declared subagent still runs in its member's container and still needs them.
  */
 export function hasToolInstalled(
   lock: HarnesstLock,
@@ -371,7 +408,13 @@ export function hasToolInstalled(
   );
 }
 
-/** The install providing channel `id` for `member` — directly or bundle-carried — if any. */
+/**
+ * The install providing channel `id` for `member` — directly or bundle-carried — if any.
+ *
+ * Member-scoped with no `subagent` parameter on purpose: channels are root-only in eve and
+ * `planInstall` refuses a channel at a subagent target, so no subagent row can ever provide one.
+ * Nothing to narrow here — don't "fix" it.
+ */
 export function findChannelInstall(
   lock: HarnesstLock,
   id: string,
@@ -460,7 +503,11 @@ export function setChannelSettings(
     if (entry.member !== member || !channelIdsForEntry(entry).includes(id)) {
       return entry;
     }
-    if (entry.settings === undefined ? !hasNext : sameSettings(entry.settings, next)) {
+    if (
+      entry.settings === undefined
+        ? !hasNext
+        : sameSettings(entry.settings, next)
+    ) {
       return entry;
     }
     changed = true;
@@ -498,6 +545,9 @@ export function installKey(type: TemplateType, id: string): string {
  * All (type/id) keys provided by a lock — direct rows plus every flattened include. The
  * marketplace "Installed" facet reads this, so a bundle-carried template is installed too even
  * though it intentionally has no standalone lock row.
+ *
+ * Lock-wide and never narrowed by `subagent`, so a subagent's row marks its template installed
+ * too: the facet asks whether the template is present in this repo, and it is.
  */
 export function installedKeys(
   lock: HarnesstLock,
@@ -515,7 +565,8 @@ export function installedKeys(
       (candidate) =>
         candidate.provider.id === entry.id &&
         candidate.provider.type === entry.type &&
-        candidate.provider.member === entry.member,
+        candidate.provider.member === entry.member &&
+        (candidate.provider.subagent ?? "") === (entry.subagent ?? ""),
     );
     const inferred = (evidence?.includes ?? []).flatMap((include) => {
       const key = installKey(include.type, include.id);
@@ -526,6 +577,7 @@ export function installedKeys(
         include.id,
         entry.member,
         catalogProviders,
+        entry.subagent ?? "",
       );
       return provider?.install === entry ? [key] : [];
     });
@@ -574,6 +626,10 @@ export function effectiveAuthScopes(auth: InstallAuth): string[] {
  * stored scopes (which record only what was granted before). Empty for members whose installs
  * carry no `auth` snapshot (old locks, non-connector installs).
  * Client-safe: pure, no server imports.
+ *
+ * Matches on `member` alone, so it deliberately includes installs scoped to that member's declared
+ * subagents: an OAuth grant is DEPLOYMENT state, and a subagent runs inside — and deploys with —
+ * its member's container, so its connection needs the same scopes on the same grant.
  */
 export function requiredScopesByProvider(
   lock: HarnesstLock,
@@ -613,6 +669,9 @@ export interface ScopeGroupChoice {
  * the definition, mirroring compose), with its current selection state. Providers whose installs
  * declare no groups don't appear — their permission surface isn't editable.
  * Client-safe: pure, no server imports.
+ *
+ * Member-only match, subagent rows included, for the same reason as `requiredScopesByProvider`:
+ * the permission surface belongs to the member's deployment, which its subagents share.
  */
 export function scopeGroupsByProvider(
   lock: HarnesstLock,
@@ -653,6 +712,9 @@ export function scopeGroupsByProvider(
  * groups for `provider` (issue #165 — the Deployment tab's Permissions edit). Each install keeps
  * only the ids its own snapshot knows; group-less snapshots and other providers/members pass
  * through untouched. Pure; returns a new lock and whether anything changed.
+ *
+ * Member-only match, so a subagent row's snapshot is rewritten too — the selection being edited is
+ * the member deployment's OAuth grant, shared by every agent root inside its container.
  */
 export function setSelectedGroups(
   lock: HarnesstLock,
@@ -689,24 +751,43 @@ export function setSelectedGroups(
   return changed ? { lock: { ...lock, installs }, changed } : { lock, changed };
 }
 
-/** Upsert an entry by (id, member): replaces the matching install, else appends. Pure. */
-export function upsertInstall(lock: HarnesstLock, entry: InstallEntry): HarnesstLock {
+/**
+ * Upsert an entry by (id, member, subagent): replaces the matching install, else appends. An entry
+ * with no `subagent` is a distinct install from the same template on one of the member's subagents,
+ * so all three components must match before we replace. Pure.
+ */
+export function upsertInstall(
+  lock: HarnesstLock,
+  entry: InstallEntry,
+): HarnesstLock {
+  const subagent = entry.subagent ?? "";
   const rest = lock.installs.filter(
-    (e) => !(e.id === entry.id && e.member === entry.member),
+    (e) =>
+      !(
+        e.id === entry.id &&
+        e.member === entry.member &&
+        (e.subagent ?? "") === subagent
+      ),
   );
   return { ...lock, installs: [...rest, entry] };
 }
 
-/** Remove the (id, member) entry, returning a new lock. Pure. */
+/** Remove the (id, member, subagent) entry, returning a new lock. Pure. */
 export function removeInstall(
   lock: HarnesstLock,
   id: string,
   member: string | null,
+  subagent: string = "",
 ): HarnesstLock {
   return {
     ...lock,
     installs: lock.installs.filter(
-      (e) => !(e.id === id && e.member === member),
+      (e) =>
+        !(
+          e.id === id &&
+          e.member === member &&
+          (e.subagent ?? "") === subagent
+        ),
     ),
   };
 }
@@ -741,7 +822,7 @@ export function renameMember(
 }
 
 /**
- * Serialize to stable, review-friendly JSON: installs sorted by (id, member) so a diff is
+ * Serialize to stable, review-friendly JSON: installs sorted by (id, member, subagent) so a diff is
  * driven by content not insertion order, 2-space indent, trailing newline (the repo's file
  * convention — everything else in a change-set looks like this).
  */
@@ -751,7 +832,11 @@ export function serializeLock(lock: HarnesstLock): string {
     // Root agent (null member) sorts before named members; then lexical.
     const am = a.member ?? "";
     const bm = b.member ?? "";
-    return am < bm ? -1 : am > bm ? 1 : 0;
+    if (am !== bm) return am < bm ? -1 : 1;
+    // The member agent (no subagent) sorts before its subagents; then lexical.
+    const as = a.subagent ?? "";
+    const bs = b.subagent ?? "";
+    return as < bs ? -1 : as > bs ? 1 : 0;
   });
   return JSON.stringify({ version: lock.version, installs }, null, 2) + "\n";
 }

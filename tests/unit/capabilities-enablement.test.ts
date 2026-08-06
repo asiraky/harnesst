@@ -58,6 +58,7 @@ const xeroTpl: CatalogTemplate = {
     description: "Bookkeeping operations.",
     version: "0.1.0",
     eve: ">=0.20.0",
+    subagentCompatible: true,
     files: ["tools/xero-create-draft-bill.ts"],
     auth: { provider: "xero", kind: "oauth2", scopes: XERO_SCOPES },
     capability: { groups: ALL_GROUPS },
@@ -209,7 +210,9 @@ describe("setSelectedCapabilityGroups — the Deployment-tab edit", () => {
       new Map([["xero", ["bills-draft", "reference-read"]]]),
     );
     // Pure: the input lock is untouched.
-    expect(lock.installs[0].auth?.[0].selectedCapabilityGroups).toEqual(DEFAULT_GROUPS);
+    expect(lock.installs[0].auth?.[0].selectedCapabilityGroups).toEqual(
+      DEFAULT_GROUPS,
+    );
   });
 
   it("drops browser-supplied ids the snapshot doesn't offer", () => {
@@ -234,7 +237,12 @@ describe("setSelectedCapabilityGroups — the Deployment-tab edit", () => {
   it("leaves other members and other providers untouched", () => {
     const other = xeroEntry(["bills-draft"], { member: "other" });
     const lock = lockOf(xeroEntry(["reference-read"]), other);
-    const { lock: next } = setSelectedCapabilityGroups(lock, "books", "xero", []);
+    const { lock: next } = setSelectedCapabilityGroups(
+      lock,
+      "books",
+      "xero",
+      [],
+    );
     expect(next.installs[0].auth?.[0].selectedCapabilityGroups).toEqual([]);
     expect(next.installs[1]).toBe(other);
   });
@@ -263,6 +271,7 @@ describe("manifest schema — the capability block's rules", () => {
     description: "Bookkeeping operations.",
     version: "0.1.0",
     eve: ">=0.20.0",
+    subagentCompatible: true,
     files: ["tools/xero-create-draft-bill.ts"],
     auth: { provider: "xero", kind: "oauth2" as const, scopes: XERO_SCOPES },
   };
@@ -331,6 +340,7 @@ describe("resolveTemplate — capability groups propagate through composition", 
         description: "Bills only.",
         version: "0.1.0",
         eve: ">=0.20.0",
+        subagentCompatible: true,
         files: ["tools/xero-search-bills.ts"],
         auth: { provider: "xero", kind: "oauth2", scopes: XERO_SCOPES },
         capability: { groups: ["bills-read", "bills-draft"] },
@@ -346,6 +356,7 @@ describe("resolveTemplate — capability groups propagate through composition", 
         description: "Full bookkeeping.",
         version: "0.1.0",
         eve: ">=0.20.0",
+        subagentCompatible: true,
         files: [],
         includes: [
           { type: "connection", id: "xero-billing" },

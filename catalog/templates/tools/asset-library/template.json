@@ -1,5 +1,6 @@
 {
   "id": "asset-library",
+  "subagentCompatible": true,
   "type": "tool",
   "name": "Asset Library",
   "description": "Store and retrieve durable, versioned files shared by every agent in this repository. Assets are committed under assets/ on the managed branch without exposing GitHub credentials to agents.",

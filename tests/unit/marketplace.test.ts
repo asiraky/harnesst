@@ -21,12 +21,14 @@ import {
 } from "~/marketplace/manifest";
 import {
   emptyLock,
+  findInstall,
   findTemplateProvider,
   hasChannelInstalled,
   hasToolInstalled,
   installKey,
   installedKeys,
   missingOwnedFiles,
+  removeInstall,
   upsertInstall,
   type CatalogProviderEvidence,
   type HarnesstLock,
@@ -44,6 +46,7 @@ const VALID: TemplateManifest = {
   description: "Deploy a Worker.",
   version: "0.1.0",
   eve: ">=0.1.0",
+  subagentCompatible: true,
   files: ["tools/cloudflare-deploy.ts"],
   dependencies: { wrangler: "^3.0.0" },
   secrets: [{ name: "CLOUDFLARE_API_TOKEN" }],
@@ -53,6 +56,20 @@ describe("manifest schema", () => {
   it("accepts a valid manifest", () => {
     expect(parseManifest(VALID)).toEqual(VALID);
   });
+
+  it("requires explicit subagent compatibility", () => {
+    const { subagentCompatible: _compatibility, ...missing } = VALID;
+    expect(() => parseManifest(missing)).toThrow(/subagentCompatible/);
+  });
+
+  it.each(["channels/github.ts", "schedules/daily.ts"])(
+    "rejects subagent compatibility for eve root-only file %s",
+    (file) => {
+      expect(() => parseManifest({ ...VALID, files: [file] })).toThrow(
+        /root-only in eve/,
+      );
+    },
+  );
 
   it.each([
     ["../escape.ts", "parent traversal"],
@@ -71,6 +88,7 @@ describe("manifest schema", () => {
       ...VALID,
       id: "chat-pack",
       type: "bundle",
+      subagentCompatible: false,
       files: [],
       includes: [{ type: "channel", id: "discord" }],
     });
@@ -257,6 +275,7 @@ describe("manifest schema — platform files (issue #254)", () => {
     ...VALID,
     id: "github",
     type: "channel",
+    subagentCompatible: false,
     files: ["channels/github.ts", "harnesst/model-hooks.ts"],
   };
 
@@ -368,9 +387,16 @@ describe("fixture catalog (the real in-repo seed)", () => {
           .map((line) => /^([A-Za-z_][\w-]*)\s*:/.exec(line)?.[1])
           .filter((key): key is string => Boolean(key));
 
-        expect(keys, `${entry.id}: ${path} frontmatter`).toContain("description");
-        const unknown = keys.filter((key) => key !== "name" && key !== "description");
-        expect(unknown, `${entry.id}: ${path} frontmatter keys eve rejects`).toEqual([]);
+        expect(keys, `${entry.id}: ${path} frontmatter`).toContain(
+          "description",
+        );
+        const unknown = keys.filter(
+          (key) => key !== "name" && key !== "description",
+        );
+        expect(
+          unknown,
+          `${entry.id}: ${path} frontmatter keys eve rejects`,
+        ).toEqual([]);
       }
     }
 
@@ -443,7 +469,11 @@ describe("composition against the real seed", () => {
   // The Discord channel's behaviour is pinned against the real seed file, not a fixture: these
   // are the exact strings a customer's repo receives, and every one of them is a bug we shipped.
   it("materializes the Discord channel with its question, reply and typing plumbing", async () => {
-    const resolved = await resolveTemplate(fixtureCatalog, "channel", "discord");
+    const resolved = await resolveTemplate(
+      fixtureCatalog,
+      "channel",
+      "discord",
+    );
     const source = resolved.files["channels/discord.ts"];
 
     expect(source).toContain('from "eve/channels/discord"');
@@ -674,7 +704,10 @@ describe("installedKeys", () => {
 
   it("returns a 'type/id' key per install", () => {
     let lock: HarnesstLock = emptyLock();
-    lock = upsertInstall(lock, installEntry({ id: "web-search", type: "tool" }));
+    lock = upsertInstall(
+      lock,
+      installEntry({ id: "web-search", type: "tool" }),
+    );
     lock = upsertInstall(lock, installEntry({ id: "pm", type: "agent" }));
     expect(installedKeys(lock).sort()).toEqual(["agent/pm", "tool/web-search"]);
   });
@@ -710,18 +743,13 @@ describe("installedKeys", () => {
           {
             id: "impeccable",
             type: "skill",
-            ownedPaths: [
-              "agents/designer/agent/skills/impeccable/SKILL.md",
-            ],
+            ownedPaths: ["agents/designer/agent/skills/impeccable/SKILL.md"],
           },
         ],
       },
     ];
     expect(
-      installedKeys(
-        { version: 1, installs: [parent] },
-        catalogProviders,
-      ),
+      installedKeys({ version: 1, installs: [parent] }, catalogProviders),
     ).toEqual(["agent/designer", "skill/impeccable"]);
   });
 
@@ -827,6 +855,32 @@ describe("findTemplateProvider", () => {
       ]),
     ).toBeUndefined();
   });
+
+  it("answers for ONE agent root — a member row never covers a subagent's (issue #344)", () => {
+    // A declared subagent is its own agent root that inherits nothing, so "is this template
+    // already here?" has a different answer per root and the wizard must not conflate them.
+    const atReader = { ...parent, subagent: "reader" };
+    const lock = { version: 1 as const, installs: [atReader] };
+    expect(
+      findTemplateProvider(lock, "agent", "designer", "designer"),
+    ).toBeUndefined();
+    expect(
+      findTemplateProvider(lock, "skill", "impeccable", "designer"),
+    ).toBeUndefined();
+    expect(
+      findTemplateProvider(lock, "agent", "designer", "designer", [], "reader"),
+    ).toEqual({ install: atReader, via: "direct" });
+    expect(
+      findTemplateProvider(
+        lock,
+        "skill",
+        "impeccable",
+        "designer",
+        [],
+        "reader",
+      ),
+    ).toEqual({ install: atReader, via: "include" });
+  });
 });
 
 describe("installed filter predicate", () => {
@@ -849,5 +903,92 @@ describe("installed filter predicate", () => {
 
   it("'all' selects everything", () => {
     expect(templates.map((t) => t.id)).toEqual(["web-search", "pm", "triage"]);
+  });
+});
+
+/**
+ * Subagent-scoped installs (issue #344). eve treats a declared subagent as its own agent root that
+ * inherits nothing from its parent, so `(id, member)` stopped being a unique install: the same
+ * template legitimately lives on a member AND on that member's subagent, and the two rows must
+ * never clobber each other. The scope is part of the identity everywhere the lock is EDITED, and
+ * deliberately invisible to the helpers that answer questions about the DEPLOYMENT, which a
+ * subagent shares with its member.
+ */
+const BOOKKEEPING_ROOT = "agents/bookkeeping/agent";
+
+describe("install identity includes the subagent scope (issue #344)", () => {
+  const atMember: InstallEntry = {
+    ...installEntry({ id: "agentmail", member: "bookkeeping" }),
+    files: [`${BOOKKEEPING_ROOT}/tools/agentmail-send.ts`],
+  };
+  const atReader: InstallEntry = {
+    ...atMember,
+    subagent: "reader",
+    files: [`${BOOKKEEPING_ROOT}/subagents/reader/tools/agentmail-send.ts`],
+  };
+
+  it("upserting at a subagent appends beside the member's row instead of replacing it", () => {
+    let lock = upsertInstall(emptyLock(), atMember);
+    lock = upsertInstall(lock, atReader);
+    expect(lock.installs).toHaveLength(2);
+    expect(findInstall(lock, "agentmail", "bookkeeping")).toEqual(atMember);
+    expect(findInstall(lock, "agentmail", "bookkeeping", "reader")).toEqual(
+      atReader,
+    );
+
+    // Within one scope an upsert still replaces, as it always has.
+    lock = upsertInstall(lock, { ...atReader, version: "2.0.0" });
+    expect(lock.installs).toHaveLength(2);
+    expect(
+      findInstall(lock, "agentmail", "bookkeeping", "reader")!.version,
+    ).toBe("2.0.0");
+    expect(findInstall(lock, "agentmail", "bookkeeping")!.version).toBe(
+      "1.0.0",
+    );
+  });
+
+  it("removing one scope leaves the other installed", () => {
+    const lock = upsertInstall(upsertInstall(emptyLock(), atMember), atReader);
+    expect(
+      removeInstall(lock, "agentmail", "bookkeeping", "reader").installs,
+    ).toEqual([atMember]);
+    expect(removeInstall(lock, "agentmail", "bookkeeping").installs).toEqual([
+      atReader,
+    ]);
+  });
+
+  it("the default scope keeps member-level lookups meaning the member agent", () => {
+    // Every pre-feature callsite omits the argument, so the default has to mean "the member
+    // itself" — never "any scope", which would hand a member's uninstall a subagent's row.
+    const subOnly = upsertInstall(emptyLock(), atReader);
+    expect(findInstall(subOnly, "agentmail", "bookkeeping")).toBeUndefined();
+    expect(findInstall(subOnly, "agentmail", "bookkeeping", "reader")).toEqual(
+      atReader,
+    );
+    expect(removeInstall(subOnly, "agentmail", "bookkeeping").installs).toEqual(
+      [atReader],
+    );
+  });
+});
+
+describe("hasToolInstalled across a member's subagents (issue #344)", () => {
+  it("sees a tool installed on a subagent — it shares the member's container", () => {
+    // This gates the deployment env vars a tool needs at runtime. A subagent runs inside its
+    // member's container, so scoping this lookup to the member agent would starve it.
+    const lock: HarnesstLock = {
+      version: 1,
+      installs: [
+        {
+          ...installEntry({
+            id: "agentmail",
+            type: "tool",
+            member: "bookkeeping",
+          }),
+          subagent: "reader",
+        },
+      ],
+    };
+    expect(hasToolInstalled(lock, "agentmail", "bookkeeping")).toBe(true);
+    expect(hasToolInstalled(lock, "agentmail", "sales")).toBe(false);
   });
 });

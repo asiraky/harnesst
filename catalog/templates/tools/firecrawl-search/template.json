@@ -1,13 +1,12 @@
 {
   "id": "firecrawl-search",
+  "subagentCompatible": true,
   "type": "tool",
   "name": "Web Search",
   "description": "Search and research the live web, returning results and optional page content. Routes through a service that bypasses the bot protection blocking plain fetches, so use it whenever the agent needs to search or read the web.",
   "version": "0.2.1",
   "eve": ">=0.1.0",
-  "files": [
-    "tools/firecrawl-search.ts"
-  ],
+  "files": ["tools/firecrawl-search.ts"],
   "assistantSkill": "assistant-skill.md",
   "dependencies": {
     "zod": "^4.4.3"

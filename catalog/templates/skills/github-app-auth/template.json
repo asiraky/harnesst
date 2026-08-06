@@ -1,13 +1,12 @@
 {
   "id": "github-app-auth",
+  "subagentCompatible": true,
   "type": "skill",
   "name": "GitHub App auth",
   "description": "Exchange the agent's GitHub App private key for a short-lived installation token (GH_TOKEN) and commit as the App's bot identity, with gh and git preinstalled in the sandbox — the credential mechanics every GitHub-using agent needs, and nothing else.",
   "version": "0.3.3",
   "eve": ">=0.1.0",
-  "files": [
-    "skills/github-app-auth.md"
-  ],
+  "files": ["skills/github-app-auth.md"],
   "assistantSkill": "assistant-skill.md",
   "sandbox": {
     "bootstrap": [

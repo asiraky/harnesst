@@ -11,6 +11,7 @@ import type { Agent, DataStore } from "~/data/ports";
 import { selectedCapabilityGroupIds } from "~/capabilities/enablement";
 import { invalidateAgentEnvironments } from "~/deploy/env-reconcile.server";
 import { stageDeletions, stageDraft, listDrafts } from "~/drafts/drafts.server";
+import { overlayDrafts, subagentDirNames } from "~/eve/parse";
 import { fetchAgentSource, readAgentFile } from "~/github/repo.server";
 import {
   findAppCredentialConflict,
@@ -19,11 +20,12 @@ import {
 import {
   catalogProviderEvidence,
   catalogLocator,
+  findInstallAtTarget,
   packageJsonPathForRoot,
   planInstall,
   type InstallTarget,
 } from "~/marketplace/install.server";
-import { findInstall, overlayLock, selectedGroupIds } from "~/marketplace/lock";
+import { overlayLock, selectedGroupIds } from "~/marketplace/lock";
 import { resolveTemplate } from "~/marketplace/compose.server";
 import {
   TEMPLATE_TYPES,
@@ -66,6 +68,12 @@ export interface AssistantInstallInput {
   capabilitySelections?: unknown;
   /** Optional write-only secret values, keyed by manifest secret name. */
   secretValues?: unknown;
+  /**
+   * Optional `/`-joined declared-subagent chain below the member root ("reader", "reader/skim").
+   * A declared subagent is its own agent root, so the template's FILES land inside it while the
+   * member still owns the deployment. Omitted or "" installs onto the member itself.
+   */
+  subagent?: unknown;
 }
 
 export type AssistantInstallResult =
@@ -310,6 +318,14 @@ export async function installMarketplaceTemplate(
   }
   const member = typeof input.member === "string" ? input.member.trim() : "";
   if (!member) return { ok: false, error: "Install needs a target member." };
+  if (input.subagent !== undefined && typeof input.subagent !== "string") {
+    return {
+      ok: false,
+      error: "Install's subagent must be a `/`-joined subagent path.",
+    };
+  }
+  const subagent =
+    typeof input.subagent === "string" ? input.subagent.trim() : "";
 
   const authSelections = stringArrayRecord(input.authSelections);
   const capabilitySelections = stringArrayRecord(input.capabilitySelections);
@@ -351,6 +367,13 @@ export async function installMarketplaceTemplate(
     let target: InstallTarget;
     let secretAgent: Agent | null = null;
     if (templateType === "agent") {
+      if (subagent) {
+        return {
+          ok: false,
+          error:
+            "Agent templates install as a new member, not into a subagent.",
+        };
+      }
       if (!context.isTeam) {
         return {
           ok: false,
@@ -375,21 +398,41 @@ export async function installMarketplaceTemplate(
           error: `No project member named "${member}" exists.`,
         };
       }
+      // A declared subagent is its own agent root and inherits nothing, so the template's files
+      // belong inside it. This entry point is token-authenticated, so the path is untrusted: walk
+      // it one level at a time against the draft-overlaid tree and refuse anything that doesn't
+      // already name a directory — an install must never mint a subagent eve never declared, and
+      // that per-level existence check is also what makes escaping the member root impossible.
+      let root = secretAgent.root;
+      if (subagent) {
+        const tree = overlayDrafts(source, draftPaths);
+        for (const name of subagent.split("/")) {
+          if (!subagentDirNames(tree.paths, root).includes(name)) {
+            return {
+              ok: false,
+              error: `No subagent named "${subagent}" exists under member "${member}".`,
+            };
+          }
+          root = `${root}/subagents/${name}`;
+        }
+      }
       target = {
         kind: "member",
         memberName: context.isTeam ? secretAgent.name : null,
-        root: secretAgent.root,
+        root,
+        // The member owns the deployment — package.json, the platform tree, the sandbox and the
+        // secrets a subagent's tools read at runtime all stay here.
+        deploymentRoot: secretAgent.root,
+        subagentPath: subagent,
       };
     }
 
     // Match the wizard's update semantics: omitted selections retain the lock snapshot instead
     // of silently reverting to newly published template defaults.
-    const installMember =
-      target.kind === "new-member" ? target.name : target.memberName;
-    const existingInstall = findInstall(
+    const existingInstall = findInstallAtTarget(
       lock,
       template.manifest.id,
-      installMember,
+      target,
     );
     for (const auth of template.auths) {
       const stored = existingInstall?.auth?.find(
@@ -414,7 +457,10 @@ export async function installMarketplaceTemplate(
 
     let packageJson: string | null = null;
     if (target.kind === "member") {
-      const packagePath = packageJsonPathForRoot(target.root);
+      // Dependencies merge into the MEMBER's package.json even when the files land in a subagent.
+      const packagePath = packageJsonPathForRoot(
+        target.deploymentRoot ?? target.root,
+      );
       const draft = drafts.find((candidate) => candidate.path === packagePath);
       packageJson =
         draft !== undefined

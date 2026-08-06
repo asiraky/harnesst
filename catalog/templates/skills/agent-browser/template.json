@@ -1,13 +1,12 @@
 {
   "id": "agent-browser",
+  "subagentCompatible": true,
   "type": "skill",
   "name": "Agent Browser",
   "description": "Browser automation with the agent-browser CLI: navigate pages, inspect accessibility snapshots, click/fill by refs, capture screenshots, and run web QA from the sandbox shell.",
   "version": "0.1.2",
   "eve": ">=0.1.0",
-  "files": [
-    "skills/agent-browser.md"
-  ],
+  "files": ["skills/agent-browser.md"],
   "assistantSkill": "assistant-skill.md",
   "sandbox": {
     "bootstrap": [

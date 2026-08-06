@@ -90,7 +90,8 @@ import {
   stageDeletions,
   stageDraft,
 } from "~/drafts/drafts.server";
-import { EMPTY_TEAM_MARKER } from "~/eve/parse";
+import { EMPTY_TEAM_MARKER, subagentRootFor } from "~/eve/parse";
+import { selectedCapabilityGroupIds } from "~/capabilities/enablement";
 import {
   orgResolverAgentName,
   readModel,
@@ -103,6 +104,7 @@ import { contextPath, subagentContextPath } from "~/lib/paths";
 import {
   catalogProviderEvidence,
   catalogLocator,
+  findInstallAtTarget,
   installedFilePath,
   packageJsonPathForRoot,
   planInstall,
@@ -114,6 +116,7 @@ import {
   overlayLock,
   providerExplanation,
   renameMember,
+  selectedGroupIds,
   serializeLock,
   type CatalogProviderEvidence,
 } from "~/marketplace/lock";
@@ -183,9 +186,16 @@ const SECRET_INTENTS = new Set<string>([
 
 /**
  * The only intents a NESTED (subagent) Settings URL may run. Everything else this action handles
- * configures the member or the repo, which a subagent does not own (issue #344).
+ * configures the member or the repo, which a subagent does not own (issue #344). A declared
+ * subagent IS its own agent root, so its marketplace installs are its own: the two install intents
+ * derive their file scope from this URL, not from the posted form.
  */
-const SUBAGENT_INTENTS = new Set<string>(["set-model", "clear-model-override"]);
+const SUBAGENT_INTENTS = new Set<string>([
+  "set-model",
+  "clear-model-override",
+  "update-install",
+  "uninstall",
+]);
 
 const ALL = "all";
 
@@ -281,6 +291,8 @@ interface InstallDisplay {
   version: string;
   /** Owning member; null = the single-agent repo's root agent. */
   member: string | null;
+  /** `/`-joined declared-subagent chain below the member root; "" = the member agent itself. */
+  subagent: string;
   /** Files uninstall would delete (from the lock). */
   files: string[];
   /** npm packages uninstall leaves for the reviewer to prune. */
@@ -320,19 +332,21 @@ function buildInstalls(
   index: { id: string; type: TemplateType; version: string }[],
   resolved: Map<string, ResolvedTemplate>,
   catalogProviders: readonly CatalogProviderEvidence[],
-  keep: (member: string | null) => boolean,
+  keep: (member: string | null, subagent: string) => boolean,
   /** Paths that actually exist for the reviewer: the branch tree with staged drafts applied. */
   present: Set<string>,
 ): InstallDisplay[] {
   const rows: InstallDisplay[] = [];
   const directKeys = new Set(
     lock.installs.map(
-      (entry) => `${entry.member ?? "root"}:${entry.type}/${entry.id}`,
+      (entry) =>
+        `${entry.member ?? "root"}:${entry.subagent ?? ""}:${entry.type}/${entry.id}`,
     ),
   );
 
   for (const entry of lock.installs) {
-    if (!keep(entry.member)) continue;
+    const scope = entry.subagent ?? "";
+    if (!keep(entry.member, scope)) continue;
     const row = index.find((r) => r.id === entry.id && r.type === entry.type);
     const template = resolved.get(`${entry.type}/${entry.id}`);
     let update: string | null = null;
@@ -341,13 +355,18 @@ function buildInstalls(
     } catch {
       update = null;
     }
-    const root = entry.member ? `agents/${entry.member}/agent` : "agent";
+    const memberRoot = entry.member ? `agents/${entry.member}/agent` : "agent";
+    // A declared subagent is its own agent root, so its install's files live under it — but the
+    // `harnesst/` platform tree is the DEPLOYMENT's, hence the explicit member root below.
+    const root = scope
+      ? subagentRootFor(memberRoot, scope.split("/"))
+      : memberRoot;
     // `installedFilePath`, not string concatenation: a `harnesst/` file materializes at the
     // PLATFORM root beside the agent root (issue #254), so looking for it inside the agent root
     // would report every install that ships platform code as permanently missing files.
     const expectedFiles = new Set(
       (template?.manifest.files ?? []).map((file) =>
-        installedFilePath(root, file),
+        installedFilePath(root, file, memberRoot),
       ),
     );
     // Deliberately-preserved paths (issue #177) aren't lock-owned but DO exist on disk — count
@@ -381,6 +400,7 @@ function buildInstalls(
       name: entry.name,
       version: entry.version,
       member: entry.member,
+      subagent: scope,
       files: entry.files,
       depsLeft: Object.keys(entry.dependencies ?? {}),
       update,
@@ -397,7 +417,7 @@ function buildInstalls(
       ),
     );
     for (const include of candidates.values()) {
-      const directKey = `${entry.member ?? "root"}:${include.type}/${include.id}`;
+      const directKey = `${entry.member ?? "root"}:${scope}:${include.type}/${include.id}`;
       if (directKeys.has(directKey)) continue;
       const provider = findTemplateProvider(
         lock,
@@ -405,6 +425,7 @@ function buildInstalls(
         include.id,
         entry.member,
         catalogProviders,
+        scope,
       );
       if (provider?.install !== entry || provider.via === "direct") continue;
       rows.push({
@@ -413,6 +434,7 @@ function buildInstalls(
         name: include.name,
         version: include.version,
         member: entry.member,
+        subagent: scope,
         files: [],
         depsLeft: [],
         update: null,
@@ -472,6 +494,9 @@ export const loader = (args: LoaderFunctionArgs) =>
             })
           ).target
         : null;
+      /** The lock's `subagent` scope for this surface; "" at a member/repo level. */
+      const viewedSubagent =
+        target?.kind === "subagent" ? target.subagentPath.join("/") : "";
       const level: NavLevel = target
         ? "subagent"
         : agentName
@@ -573,10 +598,14 @@ export const loader = (args: LoaderFunctionArgs) =>
           index,
           resolvedTemplates,
           catalogProviders,
+          // The repo level is the whole-repo inventory (rows carry their own scope); every other
+          // level shows exactly the surface being viewed, so a member's list is not padded with
+          // its subagents' installs and a subagent's list is its own.
           level === "repo"
             ? () => true
-            : (member) =>
-                member === active?.name || (member === null && !isTeam),
+            : (member, subagent) =>
+                (member === active?.name || (member === null && !isTeam)) &&
+                subagent === viewedSubagent,
           present,
         ),
         tokens: [],
@@ -705,7 +734,8 @@ export const loader = (args: LoaderFunctionArgs) =>
           base.modelSource = resolved?.source ?? null;
           base.modelInheritedFrom = resolved?.inheritedFrom ?? null;
           base.modelOverridden = resolved?.source === "override";
-          base.modelInherited = resolved !== null && resolved.source !== "override";
+          base.modelInherited =
+            resolved !== null && resolved.source !== "override";
         }
       }
       if (showRepo) {
@@ -798,7 +828,10 @@ export async function action(args: ActionFunctionArgs) {
   // and the surface never renders them at a nested target — so a hand-crafted POST to a `/sub/`
   // settings URL is refused BEFORE dispatch rather than silently executing against the member
   // (issue #344).
-  if (subagentSegmentsFromParams(args.params) && !SUBAGENT_INTENTS.has(intent)) {
+  if (
+    subagentSegmentsFromParams(args.params) &&
+    !SUBAGENT_INTENTS.has(intent)
+  ) {
     throw data("That action is not available on a subagent.", { status: 404 });
   }
 
@@ -871,7 +904,7 @@ export async function action(args: ActionFunctionArgs) {
         fetchAgentSource(project.repoInstallationId, repo),
         listDrafts(project.id),
       ]);
-      const { roster, active } = await resolveSyncedAgentContext(
+      const { roster, active, isTeam } = await resolveSyncedAgentContext(
         project.id,
         member,
         source.paths,
@@ -881,13 +914,40 @@ export async function action(args: ActionFunctionArgs) {
         path: d.path,
         content: d.content,
       }));
+      // Where the FILES land comes from the URL, never the form: a declared subagent is its own
+      // agent root, and re-resolving the chain here re-runs the existence check that authorizes
+      // that surface. The form still names the member, so refuse a cross-member post outright.
+      const subSegments = subagentSegmentsFromParams(args.params);
+      const target = subSegments
+        ? (
+            await resolveConfigTarget({
+              projectId: project.id,
+              agentName: agentFromParams(args.params),
+              subSegments,
+              source,
+              drafts: draftPaths,
+            })
+          ).target
+        : null;
+      if (target && target.member !== active.name) {
+        return { error: "That install belongs to a different member." };
+      }
+      // The member owns package.json and the platform tree. Eve sandbox config belongs to the
+      // exact agent root and is handled by the planner.
+      const deploymentRoot = active.root;
+      const urlSubagent =
+        target?.kind === "subagent" ? target.subagentPath.join("/") : "";
       const lock = overlayLock(
         source.files["harnesst-lock.json"] ?? null,
         draftPaths,
       );
+      // Scope comes only from the validated route. Historical malformed rows are repaired by
+      // editing the lock explicitly; the planner blocks rather than inferring and relocating them.
+      const subagentPath = urlSubagent;
+      const configRoot = target?.root ?? deploymentRoot;
       // A staged package.json draft wins over the branch copy — otherwise a second staged
       // install/update could silently drop dependencies added by the first.
-      const pkgPath = packageJsonPathForRoot(active.root);
+      const pkgPath = packageJsonPathForRoot(deploymentRoot);
       const pkgDraft = drafts.find((d) => d.path === pkgPath);
       const packageJson =
         pkgDraft !== undefined
@@ -930,6 +990,25 @@ export async function action(args: ActionFunctionArgs) {
           };
         }
       }
+      const installTarget = {
+        kind: "member" as const,
+        memberName: member,
+        root: configRoot,
+        deploymentRoot,
+        subagentPath,
+      };
+      const existing = findInstallAtTarget(lock, id, installTarget);
+      const authSelections: Record<string, string[]> = {};
+      const capabilitySelections: Record<string, string[]> = {};
+      for (const auth of existing?.auth ?? []) {
+        if (auth.scopeGroups) {
+          authSelections[auth.provider] = selectedGroupIds(auth);
+        }
+        if (auth.capabilityGroups) {
+          capabilitySelections[auth.provider] =
+            selectedCapabilityGroupIds(auth);
+        }
+      }
       const plan = planInstall({
         template,
         registry: catalogLocator(),
@@ -944,7 +1023,9 @@ export async function action(args: ActionFunctionArgs) {
         rosterNames: roster.map((a) => a.name),
         model: installModel,
         effort: installEffort,
-        target: { kind: "member", memberName: member, root: active.root },
+        authSelections,
+        capabilitySelections,
+        target: installTarget,
       });
       if (plan.conflicts.length > 0) {
         return {
@@ -972,7 +1053,8 @@ export async function action(args: ActionFunctionArgs) {
     }
     if (intent === "uninstall") {
       const id = String(form.get("id") ?? "");
-      const member = String(form.get("member") ?? "") || null;
+      let member = String(form.get("member") ?? "") || null;
+      let subagentPath = String(form.get("subagent") ?? "");
       if (!id) return { error: "Missing install to remove." };
       const [source, drafts] = await Promise.all([
         fetchAgentSource(project.repoInstallationId, repo),
@@ -986,10 +1068,27 @@ export async function action(args: ActionFunctionArgs) {
         source.files["harnesst-lock.json"] ?? null,
         draftPaths,
       );
+      const routeAgent = agentFromParams(args.params);
+      const routeSubagents = subagentSegmentsFromParams(args.params);
+      if (routeAgent !== null || routeSubagents !== null) {
+        const route = await resolveConfigTarget({
+          projectId: project.id,
+          agentName: routeAgent,
+          subSegments: routeSubagents,
+          source,
+          drafts: draftPaths,
+        });
+        member = route.isTeam ? route.active.name : null;
+        subagentPath =
+          route.target.kind === "subagent"
+            ? route.target.subagentPath.join("/")
+            : "";
+      }
       const plan = planUninstall({
         lock,
         id,
         memberName: member,
+        subagentPath,
         repoPaths: source.paths,
       });
       if (plan.notFound) {
@@ -1244,7 +1343,11 @@ export async function action(args: ActionFunctionArgs) {
         source.files["harnesst-lock.json"] ??
         null;
       if (lockRaw) {
-        const rewritten = renameMember(overlayLock(lockRaw, []), oldName, newName);
+        const rewritten = renameMember(
+          overlayLock(lockRaw, []),
+          oldName,
+          newName,
+        );
         if (rewritten.changed) {
           await stageDraft({
             projectId: project.id,
@@ -1508,7 +1611,7 @@ export default function Settings({
             links={loaderData.teamLinks}
           />
         )}
-        {!nested && <MarketplaceInstallsSection loaderData={loaderData} />}
+        <MarketplaceInstallsSection loaderData={loaderData} />
         {canRenameMember && (
           <RenameSection
             activeAgent={activeAgent}
@@ -1537,7 +1640,8 @@ export default function Settings({
 
 /**
  * The boundary a nested target lives behind: a declared subagent runs inside its member's
- * deployment, so everything except its model is configured once, on the member.
+ * deployment, so everything except its model and its own marketplace installs is configured
+ * once, on the member.
  */
 function SubagentBoundarySection({
   projectId,
@@ -1560,9 +1664,12 @@ function SubagentBoundarySection({
           <p>
             This subagent runs inside{" "}
             <span className="font-medium text-foreground">{member}</span> and
-            deploys with it. Secrets, environments, marketplace installs and
-            publishing are configured once, on the member — a subagent has no
-            deployment of its own.
+            deploys with it. Secrets, environments and publishing are configured
+            once, on the member — a subagent has no deployment of its own.
+          </p>
+          <p>
+            Tools installed here still run in {member}&rsquo;s container, so the
+            secrets they read are {member}&rsquo;s.
           </p>
           <p>
             <Link
@@ -1674,7 +1781,10 @@ function ModelSection({
           className="mt-2"
           disabled={fetcher.state !== "idle"}
           onClick={() =>
-            fetcher.submit({ intent: "clear-model-override" }, { method: "post" })
+            fetcher.submit(
+              { intent: "clear-model-override" },
+              { method: "post" },
+            )
           }
         >
           {nested ? `Inherit from ${member}` : "Use workspace default"}
@@ -1699,17 +1809,23 @@ function ModelSection({
 /**
  * Marketplace provenance from harnesst-lock.json. Updates and uninstalls save normal repo changes;
  * the header Publish control is the review/publish surface for those saved files.
+ *
+ * A declared subagent is its own agent root, so this section renders at a nested target too — with
+ * that subagent's own installs.
  */
 function MarketplaceInstallsSection({
   loaderData,
 }: {
   loaderData: Route.ComponentProps["loaderData"];
 }) {
-  const { project, installs, level } = loaderData;
+  const { project, installs, level, subagentPath } = loaderData;
   const submit = useSubmit();
   const navigation = useNavigation();
   const busy = navigation.state !== "idle" && navigation.formData != null;
   const showOwner = level === "repo";
+  // Update and repair recompute file paths from the URL's config target, so they are only offered
+  // on the surface the install actually lives on. The repo-wide inventory links out instead.
+  const viewedSubagent = subagentPath.join("/");
   const installsBadge = useMemo(
     () => <Badge variant="secondary">{installs.length}</Badge>,
     [installs.length],
@@ -1733,7 +1849,7 @@ function MarketplaceInstallsSection({
             <ul className="divide-y rounded-lg border text-sm">
               {installs.map((install) => (
                 <li
-                  key={`${install.member ?? "root"}:${install.type}/${install.id}`}
+                  key={`${install.member ?? "root"}:${install.subagent}:${install.type}/${install.id}`}
                   className="flex flex-wrap items-center gap-3 px-3 py-2"
                 >
                   <span className="min-w-0 flex-1">
@@ -1766,55 +1882,76 @@ function MarketplaceInstallsSection({
                         shared
                       </span>
                     ))}
-                  {!install.providedBy && install.update && (
-                    <Form method="post">
-                      <input
-                        type="hidden"
-                        name="intent"
-                        value="update-install"
-                      />
-                      <input type="hidden" name="type" value={install.type} />
-                      <input type="hidden" name="id" value={install.id} />
-                      <input
-                        type="hidden"
-                        name="member"
-                        value={install.member ?? ""}
-                      />
-                      <Button
-                        type="submit"
-                        size="sm"
-                        variant="secondary"
-                        disabled={busy}
+                  {install.subagent &&
+                    (install.subagent === viewedSubagent ? (
+                      <span className="font-mono text-xs text-muted-foreground">
+                        subagents/{install.subagent}
+                      </span>
+                    ) : (
+                      <Link
+                        to={`${subagentContextPath(
+                          project.id,
+                          install.member,
+                          install.subagent.split("/"),
+                        )}/settings`}
+                        className="font-mono text-xs underline-offset-4 hover:underline"
                       >
-                        Update to {install.update}
-                      </Button>
-                    </Form>
-                  )}
-                  {!install.providedBy && install.repair && (
-                    <Form method="post">
-                      <input
-                        type="hidden"
-                        name="intent"
-                        value="update-install"
-                      />
-                      <input type="hidden" name="mode" value="repair" />
-                      <input type="hidden" name="type" value={install.type} />
-                      <input type="hidden" name="id" value={install.id} />
-                      <input
-                        type="hidden"
-                        name="member"
-                        value={install.member ?? ""}
-                      />
-                      <Button
-                        type="submit"
-                        size="sm"
-                        variant="secondary"
-                        disabled={busy}
-                      >
-                        Repair install
-                      </Button>
-                    </Form>
-                  )}
+                        subagents/{install.subagent}
+                      </Link>
+                    ))}
+                  {!install.providedBy &&
+                    install.update &&
+                    install.subagent === viewedSubagent && (
+                      <Form method="post">
+                        <input
+                          type="hidden"
+                          name="intent"
+                          value="update-install"
+                        />
+                        <input type="hidden" name="type" value={install.type} />
+                        <input type="hidden" name="id" value={install.id} />
+                        <input
+                          type="hidden"
+                          name="member"
+                          value={install.member ?? ""}
+                        />
+                        <Button
+                          type="submit"
+                          size="sm"
+                          variant="secondary"
+                          disabled={busy}
+                        >
+                          Update to {install.update}
+                        </Button>
+                      </Form>
+                    )}
+                  {!install.providedBy &&
+                    install.repair &&
+                    install.subagent === viewedSubagent && (
+                      <Form method="post">
+                        <input
+                          type="hidden"
+                          name="intent"
+                          value="update-install"
+                        />
+                        <input type="hidden" name="mode" value="repair" />
+                        <input type="hidden" name="type" value={install.type} />
+                        <input type="hidden" name="id" value={install.id} />
+                        <input
+                          type="hidden"
+                          name="member"
+                          value={install.member ?? ""}
+                        />
+                        <Button
+                          type="submit"
+                          size="sm"
+                          variant="secondary"
+                          disabled={busy}
+                        >
+                          Repair install
+                        </Button>
+                      </Form>
+                    )}
                   {!install.providedBy && (
                     <ConfirmDialog
                       trigger={
@@ -1843,6 +1980,7 @@ function MarketplaceInstallsSection({
                             intent: "uninstall",
                             id: install.id,
                             member: install.member ?? "",
+                            subagent: install.subagent,
                           },
                           { method: "post" },
                         )
@@ -2012,8 +2150,7 @@ function RenameSection({
             <p className="font-medium">Rename to {pendingName} saved</p>
             <p className="text-muted-foreground">
               The directory move is saved with your other changes. The rename
-              applies when you publish; discarding its saved changes cancels
-              it.
+              applies when you publish; discarding its saved changes cancels it.
             </p>
           </CardContent>
         </Card>

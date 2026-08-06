@@ -1,12 +1,11 @@
 {
   "id": "reviewing-a-pull-request",
+  "subagentCompatible": true,
   "type": "skill",
   "name": "Reviewing a pull request",
   "description": "Two-axis PR review from a local checkout — standards (repo conventions plus a code-smell baseline) and spec (does it do what the issue asked) — delivered as one ranked review.",
   "version": "0.2.1",
   "eve": ">=0.1.0",
-  "files": [
-    "skills/reviewing-a-pull-request.md"
-  ],
+  "files": ["skills/reviewing-a-pull-request.md"],
   "assistantSkill": "assistant-skill.md"
 }
