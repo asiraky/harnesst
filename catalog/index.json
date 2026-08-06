@@ -44,9 +44,9 @@
       "id": "agentmail",
       "type": "connection",
       "name": "AgentMail",
-      "version": "0.1.1",
+      "version": "0.2.0",
       "description": "Read and label mail in an AgentMail inbox (agentmail.to) with a user-supplied API key — no OAuth. Ships four tools: list the account's inboxes, list/search messages by date range, labels (e.g. unread), sender, or subject, read a full message including attachment downloads (invoice PDFs are the point), and add/remove labels. Read + label only by design: nothing shipped here can send, delete, or provision mail — the billing-inbox rule, enforced by omission.",
-      "hash": "fd939b641650f9024a078566ed67bdc128bcf7b6"
+      "hash": "86a2e517c73247f35a8c06227ea634f85f910f9d"
     },
     {
       "id": "gmail",
@@ -76,9 +76,9 @@
       "id": "xero",
       "type": "connection",
       "name": "Xero",
-      "version": "0.1.2",
+      "version": "0.2.0",
       "description": "Bookkeeping operations against a Xero organisation through harnesst's brokered-capability framework: the agent's container never holds any Xero credential. harnesst keeps the OAuth grant and executes only a whitelisted set of operations — read reference data, search bills, look up and create contacts, and create DRAFT bills (a human approves them in Xero) with attached source files. Which operation groups are enabled is your choice at install time and editable any time from the Deployment tab, with instant effect.",
-      "hash": "1b315276c59b0008cd439d5ae7ca748f3aac5cd8"
+      "hash": "cc7adb858a2000987e168c84771aa365e01e9dfd"
     },
     {
       "id": "agent-browser",
@@ -172,9 +172,9 @@
       "id": "extract-pdf-text",
       "type": "tool",
       "name": "Extract PDF Text",
-      "version": "0.1.1",
-      "description": "Extract embedded text from a base64-encoded PDF locally, without uploading the document or requiring a secret. Returns the text and page count, with bounded input and output; scanned or image-only PDFs are reported clearly because this tool does not perform OCR.",
-      "hash": "a1f2b9abc950aaad5155eb40a5a2e5b2c1c0f99b"
+      "version": "0.2.0",
+      "description": "Extract embedded text from a PDF staged under /workspace/home, without uploading the document or requiring a secret. Base64 remains available for compatibility, but local path handoff keeps file bytes out of model context. Returns text and page count with bounded input and output; scanned or image-only PDFs are reported clearly because this tool does not perform OCR.",
+      "hash": "44fba6f8b1797dabe399ce147620051e62e5ac7a"
     },
     {
       "id": "firecrawl-search",
@@ -188,9 +188,9 @@
       "id": "publish-artifact",
       "type": "tool",
       "name": "Publish Artifact",
-      "version": "0.3.2",
-      "description": "Publish something the agent produced into the Front of House conversation, where it renders as a card the user can see: an image (screenshot, chart, diagram) or a static HTML page (a single file, or a directory of index.html plus its css/js/image siblings). harnesst copies the files out of the agent's home directory and serves them back behind the user's own sign-in — pages inside a sandboxed preview panel. Publishing the same name again updates that card in place as a new version.",
-      "hash": "1bf29df991ad85cd73a8addaa050aa1e04986ed1"
+      "version": "0.4.0",
+      "description": "Publish a file from the agent's home directory into the Front of House conversation as durable, versioned evidence. Images render as cards, PDF documents receive authenticated download links, and static HTML pages open in a sandboxed preview. harnesst copies the bytes without sending them through model context. Publishing the same name again updates that card in place as a new version.",
+      "hash": "843ae5669044af50e46108d1780e5b479398acfa"
     }
   ]
 }

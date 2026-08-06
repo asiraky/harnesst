@@ -92,7 +92,7 @@ export interface ChatInputAnswer {
 }
 
 /**
- * An artifact the agent published (issues #290, #291) — an image, or a static HTML page, copied out
+ * An artifact the agent published — an image, downloadable document, or static HTML page, copied out
  * of its home volume at publish time and served back by harnesst. `url` is ALWAYS a harnesst app
  * path minted from the row id; an agent-supplied URL never reaches this shape, which is what lets
  * the card render an `<img>` while `MarkdownImage` still refuses to load anything the agent wrote
@@ -103,8 +103,8 @@ export interface ChatArtifact {
   /** File name as the agent published it. */
   name: string;
   title: string | null;
-  /** `image` renders in the card; `html` opens in the sandboxed preview panel (#291). */
-  kind: "image" | "html";
+  /** Images render, documents link to their download, and HTML opens in the preview panel. */
+  kind: "image" | "html" | "document";
   contentType: string;
   byteSize: number;
   /**

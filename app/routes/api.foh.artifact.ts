@@ -1,7 +1,7 @@
 /**
- * Serves one published artifact's bytes (#290). Resource route (loader only) — the `<img>` in the
- * FOH artifact card points here, same-origin with the browser session's cookie, so no bytes and no
- * URL ever leave harnesst's own auth.
+ * Serves one published single-file artifact's bytes (#290). Resource route (loader only) — image
+ * cards and document links point here, same-origin with the browser session's cookie, so no bytes
+ * and no URL ever leave harnesst's own auth.
  *
  * Everything unauthorized is a 404, never a 403: `requireFohProject` already makes an out-of-scope
  * repo indistinguishable from a nonexistent one, and the same must hold for an artifact id — a
@@ -19,7 +19,10 @@
 import { data, type LoaderFunctionArgs } from "react-router";
 
 import { getSessionAuth } from "~/auth/session.server";
-import { artifactRendersInline } from "~/foh/artifact-media";
+import {
+  artifactIsSingleFileKind,
+  artifactRendersInline,
+} from "~/foh/artifact-media";
 import {
   findArtifactVersion,
   findProjectArtifact,
@@ -45,14 +48,19 @@ export async function loader(args: LoaderFunctionArgs) {
 
   const artifactId = args.params.artifactId ?? "";
   const artifact = artifactId
-    ? await findProjectArtifact({ id: artifactId, projectId: access.project.id })
+    ? await findProjectArtifact({
+        id: artifactId,
+        projectId: access.project.id,
+      })
     : null;
   if (!artifact) throw data("Not found", { status: 404 });
-  // Images only, and this is a security boundary rather than a lookup nicety (#291): this response
+  // Single files only, and this is a security boundary rather than a lookup nicety (#291): this response
   // sets no CSP, so serving a page bundle's `text/html` here would execute agent-authored script
   // same-origin against the viewer's own cookie. Bundles have exactly one door — the preview route,
   // whose response sandboxes itself.
-  if (artifact.kind !== "image") throw data("Not found", { status: 404 });
+  if (!artifactIsSingleFileKind(artifact.kind)) {
+    throw data("Not found", { status: 404 });
+  }
 
   const session = await getFohSessionForViewer({
     id: artifact.sessionId,
@@ -67,14 +75,18 @@ export async function loader(args: LoaderFunctionArgs) {
   // authorization above was about.
   const requested = args.params.versionId ?? "";
   const version = requested
-    ? await findArtifactVersion({ artifactId: artifact.id, versionId: requested })
+    ? await findArtifactVersion({
+        artifactId: artifact.id,
+        versionId: requested,
+      })
     : await latestArtifactVersion(artifact.id);
   if (!version) throw data("Not found", { status: 404 });
 
   const bytes = await readArtifactBytes(version.storagePath);
   if (!bytes) throw data("Not found", { status: 404 });
 
-  const inline = artifactRendersInline(version.contentType);
+  const inline =
+    artifact.kind === "image" && artifactRendersInline(version.contentType);
   // `new Uint8Array(...)`: a Node Buffer is not a `BodyInit` as far as the DOM lib is concerned,
   // and the copy is a view, not a duplicate of the bytes.
   return new Response(new Uint8Array(bytes), {

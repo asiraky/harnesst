@@ -11,6 +11,7 @@
  * bytes, and every in-flight copy holds its tar in this process's heap.
  */
 import { beforeEach, describe, expect, it } from "vitest";
+import { createHash } from "node:crypto";
 
 import {
   ARTIFACT_BUDGET_WINDOW_MS,
@@ -23,6 +24,7 @@ import {
   withArtifactCopySlot,
   type PublishArtifactDeps,
 } from "~/foh/artifacts.server";
+import { ARTIFACT_DOCUMENT_MAX_BYTES } from "~/foh/artifact-media";
 import type {
   Artifact,
   ArtifactFileInput,
@@ -38,6 +40,7 @@ const PNG = Buffer.from([
 ]);
 const HTML = Buffer.from("<html><body>hi</body></html>");
 const CSS = Buffer.from("body{color:red}");
+const PDF = Buffer.from("%PDF-1.7\nminimal");
 /** A two-file page, as the bundle copy hands it over: names already bundle-relative. */
 const PAGE = [
   { name: "index.html", bytes: HTML },
@@ -348,6 +351,83 @@ describe("publishArtifact destination", () => {
  * assertion, not a routing detail.
  */
 describe("publishArtifact kinds", () => {
+  it("stores a PDF as a versioned document with an authenticated download URL", async () => {
+    const deploymentId = await seedDeployment();
+    const deps = makeDeps({ copy: async () => ({ ok: true, bytes: PDF }) });
+
+    const result = await publishArtifact(
+      {
+        deploymentId,
+        path: "artifacts/mail/invoice.pdf",
+        kind: "document",
+        title: "Supplier invoice",
+        documentBytes: PDF,
+      },
+      deps,
+    );
+
+    expect(result).toMatchObject({
+      ok: true,
+      kind: "document",
+      name: "invoice.pdf",
+      contentType: "application/pdf",
+      byteSize: PDF.length,
+      sha256: createHash("sha256").update(PDF).digest("hex"),
+      url: "/api/foh/proj_1/artifact/art_1/ver_1",
+    });
+    expect(deps.rows[0]).toMatchObject({
+      kind: "document",
+      entryPath: null,
+      title: "Supplier invoice",
+    });
+    expect(deps.copies).toHaveLength(0);
+  });
+
+  it("refuses non-PDF bytes from the document serving door", async () => {
+    const deploymentId = await seedDeployment();
+    const notPdf = Buffer.from("not a pdf");
+    const deps = makeDeps();
+
+    const result = await publishArtifact(
+      {
+        deploymentId,
+        path: "artifacts/invoice.pdf",
+        kind: "document",
+        documentBytes: notPdf,
+      },
+      deps,
+    );
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error).toMatch(/not a PDF document/i);
+    expect(deps.written).toHaveLength(0);
+    expect(deps.rows).toHaveLength(0);
+  });
+
+  it("refuses a PDF over the document upload limit before storing bytes", async () => {
+    const deploymentId = await seedDeployment();
+    const deps = makeDeps();
+    const oversized = Buffer.alloc(ARTIFACT_DOCUMENT_MAX_BYTES + 1, 0);
+    oversized.set(Buffer.from("%PDF-"));
+
+    const result = await publishArtifact(
+      {
+        deploymentId,
+        path: "artifacts/invoice.pdf",
+        kind: "document",
+        documentBytes: oversized,
+      },
+      deps,
+    );
+
+    expect(result).toMatchObject({ ok: false });
+    if (result.ok) return;
+    expect(result.error).toMatch(/capped at 4 MiB/i);
+    expect(deps.written).toHaveLength(0);
+    expect(deps.rows).toHaveLength(0);
+  });
+
   it("stores a page as ONE row plus a member row per file, charged the summed bytes", async () => {
     const deploymentId = await seedDeployment();
     const deps = makeDeps();
@@ -465,7 +545,7 @@ describe("publishArtifact kinds", () => {
 
     expect(result.ok).toBe(false);
     if (result.ok) return;
-    expect(result.error).toMatch(/images and HTML pages/i);
+    expect(result.error).toMatch(/images, PDF documents and HTML pages/i);
     expect(deps.copies).toHaveLength(0);
   });
 
@@ -716,6 +796,31 @@ describe("publishArtifact versions", () => {
     // from the publish that succeeded.
     expect(deps.written).toHaveLength(1);
     expect(deps.versions).toHaveLength(1);
+  });
+
+  it("describes a document kind conflict accurately", async () => {
+    const deploymentId = await seedDeployment();
+    const deps = makeDeps({ copy: async () => ({ ok: true, bytes: PDF }) });
+
+    const document = await publishArtifact(
+      {
+        deploymentId,
+        path: "artifacts/invoice.pdf",
+        kind: "document",
+        documentBytes: PDF,
+      },
+      deps,
+    );
+    expect(document.ok).toBe(true);
+    const swapped = await publishArtifact(
+      { deploymentId, path: "artifacts/invoice.pdf", kind: "image" },
+      deps,
+    );
+
+    expect(swapped.ok).toBe(false);
+    if (swapped.ok) return;
+    expect(swapped.error).toMatch(/already published .* as a document/i);
+    expect(swapped.error).toMatch(/cannot be republished as an image/i);
   });
 
   it("still answers a redelivery at the limit as the no-op it is", async () => {

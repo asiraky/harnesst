@@ -3,8 +3,8 @@
  * is accepted, all pure so they unit-test with no docker, no disk and no database.
  *
  * WHAT MAY BE PUBLISHED: a path inside the agent's own home volume, and either bytes that ARE one
- * of four image formats, or a small static PAGE BUNDLE (an `index.html` plus css/js/font/image
- * siblings). For an image the content type is SNIFFED, never taken from the request: the agent
+ * of four image formats, a PDF document, or a small static PAGE BUNDLE (an `index.html` plus
+ * css/js/font/image siblings). For a single file the content type is SNIFFED, never taken from the request: the agent
  * names a file, so a claimed `image/png` on an HTML payload would turn the image serving route —
  * same-origin, cookie-authenticated — into stored XSS against the operator's own session.
  *
@@ -25,6 +25,9 @@
 /** Hard ceiling on one artifact. Matches the edge's `client_max_body_size 25m` (nginx-harnesst.conf). */
 export const ARTIFACT_MAX_BYTES = 25 * 1024 * 1024;
 
+/** PDF upload ceiling for a document published from an isolated subagent sandbox. */
+export const ARTIFACT_DOCUMENT_MAX_BYTES = 4 * 1024 * 1024;
+
 /**
  * The only directory tree an agent may publish out of: its own persistent home, which the
  * eve-docker shim mounts into every session sandbox at the same path. That is what makes the
@@ -43,6 +46,11 @@ export const ARTIFACT_CONTENT_TYPES = [
 
 export type ArtifactContentType = (typeof ARTIFACT_CONTENT_TYPES)[number];
 
+/** Documents a single-file publish may contain. Deliberately PDF-only for the first release. */
+export const ARTIFACT_DOCUMENT_CONTENT_TYPES = ["application/pdf"] as const;
+export type ArtifactDocumentContentType =
+  (typeof ARTIFACT_DOCUMENT_CONTENT_TYPES)[number];
+
 /**
  * Types the IMAGE serving route hands over for inline rendering. SVG is deliberately absent: it
  * renders safely inside an `<img>` (scripts never run in an image context) but a DIRECT navigation
@@ -58,11 +66,11 @@ export const ARTIFACT_INLINE_TYPES: readonly string[] = [
 ];
 
 /**
- * What a published artifact IS, and the row's `kind` column. `image` is a single sniffed image file
- * served by the cookie-authenticated image route; `html` is a page bundle served only through the
- * sandboxed, token-authenticated preview route.
+ * What a published artifact IS, and the row's `kind` column. `image` and `document` are single
+ * sniffed files served by the cookie-authenticated artifact route; `html` is a page bundle served
+ * only through the sandboxed, token-authenticated preview route.
  */
-export const ARTIFACT_KINDS = ["image", "html"] as const;
+export const ARTIFACT_KINDS = ["image", "html", "document"] as const;
 export type ArtifactKind = (typeof ARTIFACT_KINDS)[number];
 
 /** Most files a page bundle may hold. A page, not a site — see the byte cap above for the rest. */
@@ -191,7 +199,9 @@ export function artifactKindFor(
   name: string,
 ): ArtifactKind | null {
   if (raw === null || raw === undefined || raw === "") {
-    return /\.html?$/i.test(name) ? "html" : "image";
+    if (/\.html?$/i.test(name)) return "html";
+    if (/\.pdf$/i.test(name)) return "document";
+    return "image";
   }
   if (typeof raw !== "string") return null;
   return (ARTIFACT_KINDS as readonly string[]).includes(raw)
@@ -257,7 +267,10 @@ export function resolveArtifactSource(raw: unknown): ArtifactSource | null {
   const segments = absolute.split("/").filter((s) => s !== "" && s !== ".");
   if (segments.some((s) => s === "..")) return null;
   const path = `/${segments.join("/")}`;
-  if (path !== ARTIFACT_HOME_ROOT && !path.startsWith(`${ARTIFACT_HOME_ROOT}/`)) {
+  if (
+    path !== ARTIFACT_HOME_ROOT &&
+    !path.startsWith(`${ARTIFACT_HOME_ROOT}/`)
+  ) {
     return null;
   }
   const name = segments.at(-1) ?? "";
@@ -305,11 +318,28 @@ export function sniffArtifactContentType(
       .decode(bytes.slice(0, 4096))
       .replace(/^﻿/, "")
       .trimStart();
-    if (/^(<\?xml[\s\S]*?\?>|<!--[\s\S]*?-->|<!DOCTYPE[^>]*>|\s)*<svg[\s>]/i.test(head)) {
+    if (
+      /^(<\?xml[\s\S]*?\?>|<!--[\s\S]*?-->|<!DOCTYPE[^>]*>|\s)*<svg[\s>]/i.test(
+        head,
+      )
+    ) {
       return "image/svg+xml";
     }
   }
   return null;
+}
+
+/**
+ * A document type read from the bytes rather than its extension. A PDF header is the only format
+ * admitted; the serving route sends documents as downloads, so no document-authored active content
+ * executes in harnesst's origin.
+ */
+export function sniffArtifactDocumentContentType(
+  bytes: Uint8Array,
+): ArtifactDocumentContentType | null {
+  return startsWith(bytes, [0x25, 0x50, 0x44, 0x46, 0x2d])
+    ? "application/pdf"
+    : null;
 }
 
 /** Whether the serving route may render these bytes inline (see `ARTIFACT_INLINE_TYPES`). */
@@ -317,8 +347,16 @@ export function artifactRendersInline(contentType: string): boolean {
   return ARTIFACT_INLINE_TYPES.includes(contentType);
 }
 
+/** Whether this kind may use the cookie-authenticated single-file serving route. */
+export function artifactIsSingleFileKind(
+  kind: string,
+): kind is "image" | "document" {
+  return kind === "image" || kind === "document";
+}
+
 /**
- * The app path that serves one IMAGE artifact's bytes. Cookie-authenticated, same-origin.
+ * The app path that serves one single-file artifact's bytes. Cookie-authenticated, same-origin;
+ * documents use an attachment disposition rather than rendering inside harnesst.
  *
  * The VERSION belongs in the path (#292) rather than being left to default: an artifact's bytes
  * change when the agent republishes the name, and the response is served `immutable` — a URL that

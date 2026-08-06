@@ -1610,8 +1610,8 @@ export const artifacts = pgTable(
     /** Optional agent-supplied caption for the card. */
     title: text("title"),
     /**
-     * `image` (#290) or `html` (#291). An image is one sniffed file served by the
-     * cookie-authenticated image route; `html` is a page BUNDLE whose files live in
+     * `image` (#290), `document`, or `html` (#291). Images and documents are sniffed files served
+     * by the cookie-authenticated artifact route; `html` is a page BUNDLE whose files live in
      * `artifact_files` and are only ever served through the sandboxed preview route. Defaulted so
      * every row that predates bundles reads correctly without a backfill.
      */
@@ -1626,7 +1626,7 @@ export const artifacts = pgTable(
      */
     byteSize: integer("byte_size").notNull(),
     /**
-     * The LATEST version's content identity. For an image it is the sha256 of the bytes; for a
+     * The LATEST version's content identity. For a single file it is the sha256 of the bytes; for a
      * bundle it is a sha256 over the members' `(rel_path, sha256)` manifest, so republishing a page
      * whose stylesheet changed is a new VERSION even though `index.html` did not move — the entry
      * file's own sha would have read as "nothing changed" and left the stale bytes on the card.
@@ -1647,7 +1647,7 @@ export const artifacts = pgTable(
     streamIndex: integer("stream_index").notNull(),
     /**
      * The latest `artifact_versions` row — a soft ref (no FK; the two tables reference each other
-     * and one direction has to be plain). It is what the image URL in transcript data points at, so
+     * and one direction has to be plain). It is what the single-file URL in transcript data points at, so
      * that URL stays immutably cacheable while the artifact itself keeps changing.
      */
     latestVersionId: varchar("latest_version_id", { length: 12 }),

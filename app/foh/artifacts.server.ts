@@ -47,6 +47,7 @@ import {
 import {
   ARTIFACT_BUNDLE_EXTENSIONS,
   ARTIFACT_BUNDLE_MAX_FILES,
+  ARTIFACT_DOCUMENT_MAX_BYTES,
   ARTIFACT_MAX_BYTES,
   artifactKindFor,
   artifactUrl,
@@ -54,6 +55,7 @@ import {
   resolveArtifactSource,
   resolveBundleMember,
   sniffArtifactContentType,
+  sniffArtifactDocumentContentType,
 } from "~/foh/artifact-media";
 import { fohArtifactSandboxSessionId } from "~/foh/session-workspace";
 import {
@@ -180,8 +182,10 @@ export interface PublishArtifactInput {
   deploymentId: string;
   path: string;
   title?: string | null;
-  /** `image` or `html`; omitted, the path's own extension decides (see `artifactKindFor`). */
+  /** `image`, `html`, or `document`; omitted, the path's own extension decides. */
   kind?: string | null;
+  /** PDF bytes read by the authored tool from its current (possibly subagent) sandbox. */
+  documentBytes?: Buffer;
 }
 
 export type PublishArtifactResult =
@@ -200,6 +204,8 @@ export type PublishArtifactResult =
       name: string;
       contentType: string;
       byteSize: number;
+      /** SHA-256 of the exact published bytes (or bundle manifest) for evidence correlation. */
+      sha256: string;
       /**
        * Which version of this name the publish produced (#292). 1 for a first publish; higher when
        * the agent republished the same name, which UPDATES the card rather than adding one. The
@@ -222,7 +228,11 @@ function deny(error: string): PublishArtifactResult {
 
 /** How the agent is told a name is pinned to a kind — `was` omitted when only the store knows it. */
 function kindPinned(name: string, kind: string, was?: string): string {
-  const words = (value: string) => (value === "html" ? "a page" : "an image");
+  const words = (value: string) => {
+    if (value === "html") return "a page";
+    if (value === "document") return "a document";
+    return "an image";
+  };
   return `${name} was already published in this conversation as ${was ? words(was) : "a different kind of file"}, so it cannot be republished as ${words(kind)}. Publish it under a different name.`;
 }
 
@@ -265,8 +275,23 @@ export async function publishArtifact(
   const kind = artifactKindFor(input.kind, source.name);
   if (!kind) {
     return deny(
-      `harnesst publishes images and HTML pages, not "${input.kind}". Pass kind "image" or "html".`,
+      `harnesst publishes images, PDF documents and HTML pages, not "${input.kind}". Pass kind "image", "document" or "html".`,
     );
+  }
+  if (kind === "document" && !input.documentBytes) {
+    return deny(
+      "The PDF bytes were not supplied by Publish Artifact. Update the installed tool and try again.",
+    );
+  }
+  if (
+    kind === "document" &&
+    input.documentBytes &&
+    input.documentBytes.length > ARTIFACT_DOCUMENT_MAX_BYTES
+  ) {
+    return deny("PDF document artifacts are capped at 4 MiB.");
+  }
+  if (kind !== "document" && input.documentBytes) {
+    return deny("Only a document publish may include uploaded file bytes.");
   }
 
   // Caller resolution — deployment → environment → agent → project, all from the token's
@@ -379,32 +404,35 @@ export async function publishArtifact(
 
   // Budget-checked and destination-resolved before a single byte is read: everything above is a
   // couple of indexed queries, while the copies below hold up to 25 MB of this process's heap.
-  return kind === "html"
-    ? publishBundle(
-        {
-          deployment,
-          source,
-          common,
-          capSha,
-          sandboxSessionId,
-          worldKey: session.worldKey,
-        },
-        deps,
-      )
-    : publishImage(
-        {
-          deployment,
-          source,
-          common,
-          capSha,
-          sandboxSessionId,
-          worldKey: session.worldKey,
-        },
-        deps,
-      );
+  if (kind === "html") {
+    return publishBundle(
+      {
+        deployment,
+        source,
+        common,
+        capSha,
+        sandboxSessionId,
+        worldKey: session.worldKey,
+      },
+      deps,
+    );
+  }
+  return publishFile(
+    {
+      deployment,
+      source,
+      common,
+      capSha,
+      sandboxSessionId,
+      worldKey: session.worldKey,
+    },
+    kind,
+    input.documentBytes,
+    deps,
+  );
 }
 
-/** The row fields both kinds share, resolved before any bytes are read. */
+/** The row fields all artifact kinds share, resolved before any bytes are read. */
 interface ArtifactRowCommon {
   projectId: string;
   agentId: string;
@@ -453,11 +481,11 @@ function recordRefusal(
 }
 
 /**
- * Publish one image (#290): copy the file under a concurrency slot, read its real type out of its
- * own bytes, content-address the bytes into the store and record the row. The type is sniffed rather
- * than claimed because the image route serves same-origin behind the operator's own cookie.
+ * Publish one image or PDF document: copy the file under a concurrency slot, read its real type out
+ * of its own bytes, content-address the bytes into the store and record the row. The type is sniffed
+ * rather than claimed because the artifact route serves same-origin behind the operator's cookie.
  */
-async function publishImage(
+async function publishFile(
   {
     deployment,
     source,
@@ -466,25 +494,35 @@ async function publishImage(
     worldKey,
     sandboxSessionId,
   }: PublishHalfInput,
+  kind: "image" | "document",
+  suppliedBytes: Buffer | undefined,
   deps: PublishArtifactDeps,
 ): Promise<PublishArtifactResult> {
-  const slot = await withArtifactCopySlot(() =>
-    deps.copyFile({
-      deploymentId: deployment.id,
-      worldKey,
-      sandboxSessionId,
-      path: source.path,
-      maxBytes: ARTIFACT_MAX_BYTES,
-    }),
-  );
-  if (!slot.ok) return deny(BUSY);
-  const copied = slot.value;
+  const copied = suppliedBytes
+    ? { ok: true as const, bytes: suppliedBytes }
+    : await (async () => {
+        const slot = await withArtifactCopySlot(() =>
+          deps.copyFile({
+            deploymentId: deployment.id,
+            worldKey,
+            sandboxSessionId,
+            path: source.path,
+            maxBytes: ARTIFACT_MAX_BYTES,
+          }),
+        );
+        return slot.ok ? slot.value : ({ ok: false, error: BUSY } as const);
+      })();
   if (!copied.ok) return deny(copied.error);
 
-  const contentType = sniffArtifactContentType(copied.bytes, source.name);
+  const contentType =
+    kind === "document"
+      ? sniffArtifactDocumentContentType(copied.bytes)
+      : sniffArtifactContentType(copied.bytes, source.name);
   if (!contentType) {
     return deny(
-      `${source.name} is not a PNG, JPEG, WebP or SVG image. harnesst reads the file's own bytes, so renaming it does not help.`,
+      kind === "document"
+        ? `${source.name} is not a PDF document. harnesst reads the file's own bytes, so renaming it does not help.`
+        : `${source.name} is not a PNG, JPEG, WebP or SVG image. harnesst reads the file's own bytes, so renaming it does not help.`,
     );
   }
 
@@ -498,7 +536,7 @@ async function publishImage(
   try {
     recorded = await deps.record({
       ...common,
-      kind: "image",
+      kind,
       entryPath: null,
       contentType,
       byteSize: copied.bytes.length,
@@ -510,7 +548,7 @@ async function publishImage(
     return deny(RECORD_FAILED);
   }
   if (!recorded.ok)
-    return deny(recordRefusal(recorded.reason, source.name, "image"));
+    return deny(recordRefusal(recorded.reason, source.name, kind));
   const { artifact, version, appended } = recorded;
 
   return {
@@ -524,6 +562,7 @@ async function publishImage(
     name: artifact.name,
     contentType: version.contentType,
     byteSize: version.byteSize,
+    sha256: version.sha256,
     version: version.versionNumber,
     updated: appended,
   };
@@ -642,6 +681,7 @@ async function publishBundle(
     name: artifact.name,
     contentType: version.contentType,
     byteSize: version.byteSize,
+    sha256: version.sha256,
     version: version.versionNumber,
     updated: appended,
     fileCount: files.length,
