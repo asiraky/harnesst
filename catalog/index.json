@@ -172,9 +172,9 @@
       "id": "extract-pdf-text",
       "type": "tool",
       "name": "Extract PDF Text",
-      "version": "0.1.0",
+      "version": "0.1.1",
       "description": "Extract embedded text from a base64-encoded PDF locally, without uploading the document or requiring a secret. Returns the text and page count, with bounded input and output; scanned or image-only PDFs are reported clearly because this tool does not perform OCR.",
-      "hash": "3abc8445e9254585ffcab8dea1f955df25d2df80"
+      "hash": "a1f2b9abc950aaad5155eb40a5a2e5b2c1c0f99b"
     },
     {
       "id": "firecrawl-search",
