@@ -141,12 +141,6 @@ export default defineTool({
         code: "invalid_pdf",
         error: `The PDF could not be parsed or its text could not be extracted: ${errorMessage(error)}`,
       };
-    } finally {
-      // The bundled serverless PDF.js proxy does not expose destroy() in every runtime/build,
-      // despite the upstream PDFDocumentProxy type declaring it.
-      if (pdf && typeof pdf.destroy === "function") {
-        await pdf.destroy().catch(() => undefined);
-      }
     }
   },
 });
