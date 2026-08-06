@@ -14,10 +14,14 @@ import { describe, expect, it } from "vitest";
 
 import type { CapabilityCallRecord } from "~/capabilities/audit.server";
 import type { CapabilityExecuteDeps } from "~/capabilities/execute.server";
-import { executeCapabilityCall, type CapabilityCaller } from "~/capabilities/execute.server";
+import {
+  executeCapabilityCall,
+  type CapabilityCaller,
+} from "~/capabilities/execute.server";
 import { getCapability } from "~/capabilities/registry.server";
 import {
   billsWhereClause,
+  resolveXeroAttachment,
   XERO_ATTACHMENT_MAX_BASE64_CHARS,
   XERO_ATTACHMENT_MAX_BYTES,
   xeroCapability,
@@ -38,7 +42,12 @@ const SALES_ID = "99999999-8888-7777-6666-555555555555";
 
 /** A fake Xero accounting API: org with two account codes, AUD+USD, one bill, one sales invoice. */
 function fakeXero() {
-  const requests: Array<{ method: string; url: string; body?: unknown; contentType?: string }> = [];
+  const requests: Array<{
+    method: string;
+    url: string;
+    body?: unknown;
+    contentType?: string;
+  }> = [];
   const fetchImpl = (async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
     const method = init?.method ?? "GET";
@@ -60,13 +69,17 @@ function fakeXero() {
       return json({ Currencies: [{ Code: "AUD" }, { Code: "USD" }] });
     }
     if (url.includes("/Invoices/") && method === "GET") {
-      if (url.includes(BILL_ID)) return json({ Invoices: [{ Type: "ACCPAY" }] });
-      if (url.includes(SALES_ID)) return json({ Invoices: [{ Type: "ACCREC" }] });
+      if (url.includes(BILL_ID))
+        return json({ Invoices: [{ Type: "ACCPAY" }] });
+      if (url.includes(SALES_ID))
+        return json({ Invoices: [{ Type: "ACCREC" }] });
       return json({ Invoices: [] });
     }
     if (url.endsWith("/Invoices") && method === "POST") {
       return json({
-        Invoices: [{ InvoiceID: BILL_ID, InvoiceNumber: "BILL-1", Status: "DRAFT" }],
+        Invoices: [
+          { InvoiceID: BILL_ID, InvoiceNumber: "BILL-1", Status: "DRAFT" },
+        ],
       });
     }
     if (url.includes("/Attachments/") && method === "PUT") {
@@ -91,8 +104,10 @@ function xeroDeps(fetchImpl: typeof fetch): {
   return {
     audits,
     deps: {
-      getCapability: (provider) => (provider === "xero" ? xeroCapability : null),
-      enabledGroups: async () => xeroCapability.operationGroups.map((g) => g.id),
+      getCapability: (provider) =>
+        provider === "xero" ? xeroCapability : null,
+      enabledGroups: async () =>
+        xeroCapability.operationGroups.map((g) => g.id),
       findGrant: async () => ({ resourceId: "tenant-1" }),
       accessToken: async () => ({
         ok: true,
@@ -149,9 +164,15 @@ describe("xero create_draft_bill", () => {
     );
     expect(out.status).toBe(200);
     expect(out.body.ok).toBe(true);
-    expect(out.body.result).toMatchObject({ invoiceId: BILL_ID, status: "DRAFT" });
-    const post = requests.find((r) => r.method === "POST" && r.url.endsWith("/Invoices"))!;
-    const invoice = (post.body as { Invoices: Array<Record<string, unknown>> }).Invoices[0];
+    expect(out.body.result).toMatchObject({
+      invoiceId: BILL_ID,
+      status: "DRAFT",
+    });
+    const post = requests.find(
+      (r) => r.method === "POST" && r.url.endsWith("/Invoices"),
+    )!;
+    const invoice = (post.body as { Invoices: Array<Record<string, unknown>> })
+      .Invoices[0];
     expect(invoice.Status).toBe("DRAFT");
     expect(invoice.Type).toBe("ACCPAY");
     expect(invoice.LineItems).toHaveLength(2);
@@ -160,7 +181,11 @@ describe("xero create_draft_bill", () => {
   it("refuses a bill whose line amounts don't sum to the total", async () => {
     const { fetchImpl, requests } = fakeXero();
     const { deps, audits } = xeroDeps(fetchImpl);
-    const out = await call("create_draft_bill", { ...GOOD_BILL, total: 26 }, deps);
+    const out = await call(
+      "create_draft_bill",
+      { ...GOOD_BILL, total: 26 },
+      deps,
+    );
     expect(out.status).toBe(200);
     expect(out.body.ok).toBe(false);
     expect(out.body.error).toMatch(/sum to 25\.00 but total is 26\.00/);
@@ -176,7 +201,12 @@ describe("xero create_draft_bill", () => {
       {
         ...GOOD_BILL,
         lineItems: [
-          { description: "Widgets", quantity: 1, unitAmount: 25, accountCode: "999" },
+          {
+            description: "Widgets",
+            quantity: 1,
+            unitAmount: 25,
+            accountCode: "999",
+          },
         ],
       },
       deps,
@@ -206,7 +236,8 @@ describe("xero create_draft_bill", () => {
     );
     expect(allowed.body.ok).toBe(true);
     const post = requests.find((r) => r.method === "POST")!;
-    const invoice = (post.body as { Invoices: Array<Record<string, unknown>> }).Invoices[0];
+    const invoice = (post.body as { Invoices: Array<Record<string, unknown>> })
+      .Invoices[0];
     expect(invoice.CurrencyCode).toBe("USD");
     expect(invoice.CurrencyRate).toBe(0.65);
   });
@@ -218,7 +249,12 @@ describe("xero create_draft_bill", () => {
     expect(audits[0]).toMatchObject({
       outcome: "ok",
       groupId: "bills-draft",
-      inputSummary: { contact: "Acme Supplies", total: 25, currency: null, lineCount: 2 },
+      inputSummary: {
+        contact: "Acme Supplies",
+        total: 25,
+        currency: null,
+        lineCount: 2,
+      },
     });
     expect(JSON.stringify(audits[0].inputSummary)).not.toContain("Widgets");
   });
@@ -227,27 +263,87 @@ describe("xero create_draft_bill", () => {
 describe("xero attach_file_to_bill", () => {
   const pdf = Buffer.from("%PDF-1.4 tiny").toString("base64");
 
+  it("resolves an immutable PDF artifact owned by the calling agent", async () => {
+    const bytes = Buffer.from("%PDF-1.7 published evidence");
+    const resolved = await resolveXeroAttachment(
+      { invoiceId: BILL_ID, artifactVersionId: "version-1" },
+      CALLER.agent.id,
+      {
+        find: async ({ agentId, versionId }) => {
+          expect(agentId).toBe(CALLER.agent.id);
+          expect(versionId).toBe("version-1");
+          return {
+            artifact: { kind: "document", name: "supplier-invoice.pdf" },
+            version: {
+              contentType: "application/pdf",
+              storagePath: "ab/abcdef",
+            },
+          } as never;
+        },
+        read: async (storagePath) => {
+          expect(storagePath).toBe("ab/abcdef");
+          return bytes;
+        },
+      },
+    );
+
+    expect(resolved).toEqual({
+      bytes,
+      filename: "supplier-invoice.pdf",
+      contentType: "application/pdf",
+    });
+  });
+
+  it("refuses an artifact version that is missing or not owned by the calling agent", async () => {
+    const resolved = await resolveXeroAttachment(
+      { invoiceId: BILL_ID, artifactVersionId: "someone-elses-version" },
+      CALLER.agent.id,
+      {
+        find: async () => null,
+        read: async () => {
+          throw new Error("must not read unauthorized bytes");
+        },
+      },
+    );
+
+    expect(resolved).toBeNull();
+  });
+
   it("attaches a small pdf to an ACCPAY invoice with the whitelisted content type", async () => {
     const { fetchImpl, requests } = fakeXero();
     const { deps } = xeroDeps(fetchImpl);
     const out = await call(
       "attach_file_to_bill",
-      { invoiceId: BILL_ID, filename: "invoice-1234.pdf", contentType: "application/pdf", contentBase64: pdf },
+      {
+        invoiceId: BILL_ID,
+        filename: "invoice-1234.pdf",
+        contentType: "application/pdf",
+        contentBase64: pdf,
+      },
       deps,
     );
     expect(out.body.ok).toBe(true);
     const put = requests.find((r) => r.method === "PUT")!;
-    expect(put.url).toContain(`/Invoices/${BILL_ID}/Attachments/invoice-1234.pdf`);
+    expect(put.url).toContain(
+      `/Invoices/${BILL_ID}/Attachments/invoice-1234.pdf`,
+    );
     expect(put.contentType).toBe("application/pdf");
   });
 
   it("refuses an attachment over 10 MiB decoded", async () => {
     const { fetchImpl, requests } = fakeXero();
     const { deps } = xeroDeps(fetchImpl);
-    const oversize = Buffer.alloc(XERO_ATTACHMENT_MAX_BYTES + 1).toString("base64");
+    const oversize = Buffer.alloc(XERO_ATTACHMENT_MAX_BYTES + 1).toString(
+      "base64",
+    );
     const out = await call(
       "attach_file_to_bill",
-      { invoiceId: BILL_ID, filename: "big.pdf", contentType: "application/pdf", contentBase64: oversize },
+      {
+        invoiceId: BILL_ID,
+        filename: "big.pdf",
+        contentType: "application/pdf",
+        contentBase64: oversize,
+      },
       deps,
     );
     expect(out.body.ok).toBe(false);
@@ -261,7 +357,12 @@ describe("xero attach_file_to_bill", () => {
     const oversize = "A".repeat(XERO_ATTACHMENT_MAX_BASE64_CHARS + 4);
     const out = await call(
       "attach_file_to_bill",
-      { invoiceId: BILL_ID, filename: "big.pdf", contentType: "application/pdf", contentBase64: oversize },
+      {
+        invoiceId: BILL_ID,
+        filename: "big.pdf",
+        contentType: "application/pdf",
+        contentBase64: oversize,
+      },
       deps,
     );
     expect(out.body.ok).toBe(false);
@@ -276,7 +377,12 @@ describe("xero attach_file_to_bill", () => {
     const { deps } = xeroDeps(fetchImpl);
     const out = await call(
       "attach_file_to_bill",
-      { invoiceId: BILL_ID, filename: "x.zip", contentType: "application/zip", contentBase64: pdf },
+      {
+        invoiceId: BILL_ID,
+        filename: "x.zip",
+        contentType: "application/zip",
+        contentBase64: pdf,
+      },
       deps,
     );
     expect(out.body.ok).toBe(false);
@@ -290,7 +396,12 @@ describe("xero attach_file_to_bill", () => {
     for (const filename of ["../../etc/passwd", "a/b.pdf", ".hidden"]) {
       const out = await call(
         "attach_file_to_bill",
-        { invoiceId: BILL_ID, filename, contentType: "application/pdf", contentBase64: pdf },
+        {
+          invoiceId: BILL_ID,
+          filename,
+          contentType: "application/pdf",
+          contentBase64: pdf,
+        },
         deps,
       );
       expect(out.body.ok).toBe(false);
@@ -303,7 +414,12 @@ describe("xero attach_file_to_bill", () => {
     const { deps } = xeroDeps(fetchImpl);
     const sales = await call(
       "attach_file_to_bill",
-      { invoiceId: SALES_ID, filename: "x.pdf", contentType: "application/pdf", contentBase64: pdf },
+      {
+        invoiceId: SALES_ID,
+        filename: "x.pdf",
+        contentType: "application/pdf",
+        contentBase64: pdf,
+      },
       deps,
     );
     expect(sales.body.ok).toBe(false);
@@ -329,7 +445,12 @@ describe("xero attach_file_to_bill", () => {
     const { deps, audits } = xeroDeps(fetchImpl);
     await call(
       "attach_file_to_bill",
-      { invoiceId: BILL_ID, filename: "invoice.pdf", contentType: "application/pdf", contentBase64: pdf },
+      {
+        invoiceId: BILL_ID,
+        filename: "invoice.pdf",
+        contentType: "application/pdf",
+        contentBase64: pdf,
+      },
       deps,
     );
     expect(audits[0].inputSummary).toMatchObject({
@@ -389,5 +510,4 @@ describe("xero searches and contacts", () => {
     expect(JSON.stringify(post.body)).not.toContain("12-3456-7890123-00");
     expect(JSON.stringify(post.body)).not.toMatch(/BankAccount/i);
   });
-
 });

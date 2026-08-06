@@ -15,6 +15,11 @@
  */
 import { z } from "zod";
 
+import {
+  findAgentArtifactVersion,
+  readArtifactBytes,
+} from "~/foh/artifact-store.server";
+
 import type {
   CapabilityDefinition,
   OperationContext,
@@ -82,7 +87,10 @@ const whereSafeText = z
   .string()
   .min(1)
   .max(255)
-  .refine((s) => !/["\\\r\n]/.test(s), "must not contain quotes or backslashes");
+  .refine(
+    (s) => !/["\\\r\n]/.test(s),
+    "must not contain quotes or backslashes",
+  );
 
 const uuid = z
   .string()
@@ -150,7 +158,10 @@ const createDraftBillSchema = z.object({
       /** Or a contact name (Xero resolves/creates by name). */
       name: z.string().min(1).max(255).optional(),
     })
-    .refine((c) => c.contactId || c.name, "contact needs a contactId or a name"),
+    .refine(
+      (c) => c.contactId || c.name,
+      "contact needs a contactId or a name",
+    ),
   /** Bill (invoice) date. */
   date: isoDate,
   dueDate: isoDate.optional(),
@@ -176,7 +187,10 @@ async function validateDraftBill(
 ): Promise<OperationValidation> {
   const bill = input as CreateDraftBill;
   // Lines must sum to the stated total (cent-exact after rounding each line).
-  const sum = bill.lineItems.reduce((acc, line) => acc + cents(lineAmount(line)), 0);
+  const sum = bill.lineItems.reduce(
+    (acc, line) => acc + cents(lineAmount(line)),
+    0,
+  );
   if (sum !== cents(bill.total)) {
     return {
       ok: false,
@@ -237,7 +251,9 @@ async function executeDraftBill(
           UnitAmount: line.unitAmount,
           AccountCode: line.accountCode,
           ...(line.taxType ? { TaxType: line.taxType } : {}),
-          ...(line.lineAmount !== undefined ? { LineAmount: line.lineAmount } : {}),
+          ...(line.lineAmount !== undefined
+            ? { LineAmount: line.lineAmount }
+            : {}),
         })),
       },
     ],
@@ -264,30 +280,52 @@ async function executeDraftBill(
 
 /* ───────────────────────────────── attach_file_to_bill ───────────────────────────── */
 
-const attachFileSchema = z.object({
-  /** The ACCPAY invoice (bill) to attach to. */
-  invoiceId: uuid,
-  /** Bare file name — no path separators, no leading dot. */
-  filename: z
-    .string()
-    .regex(
-      /^[A-Za-z0-9][A-Za-z0-9._ ()-]{0,180}$/,
-      "must be a plain file name (letters, digits, dots, dashes, spaces; no paths)",
-    ),
-  contentType: z.enum(XERO_ATTACHMENT_CONTENT_TYPES),
-  /** Base64-encoded file bytes, ≤ 10 MiB decoded. */
-  contentBase64: z
-    .string()
-    .min(1)
-    .max(
-      XERO_ATTACHMENT_MAX_BASE64_CHARS,
-      "is longer than a 10 MiB file's base64 — attachments are capped at 10 MiB",
-    ),
-});
+const attachFileSchema = z
+  .object({
+    /** The ACCPAY invoice (bill) to attach to. */
+    invoiceId: uuid,
+    /** Bare file name — no path separators, no leading dot. */
+    filename: z
+      .string()
+      .regex(
+        /^[A-Za-z0-9][A-Za-z0-9._ ()-]{0,180}$/,
+        "must be a plain file name (letters, digits, dots, dashes, spaces; no paths)",
+      )
+      .optional(),
+    contentType: z.enum(XERO_ATTACHMENT_CONTENT_TYPES).optional(),
+    /** Compatibility input: base64-encoded file bytes, ≤ 10 MiB decoded. */
+    contentBase64: z
+      .string()
+      .min(1)
+      .max(
+        XERO_ATTACHMENT_MAX_BASE64_CHARS,
+        "is longer than a 10 MiB file's base64 — attachments are capped at 10 MiB",
+      )
+      .optional(),
+    /** Preferred input: immutable published evidence owned by this agent. */
+    artifactVersionId: z.string().min(1).max(100).optional(),
+  })
+  .superRefine((input, ctx) => {
+    if (Boolean(input.contentBase64) === Boolean(input.artifactVersionId)) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["artifactVersionId"],
+        message: "pass exactly one of artifactVersionId or contentBase64",
+      });
+    }
+    if (input.contentBase64 && (!input.filename || !input.contentType)) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["filename"],
+        message: "filename and contentType are required with contentBase64",
+      });
+    }
+  });
 
 type AttachFile = z.infer<typeof attachFileSchema>;
 
 function decodeAttachment(input: AttachFile): Buffer | null {
+  if (!input.contentBase64) return null;
   try {
     const bytes = Buffer.from(input.contentBase64, "base64");
     // Node's base64 decoder is lenient; round-trip length keeps garbage from slipping through.
@@ -298,19 +336,70 @@ function decodeAttachment(input: AttachFile): Buffer | null {
   }
 }
 
+interface ResolvedAttachment {
+  bytes: Buffer;
+  filename: string;
+  contentType: (typeof XERO_ATTACHMENT_CONTENT_TYPES)[number];
+}
+
+interface AttachmentArtifactDeps {
+  find: typeof findAgentArtifactVersion;
+  read: typeof readArtifactBytes;
+}
+
+const defaultAttachmentArtifactDeps: AttachmentArtifactDeps = {
+  find: findAgentArtifactVersion,
+  read: readArtifactBytes,
+};
+
+export async function resolveXeroAttachment(
+  input: AttachFile,
+  agentId: string,
+  deps: AttachmentArtifactDeps = defaultAttachmentArtifactDeps,
+): Promise<ResolvedAttachment | null> {
+  if (input.artifactVersionId) {
+    const found = await deps.find({
+      agentId,
+      versionId: input.artifactVersionId,
+    });
+    if (
+      !found ||
+      found.artifact.kind !== "document" ||
+      found.version.contentType !== "application/pdf"
+    ) {
+      return null;
+    }
+    const bytes = await deps.read(found.version.storagePath);
+    if (!bytes || bytes.length > XERO_ATTACHMENT_MAX_BYTES) return null;
+    return {
+      bytes,
+      filename: found.artifact.name,
+      contentType: "application/pdf",
+    };
+  }
+  const bytes = decodeAttachment(input);
+  if (!bytes || !input.filename || !input.contentType) return null;
+  return { bytes, filename: input.filename, contentType: input.contentType };
+}
+
 async function validateAttachFile(
   input: unknown,
   ctx: OperationContext,
 ): Promise<OperationValidation> {
   const attach = input as AttachFile;
-  const bytes = decodeAttachment(attach);
-  if (!bytes) {
-    return { ok: false, error: "contentBase64 is not valid base64 data." };
-  }
-  if (bytes.length > XERO_ATTACHMENT_MAX_BYTES) {
+  const resolved = await resolveXeroAttachment(attach, ctx.agentId);
+  if (!resolved) {
     return {
       ok: false,
-      error: `The file is ${(bytes.length / (1024 * 1024)).toFixed(1)} MiB — attachments are capped at 10 MiB.`,
+      error: attach.artifactVersionId
+        ? "The published PDF evidence does not exist or does not belong to this agent."
+        : "contentBase64 is not valid base64 data.",
+    };
+  }
+  if (resolved.bytes.length > XERO_ATTACHMENT_MAX_BYTES) {
+    return {
+      ok: false,
+      error: `The file is ${(resolved.bytes.length / (1024 * 1024)).toFixed(1)} MiB — attachments are capped at 10 MiB.`,
     };
   }
   // The target must be an ACCPAY invoice (a bill) in THIS org — attaching to sales invoices or
@@ -333,7 +422,8 @@ async function validateAttachFile(
   if (invoice.Type !== "ACCPAY") {
     return {
       ok: false,
-      error: "Attachments can only be added to bills (ACCPAY invoices), not other document types.",
+      error:
+        "Attachments can only be added to bills (ACCPAY invoices), not other document types.",
     };
   }
   return { ok: true };
@@ -344,18 +434,19 @@ async function executeAttachFile(
   ctx: OperationContext,
 ): Promise<unknown> {
   const attach = input as AttachFile;
-  const bytes = decodeAttachment(attach);
-  if (!bytes) throw new Error("contentBase64 is not valid base64 data.");
+  const resolved = await resolveXeroAttachment(attach, ctx.agentId);
+  if (!resolved)
+    throw new Error("The attachment evidence is no longer available.");
   await xeroFetch(
     ctx,
-    `/Invoices/${attach.invoiceId}/Attachments/${encodeURIComponent(attach.filename)}`,
+    `/Invoices/${attach.invoiceId}/Attachments/${encodeURIComponent(resolved.filename)}`,
     {
       method: "PUT",
-      headers: { "content-type": attach.contentType },
-      body: new Uint8Array(bytes),
+      headers: { "content-type": resolved.contentType },
+      body: new Uint8Array(resolved.bytes),
     },
   );
-  return { attached: attach.filename, invoiceId: attach.invoiceId };
+  return { attached: resolved.filename, invoiceId: attach.invoiceId };
 }
 
 /* ─────────────────────────────────── read operations ─────────────────────────────── */
@@ -363,7 +454,9 @@ async function executeAttachFile(
 const searchBillsSchema = z.object({
   /** Case-insensitive contains-match on the contact name. */
   contactName: whereSafeText.optional(),
-  status: z.enum(["DRAFT", "SUBMITTED", "AUTHORISED", "PAID", "VOIDED"]).optional(),
+  status: z
+    .enum(["DRAFT", "SUBMITTED", "AUTHORISED", "PAID", "VOIDED"])
+    .optional(),
   dateFrom: isoDate.optional(),
   dateTo: isoDate.optional(),
   reference: whereSafeText.optional(),
@@ -529,7 +622,8 @@ export const xeroCapability: CapabilityDefinition = {
               bills: (body.Invoices ?? []).map((i) => ({
                 invoiceId: i.InvoiceID ?? null,
                 invoiceNumber: i.InvoiceNumber ?? null,
-                contact: (i.Contact as { Name?: string } | undefined)?.Name ?? null,
+                contact:
+                  (i.Contact as { Name?: string } | undefined)?.Name ?? null,
                 date: i.DateString ?? i.Date ?? null,
                 dueDate: i.DueDateString ?? i.DueDate ?? null,
                 status: i.Status ?? null,
@@ -602,7 +696,9 @@ export const xeroCapability: CapabilityDefinition = {
                         ],
                       }
                     : {}),
-                  ...(contact.taxNumber ? { TaxNumber: contact.taxNumber } : {}),
+                  ...(contact.taxNumber
+                    ? { TaxNumber: contact.taxNumber }
+                    : {}),
                 },
               ],
             };
@@ -649,8 +745,9 @@ export const xeroCapability: CapabilityDefinition = {
             const attach = input as AttachFile;
             return {
               invoiceId: attach.invoiceId,
-              filename: attach.filename,
-              contentType: attach.contentType,
+              filename: attach.filename ?? null,
+              contentType: attach.contentType ?? null,
+              artifactVersionId: attach.artifactVersionId ?? null,
               // The redacted digest carries the SIZE, never the bytes.
               bytes: decodeAttachment(attach)?.length ?? null,
             };

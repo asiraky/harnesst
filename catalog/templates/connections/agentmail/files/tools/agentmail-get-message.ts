@@ -6,14 +6,17 @@
  * the tool process environment and is never accepted as model input.
  *
  * Attachment downloads: the AgentMail API hands out a short-lived presigned download URL, so
- * the default is to return that URL (the agent can fetch it in its sandbox with curl). Pass
- * includeAttachmentContent to pull the bytes through the tool as base64 instead, capped by
- * maxAttachmentBytes.
+ * the default is to return that URL. For tool-to-tool document workflows, saveAttachmentToHome
+ * downloads the file into /workspace/home and returns only its path. Base64 remains available for
+ * small compatibility cases, capped by maxAttachmentBytes.
  */
 import { defineTool } from "eve/tools";
+import { createHash } from "node:crypto";
 import { z } from "zod";
 
 const AGENTMAIL_API_URL = "https://api.agentmail.to/v0";
+const ATTACHMENT_DIR = "/workspace/home/artifacts/mail";
+const MAX_ATTACHMENT_BYTES = 4 * 1024 * 1024;
 
 const attachmentSchema = z
   .object({
@@ -77,12 +80,46 @@ function truncate(value: string, maxChars: number): string {
     : value;
 }
 
+function safeFileName(value: string | undefined): string {
+  const cleaned = (value ?? "attachment")
+    .normalize("NFKC")
+    .replace(/[^A-Za-z0-9._ ()-]/gu, "_")
+    .replace(/^\.+/u, "")
+    .slice(0, 140);
+  return cleaned || "attachment";
+}
+
+async function saveAttachment(input: {
+  bytes: ArrayBuffer;
+  messageId: string;
+  attachmentId: string;
+  filename?: string;
+  write: (path: string, bytes: Uint8Array) => Promise<void>;
+}): Promise<{ path: string; sha256: string }> {
+  const identity = createHash("sha256")
+    .update(input.messageId)
+    .update("\0")
+    .update(input.attachmentId)
+    .digest("hex")
+    .slice(0, 16);
+  const destination = `${ATTACHMENT_DIR}/${identity}-${safeFileName(input.filename)}`;
+  await input.write(destination, new Uint8Array(input.bytes));
+  return {
+    path: destination,
+    sha256: createHash("sha256")
+      .update(new Uint8Array(input.bytes))
+      .digest("hex"),
+  };
+}
+
 export default defineTool({
   description:
     "Read one AgentMail message in full: body (plain text, plus the reply-extracted text and " +
     "optional HTML) and its attachment list. To download an attachment (invoice PDFs are the " +
-    "point), pass its attachmentId — by default you get a short-lived downloadUrl to fetch " +
-    "yourself; set includeAttachmentContent to receive the bytes as base64 through this tool.",
+    "point), pass its attachmentId. For another tool to process the file, set " +
+    "saveAttachmentToHome and pass the returned path; this keeps attachment bytes out of model " +
+    "context. A short-lived downloadUrl is returned by default. Inline base64 is for small " +
+    "compatibility cases only.",
   inputSchema: z.object({
     inboxId: z
       .string()
@@ -97,26 +134,39 @@ export default defineTool({
     includeHtml: z
       .boolean()
       .optional()
-      .describe("Also return the HTML body. Off by default — text is usually enough."),
+      .describe(
+        "Also return the HTML body. Off by default — text is usually enough.",
+      ),
     maxBodyChars: z
       .number()
       .int()
       .min(500)
       .max(100000)
       .optional()
-      .describe("Maximum characters per body field returned to the model. Defaults to 20000."),
+      .describe(
+        "Maximum characters per body field returned to the model. Defaults to 20000.",
+      ),
     attachmentId: z
       .string()
       .min(1)
       .max(500)
       .optional()
-      .describe("Download this attachment (from the message's attachments list)."),
+      .describe(
+        "Download this attachment (from the message's attachments list).",
+      ),
     includeAttachmentContent: z
       .boolean()
       .optional()
       .describe(
         "Inline the attachment's bytes as base64 instead of just returning its downloadUrl. " +
           "Off by default; capped by maxAttachmentBytes.",
+      ),
+    saveAttachmentToHome: z
+      .boolean()
+      .optional()
+      .describe(
+        "Download the attachment under /workspace/home and return its local path for another " +
+          "installed tool. Prefer this over inline base64 for PDFs and other documents.",
       ),
     maxAttachmentBytes: z
       .number()
@@ -125,18 +175,24 @@ export default defineTool({
       .max(4194304)
       .optional()
       .describe(
-        "Largest attachment to inline as base64, in bytes. Defaults to 256 KiB — inline " +
-          "content lands in model context, so prefer the downloadUrl for anything bigger. " +
-          "Hard cap 4 MiB.",
+        "Largest attachment to download, in bytes. Defaults to 4 MiB when saving to home and " +
+          "256 KiB when returning inline base64. Hard cap 4 MiB.",
       ),
   }),
-  async execute(input) {
+  async execute(input, ctx) {
     const apiKey = process.env.AGENTMAIL_API_KEY;
     if (!apiKey) {
       return {
         ok: false,
         error:
           "Missing AGENTMAIL_API_KEY. Set it as a harnesst secret on this agent before using the AgentMail tools.",
+      };
+    }
+    if (input.includeAttachmentContent && input.saveAttachmentToHome) {
+      return {
+        ok: false,
+        error:
+          "Choose saveAttachmentToHome or includeAttachmentContent, not both. Prefer saving to home for tool-to-tool workflows.",
       };
     }
 
@@ -149,7 +205,9 @@ export default defineTool({
 
       const messageResponse = await fetch(messageUrl, { headers });
       const messageBody: unknown =
-        messageResponse.status === 204 ? null : await messageResponse.json().catch(() => null);
+        messageResponse.status === 204
+          ? null
+          : await messageResponse.json().catch(() => null);
       if (!messageResponse.ok) {
         return {
           ok: false,
@@ -198,7 +256,9 @@ export default defineTool({
 
       if (!input.attachmentId) return result;
 
-      const known = attachments.find((a) => a.attachmentId === input.attachmentId);
+      const known = attachments.find(
+        (a) => a.attachmentId === input.attachmentId,
+      );
       if (!known) {
         return {
           ok: false,
@@ -209,13 +269,18 @@ export default defineTool({
         };
       }
 
-      const maxBytes = input.maxAttachmentBytes ?? 256 * 1024;
-      const attachmentResponse = await fetch(`${messageUrl}/attachments/${encodeURIComponent(input.attachmentId)}`, { headers });
+      const maxBytes =
+        input.maxAttachmentBytes ??
+        (input.saveAttachmentToHome ? MAX_ATTACHMENT_BYTES : 256 * 1024);
+      const attachmentResponse = await fetch(
+        `${messageUrl}/attachments/${encodeURIComponent(input.attachmentId)}`,
+        { headers },
+      );
       const contentType = attachmentResponse.headers.get("content-type") ?? "";
 
       // The documented response is JSON metadata with a presigned download_url; some deployments
       // stream the raw file instead. Handle both — but never buffer the bytes until we know the
-      // caller asked for inline content AND the declared size is under the cap.
+      // caller asked to stage or inline content AND the declared size is under the cap.
       let downloadUrl: string | undefined;
       let expiresAt: string | undefined;
       let filename = known.filename;
@@ -224,7 +289,9 @@ export default defineTool({
       let streamed = false;
 
       if (contentType.includes("json")) {
-        const attachmentBody: unknown = await attachmentResponse.json().catch(() => null);
+        const attachmentBody: unknown = await attachmentResponse
+          .json()
+          .catch(() => null);
         if (!attachmentResponse.ok) {
           return {
             ok: false,
@@ -232,12 +299,14 @@ export default defineTool({
             error: apiError(attachmentResponse.status, attachmentBody),
           };
         }
-        const parsedAttachment = attachmentResponseSchema.safeParse(attachmentBody);
+        const parsedAttachment =
+          attachmentResponseSchema.safeParse(attachmentBody);
         if (!parsedAttachment.success) {
           return {
             ok: false,
             status: attachmentResponse.status,
-            error: "AgentMail returned an unexpected attachment response shape.",
+            error:
+              "AgentMail returned an unexpected attachment response shape.",
             response: attachmentBody,
           };
         }
@@ -258,7 +327,7 @@ export default defineTool({
         mimeType = contentType || mimeType;
       }
 
-      if (!input.includeAttachmentContent) {
+      if (!input.includeAttachmentContent && !input.saveAttachmentToHome) {
         if (!downloadUrl) {
           return {
             ok: false,
@@ -284,8 +353,8 @@ export default defineTool({
         return {
           ok: false,
           error:
-            `Attachment is ${declaredSize} bytes, over the ${maxBytes}-byte inline cap. ` +
-            "Fetch the downloadUrl directly (e.g. curl in the sandbox) or raise maxAttachmentBytes.",
+            `Attachment is ${declaredSize} bytes, over the ${maxBytes}-byte download cap. ` +
+            "Raise maxAttachmentBytes within the 4 MiB hard limit or handle the attachment outside this workflow.",
           attachment: {
             attachmentId: input.attachmentId,
             filename,
@@ -320,8 +389,8 @@ export default defineTool({
         return {
           ok: false,
           error:
-            `Attachment is ${bytes.byteLength} bytes, over the ${maxBytes}-byte inline cap. ` +
-            "Fetch the downloadUrl directly (e.g. curl in the sandbox) or raise maxAttachmentBytes.",
+            `Attachment is ${bytes.byteLength} bytes, over the ${maxBytes}-byte download cap. ` +
+            "Raise maxAttachmentBytes within the 4 MiB hard limit or handle the attachment outside this workflow.",
           attachment: {
             attachmentId: input.attachmentId,
             filename,
@@ -333,19 +402,47 @@ export default defineTool({
         };
       }
 
+      const attachment = {
+        attachmentId: input.attachmentId,
+        filename,
+        contentType: mimeType,
+        size: bytes.byteLength,
+        expiresAt,
+      };
+      if (input.saveAttachmentToHome) {
+        const sandbox = await ctx.getSandbox();
+        const saved = await saveAttachment({
+          bytes,
+          messageId: input.messageId,
+          attachmentId: input.attachmentId,
+          filename,
+          write: (path, content) =>
+            Promise.resolve(
+              sandbox.writeBinaryFile({
+                path,
+                content,
+                abortSignal: ctx.abortSignal,
+              }),
+            ),
+        });
+        return {
+          ok: true,
+          attachment: { ...attachment, ...saved },
+        };
+      }
+
       return {
         ok: true,
         attachment: {
-          attachmentId: input.attachmentId,
-          filename,
-          contentType: mimeType,
-          size: bytes.byteLength,
-          expiresAt,
+          ...attachment,
           contentBase64: Buffer.from(bytes).toString("base64"),
         },
       };
     } catch (err) {
-      return { ok: false, error: `AgentMail request failed: ${errorMessage(err)}` };
+      return {
+        ok: false,
+        error: `AgentMail request failed: ${errorMessage(err)}`,
+      };
     }
   },
 });

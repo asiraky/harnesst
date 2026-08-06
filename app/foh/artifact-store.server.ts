@@ -9,9 +9,9 @@
  * filesystem — it stays a column, so a hostile name can never shape a path.
  *
  * Since #292 an artifact is a NAMED thing in a conversation with a stack of versions, so recording
- * a publish is `recordArtifact` — one function for both kinds, because "which row does this land
- * on" is the same question for an image and for a page and answering it twice would be two chances
- * to answer it differently.
+ * a publish is `recordArtifact` — one function for every kind, because "which row does this land
+ * on" is the same question for an image, document and page, and answering it separately would be
+ * multiple chances to answer it differently.
  */
 import { and, count, desc, eq, gte, lte, sum } from "drizzle-orm";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
@@ -60,7 +60,8 @@ export async function readArtifactBytes(
 ): Promise<Buffer | null> {
   const root = artifactsDir();
   const absolute = path.resolve(root, storagePath);
-  if (absolute !== root && !absolute.startsWith(`${root}${path.sep}`)) return null;
+  if (absolute !== root && !absolute.startsWith(`${root}${path.sep}`))
+    return null;
   try {
     return await readFile(absolute);
   } catch {
@@ -247,7 +248,12 @@ async function settleVersion(input: {
   version: ArtifactVersion;
   row: Pick<
     RecordArtifactInput,
-    "entryPath" | "contentType" | "byteSize" | "sha256" | "storagePath" | "title"
+    | "entryPath"
+    | "contentType"
+    | "byteSize"
+    | "sha256"
+    | "storagePath"
+    | "title"
   >;
   files?: ArtifactFileInput[];
   keepVersions: number;
@@ -376,6 +382,34 @@ export async function findArtifactVersion(input: {
   return row ?? null;
 }
 
+/**
+ * Resolve one immutable artifact version only when it belongs to the calling agent. Capability
+ * operations use this as their authorization boundary: an opaque version id from another agent
+ * must be indistinguishable from a missing one.
+ */
+export async function findAgentArtifactVersion(input: {
+  agentId: string;
+  versionId: string;
+}): Promise<{ artifact: Artifact; version: ArtifactVersion } | null> {
+  const [version] = await db
+    .select()
+    .from(artifactVersions)
+    .where(eq(artifactVersions.id, input.versionId))
+    .limit(1);
+  if (!version) return null;
+  const [artifact] = await db
+    .select()
+    .from(artifacts)
+    .where(
+      and(
+        eq(artifacts.id, version.artifactId),
+        eq(artifacts.agentId, input.agentId),
+      ),
+    )
+    .limit(1);
+  return artifact ? { artifact, version } : null;
+}
+
 /** What a publish is measured against (see `publishArtifact`'s budgets). */
 export interface ArtifactUsage {
   /** Distinct artifacts (cards) already in this conversation, ever — NOT their versions. */
@@ -449,7 +483,9 @@ export async function findProjectArtifact(input: {
   const [row] = await db
     .select()
     .from(artifacts)
-    .where(and(eq(artifacts.id, input.id), eq(artifacts.projectId, input.projectId)))
+    .where(
+      and(eq(artifacts.id, input.id), eq(artifacts.projectId, input.projectId)),
+    )
     .limit(1);
   return row ?? null;
 }

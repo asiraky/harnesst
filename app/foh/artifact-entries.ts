@@ -35,7 +35,7 @@ export interface ArtifactRow {
   streamIndex: number;
   /** Latest version's ordinal (#292) — 1 until the name is republished. */
   versionNumber: number;
-  /** Latest version id, which the image URL is scoped to. */
+  /** Latest version id, which a single-file artifact URL is scoped to. */
   latestVersionId: string | null;
 }
 
@@ -65,7 +65,10 @@ export function turnAnchorsFromEvents(
     const turnId =
       typeof event.data.turnId === "string" ? event.data.turnId : null;
     if (!turnId) continue;
-    anchors.push({ streamIndex: event.streamIndex, turnKey: `${epoch}:${turnId}` });
+    anchors.push({
+      streamIndex: event.streamIndex,
+      turnKey: `${epoch}:${turnId}`,
+    });
   }
   return anchors;
 }
@@ -77,11 +80,12 @@ export function turnAnchorsFromEvents(
  */
 export function artifactEntry(row: ArtifactRow): ChatEntry {
   const html = row.kind === "html";
+  const kind = html ? "html" : row.kind === "document" ? "document" : "image";
   const artifact: ChatArtifact = {
     id: row.id,
     name: row.name,
     title: row.title,
-    kind: html ? "html" : "image",
+    kind,
     contentType: row.contentType,
     byteSize: row.byteSize,
     url: html ? null : artifactUrl(row.projectId, row.id, row.latestVersionId),

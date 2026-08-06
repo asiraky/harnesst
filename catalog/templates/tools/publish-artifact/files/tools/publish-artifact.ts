@@ -1,10 +1,50 @@
 import { defineTool } from "eve/tools";
 import { z } from "zod";
 
-// Publishes via harnesst's control plane (issues #290, #291) rather than uploading bytes: the file
-// already sits on the agent's home volume, which the control plane can read over the Docker socket,
-// so this call carries only the PATH. harnesst copies the bytes at publish time — the card keeps
-// working after the agent scales to zero or redeploys.
+const MAX_DOCUMENT_BYTES = 4 * 1024 * 1024;
+
+function documentPath(value: string): string | null {
+  if (!value.trim() || value.includes("\0")) return null;
+  const absolute = value.startsWith("/") ? value : `/workspace/home/${value}`;
+  if (
+    !absolute.startsWith("/workspace/home/") ||
+    absolute.split("/").includes("..")
+  ) {
+    return null;
+  }
+  return absolute;
+}
+
+async function readDocument(
+  stream: ReadableStream<Uint8Array> | null,
+): Promise<{ ok: true; contentBase64: string } | { ok: false; error: string }> {
+  if (!stream) return { ok: false, error: "The document path does not exist." };
+  const reader = stream.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > MAX_DOCUMENT_BYTES) {
+      await reader.cancel().catch(() => undefined);
+      return {
+        ok: false,
+        error: "PDF document artifacts are capped at 4 MiB.",
+      };
+    }
+    chunks.push(value);
+  }
+  return {
+    ok: true,
+    contentBase64: Buffer.concat(chunks).toString("base64"),
+  };
+}
+
+// Publishes via harnesst's control plane (issues #290, #291). Images and pages need only a path:
+// the control plane copies them from the root agent's home volume. A declared subagent has an
+// isolated sandbox, so a PDF document is read by this tool and carried in the private tool request.
+// It never enters model context, and the durable artifact keeps working after scale-down/redeploy.
 //
 // Two kinds, two safety stories. An IMAGE has its real type sniffed from the bytes and is served
 // back behind the user's own sign-in. A PAGE is agent-authored HTML, so harnesst never serves it
@@ -21,8 +61,9 @@ import { z } from "zod";
 // reported as an ordinary refusal rather than a crash.
 export default defineTool({
   description:
-    "Show the user a file you produced, as a card in this conversation. What you publish and how " +
-    "it renders is set by `kind`. The path must exist under /workspace/home; 25 MB max. To revise " +
+    "Publish a file from /workspace/home into this conversation as durable evidence the user can " +
+    "open. Images render, HTML pages open in a sandboxed preview, and PDF documents get an " +
+    "authenticated download link. PDF documents are capped at 4 MiB; other artifacts at 25 MB. To revise " +
     "something, publish the same file name again — the existing card updates to a new version " +
     "instead of adding a second card. Mention in your reply that you published it; only call this " +
     "while answering the user (a background run has nowhere to land).",
@@ -31,7 +72,7 @@ export default defineTool({
       .string()
       .min(1)
       .describe(
-        "Path of the image file, HTML file or page directory to publish, under /workspace/home — " +
+        "Path of the image, PDF, HTML file or page directory to publish, under /workspace/home — " +
           "either absolute (/workspace/home/artifacts/chart.png) or relative to it " +
           "(artifacts/chart.png, artifacts/report).",
       ),
@@ -44,17 +85,18 @@ export default defineTool({
         "Short caption shown on the card, e.g. 'Checkout page after the fix'. Defaults to the file name.",
       ),
     kind: z
-      .enum(["image", "html"])
+      .enum(["image", "html", "document"])
       .describe(
-        "How the artifact renders for the user. 'image': a single PNG, JPEG, WebP or SVG file, " +
+        "How the artifact is exposed. 'image': a single PNG, JPEG, WebP or SVG file, " +
           "displayed directly as a picture in the card. 'html': a page (a single .html file, or a " +
           "directory with index.html and the css/js/image files it loads), which the user opens " +
           "from the card in a sandboxed iframe preview — the page runs live with its styles and " +
           "scripts, but has no network access: fetch() fails even for sibling files, so inline " +
-          "any data into the page.",
+          "any data into the page. 'document': a PDF served as an authenticated download link; " +
+          "harnesst does not execute or render it inside the app.",
       ),
   }),
-  async execute({ path, title, kind }) {
+  async execute({ path, title, kind }, ctx) {
     const publishUrl = process.env.HARNESST_FOH_ARTIFACTS_URL;
     const token = process.env.HARNESST_TEAM_TOKEN;
     if (!publishUrl || !token) {
@@ -64,15 +106,34 @@ export default defineTool({
       };
     }
     try {
+      let contentBase64: string | undefined;
+      if (kind === "document") {
+        const resolved = documentPath(path);
+        if (!resolved) {
+          return {
+            ok: false,
+            error: "Document paths must be inside /workspace/home.",
+          };
+        }
+        const sandbox = await ctx.getSandbox();
+        const loaded = await readDocument(
+          await sandbox.readFile({
+            path: resolved,
+            abortSignal: ctx.abortSignal,
+          }),
+        );
+        if (!loaded.ok) return loaded;
+        contentBase64 = loaded.contentBase64;
+      }
       const res = await fetch(publishUrl, {
         method: "POST",
         headers: {
           authorization: `Bearer ${token}`,
           "content-type": "application/json",
         },
-        body: JSON.stringify({ path, title, kind }),
-        // The copy happens inside this request, so the budget covers reading up to 25 MB out of a
-        // volume — generous, but still bounded so a wedged daemon can never hold the turn open.
+        body: JSON.stringify({ path, title, kind, contentBase64 }),
+        // The copy/store happens inside this request, bounded so a wedged daemon cannot hold the
+        // turn open indefinitely.
         signal: AbortSignal.timeout(60_000),
       });
       const body = (await res.json().catch(() => null)) as
@@ -85,7 +146,10 @@ export default defineTool({
             /** Null for a page: it is reachable only through the preview the user opens. */
             url: string | null;
             name: string;
+            contentType: string;
             byteSize: number;
+            /** SHA-256 of the exact stored bytes (or bundle manifest). */
+            sha256: string;
             /** 1 on the first publish of this name; higher when the card was updated in place. */
             version: number;
             /** False when the bytes matched the version already on the card, so nothing changed. */

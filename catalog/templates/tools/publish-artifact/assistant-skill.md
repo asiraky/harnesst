@@ -1,19 +1,26 @@
 ---
-description: Load when an agent has the Publish Artifact tool installed and the request involves
-  showing something to the person in the conversation — screenshots, charts, diagrams, rendered
-  designs, a built HTML page or mock-up, "show me what it looks like", visual before/after checks.
+description:
+  Load when an agent has the Publish Artifact tool installed and needs to retain or show
+  a file in the conversation — screenshots, charts, PDF evidence, rendered designs, or HTML pages.
 ---
 
 # Publish Artifact (installed tool)
 
-Publishes an image, or a static HTML page, from the agent's home directory into the Front of House
-conversation, where it renders as a card the user can see. Only the PATH crosses the wire: harnesst
-copies the bytes out of the agent's home volume at publish time, so the card survives the agent
-scaling to zero or redeploying.
+Publishes an image, PDF document, or static HTML page from the current agent or subagent's home
+directory into the Front of House conversation, where it appears as a card the user can see. For a
+PDF in a declared subagent's isolated sandbox, the tool reads the file and sends it in the private
+tool request; the bytes never enter model context. Harnesst stores the exact bytes at publish time,
+so the card survives the agent scaling to zero or redeploying.
 
 **Images** — PNG, JPEG, WebP or SVG, up to 25 MB. The type is read from the file's own bytes, so
 renaming something else to `.png` is refused. Images are served back behind the user's own sign-in
 and render straight into the card.
+
+**Documents** — PDF, up to 4 MiB. Pass `kind: "document"`. The PDF signature is checked from the
+bytes, then the exact version is retained behind the user's sign-in. The card links to an
+authenticated download; harnesst does not execute or render the PDF itself. Keep the returned
+`artifactId`, immutable `artifactVersionId` and `sha256` when another record needs to identify the
+evidence.
 
 **Pages** — a single `.html` file, or a directory holding `index.html` plus the css, js, font and
 image files it loads (at most 40 files, 25 MB in total). `kind` is always passed — `"html"` renders
@@ -48,11 +55,11 @@ includes `artifactVersionId`, the immutable identifier to retain when another st
 needs to point at the exact bytes from this publish rather than whichever version is newest later.
 
 A name is fixed to one kind for the life of the conversation: a name published as an image cannot
-later be republished as a page, or the other way round. Publish that under a different name. Around
+later be republished as a page or document, or the other way round. Publish that under a different name. Around
 fifty publishes of one name is the ceiling, and only the most recent handful stay openable in the
 picker — plenty for refining something, not an archive to write history into.
 
-Either kind must live under `/workspace/home`: write it to `/workspace/home/artifacts/` (create the
+Every kind must live under `/workspace/home`: write it to `/workspace/home/artifacts/` (create the
 directory if needed), or publish a browser screenshot straight out of
 `/workspace/home/agent-browser/screenshots/` when the agent-browser skill is installed too.
 
@@ -61,7 +68,9 @@ that conversation, and harnesst refuses rather than guess when there is no live 
 background/channel run) or when the agent happens to be answering two people at once. So publish as
 part of the reply that mentions it, not from a scheduled job or a follow-up pass.
 
-Pair it with whatever produced the artifact: an agent that takes screenshots, renders a chart, or
-builds a page has nowhere to put the result otherwise — a file path in a reply is not something a
-user can look at. The card is its own transcript element, so the reply should MENTION what was
-published rather than trying to embed it in markdown (agent-written image markdown is never loaded).
+Pair it with whatever produced the artifact: an agent that downloads evidence, takes screenshots,
+renders a chart, or builds a page can preserve the exact output without moving its bytes through
+model context. A declared subagent can publish a PDF from its own sandbox and return the immutable
+`artifactVersionId` to the parent; this is the safe cross-agent handle because sandbox paths are not
+shared. The card is its own transcript element, so the reply should mention what was published
+rather than trying to embed it in markdown.

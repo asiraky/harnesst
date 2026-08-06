@@ -79,6 +79,21 @@ describe("artifactEntry versions", () => {
     );
     expect(page.artifact?.url).toBeNull();
   });
+
+  it("gives a document an immutable authenticated download URL", () => {
+    const document = artifactEntry(
+      row({
+        name: "invoice.pdf",
+        kind: "document",
+        contentType: "application/pdf",
+        latestVersionId: "ver_pdf",
+      }),
+    );
+    expect(document.artifact).toMatchObject({
+      kind: "document",
+      url: "/api/foh/proj_1/artifact/art_1/ver_pdf",
+    });
+  });
 });
 
 describe("mergeArtifactEntries with versions", () => {
@@ -203,12 +218,12 @@ describe("mergeArtifactEntries with versions", () => {
       ANCHORS,
     );
 
-    expect(
-      merged[0].inputRequests?.[0].options?.[0].media?.artifact?.url,
-    ).toBe("/api/foh/proj_1/artifact/art_1/ver_1");
-    expect(
-      merged[1].inputRequests?.[0].options?.[0].media?.artifact?.url,
-    ).toBe("/api/foh/proj_1/artifact/art_1/ver_2");
+    expect(merged[0].inputRequests?.[0].options?.[0].media?.artifact?.url).toBe(
+      "/api/foh/proj_1/artifact/art_1/ver_1",
+    );
+    expect(merged[1].inputRequests?.[0].options?.[0].media?.artifact?.url).toBe(
+      "/api/foh/proj_1/artifact/art_1/ver_2",
+    );
   });
 
   it("keeps an unresolved or non-image reference out of the option", () => {
