@@ -1,5 +1,6 @@
 {
   "id": "google-sheets-bundle",
+  "subagentCompatible": true,
   "type": "bundle",
   "name": "Google Sheets",
   "description": "Everything an agent needs to work with Google Sheets: the connector (install → Connect Google → read/write spreadsheets) plus a usage skill teaching A1 notation, read-before-write, and the values vs batchUpdate operations. Recommended way to add Sheets.",

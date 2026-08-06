@@ -70,6 +70,7 @@ import {
   catalogProviderEvidence,
   catalogLocator,
   describeDependencies,
+  findInstallAtTarget,
   packageJsonPathForRoot,
   planInstall,
   templateProviderForTarget,
@@ -77,7 +78,6 @@ import {
   type InstallTarget,
 } from "~/marketplace/install.server";
 import {
-  findInstall,
   overlayLock,
   providerExplanation,
   selectedGroupIds,
@@ -178,7 +178,7 @@ function declaredSubagentPaths(
  * subagent). The conflicts list otherwise carries repo paths, so the wizard needs this to render
  * that one entry as the sentence it is instead of a broken-looking monospace path.
  */
-const ROOT_ONLY_CONFLICT = "Channels and schedules are root-only in eve";
+const SUBAGENT_TARGET_CONFLICT = "Subagent target unavailable";
 
 /**
  * Resolve a selected picker value to an install target. The single-agent repo's root agent is
@@ -274,9 +274,9 @@ function templateAuthGroups(
     auths: Array<{ provider: string; scopeGroups?: AuthScopeGroup[] }>;
   },
   lock: HarnesstLock,
-  member: string | null,
+  target: InstallTarget,
 ): PreviewData["authGroups"] {
-  const existing = findInstall(lock, template.manifest.id, member);
+  const existing = findInstallAtTarget(lock, template.manifest.id, target);
   return template.auths.flatMap((a) => {
     if (!a.scopeGroups || a.scopeGroups.length === 0) return [];
     const stored = existing?.auth?.find(
@@ -308,9 +308,9 @@ function templateCapabilityGroups(
     auths: Array<{ provider: string; capabilityGroups?: string[] }>;
   },
   lock: HarnesstLock,
-  member: string | null,
+  target: InstallTarget,
 ): PreviewData["capabilityGroups"] {
-  const existing = findInstall(lock, template.manifest.id, member);
+  const existing = findInstallAtTarget(lock, template.manifest.id, target);
   return template.auths.flatMap((a) => {
     const offered = a.capabilityGroups ?? [];
     if (offered.length === 0) return [];
@@ -428,14 +428,9 @@ export const loader = (args: LoaderFunctionArgs) =>
       base.isTeam = ctx.isTeam;
       base.missingModelDefault =
         isAgentTemplate(type) && workspaceModel.model === null;
-      // Channels are root-only in eve, so `planInstall` refuses one at a subagent target: don't
-      // offer subagent options for a channel at all — an unofferable option is worse than none.
-      const offerSubagents = type !== "channel";
       base.roster = ctx.roster.map((a) => ({
         name: a.name,
-        subagents: offerSubagents
-          ? declaredSubagentPaths(source.paths, a.root)
-          : [],
+        subagents: declaredSubagentPaths(source.paths, a.root),
       }));
       if ((template.manifest.secrets?.length ?? 0) > 0) {
         try {
@@ -494,12 +489,14 @@ export const loader = (args: LoaderFunctionArgs) =>
           isUpdate: plan.isUpdate,
           includes: template.includes,
           // A new member has no existing install — the template defaults pre-tick.
-          authGroups: templateAuthGroups(template, lock, newMemberName),
-          capabilityGroups: templateCapabilityGroups(
-            template,
-            lock,
-            newMemberName,
-          ),
+          authGroups: templateAuthGroups(template, lock, {
+            kind: "new-member",
+            name: newMemberName,
+          }),
+          capabilityGroups: templateCapabilityGroups(template, lock, {
+            kind: "new-member",
+            name: newMemberName,
+          }),
         };
         return base;
       }
@@ -592,15 +589,11 @@ export const loader = (args: LoaderFunctionArgs) =>
         secrets: plan.secrets,
         isUpdate: plan.isUpdate,
         includes: template.includes,
-        authGroups: templateAuthGroups(
-          template,
-          lock,
-          resolved.target.memberName,
-        ),
+        authGroups: templateAuthGroups(template, lock, resolved.target),
         capabilityGroups: templateCapabilityGroups(
           template,
           lock,
-          resolved.target.memberName,
+          resolved.target,
         ),
       };
       return base;
@@ -712,10 +705,10 @@ export async function action(args: ActionFunctionArgs) {
     // Providers the form posted nothing for keep an existing install's stored selection (an
     // update must never silently re-scope to the template defaults); first installs fall back
     // to the defaults inside the planner.
-    const existingInstall = findInstall(
+    const existingInstall = findInstallAtTarget(
       lock,
       template.manifest.id,
-      target.kind === "new-member" ? target.name : target.memberName,
+      target,
     );
     for (const a of template.auths) {
       if (!a.scopeGroups?.length || a.provider in authSelections) continue;
@@ -952,7 +945,7 @@ export default function InstallWizard({
   // The root-only rejection is one prose sentence, not a repo path — split it out so it reads as
   // an explanation instead of a broken-looking path in the monospace list.
   const rootOnlyConflict = preview?.conflicts.find((c) =>
-    c.startsWith(ROOT_ONLY_CONFLICT),
+    c.startsWith(SUBAGENT_TARGET_CONFLICT),
   );
   const fileConflicts = (preview?.conflicts ?? []).filter(
     (c) => c !== rootOnlyConflict,
@@ -1093,8 +1086,10 @@ export default function InstallWizard({
                         <SelectItem
                           key={`${m.name}/${path}`}
                           value={`${m.name}${SUBAGENT_SEPARATOR}${path}`}
+                          disabled={!manifest.subagentCompatible}
                         >
                           {[m.name, ...path.split("/")].join(" › ")}
+                          {!manifest.subagentCompatible && " (member only)"}
                         </SelectItem>
                       )),
                     ])}

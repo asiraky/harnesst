@@ -1,5 +1,6 @@
 {
   "id": "agentmail",
+  "subagentCompatible": true,
   "type": "connection",
   "name": "AgentMail",
   "description": "Read and label mail in an AgentMail inbox (agentmail.to) with a user-supplied API key — no OAuth. Ships four tools: list the account's inboxes, list/search messages by date range, labels (e.g. unread), sender, or subject, read a full message including attachment downloads (invoice PDFs are the point), and add/remove labels. Read + label only by design: nothing shipped here can send, delete, or provision mail — the billing-inbox rule, enforced by omission.",

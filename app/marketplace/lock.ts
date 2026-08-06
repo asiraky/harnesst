@@ -503,7 +503,11 @@ export function setChannelSettings(
     if (entry.member !== member || !channelIdsForEntry(entry).includes(id)) {
       return entry;
     }
-    if (entry.settings === undefined ? !hasNext : sameSettings(entry.settings, next)) {
+    if (
+      entry.settings === undefined
+        ? !hasNext
+        : sameSettings(entry.settings, next)
+    ) {
       return entry;
     }
     changed = true;
@@ -561,7 +565,8 @@ export function installedKeys(
       (candidate) =>
         candidate.provider.id === entry.id &&
         candidate.provider.type === entry.type &&
-        candidate.provider.member === entry.member,
+        candidate.provider.member === entry.member &&
+        (candidate.provider.subagent ?? "") === (entry.subagent ?? ""),
     );
     const inferred = (evidence?.includes ?? []).flatMap((include) => {
       const key = installKey(include.type, include.id);
@@ -572,6 +577,7 @@ export function installedKeys(
         include.id,
         entry.member,
         catalogProviders,
+        entry.subagent ?? "",
       );
       return provider?.install === entry ? [key] : [];
     });
@@ -750,7 +756,10 @@ export function setSelectedGroups(
  * with no `subagent` is a distinct install from the same template on one of the member's subagents,
  * so all three components must match before we replace. Pure.
  */
-export function upsertInstall(lock: HarnesstLock, entry: InstallEntry): HarnesstLock {
+export function upsertInstall(
+  lock: HarnesstLock,
+  entry: InstallEntry,
+): HarnesstLock {
   const subagent = entry.subagent ?? "";
   const rest = lock.installs.filter(
     (e) =>
@@ -810,80 +819,6 @@ export function renameMember(
     };
   });
   return { lock: { ...lock, installs }, changed };
-}
-
-/**
- * Infer the subagent scope of an install from the paths it already owns: the `/`-joined chain when
- * EVERY path in `entry.files` sits under one common `<memberRoot>/subagents/<a>[/subagents/<b>…]/`
- * prefix, else `null`. Entries that already carry `subagent`, and entries owning no files, infer
- * nothing.
- *
- * This exists for locks written before an install could target a subagent. In the repo it was
- * written for, the assistant moved the files into the subagent tree by hand and rewrote `files` to
- * match, so those recorded paths are the only surviving evidence of where the install was meant to
- * live. Hence the unanimity requirement: a mixed entry — some files at the member root, some under
- * a subagent — is a hand-edited install no inference can safely claim, and guessing wrong here
- * would relocate live agent code on the next update. `null` means "leave it alone", never "member
- * level"; the operator can still declare the scope explicitly.
- */
-export function inferSubagentScope(
-  entry: InstallEntry,
-  memberRoot: string,
-): string | null {
-  if (entry.subagent !== undefined) return null;
-  if (entry.files.length === 0) return null;
-  const prefix = memberRoot.endsWith("/") ? memberRoot : `${memberRoot}/`;
-  let chain: string[] | null = null;
-  for (const file of entry.files) {
-    if (!file.startsWith(prefix)) return null;
-    const segments = file.slice(prefix.length).split("/");
-    const fileChain: string[] = [];
-    // Read alternating `subagents/<name>` pairs off the front. The chain must be a DIRECTORY
-    // prefix, so a pair only counts while at least one segment remains after it — a file literally
-    // named `subagents/reader` is a file, not a subagent root.
-    while (
-      segments.length >= 3 &&
-      segments[0] === "subagents" &&
-      segments[1] !== ""
-    ) {
-      fileChain.push(segments[1]);
-      segments.splice(0, 2);
-    }
-    if (chain === null) {
-      chain = fileChain;
-    } else if (
-      chain.length !== fileChain.length ||
-      chain.some((name, i) => name !== fileChain[i])
-    ) {
-      return null;
-    }
-  }
-  return chain !== null && chain.length > 0 ? chain.join("/") : null;
-}
-
-/**
- * Apply `inferSubagentScope` across a lock, resolving each entry's agent root through `memberRoots`
- * (keyed by `entry.member`, so `null` is the single-agent repo's root agent). Entries whose member
- * is absent from the map are left untouched — an unresolvable root is not evidence of anything.
- *
- * Pure, and no write-on-read: the caller applies this while planning, and the corrected `subagent`
- * fields land in the same lock write the plan produces, reviewable in the PR. `changed` is false
- * and the SAME lock object comes back when nothing inferred.
- */
-export function reconcileSubagentScopes(
-  lock: HarnesstLock,
-  memberRoots: ReadonlyMap<string | null, string>,
-): { lock: HarnesstLock; changed: boolean } {
-  let changed = false;
-  const installs = lock.installs.map((entry) => {
-    const root = memberRoots.get(entry.member);
-    if (root === undefined) return entry;
-    const subagent = inferSubagentScope(entry, root);
-    if (subagent === null) return entry;
-    changed = true;
-    return { ...entry, subagent };
-  });
-  return changed ? { lock: { ...lock, installs }, changed } : { lock, changed };
 }
 
 /**

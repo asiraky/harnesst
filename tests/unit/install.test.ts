@@ -11,6 +11,7 @@ import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
 
 import {
+  findInstallAtTarget,
   installedFilePath,
   planInstall,
   planUninstall,
@@ -47,6 +48,7 @@ const toolTpl: CatalogTemplate = {
     description: "Deploy a Worker.",
     version: "0.1.0",
     eve: ">=0.1.0",
+    subagentCompatible: true,
     files: ["tools/cloudflare-deploy.ts"],
     dependencies: { wrangler: "^3.0.0" },
     secrets: [
@@ -66,6 +68,7 @@ const agentTpl: CatalogTemplate = {
     description: "Deploys workers.",
     version: "0.1.0",
     eve: ">=0.1.0",
+    subagentCompatible: false,
     model: "anthropic/claude-sonnet-5",
     files: ["instructions.md", "agent.ts", "tools/cloudflare-deploy.ts"],
     dependencies: { wrangler: "^3.0.0" },
@@ -86,6 +89,7 @@ const browserSkillTpl: CatalogTemplate = {
     description: "Browser automation.",
     version: "0.1.0",
     eve: ">=0.1.0",
+    subagentCompatible: true,
     files: ["skills/agent-browser.md"],
     sandbox: {
       bootstrap: [
@@ -186,8 +190,11 @@ describe("planInstall — path mapping", () => {
     const bare = planInstall(memberCtx());
     const bareWrite = bare.writes.find((w) => w.path === "harnesst-lock.json")!;
     expect(
-      findInstall(parseLock(JSON.parse(bareWrite.content)), "cloudflare-deploy", "pm")!
-        .assistantSkill,
+      findInstall(
+        parseLock(JSON.parse(bareWrite.content)),
+        "cloudflare-deploy",
+        "pm",
+      )!.assistantSkill,
     ).toBeUndefined();
   });
 
@@ -369,6 +376,7 @@ const sheetsConnTpl: CatalogTemplate & { auths?: ResolvedAuth[] } = {
     description: "Read and write spreadsheets.",
     version: "0.1.0",
     eve: ">=0.1.0",
+    subagentCompatible: true,
     files: ["connections/google-sheets.ts"],
     auth: {
       provider: "google",
@@ -605,6 +613,7 @@ describe("planInstall — sandbox setup", () => {
         description: "Cloudflare CLI.",
         version: "0.1.0",
         eve: ">=0.1.0",
+        subagentCompatible: true,
         files: ["skills/cloudflare-cli.md"],
         sandbox: {
           bootstrap: ["npm install -g wrangler@latest"],
@@ -745,7 +754,9 @@ describe("planInstall — conflicts", () => {
     expect(plan.writes.some((w) => w.path === addon)).toBe(true);
     // …and the lock owns it, so the regenerated module's import resolves.
     const lock = parseLock(
-      JSON.parse(plan.writes.find((w) => w.path === "harnesst-lock.json")!.content),
+      JSON.parse(
+        plan.writes.find((w) => w.path === "harnesst-lock.json")!.content,
+      ),
     );
     expect(findInstall(lock, "agent-browser", "pm")!.files).toContain(addon);
     expect(
@@ -777,7 +788,9 @@ describe("planInstall — conflicts", () => {
     const module = plan.writes.find((w) => w.path === sandboxPath);
     expect(module?.content).toContain('from "./addons/agent-browser.js"');
     expect(
-      plan.warnings.some((w) => w.includes(sandboxPath) && w.includes("bootstrap")),
+      plan.warnings.some(
+        (w) => w.includes(sandboxPath) && w.includes("bootstrap"),
+      ),
     ).toBe(false);
   });
 
@@ -807,7 +820,9 @@ describe("planInstall — conflicts", () => {
     expect(plan.writes.some((write) => write.path === path)).toBe(false);
 
     const lock = parseLock(
-      JSON.parse(plan.writes.find((w) => w.path === "harnesst-lock.json")!.content),
+      JSON.parse(
+        plan.writes.find((w) => w.path === "harnesst-lock.json")!.content,
+      ),
     );
     const entry = findInstall(lock, "google-sheets", "pm")!;
     expect(entry.files).toEqual([]);
@@ -852,7 +867,9 @@ describe("planInstall — conflicts", () => {
     );
     expect(plan.writes.some((write) => write.path === missingPath)).toBe(true);
     const lock = parseLock(
-      JSON.parse(plan.writes.find((w) => w.path === "harnesst-lock.json")!.content),
+      JSON.parse(
+        plan.writes.find((w) => w.path === "harnesst-lock.json")!.content,
+      ),
     );
     expect(findInstall(lock, agentTpl.manifest.id, "pm")!.files).toEqual([
       missingPath,
@@ -903,10 +920,14 @@ describe("planInstall — conflicts", () => {
     expect(plan.writes.some((w) => w.path === sandboxPath)).toBe(false);
     // …and the missing skill file still stages.
     expect(
-      plan.writes.some((w) => w.path === "agents/pm/agent/skills/agent-browser.md"),
+      plan.writes.some(
+        (w) => w.path === "agents/pm/agent/skills/agent-browser.md",
+      ),
     ).toBe(true);
     expect(
-      plan.warnings.some((w) => w.includes(sandboxPath) && w.includes("bootstrap")),
+      plan.warnings.some(
+        (w) => w.includes(sandboxPath) && w.includes("bootstrap"),
+      ),
     ).toBe(true);
   });
 
@@ -1132,6 +1153,7 @@ describe("planInstall — resolved (composed) templates", () => {
       description: "Ships code.",
       version: "0.2.0",
       eve: ">=0.1.0",
+      subagentCompatible: false,
       // The channel's file is flattened in alongside the agent's own files.
       files: ["channels/discord.ts", "agent.ts", "instructions.md"],
       secrets: [{ name: "DISCORD_BOT_TOKEN", description: "bot token" }],
@@ -1225,6 +1247,7 @@ describe("planInstall — resolved (composed) templates", () => {
         description: "Ships code.",
         version: "0.2.0",
         eve: ">=0.1.0",
+        subagentCompatible: false,
         files: ["agent.ts", "instructions.md"],
       },
       files: {
@@ -1268,6 +1291,7 @@ describe("planInstall — resolved (composed) templates", () => {
         description: "Talk from Discord.",
         version: "0.1.0",
         eve: ">=0.20.0",
+        subagentCompatible: false,
         files: ["channels/discord.ts"],
       },
       files: { "channels/discord.ts": "export default {};\n" },
@@ -1324,6 +1348,7 @@ describe("planInstall — composite absorbs a standalone include install (issue 
       description: "Discord plus a chat skill.",
       version: "0.1.0",
       eve: ">=0.20.0",
+      subagentCompatible: true,
       files: ["channels/discord.ts", "skills/chat.md"],
     },
     files: {
@@ -1367,7 +1392,9 @@ describe("planInstall — composite absorbs a standalone include install (issue 
     expect(plan.warnings.some((w) => w.includes("Absorbs"))).toBe(true);
 
     const lock = parseLock(
-      JSON.parse(plan.writes.find((w) => w.path === "harnesst-lock.json")!.content),
+      JSON.parse(
+        plan.writes.find((w) => w.path === "harnesst-lock.json")!.content,
+      ),
     );
     // The standalone entry is gone; the composite's entry records the include provenance.
     expect(findInstall(lock, "discord", "x")).toBeUndefined();
@@ -1394,7 +1421,9 @@ describe("planInstall — composite absorbs a standalone include install (issue 
     );
     expect(plan.conflicts).toEqual([]);
     const lock = parseLock(
-      JSON.parse(plan.writes.find((w) => w.path === "harnesst-lock.json")!.content),
+      JSON.parse(
+        plan.writes.find((w) => w.path === "harnesst-lock.json")!.content,
+      ),
     );
     expect(findInstall(lock, "discord", "y")).toBeDefined();
     expect(findInstall(lock, "discord", "x")).toBeUndefined();
@@ -1434,6 +1463,7 @@ const platformChannelTpl: CatalogTemplate = {
     description: "Wake on GitHub events.",
     version: "0.6.0",
     eve: ">=0.1.0",
+    subagentCompatible: false,
     files: ["channels/github.ts", "harnesst/github-channel.ts"],
   },
   files: {
@@ -1454,6 +1484,7 @@ const foldedChannelTpl: CatalogTemplate = {
     description: "Wake on GitHub events.",
     version: "0.7.0",
     eve: ">=0.1.0",
+    subagentCompatible: false,
     files: ["channels/github.ts"],
   },
   files: { "channels/github.ts": "export default {};\n" },
@@ -1473,7 +1504,9 @@ function installedChannelLock(): HarnesstLock {
     memberCtx({ template: platformChannelTpl, packageJson: null }),
   );
   return parseLock(
-    JSON.parse(first.writes.find((w) => w.path === "harnesst-lock.json")!.content),
+    JSON.parse(
+      first.writes.find((w) => w.path === "harnesst-lock.json")!.content,
+    ),
   );
 }
 
@@ -1646,10 +1679,15 @@ describe("planInstall — updates overwrite (the #254 reversal)", () => {
       }),
     );
     const drafts = [
-      ...plan.writes.map((w) => ({ path: w.path, content: w.content as string | null })),
+      ...plan.writes.map((w) => ({
+        path: w.path,
+        content: w.content as string | null,
+      })),
       ...plan.deletions.map((path) => ({ path, content: null })),
     ];
-    expect(platformPathsUnderCheck([WRAPPER_PATH, PLATFORM_PATH], drafts)).toEqual([]);
+    expect(
+      platformPathsUnderCheck([WRAPPER_PATH, PLATFORM_PATH], drafts),
+    ).toEqual([]);
   });
 
   it("an update overwrites a draft-edited template path too — a draft is not preservation", () => {
@@ -1762,7 +1800,9 @@ describe("planInstall — orphaned sandbox add-ons (issue #254)", () => {
     expect(bundle.deletions).toEqual([
       "agents/pm/agent/sandbox/addons/agent-browser.ts",
     ]);
-    expect(bundle.warnings.filter((w) => w.includes("isn't owned"))).toEqual([]);
+    expect(bundle.warnings.filter((w) => w.includes("isn't owned"))).toEqual(
+      [],
+    );
   });
 });
 
@@ -1790,7 +1830,12 @@ describe("channel settings in the lock (issue #254)", () => {
   it("resolves a bundle-carried channel — the only lock entry a real install has", () => {
     expect(channelIdsForEntry(bundleEntry)).toEqual(["github"]);
     expect(
-      channelIdsForEntry({ ...bundleEntry, id: "github", type: "channel", includes: undefined }),
+      channelIdsForEntry({
+        ...bundleEntry,
+        id: "github",
+        type: "channel",
+        includes: undefined,
+      }),
     ).toEqual(["github"]);
     expect(channelIdsForEntry({ ...bundleEntry, includes: undefined })).toEqual(
       [],
@@ -1812,7 +1857,11 @@ describe("channel settings in the lock (issue #254)", () => {
     });
     // Round-trips through the serialized lock — this is a reviewable file, not a cache.
     expect(
-      channelSettings(parseLock(JSON.parse(serializeLock(next))), "github", "ivy"),
+      channelSettings(
+        parseLock(JSON.parse(serializeLock(next))),
+        "github",
+        "ivy",
+      ),
     ).toEqual(channelSettings(next, "github", "ivy"));
   });
 
@@ -1829,10 +1878,10 @@ describe("channel settings in the lock (issue #254)", () => {
   });
 
   it("reports no change for a no-op write, and leaves other members alone", () => {
-    const lock = upsertInstall(
-      upsertInstall(emptyLock(), bundleEntry),
-      { ...bundleEntry, member: "sam" },
-    );
+    const lock = upsertInstall(upsertInstall(emptyLock(), bundleEntry), {
+      ...bundleEntry,
+      member: "sam",
+    });
     const first = setChannelSettings(lock, "github", "ivy", { repos: ["a/b"] });
     expect(first.changed).toBe(true);
     const again = setChannelSettings(first.lock, "github", "ivy", {
@@ -1987,7 +2036,8 @@ describe("planUninstall", () => {
     );
     const installedLock = parseLock(
       JSON.parse(
-        installPlan.writes.find((w) => w.path === "harnesst-lock.json")!.content,
+        installPlan.writes.find((w) => w.path === "harnesst-lock.json")!
+          .content,
       ),
     );
     const entry = findInstall(installedLock, "agent-browser", "pm")!;
@@ -2015,8 +2065,8 @@ describe("planUninstall", () => {
 /**
  * Installs targeting a DECLARED eve subagent (issue #344). A subagent root is its own agent root
  * and inherits nothing from its parent, so a connection's files have to land INSIDE it — while
- * package.json, the sibling `harnesst/` platform tree and the sandbox stay at the member's
- * DEPLOYMENT root, because a subagent runs inside and ships with its member's container. The
+ * package.json and the sibling `harnesst/` platform tree stay at the member's DEPLOYMENT root.
+ * Eve sandbox configuration belongs to the subagent because declared subagents inherit nothing.
  * optional `deploymentRoot`/`subagentPath` carry exactly that split, and their absence has to keep
  * every pre-existing caller planning what it always planned.
  */
@@ -2032,6 +2082,7 @@ const platformToolTpl: CatalogTemplate = {
     description: "Read and send mail.",
     version: "0.1.0",
     eve: ">=0.1.0",
+    subagentCompatible: true,
     files: ["tools/agentmail-send.ts", "harnesst/agentmail-runtime.ts"],
   },
   files: {
@@ -2050,6 +2101,7 @@ const scheduledToolTpl: CatalogTemplate = {
     description: "Summarize the day.",
     version: "0.1.0",
     eve: ">=0.1.0",
+    subagentCompatible: false,
     files: ["tools/digest.ts", "schedules/daily.ts"],
   },
   files: {
@@ -2115,14 +2167,23 @@ describe("planInstall — subagent targets (issue #344)", () => {
     expect(paths).not.toContain("agents/pm/agent/tools/cloudflare-deploy.ts");
     // The subagent has no npm project of its own — it deploys with `pm`, so the dep merges there.
     expect(paths).toContain("agents/pm/package.json");
-    expect(JSON.parse(
-      plan.writes.find((w) => w.path === "agents/pm/package.json")!.content,
-    ).dependencies).toEqual({ wrangler: "^3.0.0", zod: "^3.23.0" });
+    expect(
+      JSON.parse(
+        plan.writes.find((w) => w.path === "agents/pm/package.json")!.content,
+      ).dependencies,
+    ).toEqual({ wrangler: "^3.0.0", zod: "^3.23.0" });
     expect(plan.conflicts).toEqual([]);
 
-    const entry = findInstall(lockFrom(plan), "cloudflare-deploy", "pm", "reader")!;
+    const entry = findInstall(
+      lockFrom(plan),
+      "cloudflare-deploy",
+      "pm",
+      "reader",
+    )!;
     expect(entry.subagent).toBe("reader");
-    expect(entry.files).toEqual([`${SUBAGENT_ROOT}/tools/cloudflare-deploy.ts`]);
+    expect(entry.files).toEqual([
+      `${SUBAGENT_ROOT}/tools/cloudflare-deploy.ts`,
+    ]);
   });
 
   it("nests one `subagents/` level per path segment and scopes the lock row to the chain", () => {
@@ -2138,25 +2199,22 @@ describe("planInstall — subagent targets (issue #344)", () => {
     ).toBe("reader/skim");
     // Identity is (id, member, subagent): neither the member nor the parent subagent owns this.
     expect(findInstall(lock, "cloudflare-deploy", "pm")).toBeUndefined();
-    expect(findInstall(lock, "cloudflare-deploy", "pm", "reader")).toBeUndefined();
+    expect(
+      findInstall(lock, "cloudflare-deploy", "pm", "reader"),
+    ).toBeUndefined();
   });
 
-  it("keeps the sandbox add-on and the managed module at the deployment root", () => {
+  it("installs the sandbox add-on and managed module at the subagent root", () => {
     const plan = planInstall(
       subagentCtx({ template: browserSkillTpl, packageJson: null }),
     );
     const paths = plan.writes.map((w) => w.path);
     expect(paths).toContain(`${SUBAGENT_ROOT}/skills/agent-browser.md`);
-    // A marketplace template's sandbox setup belongs to the deployment that runs it, and a
-    // subagent has no container of its own.
-    expect(paths).toContain("agents/pm/agent/sandbox/addons/agent-browser.ts");
-    expect(paths).toContain("agents/pm/agent/sandbox/sandbox.ts");
-    expect(paths.some((p) => p.startsWith(`${SUBAGENT_ROOT}/sandbox/`))).toBe(
-      false,
-    );
-    // The member's module still imports it — `sandboxEntries` sees the whole deployment.
+    expect(paths).toContain(`${SUBAGENT_ROOT}/sandbox/addons/agent-browser.ts`);
+    expect(paths).toContain(`${SUBAGENT_ROOT}/sandbox/sandbox.ts`);
+    expect(paths).not.toContain("agents/pm/agent/sandbox/sandbox.ts");
     expect(
-      plan.writes.find((w) => w.path === "agents/pm/agent/sandbox/sandbox.ts")!
+      plan.writes.find((w) => w.path === `${SUBAGENT_ROOT}/sandbox/sandbox.ts`)!
         .content,
     ).toContain('import * as addon0 from "./addons/agent-browser.js";');
   });
@@ -2177,7 +2235,8 @@ describe("planInstall — subagent targets (issue #344)", () => {
     );
     expect(
       Object.keys(
-        findInstall(lockFrom(plan), "agentmail", "pm", "reader")!.platformFiles ?? {},
+        findInstall(lockFrom(plan), "agentmail", "pm", "reader")!
+          .platformFiles ?? {},
       ),
     ).toEqual(["agents/pm/harnesst/agentmail-runtime.ts"]);
   });
@@ -2219,6 +2278,93 @@ describe("planInstall — subagent targets (issue #344)", () => {
     ]);
     expect("subagent" in atMember).toBe(false);
     expect(atReader.subagent).toBe("reader");
+    expect(
+      findInstallAtTarget(lock, "cloudflare-deploy", subagentTarget("reader")),
+    ).toBe(atReader);
+  });
+
+  it("shares identical platform files across scopes and deletes them after the last owner", () => {
+    const memberPlan = planInstall(
+      memberCtx({ template: platformToolTpl, packageJson: null }),
+    );
+    const memberLock = lockFrom(memberPlan);
+    const memberEntry = findInstall(memberLock, "agentmail", "pm")!;
+    const subPlan = planInstall(
+      subagentCtx({
+        template: platformToolTpl,
+        packageJson: null,
+        lock: memberLock,
+        repoPaths: memberEntry.files,
+      }),
+    );
+    expect(subPlan.conflicts).toEqual([]);
+    const both = lockFrom(subPlan);
+    const subEntry = findInstall(both, "agentmail", "pm", "reader")!;
+    const platformPath = "agents/pm/harnesst/agentmail-runtime.ts";
+    expect(memberEntry.files).toContain(platformPath);
+    expect(subEntry.files).toContain(platformPath);
+
+    const removeSubagent = planUninstall({
+      lock: both,
+      id: "agentmail",
+      memberName: "pm",
+      subagentPath: "reader",
+      repoPaths: [...new Set([...memberEntry.files, ...subEntry.files])],
+    });
+    expect(removeSubagent.deletions).not.toContain(platformPath);
+    const memberOnly = parseLock(JSON.parse(removeSubagent.lockWrite.content));
+    const removeMember = planUninstall({
+      lock: memberOnly,
+      id: "agentmail",
+      memberName: "pm",
+      repoPaths: memberEntry.files,
+    });
+    expect(removeMember.deletions).toContain(platformPath);
+  });
+
+  it("blocks incompatible platform content across scopes", () => {
+    const memberPlan = planInstall(
+      memberCtx({ template: platformToolTpl, packageJson: null }),
+    );
+    const memberLock = lockFrom(memberPlan);
+    const changedPlatform: CatalogTemplate = {
+      ...platformToolTpl,
+      files: {
+        ...platformToolTpl.files,
+        "harnesst/agentmail-runtime.ts":
+          "export function runtime() { return 2; }\n",
+      },
+    };
+    const plan = planInstall(
+      subagentCtx({
+        template: changedPlatform,
+        packageJson: null,
+        lock: memberLock,
+        repoPaths: memberLock.installs.flatMap((entry) => entry.files),
+      }),
+    );
+    expect(plan.conflicts.join("\n")).toContain("shared by another scope");
+  });
+
+  it("blocks a malformed member row instead of inferring or relocating its scope", () => {
+    const malformed: InstallEntry = {
+      id: "cloudflare-deploy",
+      type: "tool",
+      name: "Cloudflare Deploy",
+      version: "0.0.9",
+      hash: "old",
+      registry: REGISTRY,
+      member: "pm",
+      files: [`${SUBAGENT_ROOT}/tools/cloudflare-deploy.ts`],
+    };
+    const plan = planInstall(
+      memberCtx({
+        lock: upsertInstall(emptyLock(), malformed),
+        repoPaths: malformed.files,
+      }),
+    );
+    expect(plan.conflicts.join("\n")).toContain("different install scope");
+    expect(plan.deletions).toEqual([]);
   });
 
   it("updates a subagent-scoped install in place instead of relocating it to the member", () => {
@@ -2258,7 +2404,7 @@ describe("planInstall — subagent targets (issue #344)", () => {
 });
 
 describe("planInstall — channels and schedules are root-only (issue #344)", () => {
-  const ROOT_ONLY = "Channels and schedules are root-only in eve";
+  const ROOT_ONLY = "Subagent target unavailable";
 
   it("refuses a channel template at a subagent target and stages nothing", () => {
     const plan = planInstall(
@@ -2339,7 +2485,9 @@ describe("planUninstall — subagent scope (issue #344)", () => {
     expect(plan.notFound).toBe(false);
     expect(plan.deletions).toEqual(atReader.files);
     const parsed = parseLock(JSON.parse(plan.lockWrite.content));
-    expect(findInstall(parsed, "cloudflare-deploy", "pm", "reader")).toBeUndefined();
+    expect(
+      findInstall(parsed, "cloudflare-deploy", "pm", "reader"),
+    ).toBeUndefined();
     expect(findInstall(parsed, "cloudflare-deploy", "pm")).toEqual(atMember);
   });
 

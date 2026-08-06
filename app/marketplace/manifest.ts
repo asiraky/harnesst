@@ -114,138 +114,155 @@ const sandboxSetupSchema = z.object({
 
 export const templateManifestSchema = z
   .object({
-  id: slug,
-  type: z.enum(TEMPLATE_TYPES),
-  name: z.string().min(1),
-  description: z.string().min(1),
-  version: semver,
-  /** A semver *range* the template targets (e.g. ">=0.1.0") — opaque here; we never parse ranges. */
-  eve: z.string().min(1),
-  /**
-   * Install-relative paths the template ships. Non-empty for every type except `bundle`: a
-   * bundle is pure composition, so it may ship nothing of its own (its `includes` carry the
-   * files) — see the superRefine below.
-   */
-  files: z.array(relativeFilePath),
-  /**
-   * The template's ASSISTANT skill (issue #274): a markdown file, sibling to `files/` in the
-   * template directory (e.g. "assistant-skill.md"), that teaches the harnesst assistant what this
-   * template can do — for a channel, what wakes the agent and whether it can park into Front of
-   * House. It is NOT installed into the customer repo; it rides the assistant bundle, snapshotted
-   * into `harnesst-lock.json` at install time. Optional HERE so already-published catalogs keep
-   * parsing during rollout — the catalog CI (validate.mjs) makes it mandatory for every template.
-   */
-  assistantSkill: relativeFilePath.optional(),
-  /** npm name → version range, JSON-merged into the target's package.json at install (PRD §7.8). */
-  dependencies: z.record(npmName, z.string().min(1)).optional(),
-  /**
-   * Secrets the template needs, by name — the wizard collects values at install. `sandbox: true`
-   * marks one for the agent's sandbox shell (HARNESST_SANDBOX_ENV convention): the install flips the
-   * exposure flag so terminal-driven agents get their credentials without a manual Settings trip.
-   */
-  secrets: z
-    .array(
-      z.object({
-        name: secretName,
-        description: z.string().optional(),
-        sandbox: z.boolean().optional(),
-        /**
-         * Marks a secret that a guided harnesst flow sets (e.g. the GitHub App manifest flow on the
-         * Deployment tab) rather than one collected at install — the wizard renders no input
-         * for it.
-         */
-        provisioned: z.boolean().optional(),
-        /**
-         * A secret nobody types (issue #163) — harnesst mints a random value at first deploy and
-         * keeps it stable across redeploys. Never prompted; mutually exclusive with provisioned.
-         */
-        generated: z.boolean().optional(),
-      }),
-    )
-    .optional(),
-  /**
-   * Auth-brokered connection descriptor (issue #30) — ONLY valid on a `connection` template
-   * (enforced in the superRefine below). It drives the install wizard's Connect step: harnesst runs
-   * an operator-brokered OAuth flow for `provider`, requesting `scopes`, and stores the resulting
-   * grant so deploy can inject it. `kind` is `"oauth2"` for now (the only brokered flow).
-   *
-   * Permission levels (issue #165): `scopes` is the always-requested baseline; `scopeGroups`
-   * declares named, user-selectable levels (e.g. "Read mail" / "Send mail") the installer ticks
-   * at install time — the effective request is baseline ∪ selected groups. At least one of the
-   * two must be present (superRefine); a template with only `scopes` behaves exactly as before.
-   *
-   * `principalType` is deliberately omitted: Phase 1 grants are APP-scoped (one shared grant per
-   * agent, captured at install). It joins here when user-scoped connections land.
-   */
-  auth: z
-    .object({
-      provider: slug,
-      kind: z.literal("oauth2"),
-      /** Baseline scopes, always requested. Optional when scopeGroups is present. */
-      scopes: z.array(z.string().min(1)).min(1).optional(),
-      /** Named, user-selectable permission levels. Order = display order. */
-      scopeGroups: z
-        .array(
-          z.object({
-            id: slug,
-            /** Short human label, e.g. "Read mail". */
-            label: z.string().min(1),
-            /** What enabling this lets the agent do, in plain words. */
-            description: z.string().min(1),
-            scopes: z.array(z.string().min(1)).min(1),
-            /** Pre-ticked in the install wizard. */
-            default: z.boolean().optional(),
-          }),
-        )
-        .min(1)
-        .optional(),
-    })
-    .optional(),
-  /**
-   * Brokered-capability enablement (issue #166) — ONLY valid alongside `auth` on a `connection`
-   * template (superRefine below). Where `auth.scopeGroups` selects what the PROVIDER's token can
-   * do, `capability.groups` names the operation groups (defined in harnesst's capability registry,
-   * `app/capabilities/`) this template offers the installer; the selection is enforced PER CALL
-   * by harnesst's capability route, so changing it later needs no reconnect. Group ids must exist in
-   * the provider's capability definition (validated by catalog CI + harnesst's registry cross-check).
-   */
-  capability: z
-    .object({
-      /** Operation-group ids this template wants, in display order. */
-      groups: z.array(slug).min(1),
-    })
-    .optional(),
-  /** Sandbox setup installed alongside this template, merged by harnesst into the agent sandbox. */
-  sandbox: sandboxSetupSchema.optional(),
-  /** Suggested model, for agent-type templates. */
-  model: z.string().optional(),
-  /**
-   * Provider-side setup a customer must do before this template works — rendered as Markdown on
-   * the detail page, *before* install. This is where a template carries the install knowledge a
-   * secret's description can't hold: creating an app on the provider, pointing a webhook at the
-   * agent's endpoint, scopes to grant. Mainly used by channels; any template may set it.
-   */
-  setup: z.string().min(1).optional(),
-  /**
-   * Other catalog templates this one bundles by reference (composition). At install/update time
-   * the resolver (compose.server.ts) flattens each include's files/deps/secrets/sandbox into this
-   * template, so installed repos get materialized files — never live references. No version
-   * pinning: includes resolve from the same catalog snapshot the parent came from, and the
-   * parent's own version bump is what delivers newer included artifacts. `agent` is not includable
-   * (a whole team member can't flatten into a parent); cycles and path collisions are CI failures.
-   */
-  includes: z
-    .array(
-      z.object({
-        type: z.enum(
-          INCLUDABLE_TYPES as [IncludableType, ...IncludableType[]],
-        ),
-        id: slug,
-      }),
-    )
-    .optional(),
+    id: slug,
+    type: z.enum(TEMPLATE_TYPES),
+    name: z.string().min(1),
+    description: z.string().min(1),
+    version: semver,
+    /** A semver *range* the template targets (e.g. ">=0.1.0") — opaque here; we never parse ranges. */
+    eve: z.string().min(1),
+    /** Whether this template may be rooted inside a declared eve subagent. */
+    subagentCompatible: z.boolean(),
+    /**
+     * Install-relative paths the template ships. Non-empty for every type except `bundle`: a
+     * bundle is pure composition, so it may ship nothing of its own (its `includes` carry the
+     * files) — see the superRefine below.
+     */
+    files: z.array(relativeFilePath),
+    /**
+     * The template's ASSISTANT skill (issue #274): a markdown file, sibling to `files/` in the
+     * template directory (e.g. "assistant-skill.md"), that teaches the harnesst assistant what this
+     * template can do — for a channel, what wakes the agent and whether it can park into Front of
+     * House. It is NOT installed into the customer repo; it rides the assistant bundle, snapshotted
+     * into `harnesst-lock.json` at install time. Optional HERE so already-published catalogs keep
+     * parsing during rollout — the catalog CI (validate.mjs) makes it mandatory for every template.
+     */
+    assistantSkill: relativeFilePath.optional(),
+    /** npm name → version range, JSON-merged into the target's package.json at install (PRD §7.8). */
+    dependencies: z.record(npmName, z.string().min(1)).optional(),
+    /**
+     * Secrets the template needs, by name — the wizard collects values at install. `sandbox: true`
+     * marks one for the agent's sandbox shell (HARNESST_SANDBOX_ENV convention): the install flips the
+     * exposure flag so terminal-driven agents get their credentials without a manual Settings trip.
+     */
+    secrets: z
+      .array(
+        z.object({
+          name: secretName,
+          description: z.string().optional(),
+          sandbox: z.boolean().optional(),
+          /**
+           * Marks a secret that a guided harnesst flow sets (e.g. the GitHub App manifest flow on the
+           * Deployment tab) rather than one collected at install — the wizard renders no input
+           * for it.
+           */
+          provisioned: z.boolean().optional(),
+          /**
+           * A secret nobody types (issue #163) — harnesst mints a random value at first deploy and
+           * keeps it stable across redeploys. Never prompted; mutually exclusive with provisioned.
+           */
+          generated: z.boolean().optional(),
+        }),
+      )
+      .optional(),
+    /**
+     * Auth-brokered connection descriptor (issue #30) — ONLY valid on a `connection` template
+     * (enforced in the superRefine below). It drives the install wizard's Connect step: harnesst runs
+     * an operator-brokered OAuth flow for `provider`, requesting `scopes`, and stores the resulting
+     * grant so deploy can inject it. `kind` is `"oauth2"` for now (the only brokered flow).
+     *
+     * Permission levels (issue #165): `scopes` is the always-requested baseline; `scopeGroups`
+     * declares named, user-selectable levels (e.g. "Read mail" / "Send mail") the installer ticks
+     * at install time — the effective request is baseline ∪ selected groups. At least one of the
+     * two must be present (superRefine); a template with only `scopes` behaves exactly as before.
+     *
+     * `principalType` is deliberately omitted: Phase 1 grants are APP-scoped (one shared grant per
+     * agent, captured at install). It joins here when user-scoped connections land.
+     */
+    auth: z
+      .object({
+        provider: slug,
+        kind: z.literal("oauth2"),
+        /** Baseline scopes, always requested. Optional when scopeGroups is present. */
+        scopes: z.array(z.string().min(1)).min(1).optional(),
+        /** Named, user-selectable permission levels. Order = display order. */
+        scopeGroups: z
+          .array(
+            z.object({
+              id: slug,
+              /** Short human label, e.g. "Read mail". */
+              label: z.string().min(1),
+              /** What enabling this lets the agent do, in plain words. */
+              description: z.string().min(1),
+              scopes: z.array(z.string().min(1)).min(1),
+              /** Pre-ticked in the install wizard. */
+              default: z.boolean().optional(),
+            }),
+          )
+          .min(1)
+          .optional(),
+      })
+      .optional(),
+    /**
+     * Brokered-capability enablement (issue #166) — ONLY valid alongside `auth` on a `connection`
+     * template (superRefine below). Where `auth.scopeGroups` selects what the PROVIDER's token can
+     * do, `capability.groups` names the operation groups (defined in harnesst's capability registry,
+     * `app/capabilities/`) this template offers the installer; the selection is enforced PER CALL
+     * by harnesst's capability route, so changing it later needs no reconnect. Group ids must exist in
+     * the provider's capability definition (validated by catalog CI + harnesst's registry cross-check).
+     */
+    capability: z
+      .object({
+        /** Operation-group ids this template wants, in display order. */
+        groups: z.array(slug).min(1),
+      })
+      .optional(),
+    /** Sandbox setup installed alongside this template, merged by harnesst into the agent sandbox. */
+    sandbox: sandboxSetupSchema.optional(),
+    /** Suggested model, for agent-type templates. */
+    model: z.string().optional(),
+    /**
+     * Provider-side setup a customer must do before this template works — rendered as Markdown on
+     * the detail page, *before* install. This is where a template carries the install knowledge a
+     * secret's description can't hold: creating an app on the provider, pointing a webhook at the
+     * agent's endpoint, scopes to grant. Mainly used by channels; any template may set it.
+     */
+    setup: z.string().min(1).optional(),
+    /**
+     * Other catalog templates this one bundles by reference (composition). At install/update time
+     * the resolver (compose.server.ts) flattens each include's files/deps/secrets/sandbox into this
+     * template, so installed repos get materialized files — never live references. No version
+     * pinning: includes resolve from the same catalog snapshot the parent came from, and the
+     * parent's own version bump is what delivers newer included artifacts. `agent` is not includable
+     * (a whole team member can't flatten into a parent); cycles and path collisions are CI failures.
+     */
+    includes: z
+      .array(
+        z.object({
+          type: z.enum(
+            INCLUDABLE_TYPES as [IncludableType, ...IncludableType[]],
+          ),
+          id: slug,
+        }),
+      )
+      .optional(),
   })
   .superRefine((m, ctx) => {
+    const rootOnlyFile = m.files.find(
+      (file) => file.startsWith("channels/") || file.startsWith("schedules/"),
+    );
+    if (
+      m.subagentCompatible &&
+      (m.type === "agent" || m.type === "channel" || rootOnlyFile)
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["subagentCompatible"],
+        message: rootOnlyFile
+          ? `must be false because "${rootOnlyFile}" is root-only in eve`
+          : `must be false for ${m.type} templates`,
+      });
+    }
     // Only a bundle may ship no files of its own (pure grouping); everything else must ship ≥1.
     if (m.type !== "bundle" && m.files.length === 0) {
       ctx.addIssue({
@@ -254,7 +271,8 @@ export const templateManifestSchema = z
         type: "array",
         inclusive: true,
         path: ["files"],
-        message: "files must be non-empty (only a bundle may ship no files of its own)",
+        message:
+          "files must be non-empty (only a bundle may ship no files of its own)",
       });
     }
     // The assistant skill is a manifest-level artifact, never an installed file — the same path
@@ -267,7 +285,11 @@ export const templateManifestSchema = z
       });
     }
     // A file-less bundle with no includes would install nothing — reject it as authored noise.
-    if (m.type === "bundle" && m.files.length === 0 && (m.includes?.length ?? 0) === 0) {
+    if (
+      m.type === "bundle" &&
+      m.files.length === 0 &&
+      (m.includes?.length ?? 0) === 0
+    ) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         path: ["includes"],
@@ -314,7 +336,8 @@ export const templateManifestSchema = z
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         path: ["capability"],
-        message: "capability requires an auth block (the grant its operations consume)",
+        message:
+          "capability requires an auth block (the grant its operations consume)",
       });
     }
     // Capability group ids are the lock's selection keys too — duplicates are ambiguous.

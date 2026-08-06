@@ -37,23 +37,24 @@ Note the plural: a template of `type: "tool"` lives under `templates/tools/`.
 1. Create `templates/<type>s/<id>/` where `<id>` is a kebab-case slug that **equals the directory name**.
 2. Write `template.json` (the manifest). The contract:
 
-   | field                 | required | notes                                                                                                                |
-   | --------------------- | -------- | -------------------------------------------------------------------------------------------------------------------- |
-   | `id`                  | yes      | kebab-case slug, matches the directory name                                                                          |
-   | `type`                | yes      | `tool` \| `skill` \| `subagent` \| `channel` \| `connection` \| `bundle` \| `agent`                                  |
-   | `name`, `description` | yes      | non-empty                                                                                                            |
-   | `version`             | yes      | semver `x.y.z`                                                                                                       |
-   | `eve`                 | yes      | semver _range_ the template targets, e.g. `">=0.1.0"`                                                                |
-   | `files`               | yes      | list of install-relative paths — **no absolute paths, no `..`, no backslashes**; non-empty for every type except `bundle` (a bundle may be pure composition) |
-   | `dependencies`        | no       | npm name → version range; JSON-merged into the target's `package.json`                                               |
+   | field                 | required | notes                                                                                                                                                                                                                                                                                       |
+   | --------------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+   | `id`                  | yes      | kebab-case slug, matches the directory name                                                                                                                                                                                                                                                 |
+   | `type`                | yes      | `tool` \| `skill` \| `subagent` \| `channel` \| `connection` \| `bundle` \| `agent`                                                                                                                                                                                                         |
+   | `name`, `description` | yes      | non-empty                                                                                                                                                                                                                                                                                   |
+   | `version`             | yes      | semver `x.y.z`                                                                                                                                                                                                                                                                              |
+   | `eve`                 | yes      | semver _range_ the template targets, e.g. `">=0.1.0"`                                                                                                                                                                                                                                       |
+   | `subagentCompatible`  | yes      | whether the template may install into a declared subagent; every included template must also allow it                                                                                                                                                                                       |
+   | `files`               | yes      | list of install-relative paths — **no absolute paths, no `..`, no backslashes**; non-empty for every type except `bundle` (a bundle may be pure composition)                                                                                                                                |
+   | `dependencies`        | no       | npm name → version range; JSON-merged into the target's `package.json`                                                                                                                                                                                                                      |
    | `secrets`             | no       | `[{ name: UPPER_SNAKE, description?, provisioned?, generated? }]` — the install wizard makes placeholders; `provisioned` (a guided harnesst flow sets it) and `generated` (harnesst mints it — see [Connection providers](#connection-providers)) are never prompted and mutually exclusive |
-   | `sandbox`             | no       | sandbox setup merged into the target agent, e.g. `bootstrap` shell commands, `env` defaults, and a `revalidationKey` |
-   | `auth`                | no       | `{ provider, kind: "oauth2", scopes?, scopeGroups? }` — brokered OAuth descriptor, `connection` templates only; at least one of `scopes` (always-requested baseline) / `scopeGroups` (user-selectable permission levels) required (see [Connection providers](#connection-providers)) |
-   | `capability`          | no       | `{ groups }` — operation-group enablement for a brokered-capability provider (issue #166); only valid alongside `auth` on a `connection` template. Group ids must exist in harnesst's capability registry (see [Brokered capabilities](#brokered-capabilities-issue-166)) |
-   | `connections`         | no       | declared for future use                                                                                              |
-   | `model`               | no       | suggested model (agent-type templates)                                                                               |
-   | `setup`               | no       | Markdown, shown on the detail page before install — provider-side steps a secret description can't hold (create an app, point a webhook at the agent's endpoint, grant scopes). Mainly channels |
-   | `includes`            | no       | `[{ type, id }]` — other catalog templates bundled by reference; `type` is any type except `agent` (see Composition) |
+   | `sandbox`             | no       | sandbox setup merged into the target agent, e.g. `bootstrap` shell commands, `env` defaults, and a `revalidationKey`                                                                                                                                                                        |
+   | `auth`                | no       | `{ provider, kind: "oauth2", scopes?, scopeGroups? }` — brokered OAuth descriptor, `connection` templates only; at least one of `scopes` (always-requested baseline) / `scopeGroups` (user-selectable permission levels) required (see [Connection providers](#connection-providers))       |
+   | `capability`          | no       | `{ groups }` — operation-group enablement for a brokered-capability provider (issue #166); only valid alongside `auth` on a `connection` template. Group ids must exist in harnesst's capability registry (see [Brokered capabilities](#brokered-capabilities-issue-166))                   |
+   | `connections`         | no       | declared for future use                                                                                                                                                                                                                                                                     |
+   | `model`               | no       | suggested model (agent-type templates)                                                                                                                                                                                                                                                      |
+   | `setup`               | no       | Markdown, shown on the detail page before install — provider-side steps a secret description can't hold (create an app, point a webhook at the agent's endpoint, grant scopes). Mainly channels                                                                                             |
+   | `includes`            | no       | `[{ type, id }]` — other catalog templates bundled by reference; `type` is any type except `agent` (see Composition)                                                                                                                                                                        |
 
 3. Put the shipped files under `files/`, mirroring the install-relative paths — a tool at `files/tools/<id>.ts` installs to the target agent's `tools/<id>.ts`.
 4. Run `npm run catalog:index` (regenerates `index.json`) then `npm run catalog:validate`.
@@ -76,7 +77,7 @@ The content hash is `sha1(hex)` over the canonicalized manifest plus every file'
 
 A template may bundle other templates by reference with `includes: [{ type, id }]`. `type` is any template type except `agent` (an agent is a whole team member — it installs as its own root and can't flatten into a parent). Includes may nest (a skill may include a tool); cycles are an error.
 
-The `bundle` type is composition made first-class (issue #42): a named group of includable assets that installs **into an existing member** as one unit, with no (or few) files of its own. An `agent` is conceptually a bundle that also seeds a new member. Installing a composite onto a member that already has one of its includes installed standalone *absorbs* that install — the composite takes ownership of its files and lock entry instead of refusing on a path conflict.
+The `bundle` type is composition made first-class (issue #42): a named group of includable assets that installs **into an existing member** as one unit, with no (or few) files of its own. An `agent` is conceptually a bundle that also seeds a new member. Installing a composite onto a member that already has one of its includes installed standalone _absorbs_ that install — the composite takes ownership of its files and lock entry instead of refusing on a path conflict.
 
 At install (and update) time harnesst's resolver flattens each reference into the parent, so:
 
@@ -107,7 +108,7 @@ deploy. The contract:
 - **At deploy harnesst injects `<PREFIX>_OAUTH_CLIENT_ID` / `<PREFIX>_OAUTH_CLIENT_SECRET` /
   `<PREFIX>_OAUTH_REFRESH_TOKEN`** for every provider the agent holds an active grant for;
   the shipped connection file refreshes its own access tokens from those at runtime. It also
-  injects **`<PREFIX>_OAUTH_SCOPES`** — the scopes the account actually *granted*,
+  injects **`<PREFIX>_OAUTH_SCOPES`** — the scopes the account actually _granted_,
   space-joined — so agent code can read its own permission level (don't offer to send mail
   when only read was granted; the gmail template's connection file shows the pattern).
 
@@ -190,8 +191,8 @@ forever, and every level doubles the catalog.
   behave exactly as before scope groups existed.
 - **`scopeGroups`** — named, user-selectable levels
   (`{ id, label, description, scopes, default? }`). Use it whenever the system has separable
-  capabilities a cautious installer would want to withhold (gmail: *Read mail* / *Manage
-  labels* / *Send mail*). The installer ticks groups in the install wizard (`default: true`
+  capabilities a cautious installer would want to withhold (gmail: _Read mail_ / _Manage
+  labels_ / _Send mail_). The installer ticks groups in the install wizard (`default: true`
   groups pre-ticked), the OAuth consent requests baseline ∪ selected groups, and the
   selection stays editable on the agent's Deployment tab — widening asks for one reconnect,
   narrowing takes effect on reconnect. Overlapping groups are fine (gmail's `gmail.modify` ⊃

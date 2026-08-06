@@ -1,5 +1,6 @@
 {
   "id": "designer",
+  "subagentCompatible": false,
   "type": "agent",
   "name": "Designer",
   "description": "Interviews you to capture product truth, then designs, quality-checks, and publishes a complete static site into the Front of House preview.",

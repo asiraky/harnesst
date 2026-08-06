@@ -25,11 +25,9 @@ import {
   findTemplateProvider,
   hasChannelInstalled,
   hasToolInstalled,
-  inferSubagentScope,
   installKey,
   installedKeys,
   missingOwnedFiles,
-  reconcileSubagentScopes,
   removeInstall,
   upsertInstall,
   type CatalogProviderEvidence,
@@ -48,6 +46,7 @@ const VALID: TemplateManifest = {
   description: "Deploy a Worker.",
   version: "0.1.0",
   eve: ">=0.1.0",
+  subagentCompatible: true,
   files: ["tools/cloudflare-deploy.ts"],
   dependencies: { wrangler: "^3.0.0" },
   secrets: [{ name: "CLOUDFLARE_API_TOKEN" }],
@@ -57,6 +56,20 @@ describe("manifest schema", () => {
   it("accepts a valid manifest", () => {
     expect(parseManifest(VALID)).toEqual(VALID);
   });
+
+  it("requires explicit subagent compatibility", () => {
+    const { subagentCompatible: _compatibility, ...missing } = VALID;
+    expect(() => parseManifest(missing)).toThrow(/subagentCompatible/);
+  });
+
+  it.each(["channels/github.ts", "schedules/daily.ts"])(
+    "rejects subagent compatibility for eve root-only file %s",
+    (file) => {
+      expect(() => parseManifest({ ...VALID, files: [file] })).toThrow(
+        /root-only in eve/,
+      );
+    },
+  );
 
   it.each([
     ["../escape.ts", "parent traversal"],
@@ -75,6 +88,7 @@ describe("manifest schema", () => {
       ...VALID,
       id: "chat-pack",
       type: "bundle",
+      subagentCompatible: false,
       files: [],
       includes: [{ type: "channel", id: "discord" }],
     });
@@ -261,6 +275,7 @@ describe("manifest schema — platform files (issue #254)", () => {
     ...VALID,
     id: "github",
     type: "channel",
+    subagentCompatible: false,
     files: ["channels/github.ts", "harnesst/model-hooks.ts"],
   };
 
@@ -372,9 +387,16 @@ describe("fixture catalog (the real in-repo seed)", () => {
           .map((line) => /^([A-Za-z_][\w-]*)\s*:/.exec(line)?.[1])
           .filter((key): key is string => Boolean(key));
 
-        expect(keys, `${entry.id}: ${path} frontmatter`).toContain("description");
-        const unknown = keys.filter((key) => key !== "name" && key !== "description");
-        expect(unknown, `${entry.id}: ${path} frontmatter keys eve rejects`).toEqual([]);
+        expect(keys, `${entry.id}: ${path} frontmatter`).toContain(
+          "description",
+        );
+        const unknown = keys.filter(
+          (key) => key !== "name" && key !== "description",
+        );
+        expect(
+          unknown,
+          `${entry.id}: ${path} frontmatter keys eve rejects`,
+        ).toEqual([]);
       }
     }
 
@@ -447,7 +469,11 @@ describe("composition against the real seed", () => {
   // The Discord channel's behaviour is pinned against the real seed file, not a fixture: these
   // are the exact strings a customer's repo receives, and every one of them is a bug we shipped.
   it("materializes the Discord channel with its question, reply and typing plumbing", async () => {
-    const resolved = await resolveTemplate(fixtureCatalog, "channel", "discord");
+    const resolved = await resolveTemplate(
+      fixtureCatalog,
+      "channel",
+      "discord",
+    );
     const source = resolved.files["channels/discord.ts"];
 
     expect(source).toContain('from "eve/channels/discord"');
@@ -678,7 +704,10 @@ describe("installedKeys", () => {
 
   it("returns a 'type/id' key per install", () => {
     let lock: HarnesstLock = emptyLock();
-    lock = upsertInstall(lock, installEntry({ id: "web-search", type: "tool" }));
+    lock = upsertInstall(
+      lock,
+      installEntry({ id: "web-search", type: "tool" }),
+    );
     lock = upsertInstall(lock, installEntry({ id: "pm", type: "agent" }));
     expect(installedKeys(lock).sort()).toEqual(["agent/pm", "tool/web-search"]);
   });
@@ -714,18 +743,13 @@ describe("installedKeys", () => {
           {
             id: "impeccable",
             type: "skill",
-            ownedPaths: [
-              "agents/designer/agent/skills/impeccable/SKILL.md",
-            ],
+            ownedPaths: ["agents/designer/agent/skills/impeccable/SKILL.md"],
           },
         ],
       },
     ];
     expect(
-      installedKeys(
-        { version: 1, installs: [parent] },
-        catalogProviders,
-      ),
+      installedKeys({ version: 1, installs: [parent] }, catalogProviders),
     ).toEqual(["agent/designer", "skill/impeccable"]);
   });
 
@@ -847,7 +871,14 @@ describe("findTemplateProvider", () => {
       findTemplateProvider(lock, "agent", "designer", "designer", [], "reader"),
     ).toEqual({ install: atReader, via: "direct" });
     expect(
-      findTemplateProvider(lock, "skill", "impeccable", "designer", [], "reader"),
+      findTemplateProvider(
+        lock,
+        "skill",
+        "impeccable",
+        "designer",
+        [],
+        "reader",
+      ),
     ).toEqual({ install: atReader, via: "include" });
   });
 });
@@ -911,7 +942,9 @@ describe("install identity includes the subagent scope (issue #344)", () => {
     expect(
       findInstall(lock, "agentmail", "bookkeeping", "reader")!.version,
     ).toBe("2.0.0");
-    expect(findInstall(lock, "agentmail", "bookkeeping")!.version).toBe("1.0.0");
+    expect(findInstall(lock, "agentmail", "bookkeeping")!.version).toBe(
+      "1.0.0",
+    );
   });
 
   it("removing one scope leaves the other installed", () => {
@@ -932,151 +965,9 @@ describe("install identity includes the subagent scope (issue #344)", () => {
     expect(findInstall(subOnly, "agentmail", "bookkeeping", "reader")).toEqual(
       atReader,
     );
-    expect(removeInstall(subOnly, "agentmail", "bookkeeping").installs).toEqual([
-      atReader,
-    ]);
-  });
-});
-
-describe("inferSubagentScope (issue #344)", () => {
-  const base = installEntry({ id: "agentmail", member: "bookkeeping" });
-  const under = (...paths: string[]): InstallEntry => ({ ...base, files: paths });
-
-  it("infers the scope when every owned file sits under one subagent subtree", () => {
-    expect(
-      inferSubagentScope(
-        under(
-          `${BOOKKEEPING_ROOT}/subagents/reader/tools/agentmail-list.ts`,
-          `${BOOKKEEPING_ROOT}/subagents/reader/tools/agentmail-send.ts`,
-        ),
-        BOOKKEEPING_ROOT,
-      ),
-    ).toBe("reader");
-  });
-
-  it("infers a nested chain, named by segment and not by directory", () => {
-    expect(
-      inferSubagentScope(
-        under(`${BOOKKEEPING_ROOT}/subagents/reader/subagents/skim/tools/x.ts`),
-        BOOKKEEPING_ROOT,
-      ),
-    ).toBe("reader/skim");
-  });
-
-  it("claims nothing for an entry that already declares its scope", () => {
-    expect(
-      inferSubagentScope(
-        {
-          ...under(`${BOOKKEEPING_ROOT}/subagents/reader/tools/x.ts`),
-          subagent: "reader",
-        },
-        BOOKKEEPING_ROOT,
-      ),
-    ).toBeNull();
-  });
-
-  it("claims nothing for an entry that owns no files", () => {
-    expect(inferSubagentScope(under(), BOOKKEEPING_ROOT)).toBeNull();
-  });
-
-  it("claims nothing for a MIXED entry — a hand-edited install is no one's to guess", () => {
-    // Exactly the half-moved shape a hand repair leaves behind. Guessing "reader" here would
-    // relocate the member's own live file on the next update; `null` means "leave it alone".
-    expect(
-      inferSubagentScope(
-        under(
-          `${BOOKKEEPING_ROOT}/tools/agentmail-send.ts`,
-          `${BOOKKEEPING_ROOT}/subagents/reader/tools/agentmail-list.ts`,
-        ),
-        BOOKKEEPING_ROOT,
-      ),
-    ).toBeNull();
-  });
-
-  it("claims nothing when the files are spread across two subagents", () => {
-    expect(
-      inferSubagentScope(
-        under(
-          `${BOOKKEEPING_ROOT}/subagents/reader/tools/a.ts`,
-          `${BOOKKEEPING_ROOT}/subagents/writer/tools/b.ts`,
-        ),
-        BOOKKEEPING_ROOT,
-      ),
-    ).toBeNull();
-  });
-
-  it("claims nothing for files that live outside the member root entirely", () => {
-    expect(
-      inferSubagentScope(
-        under("agents/sales/agent/subagents/reader/tools/a.ts"),
-        BOOKKEEPING_ROOT,
-      ),
-    ).toBeNull();
-  });
-});
-
-describe("reconcileSubagentScopes (issue #344)", () => {
-  const memberRoots = new Map<string | null, string>([
-    ["bookkeeping", BOOKKEEPING_ROOT],
-  ]);
-  /** The real customer shape: files hand-moved into the subagent, no `subagent` field. */
-  const legacy: InstallEntry = {
-    ...installEntry({ id: "agentmail", member: "bookkeeping" }),
-    files: [
-      `${BOOKKEEPING_ROOT}/subagents/reader/tools/agentmail-list.ts`,
-      `${BOOKKEEPING_ROOT}/subagents/reader/tools/agentmail-send.ts`,
-    ],
-  };
-  const atRoot: InstallEntry = {
-    ...installEntry({ id: "web-search", member: "bookkeeping" }),
-    files: [`${BOOKKEEPING_ROOT}/tools/web-search.ts`],
-  };
-  const unknownMember: InstallEntry = {
-    ...installEntry({ id: "agentmail", member: "sales" }),
-    files: ["agents/sales/agent/subagents/reader/tools/agentmail-send.ts"],
-  };
-
-  it("stamps the inferred scope onto a pre-feature entry, purely", () => {
-    const { lock, changed } = reconcileSubagentScopes(
-      { version: 1, installs: [legacy] },
-      memberRoots,
+    expect(removeInstall(subOnly, "agentmail", "bookkeeping").installs).toEqual(
+      [atReader],
     );
-    expect(changed).toBe(true);
-    expect(lock.installs[0].subagent).toBe("reader");
-    // The paths are the evidence, not the thing to rewrite — they already point at the subagent.
-    expect(lock.installs[0].files).toEqual(legacy.files);
-    expect(legacy.subagent).toBeUndefined();
-  });
-
-  it("leaves an entry alone when its member's root is unknown", () => {
-    // An unresolvable root is not evidence of anything — `agents/sales/agent` merely looks like a
-    // member root; only the roster says where a member's agent actually is.
-    const { lock, changed } = reconcileSubagentScopes(
-      { version: 1, installs: [unknownMember] },
-      memberRoots,
-    );
-    expect(changed).toBe(false);
-    expect(lock.installs[0].subagent).toBeUndefined();
-  });
-
-  it("reports changed:false and hands back the same lock when nothing infers", () => {
-    const before: HarnesstLock = { version: 1, installs: [atRoot] };
-    const { lock, changed } = reconcileSubagentScopes(before, memberRoots);
-    expect(changed).toBe(false);
-    expect(lock).toBe(before);
-  });
-
-  it("stamps only the inferable rows of a mixed lock", () => {
-    const { lock, changed } = reconcileSubagentScopes(
-      { version: 1, installs: [legacy, atRoot, unknownMember] },
-      memberRoots,
-    );
-    expect(changed).toBe(true);
-    expect(lock.installs.map((e) => e.subagent)).toEqual([
-      "reader",
-      undefined,
-      undefined,
-    ]);
   });
 });
 

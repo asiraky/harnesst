@@ -15,17 +15,12 @@ import { planInstall, planUninstall } from "~/marketplace/install.server";
 import {
   findInstall,
   parseLock,
-  reconcileSubagentScopes,
   serializeLock,
   type HarnesstLock,
 } from "~/marketplace/lock";
 
 const MEMBER_ROOT = "agents/bookkeeping/agent";
 const READER_ROOT = `${MEMBER_ROOT}/subagents/reader`;
-const MEMBER_ROOTS = new Map<string | null, string>([
-  ["bookkeeping", MEMBER_ROOT],
-]);
-
 /** The lock as commit 5ce11787 left it: subagent paths, no `subagent` scope field. */
 const LEGACY_LOCK: HarnesstLock = {
   version: 1,
@@ -53,7 +48,11 @@ const check = (ok: boolean, label: string) => {
   if (!ok) problems.push(label);
 };
 
-const template = await resolveTemplate(fixtureCatalog, "connection", "agentmail");
+const template = await resolveTemplate(
+  fixtureCatalog,
+  "connection",
+  "agentmail",
+);
 const repoPaths = [
   `${MEMBER_ROOT}/agent.ts`,
   `${MEMBER_ROOT}/instructions.md`,
@@ -70,27 +69,29 @@ const base = {
   drafts: [],
   packageJson,
   rosterNames: ["bookkeeping"],
-} as const;
+};
 
-console.log("\n1. The bug: planning the update at the MEMBER scope relocates the subagent's tools");
+console.log(
+  "\n1. A malformed legacy row is blocked instead of inferred or relocated",
+);
 const naive = planInstall({
   ...base,
   lock: LEGACY_LOCK,
   target: { kind: "member", memberName: "bookkeeping", root: MEMBER_ROOT },
 });
-const relocated = naive.deletions.filter((p) => p.startsWith(`${READER_ROOT}/`));
 check(
-  relocated.length === 3,
-  `member-scope plan deletes the subagent's 3 tools (${relocated.length} deletions) — the damage this fix prevents`,
+  naive.conflicts.some((conflict) =>
+    conflict.includes("different install scope"),
+  ),
+  "member-scope plan reports the malformed lock row",
 );
-check(
-  naive.writes.some((w) => w.path === `${MEMBER_ROOT}/tools/agentmail-get-message.ts`),
-  "member-scope plan re-creates them at the member root",
-);
+check(naive.deletions.length === 0, "and plans no relocating deletions");
 
-console.log("\n2. Reconciliation recovers the scope the hand-edit destroyed");
-const { lock: fixed, changed } = reconcileSubagentScopes(LEGACY_LOCK, MEMBER_ROOTS);
-check(changed, "reconcileSubagentScopes reports a change");
+console.log("\n2. An operator explicitly repairs the lock scope");
+const fixed: HarnesstLock = {
+  ...LEGACY_LOCK,
+  installs: [{ ...LEGACY_LOCK.installs[0], subagent: "reader" }],
+};
 check(
   findInstall(fixed, "agentmail", "bookkeeping", "reader") !== undefined,
   'the entry is now scoped to the "reader" subagent',
@@ -101,10 +102,12 @@ check(
 );
 check(
   serializeLock(fixed).includes('"subagent": "reader"'),
-  "the correction lands in the serialized lock, reviewable in the PR",
+  "the explicit correction serializes as a reviewable lock diff",
 );
 
-console.log("\n3. The fix: planning the update at the subagent scope keeps the tools in place");
+console.log(
+  "\n3. The fix: planning the update at the subagent scope keeps the tools in place",
+);
 const scoped = planInstall({
   ...base,
   lock: fixed,
@@ -116,7 +119,10 @@ const scoped = planInstall({
     subagentPath: "reader",
   },
 });
-check(scoped.conflicts.length === 0, `no conflicts (${scoped.conflicts.join("; ")})`);
+check(
+  scoped.conflicts.length === 0,
+  `no conflicts (${scoped.conflicts.join("; ")})`,
+);
 check(
   !scoped.deletions.some((p) => p.startsWith(`${READER_ROOT}/tools/`)),
   "NO deletions relocating the subagent's tools",
@@ -135,16 +141,23 @@ check(
   "the zod dependency still merges into the MEMBER's package.json",
 );
 const staged = parseLock(
-  JSON.parse(scoped.writes.find((w) => w.path === "harnesst-lock.json")!.content),
+  JSON.parse(
+    scoped.writes.find((w) => w.path === "harnesst-lock.json")!.content,
+  ),
 );
 const entry = findInstall(staged, "agentmail", "bookkeeping", "reader")!;
-check(entry.version === template.manifest.version, `lock records v${entry.version}`);
+check(
+  entry.version === template.manifest.version,
+  `lock records v${entry.version}`,
+);
 check(
   entry.files.every((f) => f.startsWith(`${READER_ROOT}/`)),
   "and owns only subagent-root paths",
 );
 
-console.log("\n4. The scopes are independent: the member can hold its own copy");
+console.log(
+  "\n4. The scopes are independent: the member can hold its own copy",
+);
 const alsoMember = planInstall({
   ...base,
   lock: staged,
@@ -152,9 +165,14 @@ const alsoMember = planInstall({
   target: { kind: "member", memberName: "bookkeeping", root: MEMBER_ROOT },
 });
 const bothLock = parseLock(
-  JSON.parse(alsoMember.writes.find((w) => w.path === "harnesst-lock.json")!.content),
+  JSON.parse(
+    alsoMember.writes.find((w) => w.path === "harnesst-lock.json")!.content,
+  ),
 );
-check(bothLock.installs.length === 2, `two independent rows (${bothLock.installs.length})`);
+check(
+  bothLock.installs.length === 2,
+  `two independent rows (${bothLock.installs.length})`,
+);
 check(
   !alsoMember.deletions.some((p) => p.startsWith(`${READER_ROOT}/`)),
   "installing on the member touches none of the subagent's files",
@@ -171,8 +189,11 @@ check(
   "uninstalling the subagent scope deletes only its own files",
 );
 check(
-  findInstall(parseLock(JSON.parse(removed.lockWrite.content)), "agentmail", "bookkeeping") !==
-    undefined,
+  findInstall(
+    parseLock(JSON.parse(removed.lockWrite.content)),
+    "agentmail",
+    "bookkeeping",
+  ) !== undefined,
   "and leaves the member's install standing",
 );
 
@@ -190,9 +211,12 @@ const refused = planInstall({
     subagentPath: "reader",
   },
 });
-check(refused.writes.length === 0, "a channel at a subagent target stages nothing");
 check(
-  refused.conflicts.some((c) => c.startsWith("Channels and schedules are root-only in eve")),
+  refused.writes.length === 0,
+  "a channel at a subagent target stages nothing",
+);
+check(
+  refused.conflicts.some((c) => c.startsWith("Subagent target unavailable")),
   `and says why: ${refused.conflicts[0] ?? "(no conflict!)"}`,
 );
 

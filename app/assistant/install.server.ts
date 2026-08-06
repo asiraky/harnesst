@@ -20,11 +20,12 @@ import {
 import {
   catalogProviderEvidence,
   catalogLocator,
+  findInstallAtTarget,
   packageJsonPathForRoot,
   planInstall,
   type InstallTarget,
 } from "~/marketplace/install.server";
-import { findInstall, overlayLock, selectedGroupIds } from "~/marketplace/lock";
+import { overlayLock, selectedGroupIds } from "~/marketplace/lock";
 import { resolveTemplate } from "~/marketplace/compose.server";
 import {
   TEMPLATE_TYPES,
@@ -369,7 +370,8 @@ export async function installMarketplaceTemplate(
       if (subagent) {
         return {
           ok: false,
-          error: "Agent templates install as a new member, not into a subagent.",
+          error:
+            "Agent templates install as a new member, not into a subagent.",
         };
       }
       if (!context.isTeam) {
@@ -427,13 +429,10 @@ export async function installMarketplaceTemplate(
 
     // Match the wizard's update semantics: omitted selections retain the lock snapshot instead
     // of silently reverting to newly published template defaults.
-    const installMember =
-      target.kind === "new-member" ? target.name : target.memberName;
-    const existingInstall = findInstall(
+    const existingInstall = findInstallAtTarget(
       lock,
       template.manifest.id,
-      installMember,
-      subagent,
+      target,
     );
     for (const auth of template.auths) {
       const stored = existingInstall?.auth?.find(

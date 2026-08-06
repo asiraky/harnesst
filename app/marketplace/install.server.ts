@@ -251,9 +251,18 @@ function orphanedSandboxAddons(
     .sort();
 }
 
-function sandboxEntries(lock: HarnesstLock, member: string | null) {
+function sandboxEntries(
+  lock: HarnesstLock,
+  member: string | null,
+  subagent: string,
+) {
   return lock.installs
-    .filter((entry) => entry.member === member && hasSandboxWork(entry.sandbox))
+    .filter(
+      (entry) =>
+        entry.member === member &&
+        (entry.subagent ?? "") === subagent &&
+        hasSandboxWork(entry.sandbox),
+    )
     .sort((a, b) => a.id.localeCompare(b.id));
 }
 
@@ -261,8 +270,9 @@ function renderManagedSandboxModule(
   root: string,
   lock: HarnesstLock,
   member: string | null,
+  subagent: string,
 ): string {
-  const entries = sandboxEntries(lock, member);
+  const entries = sandboxEntries(lock, member, subagent);
   const imports = entries
     .map(
       (entry, index) =>
@@ -383,6 +393,17 @@ export interface PlanContext {
    * new-member validation and non-file conflicts remain blocking.
    */
   keepExistingFiles?: boolean;
+}
+
+/** Resolve the existing lock row for an install target, including its declared-subagent scope. */
+export function findInstallAtTarget(
+  lock: HarnesstLock,
+  id: string,
+  target: InstallTarget,
+): InstallEntry | undefined {
+  return target.kind === "new-member"
+    ? findInstall(lock, id, target.name)
+    : findInstall(lock, id, target.memberName, target.subagentPath ?? "");
 }
 
 export interface InstallPlan {
@@ -645,16 +666,16 @@ export function planInstall(ctx: PlanContext): InstallPlan {
     target.kind === "new-member" ? `agents/${target.name}/agent` : target.root;
   // The DEPLOYMENT root — the roster member's own agent root, which for every caller that doesn't
   // name one is `agentRoot` itself. A declared eve subagent is its own agent root and inherits
-  // nothing, but it still runs inside and deploys with its member: npm dependencies, the sibling
-  // `harnesst/` platform tree and the sandbox bootstrap all belong to the deployment that actually
-  // builds and runs the container, never to the subagent directory. Everything that describes the
-  // CONTAINER resolves against this; only the template's own files resolve against `agentRoot`.
+  // nothing, but it still deploys with its member: npm dependencies and the sibling `harnesst/`
+  // platform tree belong to the deployment. Eve sandboxes are the exception: a declared subagent
+  // has its own sandbox config and does not inherit the member's, so sandbox files use `agentRoot`.
   const deploymentRoot =
     target.kind === "new-member"
       ? `agents/${target.name}/agent`
       : (target.deploymentRoot ?? target.root);
   /** "" = the member agent itself; anything else scopes this install to a declared subagent. */
-  const subagentPath = target.kind === "member" ? (target.subagentPath ?? "") : "";
+  const subagentPath =
+    target.kind === "member" ? (target.subagentPath ?? "") : "";
 
   const secrets = (manifest.secrets ?? []).map((s) => ({
     name: s.name,
@@ -664,36 +685,26 @@ export function planInstall(ctx: PlanContext): InstallPlan {
     generated: s.generated,
   }));
 
-  // eve wires channels and schedules from the member agent's own config — a declared subagent has
-  // no such surface, so these files would land somewhere eve never looks and the operator would
-  // discover the silence rather than the mistake. Refuse before any path mapping, and stage
-  // nothing: there is no partially-correct version of this install to review.
-  if (subagentPath) {
-    const shipsChannel =
-      manifest.type === "channel" ||
-      (template.includes ?? []).some((i) => i.type === "channel");
-    const shipsSchedule = manifest.files.some((f) => f.startsWith("schedules/"));
-    if (shipsChannel || shipsSchedule) {
-      const what = [shipsChannel ? "a channel" : null, shipsSchedule ? "a schedule" : null]
-        .filter(Boolean)
-        .join(" and ");
-      const memberLabel = target.kind === "member" && target.memberName
+  // Target compatibility is catalog configuration, validated recursively during composition.
+  // Refuse before mapping any paths so an incompatible install stages nothing.
+  if (subagentPath && !manifest.subagentCompatible) {
+    const memberLabel =
+      target.kind === "member" && target.memberName
         ? `the "${target.memberName}" agent`
         : "the root agent";
-      conflicts.push(
-        `Channels and schedules are root-only in eve — "${manifest.name}" ships ${what} and can't be installed into the "${subagentPath}" subagent. Install it on ${memberLabel} instead.`,
-      );
-      return {
-        writes: [],
-        deletions: [],
-        conflicts,
-        canKeepExistingFiles: false,
-        preservedFiles: [],
-        warnings,
-        isUpdate: false,
-        secrets,
-      };
-    }
+    conflicts.push(
+      `Subagent target unavailable — "${manifest.name}" is configured for member agents only and can't be installed into the "${subagentPath}" subagent. Install it on ${memberLabel} instead.`,
+    );
+    return {
+      writes: [],
+      deletions: [],
+      conflicts,
+      canKeepExistingFiles: false,
+      preservedFiles: [],
+      warnings,
+      isUpdate: false,
+      secrets,
+    };
   }
 
   const provider = templateProviderForTarget(
@@ -729,7 +740,7 @@ export function planInstall(ctx: PlanContext): InstallPlan {
     }));
     if (hasSandboxWork(manifest.sandbox)) {
       fileWrites.push({
-        path: sandboxAddonPath(deploymentRoot, manifest.id),
+        path: sandboxAddonPath(agentRoot, manifest.id),
         content: renderSandboxAddon(manifest.sandbox),
       });
     }
@@ -754,7 +765,7 @@ export function planInstall(ctx: PlanContext): InstallPlan {
     }));
     if (hasSandboxWork(manifest.sandbox)) {
       fileWrites.push({
-        path: sandboxAddonPath(deploymentRoot, manifest.id),
+        path: sandboxAddonPath(agentRoot, manifest.id),
         content: renderSandboxAddon(manifest.sandbox),
       });
     }
@@ -810,11 +821,31 @@ export function planInstall(ctx: PlanContext): InstallPlan {
   // install living in a different tree, so it must neither be updated nor deleted from here.
   const existing =
     target.kind === "member"
-      ? findInstall(ctx.lock, manifest.id, member, subagentPath)
+      ? findInstallAtTarget(ctx.lock, manifest.id, target)
       : undefined;
   const isUpdate = !!existing;
   const owned = new Set(existing?.files ?? []);
   const newPaths = new Set(fileWrites.map((w) => w.path));
+  let hasScopeMismatch = false;
+
+  // A lock row is authoritative about its declared scope. Never infer a different one from file
+  // locations: malformed historical rows are repaired manually. Block instead of relocating live
+  // files when a member-level row owns nested paths the current template does not map there, or a
+  // subagent row owns ordinary files outside its declared root.
+  if (existing) {
+    const nestedPrefix = `${deploymentRoot}/subagents/`;
+    const scopeMismatch = existing.files.find((path) => {
+      if (isPlatformPath(path)) return false;
+      if (subagentPath) return !path.startsWith(`${agentRoot}/`);
+      return path.startsWith(nestedPrefix) && !newPaths.has(path);
+    });
+    if (scopeMismatch) {
+      hasScopeMismatch = true;
+      conflicts.push(
+        `The lock row declares a different install scope than its owned file "${scopeMismatch}". Correct harnesst-lock.json before updating; harnesst will not infer or relocate it.`,
+      );
+    }
+  }
 
   // Composition absorb (issue #42): a composite landing on a member that already has one of its
   // includes installed standalone is routine, not a conflict — the composite takes over that
@@ -845,9 +876,15 @@ export function planInstall(ctx: PlanContext): InstallPlan {
   // Deliberately scope-BLIND: two installs at different scopes must never both own a repo path,
   // so every row we didn't recognize above stakes its claim here.
   const ownedByOtherInstall = new Set<string>();
+  const otherOwnersByPath = new Map<string, InstallEntry[]>();
   for (const entry of ctx.lock.installs) {
     if (recognizedOwners.has(entry)) continue;
-    for (const path of entry.files) ownedByOtherInstall.add(path);
+    for (const path of entry.files) {
+      ownedByOtherInstall.add(path);
+      const owners = otherOwnersByPath.get(path) ?? [];
+      owners.push(entry);
+      otherOwnersByPath.set(path, owners);
+    }
   }
 
   const draftAt = new Map(ctx.drafts.map((d) => [d.path, d.content]));
@@ -860,7 +897,9 @@ export function planInstall(ctx: PlanContext): InstallPlan {
    * "keep existing files" — registering a path the drafts were removing.
    */
   const occupiedAt = (path: string): boolean =>
-    draftAt.has(path) ? draftAt.get(path) !== null : ctx.repoPaths.includes(path);
+    draftAt.has(path)
+      ? draftAt.get(path) !== null
+      : ctx.repoPaths.includes(path);
   const nonFileConflictCount = conflicts.length;
   const occupiedTemplatePaths: string[] = [];
   const preservableTemplatePaths: string[] = [];
@@ -880,8 +919,27 @@ export function planInstall(ctx: PlanContext): InstallPlan {
   if (target.kind === "new-member") {
     createPaths.push(`agents/${target.name}/package.json`);
   }
+  const fileWriteByPath = new Map(
+    fileWrites.map((write) => [write.path, write]),
+  );
   for (const path of createPaths) {
     const occupied = occupiedAt(path);
+    const write = fileWriteByPath.get(path);
+    const otherOwners = otherOwnersByPath.get(path) ?? [];
+    if (write && isPlatformPath(path) && otherOwners.length > 0) {
+      const hash = platformFileHash(write.content);
+      const incompatible = otherOwners.some(
+        (owner) => owner.platformFiles?.[path] !== hash,
+      );
+      if (incompatible) {
+        conflicts.push(
+          `${path} is shared by another scope with different platform content. Align the template versions before installing or updating.`,
+        );
+        continue;
+      }
+      // Identical platform content is one deployment resource referenced by multiple scope rows.
+      continue;
+    }
     if (owned.has(path)) continue; // ours already — overwrite is fine (update)
     if (!occupied) continue;
     // Updates overwrite. A template-shipped path this very entry preserved before is reclaimed —
@@ -890,7 +948,11 @@ export function planInstall(ctx: PlanContext): InstallPlan {
     // generic, driven by panel settings rather than hand edits, so there is nothing in the file
     // worth keeping over the template's newer version. First installs never take this branch, and
     // a path owned by a DIFFERENT install is never ours to reclaim — both still conflict below.
-    if (isUpdate && previouslyPreserved.has(path) && !ownedByOtherInstall.has(path)) {
+    if (
+      isUpdate &&
+      previouslyPreserved.has(path) &&
+      !ownedByOtherInstall.has(path)
+    ) {
       continue;
     }
     occupiedTemplatePaths.push(path);
@@ -924,13 +986,16 @@ export function planInstall(ctx: PlanContext): InstallPlan {
   );
   const allPreserved = [...new Set([...preservedFiles, ...carriedPreserved])];
 
-  const deletions = [
-    ...new Set(
-      [...(existing?.files ?? []), ...absorbed.flatMap((e) => e.files)].filter(
-        (f) => !newPaths.has(f),
-      ),
-    ),
-  ];
+  const deletions = hasScopeMismatch
+    ? []
+    : [
+        ...new Set(
+          [
+            ...(existing?.files ?? []),
+            ...absorbed.flatMap((e) => e.files),
+          ].filter((f) => !newPaths.has(f) && !ownedByOtherInstall.has(f)),
+        ),
+      ];
 
   // ── 3. The lock write — always. files exclude package.json / harnesst-lock.json (they're merges). ──
   // Per-file content hashes for the PLATFORM files this install actually wrote (issue #254), keyed
@@ -967,7 +1032,9 @@ export function planInstall(ctx: PlanContext): InstallPlan {
       .sort(),
     // Snapshot the assistant skill content (issue #274) so the install pins the skill it shipped
     // with — bundle assembly reads it from here, falling back to the catalog for older locks.
-    ...(template.assistantSkill ? { assistantSkill: template.assistantSkill } : {}),
+    ...(template.assistantSkill
+      ? { assistantSkill: template.assistantSkill }
+      : {}),
     // Record the deliberately-preserved paths (issue #177) so the Settings drift check treats
     // them as present and a later repair/update keeps honouring the registration instead of
     // blocking on the very files this install promised to leave alone. Template-shipped paths
@@ -1020,14 +1087,14 @@ export function planInstall(ctx: PlanContext): InstallPlan {
     path: "harnesst-lock.json",
     content: serializeLock(nextLock),
   });
-  const nextSandboxEntries = sandboxEntries(nextLock, member);
-  const previousSandboxEntries = sandboxEntries(ctx.lock, member);
+  const nextSandboxEntries = sandboxEntries(nextLock, member, subagentPath);
+  const previousSandboxEntries = sandboxEntries(ctx.lock, member, subagentPath);
   // The managed sandbox module is generated, never lock-owned, so a normal install overwrites it
   // freely. But register mode's no-overwrite promise must also cover a HAND-AUTHORED
   // `sandbox/sandbox.ts`: when harnesst wasn't already managing one (no prior sandbox install) and a
   // file occupies that path, it is the customer's — keep it byte-for-byte and skip the managed
   // write, at the cost of not wiring this install's sandbox bootstrap.
-  const sbModulePath = sandboxModulePath(deploymentRoot);
+  const sbModulePath = sandboxModulePath(agentRoot);
   const preserveSandboxModule =
     ctx.keepExistingFiles &&
     occupiedAt(sbModulePath) &&
@@ -1039,18 +1106,22 @@ export function planInstall(ctx: PlanContext): InstallPlan {
         `Kept your existing \`${sbModulePath}\` unchanged — the sandbox bootstrap for this install was not wired in.`,
       );
     }
-  } else if (nextSandboxEntries.length > 0 || previousSandboxEntries.length > 0) {
+  } else if (
+    nextSandboxEntries.length > 0 ||
+    previousSandboxEntries.length > 0
+  ) {
     writes.push({
       path: sbModulePath,
       content: renderManagedSandboxModule(
-        deploymentRoot,
+        agentRoot,
         nextLock,
         member,
+        subagentPath,
       ),
     });
     // Regenerating the module is the moment an unowned add-on disappears (issue #254) — say so.
     for (const orphan of orphanedSandboxAddons(
-      deploymentRoot,
+      agentRoot,
       nextSandboxEntries.map((e) => e.id),
       ctx,
       new Set(deletions),
@@ -1106,33 +1177,45 @@ export function planUninstall(ctx: {
     return {
       deletions: [],
       writes: [],
-      lockWrite: { path: "harnesst-lock.json", content: serializeLock(ctx.lock) },
+      lockWrite: {
+        path: "harnesst-lock.json",
+        content: serializeLock(ctx.lock),
+      },
       depsLeft: [],
       notFound: true,
     };
   }
-  const deletions = entry.files.filter((f) => ctx.repoPaths.includes(f));
   const nextLock = removeInstall(ctx.lock, ctx.id, ctx.memberName, subagent);
+  const stillOwned = new Set(
+    nextLock.installs.flatMap((install) => install.files),
+  );
+  const presentPaths = new Set(ctx.repoPaths);
+  const deletions = entry.files.filter(
+    (f) => presentPaths.has(f) && !stillOwned.has(f),
+  );
   const writes = [
     {
       path: "harnesst-lock.json",
       content: serializeLock(nextLock),
     },
   ];
-  // The sandbox module is the DEPLOYMENT's, so it lives at the member's own root and is rebuilt
-  // from every row that member carries — including the ones scoped to its declared subagents,
-  // which run in the same container.
+  // Eve declared subagents do not inherit their parent's sandbox. Rebuild the module at the exact
+  // agent root whose install was removed.
   const deploymentRoot = rootForMember(ctx.memberName);
+  const agentRoot = subagent
+    ? subagentRootFor(deploymentRoot, subagent.split("/"))
+    : deploymentRoot;
   if (
     hasSandboxWork(entry.sandbox) ||
-    sandboxEntries(nextLock, ctx.memberName).length > 0
+    sandboxEntries(nextLock, ctx.memberName, subagent).length > 0
   ) {
     writes.push({
-      path: sandboxModulePath(deploymentRoot),
+      path: sandboxModulePath(agentRoot),
       content: renderManagedSandboxModule(
-        deploymentRoot,
+        agentRoot,
         nextLock,
         ctx.memberName,
+        subagent,
       ),
     });
   }

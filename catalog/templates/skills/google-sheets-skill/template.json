@@ -1,12 +1,11 @@
 {
   "id": "google-sheets-skill",
+  "subagentCompatible": true,
   "type": "skill",
   "name": "Google Sheets usage",
   "description": "Practical guidance for driving the google_sheets__* tools: A1 notation, read-before-write discipline, RAW vs USER_ENTERED, append vs update, and the batchUpdate request shapes for structural changes.",
   "version": "0.1.1",
   "eve": ">=0.20.0",
-  "files": [
-    "skills/google-sheets.md"
-  ],
+  "files": ["skills/google-sheets.md"],
   "assistantSkill": "assistant-skill.md"
 }

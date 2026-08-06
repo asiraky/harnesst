@@ -66,6 +66,7 @@ const gmailTpl: CatalogTemplate = {
     description: "Mail access.",
     version: "0.1.0",
     eve: ">=0.20.0",
+    subagentCompatible: true,
     files: ["connections/gmail.ts"],
     auth: { provider: "google", kind: "oauth2", scopeGroups: GROUPS },
   },
@@ -82,6 +83,7 @@ const sheetsTpl: CatalogTemplate = {
     description: "Sheets access.",
     version: "0.2.0",
     eve: ">=0.20.0",
+    subagentCompatible: true,
     files: ["connections/google-sheets.ts"],
     auth: { provider: "google", kind: "oauth2", scopes: [SHEETS] },
   },
@@ -458,6 +460,7 @@ describe("resolveTemplate — scope groups propagate through composition (issue 
         description: "Mail + sheets.",
         version: "0.1.0",
         eve: ">=0.20.0",
+        subagentCompatible: true,
         files: [],
         includes: [
           { type: "connection", id: "gmail" },
@@ -484,6 +487,7 @@ describe("resolveTemplate — scope groups propagate through composition (issue 
         description: "Triage-only mail.",
         version: "0.1.0",
         eve: ">=0.20.0",
+        subagentCompatible: true,
         files: ["connections/gmail-triage.ts"],
         auth: {
           provider: "google",
@@ -516,6 +520,7 @@ describe("resolveTemplate — scope groups propagate through composition (issue 
         description: "Both mail connectors.",
         version: "0.1.0",
         eve: ">=0.20.0",
+        subagentCompatible: true,
         files: [],
         includes: [
           { type: "connection", id: "gmail" },

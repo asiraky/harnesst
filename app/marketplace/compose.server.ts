@@ -134,9 +134,7 @@ async function resolve(
 ): Promise<ResolvedTemplate> {
   const node = `${type}/${id}`;
   if (stack.includes(node)) {
-    throw new Error(
-      `Include cycle detected: ${[...stack, node].join(" → ")}.`,
-    );
+    throw new Error(`Include cycle detected: ${[...stack, node].join(" → ")}.`);
   }
   if (stack.length >= MAX_DEPTH) {
     throw new Error(
@@ -167,6 +165,11 @@ async function resolve(
     if (child.manifest.type === "agent") {
       throw new Error(
         `Template ${node} includes ${label(child.manifest)}, which is an agent — agents can't be bundled by reference.`,
+      );
+    }
+    if (manifest.subagentCompatible && !child.manifest.subagentCompatible) {
+      throw new Error(
+        `Template ${node} is marked subagent-compatible but includes root-only ${label(child.manifest)}.`,
       );
     }
     resolvedIncludes.push(child);
@@ -225,7 +228,9 @@ async function resolve(
       if (!existing) {
         secretByName.set(s.name, {
           name: s.name,
-          ...(s.description !== undefined ? { description: s.description } : {}),
+          ...(s.description !== undefined
+            ? { description: s.description }
+            : {}),
           ...(s.sandbox ? { sandbox: true } : {}),
           ...(s.provisioned ? { provisioned: true } : {}),
           ...(s.generated ? { generated: true } : {}),
@@ -322,7 +327,12 @@ async function resolve(
   const resolvedManifest: TemplateManifest = { ...manifest };
   delete resolvedManifest.includes;
   resolvedManifest.files = fileList;
-  setOrDelete(resolvedManifest, "dependencies", deps, Object.keys(deps).length > 0);
+  setOrDelete(
+    resolvedManifest,
+    "dependencies",
+    deps,
+    Object.keys(deps).length > 0,
+  );
   setOrDelete(resolvedManifest, "secrets", secrets, secrets.length > 0);
   setOrDelete(resolvedManifest, "sandbox", sandbox, sandbox !== undefined);
   // `auth` (and its `capability` rider, issue #166) is an install-wizard concern surfaced via
@@ -379,11 +389,7 @@ function mergeSandbox(
   if (Object.keys(env).length > 0) merged.env = env;
   if (keys.length > 0) merged.revalidationKey = keys.join("|");
   // Every branch above was empty → the ordered setups were all `{}`; still nothing to emit.
-  if (
-    !merged.bootstrap &&
-    !merged.env &&
-    !merged.revalidationKey
-  ) {
+  if (!merged.bootstrap && !merged.env && !merged.revalidationKey) {
     return undefined;
   }
   return merged;

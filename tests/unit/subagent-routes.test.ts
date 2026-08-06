@@ -114,7 +114,9 @@ const PATHS = [
 ];
 
 /** Every repo file under `researcher/`, i.e. what deleting that one row has to cover. */
-const RESEARCHER_FILES = PATHS.filter((p) => p.startsWith(`${RESEARCHER_ROOT}/`));
+const RESEARCHER_FILES = PATHS.filter((p) =>
+  p.startsWith(`${RESEARCHER_ROOT}/`),
+);
 
 const FILES: Record<string, string> = {
   [`${IVY_ROOT}/agent.ts`]:
@@ -170,7 +172,12 @@ function reset(drafts: { path: string; content: string | null }[] = []) {
   vi.resetModules();
   const store = makeFakeStore();
   store.seedProject({ id: "p1", orgId: "o1", layout: "team" });
-  store.seedAgent({ id: "a-ivy", projectId: "p1", name: "ivy", root: IVY_ROOT });
+  store.seedAgent({
+    id: "a-ivy",
+    projectId: "p1",
+    name: "ivy",
+    root: IVY_ROOT,
+  });
   store.seedAgent({
     id: "a-sam",
     projectId: "p1",
@@ -219,7 +226,12 @@ describe("capability matrix at the route boundary", () => {
       loader(
         routeArgs(
           "https://h.example.com/repos/p1/agents/ivy/sub/researcher/resources/channels",
-          { projectId: "p1", agentName: "ivy", subPath: "researcher", category: "channels" },
+          {
+            projectId: "p1",
+            agentName: "ivy",
+            subPath: "researcher",
+            category: "channels",
+          },
         ),
       ),
     );
@@ -232,7 +244,12 @@ describe("capability matrix at the route boundary", () => {
       action(
         formArgs(
           "https://h.example.com/repos/p1/agents/ivy/sub/researcher/resources/schedules",
-          { projectId: "p1", agentName: "ivy", subPath: "researcher", category: "schedules" },
+          {
+            projectId: "p1",
+            agentName: "ivy",
+            subPath: "researcher",
+            category: "schedules",
+          },
           { intent: "delete-resource", path: `${IVY_ROOT}/schedules/daily.md` },
         ),
       ),
@@ -261,7 +278,12 @@ describe("capability matrix at the route boundary", () => {
       ],
       [
         "https://h.example.com/repos/p1/agents/ivy/sub/researcher/resources/hooks",
-        { projectId: "p1", agentName: "ivy", subPath: "researcher", category: "hooks" },
+        {
+          projectId: "p1",
+          agentName: "ivy",
+          subPath: "researcher",
+          category: "hooks",
+        },
       ],
     ] as const) {
       const view = await loader(routeArgs(url, params));
@@ -274,31 +296,51 @@ describe("capability matrix at the route boundary", () => {
     const view = await loader(
       routeArgs(
         "https://h.example.com/repos/p1/agents/ivy/sub/researcher/resources/tools",
-        { projectId: "p1", agentName: "ivy", subPath: "researcher", category: "tools" },
+        {
+          projectId: "p1",
+          agentName: "ivy",
+          subPath: "researcher",
+          category: "tools",
+        },
       ),
     );
     expect(view.activeRoot).toBe(RESEARCHER_ROOT);
     expect(view.subagentPath).toEqual(["researcher"]);
-    expect(view.rows.map((r) => r.path)).toEqual([`${RESEARCHER_ROOT}/tools/cite.ts`]);
+    expect(view.rows.map((r) => r.path)).toEqual([
+      `${RESEARCHER_ROOT}/tools/cite.ts`,
+    ]);
   });
 });
 
 describe("subagent rows", () => {
   it("groups a draft-only subagent into one saved-new directory row", async () => {
     reset([
-      { path: `${IVY_ROOT}/subagents/scout/agent.ts`, content: "export default {}" },
-      { path: `${IVY_ROOT}/subagents/scout/instructions.md`, content: "# scout" },
+      {
+        path: `${IVY_ROOT}/subagents/scout/agent.ts`,
+        content: "export default {}",
+      },
+      {
+        path: `${IVY_ROOT}/subagents/scout/instructions.md`,
+        content: "# scout",
+      },
     ]);
     const { loader } = await categoryRoute();
     const view = await loader(
-      routeArgs("https://h.example.com/repos/p1/agents/ivy/resources/subagents", {
-        projectId: "p1",
-        agentName: "ivy",
-        category: "subagents",
-      }),
+      routeArgs(
+        "https://h.example.com/repos/p1/agents/ivy/resources/subagents",
+        {
+          projectId: "p1",
+          agentName: "ivy",
+          category: "subagents",
+        },
+      ),
     );
     const scout = view.rows.find((r) => r.name === "scout");
-    expect(scout).toMatchObject({ isDirectory: true, staged: true, inRepo: false });
+    expect(scout).toMatchObject({
+      isDirectory: true,
+      staged: true,
+      inRepo: false,
+    });
     // …and never as a bare `agent.ts` file row.
     expect(view.rows.map((r) => r.name)).not.toContain("agent.ts");
   });
@@ -307,11 +349,14 @@ describe("subagent rows", () => {
     reset();
     const { loader } = await categoryRoute();
     const view = await loader(
-      routeArgs("https://h.example.com/repos/p1/agents/ivy/resources/subagents", {
-        projectId: "p1",
-        agentName: "ivy",
-        category: "subagents",
-      }),
+      routeArgs(
+        "https://h.example.com/repos/p1/agents/ivy/resources/subagents",
+        {
+          projectId: "p1",
+          agentName: "ivy",
+          category: "subagents",
+        },
+      ),
     );
     expect(view.rows).toEqual([
       expect.objectContaining({
@@ -368,7 +413,12 @@ describe("create-subagent", () => {
       action(
         formArgs(
           "https://h.example.com/repos/p1/agents/ivy/sub/researcher/resources/subagents",
-          { projectId: "p1", agentName: "ivy", subPath: "researcher", category: "subagents" },
+          {
+            projectId: "p1",
+            agentName: "ivy",
+            subPath: "researcher",
+            category: "subagents",
+          },
           { intent: "create-subagent", name: "cite-checker" },
         ),
       ),
@@ -379,7 +429,9 @@ describe("create-subagent", () => {
     const agentModule = mocks.stageDraft.mock.calls
       .map(([input]) => input)
       .find((input) => input.path.endsWith("cite-checker/agent.ts"));
-    expect(agentModule.path).toBe(`${RESEARCHER_ROOT}/subagents/cite-checker/agent.ts`);
+    expect(agentModule.path).toBe(
+      `${RESEARCHER_ROOT}/subagents/cite-checker/agent.ts`,
+    );
     expect(agentModule.content).toContain(
       "harnesstAgentModel('ivy', 'researcher/cite-checker')",
     );
@@ -394,7 +446,9 @@ describe("create-subagent", () => {
         { intent: "create-subagent", name: "researcher" },
       ),
     );
-    expect(result).toEqual({ error: "A subagent named researcher already exists." });
+    expect(result).toEqual({
+      error: "A subagent named researcher already exists.",
+    });
     expect(mocks.stageDraft).not.toHaveBeenCalled();
   });
 });
@@ -420,7 +474,12 @@ describe("path confinement", () => {
     const result = await action(
       formArgs(
         "https://h.example.com/repos/p1/agents/ivy/sub/researcher/resources/tools",
-        { projectId: "p1", agentName: "ivy", subPath: "researcher", category: "tools" },
+        {
+          projectId: "p1",
+          agentName: "ivy",
+          subPath: "researcher",
+          category: "tools",
+        },
         { intent: "delete-resource", path: `${IVY_ROOT}/tools/search.ts` },
       ),
     );
@@ -432,7 +491,12 @@ describe("path confinement", () => {
     const result = await action(
       formArgs(
         "https://h.example.com/repos/p1/agents/ivy/sub/researcher/resources/tools",
-        { projectId: "p1", agentName: "ivy", subPath: "researcher", category: "tools" },
+        {
+          projectId: "p1",
+          agentName: "ivy",
+          subPath: "researcher",
+          category: "tools",
+        },
         { intent: "delete-resource", path: `${RESEARCHER_ROOT}/tools/cite.ts` },
       ),
     );
@@ -551,8 +615,16 @@ describe("subagent subtree deletion", () => {
     const result = await action(
       formArgs(
         "https://h.example.com/repos/p1/agents/ivy/sub/researcher/resources/subagents",
-        { projectId: "p1", agentName: "ivy", subPath: "researcher", category: "subagents" },
-        { intent: "delete-resource", path: `${RESEARCHER_ROOT}/subagents/citer` },
+        {
+          projectId: "p1",
+          agentName: "ivy",
+          subPath: "researcher",
+          category: "subagents",
+        },
+        {
+          intent: "delete-resource",
+          path: `${RESEARCHER_ROOT}/subagents/citer`,
+        },
       ),
     );
     expect(result).toEqual({ ok: true, staged: "citer" });
@@ -585,11 +657,14 @@ describe("subagent subtree deletion", () => {
     reset(RESEARCHER_FILES.map((path) => ({ path, content: null })));
     const { loader } = await categoryRoute();
     const view = await loader(
-      routeArgs("https://h.example.com/repos/p1/agents/ivy/resources/subagents", {
-        projectId: "p1",
-        agentName: "ivy",
-        category: "subagents",
-      }),
+      routeArgs(
+        "https://h.example.com/repos/p1/agents/ivy/resources/subagents",
+        {
+          projectId: "p1",
+          agentName: "ivy",
+          category: "subagents",
+        },
+      ),
     );
     expect(view.rows).toEqual([
       expect.objectContaining({
@@ -610,7 +685,12 @@ describe("crafted requests against the nested routes", () => {
       loader(
         routeArgs(
           "https://h.example.com/repos/p1/agents/sam/sub/researcher/resources/tools",
-          { projectId: "p1", agentName: "sam", subPath: "researcher", category: "tools" },
+          {
+            projectId: "p1",
+            agentName: "sam",
+            subPath: "researcher",
+            category: "tools",
+          },
         ),
       ),
     );
@@ -623,7 +703,12 @@ describe("crafted requests against the nested routes", () => {
       loader(
         routeArgs(
           "https://h.example.com/repos/p1/agents/nobody/sub/researcher/resources/tools",
-          { projectId: "p1", agentName: "nobody", subPath: "researcher", category: "tools" },
+          {
+            projectId: "p1",
+            agentName: "nobody",
+            subPath: "researcher",
+            category: "tools",
+          },
         ),
       ),
     );
@@ -631,7 +716,8 @@ describe("crafted requests against the nested routes", () => {
   });
 
   it("ignores a posted agent field when saving instructions", async () => {
-    const { action } = await import("~/routes/projects.$projectId.edit.instructions");
+    const { action } =
+      await import("~/routes/projects.$projectId.edit.instructions");
     const result = await action(
       formArgs(
         "https://h.example.com/repos/p1/agents/ivy/sub/researcher/edit/instructions",
@@ -646,7 +732,8 @@ describe("crafted requests against the nested routes", () => {
   });
 
   it("refuses to save instructions for a subagent of another member", async () => {
-    const { action } = await import("~/routes/projects.$projectId.edit.instructions");
+    const { action } =
+      await import("~/routes/projects.$projectId.edit.instructions");
     const response = await thrownFrom(
       action(
         formArgs(
@@ -692,26 +779,24 @@ describe("editor templates at a nested root", () => {
 describe("intents at a nested Settings URL", () => {
   beforeEach(() => reset());
 
-  it.each([
-    "delete-repository",
-    "remove-agent",
-    "rename-agent",
-    "set-secret",
-  ])("404s `%s` posted to a subagent's Settings URL", async (intent) => {
-    const { action } = await settingsRoute();
-    const response = await thrownFrom(
-      action(
-        formArgs(
-          "https://h.example.com/repos/p1/agents/ivy/sub/researcher/settings",
-          { projectId: "p1", agentName: "ivy", subPath: "researcher" },
-          { intent, name: "gone", key: "K", value: "v" },
+  it.each(["delete-repository", "remove-agent", "rename-agent", "set-secret"])(
+    "404s `%s` posted to a subagent's Settings URL",
+    async (intent) => {
+      const { action } = await settingsRoute();
+      const response = await thrownFrom(
+        action(
+          formArgs(
+            "https://h.example.com/repos/p1/agents/ivy/sub/researcher/settings",
+            { projectId: "p1", agentName: "ivy", subPath: "researcher" },
+            { intent, name: "gone", key: "K", value: "v" },
+          ),
         ),
-      ),
-    );
-    expect(response.status).toBe(404);
-    expect(mocks.stageDraft).not.toHaveBeenCalled();
-    expect(mocks.stageDeletions).not.toHaveBeenCalled();
-  });
+      );
+      expect(response.status).toBe(404);
+      expect(mocks.stageDraft).not.toHaveBeenCalled();
+      expect(mocks.stageDeletions).not.toHaveBeenCalled();
+    },
+  );
 
   it("lets the model intents through — the one thing a subagent owns", async () => {
     const { action } = await settingsRoute();
@@ -764,6 +849,7 @@ describe("marketplace installs at a nested Settings URL", () => {
       description: "Cites things.",
       version: "2.0.0",
       eve: ">=0.22.0",
+      subagentCompatible: true,
       files: ["tools/cite.ts"],
       dependencies: { "citer-sdk": "^1.0.0" },
     },
@@ -820,14 +906,16 @@ describe("marketplace installs at a nested Settings URL", () => {
       paths: writes.map((write) => write.path),
       content: (path: string) =>
         writes.find((write) => write.path === path)?.content ?? "",
-      deletions: mocks.stageDeletions.mock.calls.flatMap(([call]) => call.paths),
+      deletions: mocks.stageDeletions.mock.calls.flatMap(
+        ([call]) => call.paths,
+      ),
     };
   }
 
   beforeEach(() => reset());
 
-  // The row is member-scoped, so it renders on the MEMBER's page — and it is still the
-  // subagent's install. Both surfaces have to correct it in place rather than fork a copy.
+  // Historical malformed rows are repaired explicitly in Git. Neither surface may infer a scope
+  // and relocate live files during an update.
   it.each([
     [
       "the subagent's own page",
@@ -840,34 +928,24 @@ describe("marketplace installs at a nested Settings URL", () => {
       { projectId: "p1", agentName: "ivy" },
     ],
   ])(
-    "updates a legacy member-scoped install at the subagent it was moved into, from %s",
+    "blocks a malformed member-scoped install from %s",
     async (_label, url, params) => {
       // The customer's damage in lock form: the row claims member scope, every file it owns is
       // already inside the subagent. Recomputing paths from the member root would delete them.
       withLock(lockWith([{ ...BASE_ENTRY, files: [CITE_TOOL] }]));
       const { action } = await settingsRoute();
-      const response = await thrownFrom(
-        action(
-          formArgs(url, params, {
-            intent: "update-install",
-            type: "connection",
-            id: "citer",
-            member: "ivy",
-          }),
-        ),
+      const response = await action(
+        formArgs(url, params, {
+          intent: "update-install",
+          type: "connection",
+          id: "citer",
+          member: "ivy",
+        }),
       );
-      expect(response.status).toBe(302);
-      const { paths, content, deletions } = staged();
-      expect(paths).toContain(CITE_TOOL);
-      expect(paths).not.toContain(`${IVY_ROOT}/tools/cite.ts`);
-      expect(deletions).not.toContain(CITE_TOOL);
-      // Dependencies belong to the deployment — the member's package.json, not the subagent's.
-      expect(content("agents/ivy/package.json")).toContain("citer-sdk");
-      // The inferred scope rides along in the staged lock, so a human reviews the correction.
-      const lock = JSON.parse(content("harnesst-lock.json"));
-      expect(lock.installs).toMatchObject([
-        { subagent: "researcher", version: "2.0.0", files: [CITE_TOOL] },
-      ]);
+      expect(response).toMatchObject({
+        error: expect.stringContaining("blocked"),
+      });
+      expect(staged()).toMatchObject({ paths: [], deletions: [] });
     },
   );
 
@@ -887,8 +965,9 @@ describe("marketplace installs at a nested Settings URL", () => {
           {
             intent: "uninstall",
             id: "citer",
-            member: "ivy",
-            subagent: "researcher",
+            // Browser-controlled fields cannot redirect the uninstall to another scope.
+            member: "other",
+            subagent: "",
           },
         ),
       ),

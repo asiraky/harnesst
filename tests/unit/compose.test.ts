@@ -25,6 +25,7 @@ const channelTpl: CatalogTemplate = {
     description: "Talk from Discord.",
     version: "0.1.0",
     eve: ">=0.20.0",
+    subagentCompatible: false,
     files: ["channels/discord.ts"],
     dependencies: { "discord-lib": "^1.0.0" },
     secrets: [
@@ -50,6 +51,7 @@ const toolTpl: CatalogTemplate = {
     description: "Search the web.",
     version: "0.3.0",
     eve: ">=0.1.0",
+    subagentCompatible: true,
     files: ["tools/search.ts"],
     dependencies: { "search-lib": "^2.0.0" },
   },
@@ -66,6 +68,7 @@ const agentTpl: CatalogTemplate = {
     description: "Ships code.",
     version: "1.0.0",
     eve: ">=0.1.0",
+    subagentCompatible: false,
     model: "some/model",
     files: ["agent.ts", "instructions.md"],
     includes: [
@@ -83,7 +86,10 @@ const agentTpl: CatalogTemplate = {
       revalidationKey: "agent@1",
     },
   },
-  files: { "agent.ts": "export default {};\n", "instructions.md": "# Engineer\n" },
+  files: {
+    "agent.ts": "export default {};\n",
+    "instructions.md": "# Engineer\n",
+  },
 };
 
 describe("resolveTemplate — flattening an agent that includes a channel + a tool", () => {
@@ -189,6 +195,7 @@ describe("resolveTemplate — nesting", () => {
       description: "t",
       version: "0.1.0",
       eve: ">=0.1.0",
+      subagentCompatible: true,
       files: ["tools/t.ts"],
       dependencies: { tl: "^1.0.0" },
     },
@@ -203,6 +210,7 @@ describe("resolveTemplate — nesting", () => {
       description: "s",
       version: "0.1.0",
       eve: ">=0.1.0",
+      subagentCompatible: true,
       files: ["skills/s.md"],
       includes: [{ type: "tool", id: "t" }],
     },
@@ -217,6 +225,7 @@ describe("resolveTemplate — nesting", () => {
       description: "a",
       version: "0.1.0",
       eve: ">=0.1.0",
+      subagentCompatible: false,
       files: ["agent.ts"],
       includes: [{ type: "skill", id: "s" }],
     },
@@ -273,6 +282,7 @@ describe("resolveTemplate — a file-less bundle (pure composition, issue #42)",
       description: "The Discord channel plus the search tool, as one unit.",
       version: "0.1.0",
       eve: ">=0.20.0",
+      subagentCompatible: false,
       files: [],
       includes: [
         { type: "channel", id: "discord" },
@@ -303,6 +313,20 @@ describe("resolveTemplate — a file-less bundle (pure composition, issue #42)",
     const resolved = await resolveTemplate(source, "bundle", "chat-pack");
     expect(resolved.hash).toBe(templateContentHash(bundleTpl));
   });
+
+  it("rejects a bundle configured for subagents when an include is root-only", async () => {
+    const invalid: CatalogTemplate = {
+      ...bundleTpl,
+      manifest: { ...bundleTpl.manifest, subagentCompatible: true },
+    };
+    await expect(
+      resolveTemplate(
+        fakeCatalog([channelTpl, toolTpl, invalid]),
+        "bundle",
+        "chat-pack",
+      ),
+    ).rejects.toThrow(/includes root-only channel\/discord/);
+  });
 });
 
 describe("resolveTemplate — auth descriptors (issue #30)", () => {
@@ -315,6 +339,7 @@ describe("resolveTemplate — auth descriptors (issue #30)", () => {
       description: "Read/write Sheets.",
       version: "0.1.0",
       eve: ">=0.20.0",
+      subagentCompatible: true,
       files: ["connections/google-sheets.ts"],
       auth: {
         provider: "google",
@@ -333,6 +358,7 @@ describe("resolveTemplate — auth descriptors (issue #30)", () => {
       description: "How to use sheets.",
       version: "0.1.0",
       eve: ">=0.20.0",
+      subagentCompatible: true,
       files: ["skills/sheets.md"],
     },
     files: { "skills/sheets.md": "# sheets\n" },
@@ -346,6 +372,7 @@ describe("resolveTemplate — auth descriptors (issue #30)", () => {
       description: "Connector + skill.",
       version: "0.1.0",
       eve: ">=0.20.0",
+      subagentCompatible: true,
       files: [],
       includes: [
         { type: "connection", id: "google-sheets" },
@@ -357,7 +384,11 @@ describe("resolveTemplate — auth descriptors (issue #30)", () => {
 
   it("surfaces the connection's own auth on the resolved template", async () => {
     const source = fakeCatalog([connTpl]);
-    const resolved = await resolveTemplate(source, "connection", "google-sheets");
+    const resolved = await resolveTemplate(
+      source,
+      "connection",
+      "google-sheets",
+    );
     expect(resolved.auths).toEqual([
       {
         templateId: "google-sheets",
@@ -367,9 +398,7 @@ describe("resolveTemplate — auth descriptors (issue #30)", () => {
       },
     ]);
     // auth is an install-wizard concern, never a materialized manifest field.
-    expect(
-      (resolved.manifest as Record<string, unknown>).auth,
-    ).toBeUndefined();
+    expect((resolved.manifest as Record<string, unknown>).auth).toBeUndefined();
   });
 
   it("a bundle including a connection surfaces that connection's auth", async () => {
@@ -395,6 +424,7 @@ describe("resolveTemplate — auth descriptors (issue #30)", () => {
         description: "Drive access.",
         version: "0.1.0",
         eve: ">=0.20.0",
+        subagentCompatible: true,
         files: ["connections/google-drive.ts"],
         auth: {
           provider: "google",
@@ -416,6 +446,7 @@ describe("resolveTemplate — auth descriptors (issue #30)", () => {
         description: "Both Google connectors.",
         version: "0.1.0",
         eve: ">=0.20.0",
+        subagentCompatible: true,
         files: [],
         includes: [
           { type: "connection", id: "google-sheets" },
@@ -448,6 +479,7 @@ describe("resolveTemplate — guard rails", () => {
         description: "a",
         version: "0.1.0",
         eve: ">=0.1.0",
+        subagentCompatible: true,
         files: ["skills/a.md"],
         includes: [{ type: "skill", id: "b" }],
       },
@@ -462,6 +494,7 @@ describe("resolveTemplate — guard rails", () => {
         description: "b",
         version: "0.1.0",
         eve: ">=0.1.0",
+        subagentCompatible: true,
         files: ["skills/b.md"],
         includes: [{ type: "skill", id: "a" }],
       },
@@ -486,6 +519,7 @@ describe("resolveTemplate — guard rails", () => {
           description: "s",
           version: "0.1.0",
           eve: ">=0.1.0",
+          subagentCompatible: true,
           files: [`skills/s${i}.md`],
           ...(i < 8 ? { includes: [{ type: "skill", id: `s${i + 1}` }] } : {}),
         },
@@ -508,6 +542,7 @@ describe("resolveTemplate — guard rails", () => {
         description: "t1",
         version: "0.1.0",
         eve: ">=0.1.0",
+        subagentCompatible: true,
         files: ["shared/x.ts"],
       },
       files: { "shared/x.ts": "// t1\n" },
@@ -521,6 +556,7 @@ describe("resolveTemplate — guard rails", () => {
         description: "t2",
         version: "0.1.0",
         eve: ">=0.1.0",
+        subagentCompatible: true,
         files: ["shared/x.ts"],
       },
       files: { "shared/x.ts": "// t2\n" },
@@ -534,6 +570,7 @@ describe("resolveTemplate — guard rails", () => {
         description: "clash",
         version: "0.1.0",
         eve: ">=0.1.0",
+        subagentCompatible: false,
         files: ["agent.ts"],
         includes: [
           { type: "tool", id: "t1" },
@@ -558,6 +595,7 @@ describe("resolveTemplate — guard rails", () => {
         description: "bad",
         version: "0.1.0",
         eve: ">=0.1.0",
+        subagentCompatible: false,
         files: ["agent.ts"],
         // Schema rejects this; the resolver defends too (GitHub source parses remote bytes).
         includes: [{ type: "agent", id: "engineer" }],
@@ -580,6 +618,7 @@ describe("resolveTemplate — guard rails", () => {
         description: "orphan",
         version: "0.1.0",
         eve: ">=0.1.0",
+        subagentCompatible: false,
         files: ["agent.ts"],
         includes: [{ type: "tool", id: "ghost" }],
       },

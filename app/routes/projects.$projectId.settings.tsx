@@ -91,6 +91,7 @@ import {
   stageDraft,
 } from "~/drafts/drafts.server";
 import { EMPTY_TEAM_MARKER, subagentRootFor } from "~/eve/parse";
+import { selectedCapabilityGroupIds } from "~/capabilities/enablement";
 import {
   orgResolverAgentName,
   readModel,
@@ -103,6 +104,7 @@ import { contextPath, subagentContextPath } from "~/lib/paths";
 import {
   catalogProviderEvidence,
   catalogLocator,
+  findInstallAtTarget,
   installedFilePath,
   packageJsonPathForRoot,
   planInstall,
@@ -113,8 +115,8 @@ import {
   missingOwnedFiles,
   overlayLock,
   providerExplanation,
-  reconcileSubagentScopes,
   renameMember,
+  selectedGroupIds,
   serializeLock,
   type CatalogProviderEvidence,
 } from "~/marketplace/lock";
@@ -356,7 +358,9 @@ function buildInstalls(
     const memberRoot = entry.member ? `agents/${entry.member}/agent` : "agent";
     // A declared subagent is its own agent root, so its install's files live under it — but the
     // `harnesst/` platform tree is the DEPLOYMENT's, hence the explicit member root below.
-    const root = scope ? subagentRootFor(memberRoot, scope.split("/")) : memberRoot;
+    const root = scope
+      ? subagentRootFor(memberRoot, scope.split("/"))
+      : memberRoot;
     // `installedFilePath`, not string concatenation: a `harnesst/` file materializes at the
     // PLATFORM root beside the agent root (issue #254), so looking for it inside the agent root
     // would report every install that ships platform code as permanently missing files.
@@ -730,7 +734,8 @@ export const loader = (args: LoaderFunctionArgs) =>
           base.modelSource = resolved?.source ?? null;
           base.modelInheritedFrom = resolved?.inheritedFrom ?? null;
           base.modelOverridden = resolved?.source === "override";
-          base.modelInherited = resolved !== null && resolved.source !== "override";
+          base.modelInherited =
+            resolved !== null && resolved.source !== "override";
         }
       }
       if (showRepo) {
@@ -823,7 +828,10 @@ export async function action(args: ActionFunctionArgs) {
   // and the surface never renders them at a nested target — so a hand-crafted POST to a `/sub/`
   // settings URL is refused BEFORE dispatch rather than silently executing against the member
   // (issue #344).
-  if (subagentSegmentsFromParams(args.params) && !SUBAGENT_INTENTS.has(intent)) {
+  if (
+    subagentSegmentsFromParams(args.params) &&
+    !SUBAGENT_INTENTS.has(intent)
+  ) {
     throw data("That action is not available on a subagent.", { status: 404 });
   }
 
@@ -924,41 +932,19 @@ export async function action(args: ActionFunctionArgs) {
       if (target && target.member !== active.name) {
         return { error: "That install belongs to a different member." };
       }
-      // The member owns the deployment: package.json, the platform tree and the sandbox stay
-      // here even when the template's own files land inside a subagent.
+      // The member owns package.json and the platform tree. Eve sandbox config belongs to the
+      // exact agent root and is handled by the planner.
       const deploymentRoot = active.root;
       const urlSubagent =
         target?.kind === "subagent" ? target.subagentPath.join("/") : "";
-      const staged = overlayLock(
+      const lock = overlayLock(
         source.files["harnesst-lock.json"] ?? null,
         draftPaths,
       );
-      // Installs predating subagent targeting record member scope even when their files were
-      // hand-moved into a subagent, so planning straight off the lock would recompute every path
-      // at the member root and stage deletions that strip the subagent's tools. Infer the real
-      // scope first and plan against the corrected lock: the correction rides along in the lock
-      // write this plan already stages, so a human reviews it in the PR instead of harnesst
-      // rewriting the lock behind a read.
-      const memberRoots = new Map<string | null, string>(
-        roster.map((agent) => [agent.name, agent.root] as const),
-      );
-      if (!isTeam) memberRoots.set(null, active.root);
-      const { lock } = reconcileSubagentScopes(staged, memberRoots);
-      // That reconciliation is also where the member's own page learns the truth: the legacy row
-      // it renders now resolves to the subagent its files occupy, so update it THERE. Planning at
-      // the member root instead would fork a second copy of an install that plainly lives on the
-      // subagent. A nested URL always wins, and several rows for one (id, member) are ambiguous —
-      // each one is updatable from its own surface.
-      const rows = lock.installs.filter(
-        (entry) => entry.id === id && entry.member === member,
-      );
-      const subagentPath =
-        urlSubagent || (rows.length === 1 ? (rows[0].subagent ?? "") : "");
-      const configRoot =
-        target?.root ??
-        (subagentPath
-          ? subagentRootFor(deploymentRoot, subagentPath.split("/"))
-          : deploymentRoot);
+      // Scope comes only from the validated route. Historical malformed rows are repaired by
+      // editing the lock explicitly; the planner blocks rather than inferring and relocating them.
+      const subagentPath = urlSubagent;
+      const configRoot = target?.root ?? deploymentRoot;
       // A staged package.json draft wins over the branch copy — otherwise a second staged
       // install/update could silently drop dependencies added by the first.
       const pkgPath = packageJsonPathForRoot(deploymentRoot);
@@ -1004,6 +990,25 @@ export async function action(args: ActionFunctionArgs) {
           };
         }
       }
+      const installTarget = {
+        kind: "member" as const,
+        memberName: member,
+        root: configRoot,
+        deploymentRoot,
+        subagentPath,
+      };
+      const existing = findInstallAtTarget(lock, id, installTarget);
+      const authSelections: Record<string, string[]> = {};
+      const capabilitySelections: Record<string, string[]> = {};
+      for (const auth of existing?.auth ?? []) {
+        if (auth.scopeGroups) {
+          authSelections[auth.provider] = selectedGroupIds(auth);
+        }
+        if (auth.capabilityGroups) {
+          capabilitySelections[auth.provider] =
+            selectedCapabilityGroupIds(auth);
+        }
+      }
       const plan = planInstall({
         template,
         registry: catalogLocator(),
@@ -1018,13 +1023,9 @@ export async function action(args: ActionFunctionArgs) {
         rosterNames: roster.map((a) => a.name),
         model: installModel,
         effort: installEffort,
-        target: {
-          kind: "member",
-          memberName: member,
-          root: configRoot,
-          deploymentRoot,
-          subagentPath,
-        },
+        authSelections,
+        capabilitySelections,
+        target: installTarget,
       });
       if (plan.conflicts.length > 0) {
         return {
@@ -1052,10 +1053,8 @@ export async function action(args: ActionFunctionArgs) {
     }
     if (intent === "uninstall") {
       const id = String(form.get("id") ?? "");
-      const member = String(form.get("member") ?? "") || null;
-      // Install identity is (id, member, subagent): without the scope this would match — and
-      // delete — the member's own row of the same template id.
-      const subagentPath = String(form.get("subagent") ?? "");
+      let member = String(form.get("member") ?? "") || null;
+      let subagentPath = String(form.get("subagent") ?? "");
       if (!id) return { error: "Missing install to remove." };
       const [source, drafts] = await Promise.all([
         fetchAgentSource(project.repoInstallationId, repo),
@@ -1069,6 +1068,22 @@ export async function action(args: ActionFunctionArgs) {
         source.files["harnesst-lock.json"] ?? null,
         draftPaths,
       );
+      const routeAgent = agentFromParams(args.params);
+      const routeSubagents = subagentSegmentsFromParams(args.params);
+      if (routeAgent !== null || routeSubagents !== null) {
+        const route = await resolveConfigTarget({
+          projectId: project.id,
+          agentName: routeAgent,
+          subSegments: routeSubagents,
+          source,
+          drafts: draftPaths,
+        });
+        member = route.isTeam ? route.active.name : null;
+        subagentPath =
+          route.target.kind === "subagent"
+            ? route.target.subagentPath.join("/")
+            : "";
+      }
       const plan = planUninstall({
         lock,
         id,
@@ -1328,7 +1343,11 @@ export async function action(args: ActionFunctionArgs) {
         source.files["harnesst-lock.json"] ??
         null;
       if (lockRaw) {
-        const rewritten = renameMember(overlayLock(lockRaw, []), oldName, newName);
+        const rewritten = renameMember(
+          overlayLock(lockRaw, []),
+          oldName,
+          newName,
+        );
         if (rewritten.changed) {
           await stageDraft({
             projectId: project.id,
@@ -1762,7 +1781,10 @@ function ModelSection({
           className="mt-2"
           disabled={fetcher.state !== "idle"}
           onClick={() =>
-            fetcher.submit({ intent: "clear-model-override" }, { method: "post" })
+            fetcher.submit(
+              { intent: "clear-model-override" },
+              { method: "post" },
+            )
           }
         >
           {nested ? `Inherit from ${member}` : "Use workspace default"}
@@ -2128,8 +2150,7 @@ function RenameSection({
             <p className="font-medium">Rename to {pendingName} saved</p>
             <p className="text-muted-foreground">
               The directory move is saved with your other changes. The rename
-              applies when you publish; discarding its saved changes cancels
-              it.
+              applies when you publish; discarding its saved changes cancels it.
             </p>
           </CardContent>
         </Card>

@@ -20,6 +20,7 @@ const connection: CatalogTemplate = {
     description: "Connects to Example.",
     version: "1.0.0",
     eve: ">=0.22.0",
+    subagentCompatible: true,
     files: ["tools/example-api.ts"],
     dependencies: { "example-sdk": "^2.0.0" },
     secrets: [{ name: "EXAMPLE_TOKEN", sandbox: true }],
@@ -60,6 +61,7 @@ const bundle: CatalogTemplate = {
     description: "The full Example integration.",
     version: "1.0.0",
     eve: ">=0.22.0",
+    subagentCompatible: true,
     files: [],
     includes: [{ type: "connection", id: "example-api" }],
   },
@@ -75,9 +77,12 @@ const agent: CatalogTemplate = {
     description: "A ready-made teammate.",
     version: "1.0.0",
     eve: ">=0.22.0",
+    subagentCompatible: false,
     files: ["agent.ts"],
   },
-  files: { "agent.ts": 'export default defineAgent({ model: "anthropic/x" });\n' },
+  files: {
+    "agent.ts": 'export default defineAgent({ model: "anthropic/x" });\n',
+  },
 };
 
 function harness(options?: {
@@ -203,7 +208,9 @@ describe("assistant marketplace install", () => {
     ]);
 
     const drafts = await listDrafts(project.id, store);
-    const lockDraft = drafts.find((draft) => draft.path === "harnesst-lock.json");
+    const lockDraft = drafts.find(
+      (draft) => draft.path === "harnesst-lock.json",
+    );
     const lock = parseLock(JSON.parse(lockDraft?.content ?? "null"));
     expect(lock.installs[0]).toMatchObject({
       id: "example-bundle",
@@ -261,7 +268,9 @@ describe("assistant marketplace install", () => {
     expect(update).toMatchObject({ ok: true, isUpdate: true });
 
     const drafts = await listDrafts(project.id, store);
-    const lockDraft = drafts.find((draft) => draft.path === "harnesst-lock.json");
+    const lockDraft = drafts.find(
+      (draft) => draft.path === "harnesst-lock.json",
+    );
     const lock = parseLock(JSON.parse(lockDraft?.content ?? "null"));
     expect(lock.installs[0].auth?.[0].selectedGroups).toEqual(["write"]);
   });
@@ -287,7 +296,9 @@ describe("assistant marketplace install", () => {
       { kind: "set", name: "EXAMPLE_TOKEN", value: "s3cr3t", sandbox: true },
     ]);
     const drafts = await listDrafts(project.id, store);
-    expect(drafts.some((draft) => draft.path === "harnesst-lock.json")).toBe(true);
+    expect(drafts.some((draft) => draft.path === "harnesst-lock.json")).toBe(
+      true,
+    );
   });
 
   it("stages nothing when the GitHub-App credential guard rejects the install", async () => {
@@ -295,7 +306,10 @@ describe("assistant marketplace install", () => {
     const result = await installMarketplaceTemplate(
       project,
       { type: "connection", id: "example-api", member: "agent" },
-      { ...deps, credentialConflict: async () => "Another agent uses this App." },
+      {
+        ...deps,
+        credentialConflict: async () => "Another agent uses this App.",
+      },
     );
 
     expect(result).toMatchObject({
@@ -404,7 +418,7 @@ describe("assistant marketplace install", () => {
         files: expect.arrayContaining([
           "agents/pm/agent/subagents/reader/tools/example-api.ts",
           // The sandbox the tool runs in is the member's, so its add-on stays at the member root.
-          "agents/pm/agent/sandbox/addons/example-api.ts",
+          "agents/pm/agent/subagents/reader/sandbox/addons/example-api.ts",
         ]),
       },
     ]);
