@@ -1,5 +1,5 @@
 {
-  "id": "b5df2458-6179-41e7-948d-b30098162c55",
+  "id": "1e7cfc70-9077-4f06-8e79-484f078be93f",
   "prevId": "1b146bbc-70da-4291-9909-50ba779ee975",
   "version": "7",
   "dialect": "postgresql",
@@ -50,6 +50,12 @@
           "primaryKey": false,
           "notNull": false
         },
+        "activated_at": {
+          "name": "activated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
         "superseded_at": {
           "name": "superseded_at",
           "type": "timestamp with time zone",
@@ -97,7 +103,7 @@
             }
           ],
           "isUnique": true,
-          "where": "\"agent_github_apps\".\"superseded_at\" is null",
+          "where": "\"agent_github_apps\".\"activated_at\" is not null and \"agent_github_apps\".\"superseded_at\" is null",
           "concurrently": false,
           "method": "btree",
           "with": {}

@@ -164,10 +164,12 @@ export const loader = (args: LoaderFunctionArgs) => {
         }),
       ]);
       const writes: Array<[key: string, value: string, sandbox: boolean]> = [
-        ["GITHUB_APP_ID", converted.appId, true],
         ["GITHUB_APP_PRIVATE_KEY", converted.pem, true],
         ["GITHUB_WEBHOOK_SECRET", converted.webhookSecret, false],
         ["GITHUB_APP_SLUG", converted.slug, true],
+        // Commit marker for recovering a pending history row after a crash: when the App id has
+        // changed, every other credential write above completed successfully.
+        ["GITHUB_APP_ID", converted.appId, true],
       ];
       await recordCreatedAgentGitHubApp(
         {

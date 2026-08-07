@@ -111,7 +111,8 @@ import { listDrafts, stageDraft } from "~/drafts/drafts.server";
 import { getAgentSource } from "~/github/cached.server";
 import {
   agentGitHubAppSettingsUrl,
-  listSupersededAgentGitHubApps,
+  listAgentGitHubAppsNeedingCleanup,
+  reconcilePendingAgentGitHubApp,
 } from "~/github/agent-apps.server";
 import { fetchAgentSource } from "~/github/repo.server";
 import {
@@ -307,10 +308,11 @@ interface DeploymentData {
      */
     repositories: string[] | null;
     /** Apps this agent replaced; GitHub leaves them installed until an operator removes them. */
-    supersededApps: Array<{
+    cleanupApps: Array<{
       appId: string;
       slug: string;
       settingsUrl: string;
+      status: "pending" | "superseded";
     }>;
     /**
      * Whether the channel's settings panel is editable (issue #254): true only when the LOCK
@@ -503,7 +505,7 @@ export const loader = (args: LoaderFunctionArgs) =>
             appSlug: null,
             installations: null,
             repositories: null,
-            supersededApps: [],
+            cleanupApps: [],
             configurable: false,
             settings: {},
           },
@@ -692,24 +694,43 @@ export const loader = (args: LoaderFunctionArgs) =>
       let githubAppSlug: string | null = null;
       let githubInstallations: AppInstallation[] | null = null;
       let githubRepositories: string[] | null = null;
-      let supersededGithubApps: DeploymentData["githubSetup"]["supersededApps"] =
-        [];
+      const githubSecretRef = (key: string) => ({
+        projectId: project.id,
+        agentId: active.id,
+        environmentId: null,
+        key,
+      });
+      let activeGithubAppId: string | null = null;
+      try {
+        activeGithubAppId = await getRuntime().secrets.get(
+          githubSecretRef("GITHUB_APP_ID"),
+        );
+        await reconcilePendingAgentGitHubApp(
+          project.id,
+          active.id,
+          activeGithubAppId,
+        );
+      } catch {
+        // A secret/DB hiccup cannot hide already-durable cleanup rows below.
+      }
+      const cleanupGithubApps: DeploymentData["githubSetup"]["cleanupApps"] = (
+        await listAgentGitHubAppsNeedingCleanup(project.id, active.id)
+      ).map((app) => ({
+        appId: app.appId,
+        slug: app.slug,
+        settingsUrl: agentGitHubAppSettingsUrl(app),
+        status: app.status === "pending" ? "pending" : "superseded",
+      }));
       if (hasGithubSetup) {
-        const secretRef = (key: string) => ({
-          projectId: project.id,
-          agentId: active.id,
-          environmentId: null,
-          key,
-        });
         try {
           githubAppSlug = await getRuntime().secrets.get(
-            secretRef("GITHUB_APP_SLUG"),
+            githubSecretRef("GITHUB_APP_SLUG"),
           );
           if (githubAppSlug) {
-            const [appId, privateKey] = await Promise.all([
-              getRuntime().secrets.get(secretRef("GITHUB_APP_ID")),
-              getRuntime().secrets.get(secretRef("GITHUB_APP_PRIVATE_KEY")),
-            ]);
+            const appId = activeGithubAppId;
+            const privateKey = await getRuntime().secrets.get(
+              githubSecretRef("GITHUB_APP_PRIVATE_KEY"),
+            );
             if (appId && privateKey) {
               githubInstallations = await listAppInstallations({
                 appId,
@@ -729,13 +750,6 @@ export const loader = (args: LoaderFunctionArgs) =>
           githubInstallations = null; // GitHub/secrets hiccup — the card falls back to a link
           githubRepositories = null;
         }
-        supersededGithubApps = (
-          await listSupersededAgentGitHubApps(project.id, active.id)
-        ).map((app) => ({
-          appId: app.appId,
-          slug: app.slug,
-          settingsUrl: agentGitHubAppSettingsUrl(app),
-        }));
       }
       return {
         project,
@@ -768,7 +782,7 @@ export const loader = (args: LoaderFunctionArgs) =>
           appSlug: githubAppSlug,
           installations: githubInstallations,
           repositories: githubRepositories,
-          supersededApps: supersededGithubApps,
+          cleanupApps: cleanupGithubApps,
           // Bundle-aware (`findChannelInstall`): the marketplace steers people into the GitHub
           // BUNDLE, whose only lock row is the bundle itself, so a plain `findInstall("github")`
           // would find nothing and hide the panel from exactly the installs it exists for.
@@ -2312,7 +2326,7 @@ function ChannelsCard({
   agentName: string;
 }) {
   const showDiscord = discord.enabled && discord.configured;
-  const showGithub = github.enabled;
+  const showGithub = github.enabled || github.cleanupApps.length > 0;
   if (!showDiscord && !showGithub) return null;
 
   return (
@@ -2459,26 +2473,36 @@ function GitHubChannelRow({
         ? `@${setup.appSlug} — not installed on any account yet, so it can't see any repositories.`
         : `@${setup.appSlug} — answers @mentions on the repositories it's installed on.`;
 
+  const cleanupWarning = setup.cleanupApps.length > 0 && (
+    <Alert className="mb-3 border-amber-500/50 bg-amber-500/5">
+      <AlertTitle>GitHub Apps need cleanup</AlertTitle>
+      <AlertDescription>
+        {setup.cleanupApps.map((app) => (
+          <p key={app.appId}>
+            <code>@{app.slug}</code> (App {app.appId}) {app.status === "pending"
+              ? "was created, but harnesst could not confirm that its credentials became active."
+              : "was replaced, but GitHub does not uninstall or delete it."}{" "}
+            It may still point at this agent&rsquo;s webhook URL and retain
+            repository access. {" "}
+            <a href={app.settingsUrl} target="_blank" rel="noreferrer">
+              {app.status === "pending"
+                ? "Review it on GitHub"
+                : "Remove it on GitHub"}
+            </a>
+            .
+          </p>
+        ))}
+      </AlertDescription>
+    </Alert>
+  );
+
+  if (!setup.enabled) {
+    return <div className="rounded-lg border px-3 py-2">{cleanupWarning}</div>;
+  }
+
   return (
     <div className="rounded-lg border px-3 py-2">
-      {setup.supersededApps.length > 0 && (
-        <Alert className="mb-3 border-amber-500/50 bg-amber-500/5">
-          <AlertTitle>Remove the previous GitHub App</AlertTitle>
-          <AlertDescription>
-            {setup.supersededApps.map((app) => (
-              <p key={app.appId}>
-                <code>@{app.slug}</code> (App {app.appId}) was replaced but
-                GitHub does not uninstall or delete it. It still points at this
-                agent&rsquo;s webhook URL and may retain repository access.{" "}
-                <a href={app.settingsUrl} target="_blank" rel="noreferrer">
-                  Remove it on GitHub
-                </a>
-                .
-              </p>
-            ))}
-          </AlertDescription>
-        </Alert>
-      )}
+      {cleanupWarning}
       <div className="flex items-center justify-between gap-3">
         <div className="grid gap-0.5">
           <div className="flex items-center gap-2">

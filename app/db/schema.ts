@@ -399,6 +399,8 @@ export const agentGithubApps = pgTable(
     /** Needed to link to the correct user/org-owned GitHub App settings page. */
     ownerLogin: text("owner_login"),
     ownerType: text("owner_type"),
+    /** Null while the callback has durably recorded creation but not committed all secret writes. */
+    activatedAt: timestamp("activated_at", { withTimezone: true }),
     supersededAt: timestamp("superseded_at", { withTimezone: true }),
     createdAt: createdAt(),
   },
@@ -406,7 +408,7 @@ export const agentGithubApps = pgTable(
     uniqueIndex("agent_github_apps_agent_app_uq").on(t.agentId, t.appId),
     uniqueIndex("agent_github_apps_current_agent_uq")
       .on(t.agentId)
-      .where(sql`${t.supersededAt} is null`),
+      .where(sql`${t.activatedAt} is not null and ${t.supersededAt} is null`),
     index("agent_github_apps_agent_created_idx").on(t.agentId, t.createdAt),
   ],
 );

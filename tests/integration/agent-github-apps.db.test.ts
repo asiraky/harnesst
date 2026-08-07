@@ -13,8 +13,11 @@ describe.runIf(LIVE)("agent GitHub App history against real Postgres", () => {
     const { db } = await import("~/db/client.server");
     const { organization } = await import("~/db/auth-schema");
     const { agents, projects } = await import("~/db/schema");
-    const { listSupersededAgentGitHubApps, recordCreatedAgentGitHubApp } =
-      await import("~/github/agent-apps.server");
+    const {
+      listAgentGitHubAppsNeedingCleanup,
+      reconcilePendingAgentGitHubApp,
+      recordCreatedAgentGitHubApp,
+    } = await import("~/github/agent-apps.server");
 
     const suffix = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
     const orgId = `gh-app-${suffix}`;
@@ -66,8 +69,40 @@ describe.runIf(LIVE)("agent GitHub App history against real Postgres", () => {
       });
       expect(second.superseded[0].supersededAt).toBeInstanceOf(Date);
       await expect(
-        listSupersededAgentGitHubApps(project.id, agent.id),
+        listAgentGitHubAppsNeedingCleanup(project.id, agent.id),
       ).resolves.toMatchObject([{ appId: "4271951", slug: "eden-sam" }]);
+
+      await expect(
+        recordCreatedAgentGitHubApp(
+          {
+            projectId: project.id,
+            agentId: agent.id,
+            appId: "4500000",
+            slug: "sam-next",
+            ownerLogin: "worksauceapp",
+            ownerType: "Organization",
+          },
+          async () => {
+            throw new Error("lost final history commit");
+          },
+        ),
+      ).rejects.toThrow("lost final history commit");
+      await expect(
+        listAgentGitHubAppsNeedingCleanup(project.id, agent.id),
+      ).resolves.toMatchObject([
+        { appId: "4271951", status: "superseded" },
+        { appId: "4500000", status: "pending" },
+      ]);
+
+      await expect(
+        reconcilePendingAgentGitHubApp(project.id, agent.id, "4500000"),
+      ).resolves.toBe(true);
+      await expect(
+        listAgentGitHubAppsNeedingCleanup(project.id, agent.id),
+      ).resolves.toMatchObject([
+        { appId: "4271951", status: "superseded" },
+        { appId: "4395332", status: "superseded" },
+      ]);
     } finally {
       await db.delete(organization).where(eq(organization.id, orgId));
     }

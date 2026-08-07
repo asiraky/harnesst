@@ -1,5 +1,5 @@
 /** Durable identities for per-agent GitHub Apps created by the manifest flow (issue #362). */
-import { and, asc, eq, isNull, sql } from "drizzle-orm";
+import { and, asc, eq, isNotNull, isNull, ne, or, sql } from "drizzle-orm";
 
 import { db } from "~/db/client.server";
 import { agentGithubApps, agents } from "~/db/schema";
@@ -10,8 +10,10 @@ export interface AgentGitHubApp {
   slug: string;
   ownerLogin: string | null;
   ownerType: string | null;
+  activatedAt: Date | null;
   supersededAt: Date | null;
   createdAt: Date;
+  status: "pending" | "active" | "superseded";
 }
 
 export interface CreatedAgentGitHubApp {
@@ -26,15 +28,16 @@ export interface CreatedAgentGitHubApp {
 }
 
 /**
- * Make a newly converted App current and retain the outgoing identity. A transaction-scoped
- * advisory lock serializes separate manifest flows even when this agent has no identity row yet;
- * unlike a row lock, it does not block secret inserts that reference the agent by foreign key.
+ * Durably record the newly-created identity before writing its single-copy credentials, then make
+ * it current after those writes succeed. The pending row survives a process/DB failure between
+ * the two transactions, so the new App never becomes invisible. A transaction advisory lock
+ * serializes credential activation without blocking secret rows' agent foreign keys.
  */
 export async function recordCreatedAgentGitHubApp(
   input: CreatedAgentGitHubApp,
   activate: () => Promise<void> = async () => {},
 ): Promise<{ current: AgentGitHubApp; superseded: AgentGitHubApp[] }> {
-  return db.transaction(async (tx) => {
+  const pendingId = await db.transaction(async (tx) => {
     await tx.execute(
       sql`select pg_advisory_xact_lock(hashtext(${input.agentId}))`,
     );
@@ -53,7 +56,7 @@ export async function recordCreatedAgentGitHubApp(
       );
     }
 
-    const outgoing = await tx
+    const unsuperseded = await tx
       .select()
       .from(agentGithubApps)
       .where(
@@ -64,58 +67,38 @@ export async function recordCreatedAgentGitHubApp(
         ),
       );
 
+    const active = unsuperseded.filter((row) => row.activatedAt !== null);
     if (
-      outgoing.length === 0 &&
+      active.length === 0 &&
       input.previous &&
       input.previous.appId !== input.appId
     ) {
-      const [seeded] = await tx
+      await tx
         .insert(agentGithubApps)
         .values({
           projectId: input.projectId,
           agentId: input.agentId,
           appId: input.previous.appId,
           slug: input.previous.slug,
+          activatedAt: new Date(),
         })
-        .returning();
-      outgoing.push(seeded);
+        .onConflictDoNothing();
     }
 
-    const sameApp = outgoing.find((row) => row.appId === input.appId);
+    const sameApp = unsuperseded.find((row) => row.appId === input.appId);
     if (sameApp) {
-      await activate();
-      const [current] = await tx
+      await tx
         .update(agentGithubApps)
         .set({
           slug: input.slug,
           ownerLogin: input.ownerLogin,
           ownerType: input.ownerType,
         })
-        .where(eq(agentGithubApps.id, sameApp.id))
-        .returning();
-      return { current: toAgentGitHubApp(current), superseded: [] };
+        .where(eq(agentGithubApps.id, sameApp.id));
+      return sameApp.id;
     }
 
-    // Keep the agent-row lock while replacing credentials. Two independent manifest flows can
-    // otherwise interleave secret writes and commit history in the opposite order, leaving the
-    // recorded current App different from the credentials the agent actually uses.
-    await activate();
-    const supersededAt = new Date();
-    const superseded = outgoing.length
-      ? await tx
-          .update(agentGithubApps)
-          .set({ supersededAt })
-          .where(
-            and(
-              eq(agentGithubApps.projectId, input.projectId),
-              eq(agentGithubApps.agentId, input.agentId),
-              isNull(agentGithubApps.supersededAt),
-            ),
-          )
-          .returning()
-      : [];
-
-    const [current] = await tx
+    const [pending] = await tx
       .insert(agentGithubApps)
       .values({
         projectId: input.projectId,
@@ -126,14 +109,54 @@ export async function recordCreatedAgentGitHubApp(
         ownerType: input.ownerType,
       })
       .returning();
+    return pending.id;
+  });
+
+  return db.transaction(async (tx) => {
+    await tx.execute(
+      sql`select pg_advisory_xact_lock(hashtext(${input.agentId}))`,
+    );
+
+    // Keep the advisory lock while replacing credentials. Two independent manifest flows can
+    // otherwise interleave secret writes and commit history in the opposite order.
+    await activate();
+    const transitioned = await tx
+      .update(agentGithubApps)
+      .set({
+        activatedAt: sql`case when ${agentGithubApps.id} = ${pendingId} then now() else ${agentGithubApps.activatedAt} end`,
+        supersededAt: sql`case when ${agentGithubApps.id} = ${pendingId} then null else now() end`,
+      })
+      .where(
+        and(
+          eq(agentGithubApps.projectId, input.projectId),
+          eq(agentGithubApps.agentId, input.agentId),
+          or(
+            eq(agentGithubApps.id, pendingId),
+            and(
+              ne(agentGithubApps.id, pendingId),
+              isNotNull(agentGithubApps.activatedAt),
+              isNull(agentGithubApps.supersededAt),
+            ),
+          ),
+        ),
+      )
+      .returning();
+    let current: (typeof transitioned)[number] | undefined;
+    const superseded: AgentGitHubApp[] = [];
+    for (const row of transitioned) {
+      if (row.id === pendingId) current = row;
+      else superseded.push(toAgentGitHubApp(row));
+    }
+    if (!current) throw new Error("The pending GitHub App identity disappeared.");
     return {
       current: toAgentGitHubApp(current),
-      superseded: superseded.map(toAgentGitHubApp),
+      superseded,
     };
   });
 }
 
-export async function listSupersededAgentGitHubApps(
+/** Superseded Apps plus pending creations whose credential activation never committed. */
+export async function listAgentGitHubAppsNeedingCleanup(
   projectId: string,
   agentId: string,
 ): Promise<AgentGitHubApp[]> {
@@ -147,7 +170,65 @@ export async function listSupersededAgentGitHubApps(
       ),
     )
     .orderBy(asc(agentGithubApps.createdAt));
-  return rows.filter((row) => row.supersededAt !== null).map(toAgentGitHubApp);
+  const cleanup: AgentGitHubApp[] = [];
+  for (const row of rows) {
+    if (row.supersededAt !== null || row.activatedAt === null) {
+      cleanup.push(toAgentGitHubApp(row));
+    }
+  }
+  return cleanup;
+}
+
+/**
+ * Recover the narrow crash window where every credential write committed (App id is written last)
+ * but the history-finalization transaction did not. Safe to call from a loader: it is a no-op
+ * unless an unsuperseded pending row exactly matches the active secret App id.
+ */
+export async function reconcilePendingAgentGitHubApp(
+  projectId: string,
+  agentId: string,
+  activeAppId: string | null,
+): Promise<boolean> {
+  if (!activeAppId) return false;
+  return db.transaction(async (tx) => {
+    await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${agentId}))`);
+    const [pending] = await tx
+      .select()
+      .from(agentGithubApps)
+      .where(
+        and(
+          eq(agentGithubApps.projectId, projectId),
+          eq(agentGithubApps.agentId, agentId),
+          eq(agentGithubApps.appId, activeAppId),
+          isNull(agentGithubApps.activatedAt),
+          isNull(agentGithubApps.supersededAt),
+        ),
+      )
+      .limit(1);
+    if (!pending) return false;
+
+    await tx
+      .update(agentGithubApps)
+      .set({
+        activatedAt: sql`case when ${agentGithubApps.id} = ${pending.id} then now() else ${agentGithubApps.activatedAt} end`,
+        supersededAt: sql`case when ${agentGithubApps.id} = ${pending.id} then null else now() end`,
+      })
+      .where(
+        and(
+          eq(agentGithubApps.projectId, projectId),
+          eq(agentGithubApps.agentId, agentId),
+          or(
+            eq(agentGithubApps.id, pending.id),
+            and(
+              ne(agentGithubApps.id, pending.id),
+              isNotNull(agentGithubApps.activatedAt),
+              isNull(agentGithubApps.supersededAt),
+            ),
+          ),
+        ),
+      );
+    return true;
+  });
 }
 
 /** Direct settings URL for deletion; the public App page is the safe fallback for old rows. */
@@ -174,7 +255,14 @@ function toAgentGitHubApp(
     slug: row.slug,
     ownerLogin: row.ownerLogin,
     ownerType: row.ownerType,
+    activatedAt: row.activatedAt,
     supersededAt: row.supersededAt,
     createdAt: row.createdAt,
+    status:
+      row.supersededAt !== null
+        ? "superseded"
+        : row.activatedAt !== null
+          ? "active"
+          : "pending",
   };
 }
