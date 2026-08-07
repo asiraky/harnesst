@@ -14,7 +14,7 @@
       "name": "Vercel Issuer",
       "version": "0.1.0",
       "description": "The team's Vercel platform engineer: creates Vercel projects and mints project-scoped tokens for teammates behind a human approval gate. Holds the one full-account token; every privileged operation shows the human the exact request and justification before it runs.",
-      "hash": "a2ec77300a0657876241f6002f953c4c40212e7e"
+      "hash": "47711fbea586616127925023d1c8abbe80002b4d"
     },
     {
       "id": "github-bundle",
@@ -126,7 +126,7 @@
       "name": "Deploying Vercel apps",
       "version": "0.1.0",
       "description": "How to take an app to production on Vercel through the gated Vercel CLI tool: getting a project provisioned by the platform teammate, deploying, configuring env, connecting git, and verifying before mutating.",
-      "hash": "08e7dbaab13376ef4fa11e325372e49a71ad363d"
+      "hash": "12b4dcbad2f4e5aed683b55215f9dabf46875915"
     },
     {
       "id": "dev-toolchain",
@@ -222,7 +222,7 @@
       "name": "Vercel CLI",
       "version": "0.1.0",
       "description": "Run the vercel CLI against exactly one Vercel project with a project-scoped token that never enters the sandbox shell or the model's context. Every command carries the agent's written justification and is human-approved by default.",
-      "hash": "6649683b29ff8984f07e75ef78ca8ad4bff48703"
+      "hash": "6937a416e3e82079b132e25bf76a62f96dac4af5"
     }
   ]
 }

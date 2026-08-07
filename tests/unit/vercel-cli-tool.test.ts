@@ -136,6 +136,25 @@ describe("vercel-cli tool template", () => {
     expect(harness.execCalls).toHaveLength(0);
   });
 
+  it("refuses raw `api` access for the master-token holder, but allows it on a project token", async () => {
+    const issuer = loadTemplate({
+      env: { VERCEL_MASTER_TOKEN: "master_tok_9876543210" },
+    });
+    const refused = await issuer.tool.execute({
+      args: ["api", "/v3/user/tokens", "-X", "POST"],
+      justification: "j",
+    });
+    expect(refused.ok).toBe(false);
+    expect(issuer.execCalls).toHaveLength(0);
+
+    const scoped = loadTemplate({ env: { VERCEL_TOKEN: TOKEN }, exec: () => ({ stdout: "{}" }) });
+    const allowed = await scoped.tool.execute({
+      args: ["api", "/v9/projects/acme"],
+      justification: "j",
+    });
+    expect(allowed.ok).toBe(true);
+  });
+
   it("answers a readable error instead of spawning when no credential is configured", async () => {
     const harness = loadTemplate({ env: {} });
     const result = await harness.tool.execute({ args: ["whoami"], justification: "j" });
@@ -184,7 +203,7 @@ describe("vercel-cli tool template", () => {
       env: { VERCEL_TOKEN: TOKEN },
       exec: () => ({
         error: Object.assign(new Error("exit 1"), { code: 1 }),
-        stdout: `token is ${TOKEN} and also vcp_other9999999 leaked`,
+        stdout: `token is ${TOKEN} and also vcp_other9999999 leaked, {"bearerToken":"AbC123fullAccount"}`,
         stderr: `see https://my-app-abc123.vercel.app for ${TOKEN}`,
       }),
     });
@@ -192,6 +211,8 @@ describe("vercel-cli tool template", () => {
     expect(result).toMatchObject({ ok: false, exitCode: 1 });
     expect(String(result.stdout)).not.toContain(TOKEN);
     expect(String(result.stdout)).toContain("vcp_[redacted]");
+    expect(String(result.stdout)).not.toContain("AbC123fullAccount");
+    expect(String(result.stdout)).toContain('"bearerToken":"[redacted]"');
     expect(String(result.stderr)).not.toContain(TOKEN);
     expect(String(result.stderr)).toContain("https://my-app-abc123.vercel.app");
   });

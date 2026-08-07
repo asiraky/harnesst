@@ -32,6 +32,7 @@ interface Options {
   createProject?: { status: number; body: unknown };
   mint?: { status: number; body: unknown };
   deposit?: (call: FetchCall) => { status: number; body: unknown };
+  revoke?: { status: number; body: unknown };
 }
 
 interface Harness {
@@ -62,7 +63,7 @@ function loadTemplate(options: Options = {}): Harness {
         options.mint ?? { status: 200, body: { token: { id: "tok_1" }, bearerToken: BEARER } }
       );
     if (url.includes("/v3/user/tokens/") && call.method === "DELETE")
-      return { status: 200, body: {} };
+      return options.revoke ?? { status: 200, body: {} };
     if (url.startsWith("https://harnesst.local/deposit"))
       return options.deposit?.(call) ?? { status: 200, body: { ok: true } };
     throw new Error(`unexpected fetch to ${url}`);
@@ -174,13 +175,22 @@ describe("vercel-provision tool template", () => {
     expect(idDeposit.body).toMatchObject({ key: "VERCEL_PROJECT_ID", value: "prj_new" });
   });
 
-  it("adopts an existing same-name project on conflict so retries converge", async () => {
+  it("adopts an existing same-name project on conflict, and says so instead of pretending it created one", async () => {
     const harness = loadTemplate({
       createProject: { status: 409, body: { error: { code: "conflict", message: "exists" } } },
     });
     const result = await harness.tool.execute(INPUT);
-    expect(result).toMatchObject({ ok: true, projectId: "prj_existing" });
+    expect(result).toMatchObject({ ok: true, projectId: "prj_existing", adopted: true });
+    expect(String(result.note)).toContain("adopted");
     expect(harness.calls.some((c) => c.url.includes("/v9/projects/acme-web"))).toBe(true);
+  });
+
+  it("passes the route's delivery verdict through — a held deposit is not reported as queued", async () => {
+    const harness = loadTemplate({
+      deposit: () => ({ status: 200, body: { ok: true, delivery: "held" } }),
+    });
+    const result = await harness.tool.execute(INPUT);
+    expect(result).toMatchObject({ ok: true, delivery: "held" });
   });
 
   it("revokes the minted token when the deposit fails, and surfaces no token value", async () => {
@@ -193,6 +203,19 @@ describe("vercel-provision tool template", () => {
     expect(JSON.stringify(result)).not.toContain(BEARER);
     const revoke = harness.calls.find((c) => c.method === "DELETE");
     expect(revoke?.url).toContain("/v3/user/tokens/tok_1");
+  });
+
+  it("admits when revocation itself failed instead of claiming the token was revoked", async () => {
+    const harness = loadTemplate({
+      deposit: () => ({ status: 500, body: {} }),
+      revoke: { status: 403, body: { error: { code: "forbidden", message: "nope" } } },
+    });
+    const result = await harness.tool.execute(INPUT);
+    expect(result.ok).toBe(false);
+    expect(String(result.error)).not.toContain("was revoked");
+    expect(String(result.error)).toMatch(/revok.*FAILED/i);
+    expect(String(result.error)).toContain("tok_1");
+    expect(JSON.stringify(result)).not.toContain(BEARER);
   });
 
   it("scopes project calls to a configured team but never the user-token mint", async () => {

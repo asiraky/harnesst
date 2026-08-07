@@ -24,11 +24,18 @@ const FORBIDDEN_SUBCOMMANDS = new Set(["tokens", "login", "logout"]);
  * Forbidden words are rejected ANYWHERE in the argv, not just first position — flag values can
  * shift what the CLI parses as the subcommand (`--scope x tokens add`), and a false positive on
  * a directory literally named "tokens" is a price worth paying.
+ *
+ * The master-token holder additionally loses `api`: raw REST access with the full-account
+ * credential could mint a fresh token (`POST /v3/user/tokens`) whose bearer value would land in
+ * model-visible stdout. The issuer mints through its dedicated provisioning tool instead.
  */
-export function refuseArgs(args: string[]): string | null {
+export function refuseArgs(args: string[], hasMasterToken: boolean = false): string | null {
   const forbidden = args.find((arg) => FORBIDDEN_SUBCOMMANDS.has(arg));
   if (forbidden) {
     return `The \`vercel ${forbidden}\` subcommand is not available through this tool — it handles credentials, which the harness manages for you.`;
+  }
+  if (hasMasterToken && args.includes("api")) {
+    return "Raw `vercel api` access is not available with the full-account credential — use the provisioning tool for anything the other subcommands cannot do.";
   }
   for (const arg of args) {
     if (arg === "--token" || arg.startsWith("--token=") || arg === "-t") {
@@ -48,7 +55,9 @@ export function redact(text: string, secrets: Array<string | undefined>): string
   for (const secret of secrets) {
     if (secret) out = out.split(secret).join("[redacted]");
   }
-  return out.replace(/\bvcp_[A-Za-z0-9]{8,}/g, "vcp_[redacted]");
+  return out
+    .replace(/\bvcp_[A-Za-z0-9]{8,}/g, "vcp_[redacted]")
+    .replace(/("bearerToken"\s*:\s*")[^"]+(")/g, "$1[redacted]$2");
 }
 
 function truncate(text: string): string {
@@ -96,7 +105,7 @@ export default defineTool({
       };
     }
 
-    const refusal = refuseArgs(args);
+    const refusal = refuseArgs(args, Boolean(process.env.VERCEL_MASTER_TOKEN));
     if (refusal) return { ok: false, error: refusal };
 
     let cliEntry: string;

@@ -21,11 +21,11 @@ so pick the deployment work back up in a later turn.
 
 ## Deploying
 
-- The first `deploy --yes` from your app directory uploads and builds it; `deploy --prod --yes`
-  ships to production. There is no separate "create" step.
-- Prefer git-connected deploys when a repository exists: `git connect --yes` links it, after
-  which every push builds automatically and you use the tool mainly to configure, inspect, and
-  promote.
+- Deploy git-connected: push your code to the repository, link it with `git connect --yes`, and
+  every push builds automatically; use the tool mainly to configure, inspect, and promote.
+- The tool runs OUTSIDE your sandbox shell: a `cwd` pointing at files you created in your
+  workspace will not resolve there. That is why file-upload `deploy` of workspace code does not
+  work — get code into the git repository and let Vercel build from it.
 - Configure environment variables with `env add` (values for the app you're deploying — never
   your own credentials) and check them with `env ls`.
 - Inspect before you mutate: `inspect <deployment-url>` and `project ls` tell you what exists

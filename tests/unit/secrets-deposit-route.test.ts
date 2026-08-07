@@ -231,6 +231,24 @@ describe("POST /api/secrets/deposit", () => {
     expect(JSON.stringify(audited.inputSummary)).not.toContain("vcp_sekret");
   });
 
+  it("still reports success when invalidation fails after the secret is stored — the issuer must not revoke a stored token", async () => {
+    mocks.invalidateAgentEnvironments.mockRejectedValue(new Error("db gone"));
+    const { payload } = unwrap(await callAction(GOOD_BODY));
+    expect(payload).toEqual({ ok: true, delivery: "stored" });
+    expect(mocks.secretsSet).toHaveBeenCalled();
+    expect(mocks.recordCapabilityCall).toHaveBeenCalledWith(
+      expect.objectContaining({ outcome: "ok" }),
+    );
+  });
+
+  it("audits an unexpected server error before rethrowing it", async () => {
+    mocks.secretsSet.mockRejectedValue(new Error("store exploded"));
+    await expect(callAction(GOOD_BODY)).rejects.toThrow("store exploded");
+    expect(mocks.recordCapabilityCall).toHaveBeenCalledWith(
+      expect.objectContaining({ outcome: "error", agentId: "ag_issuer" }),
+    );
+  });
+
   it("never targets the built-in assistant even when the name matches", async () => {
     mocks.store.agents.listByProject.mockResolvedValue([
       { id: "ag_asst", projectId: "proj_1", name: "dev", root: "agent", kind: "assistant" },

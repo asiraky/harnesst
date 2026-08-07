@@ -18,7 +18,7 @@
  *
  * Bad token → 401; business outcomes → 200 `{ ok:false, error }` so the tool surfaces the text.
  * Every attempt by an authenticated caller is audited (key name, never the value), mirroring the
- * capability proxy. Resource route (action only).
+ * capability proxy — including unexpected server errors. Resource route (action only).
  */
 import { data, type ActionFunctionArgs } from "react-router";
 
@@ -89,95 +89,116 @@ export async function action({ request }: ActionFunctionArgs) {
     return data({ ok: false, error });
   };
 
-  let body: {
-    member?: unknown;
-    key?: unknown;
-    value?: unknown;
-    sandboxExposed?: unknown;
+  const deposit = async () => {
+    let body: {
+      member?: unknown;
+      key?: unknown;
+      value?: unknown;
+      sandboxExposed?: unknown;
+    };
+    try {
+      body = (await request.json()) as typeof body;
+    } catch {
+      return refuse("Send a JSON body with `member`, `key`, and `value`.");
+    }
+
+    const member = typeof body.member === "string" ? body.member.trim() : "";
+    const key = typeof body.key === "string" ? body.key : "";
+    const value = typeof body.value === "string" ? body.value : "";
+    const summary = { member, key };
+    if (!member || !key || !value) {
+      return refuse("`member`, `key`, and `value` are all required.", summary);
+    }
+    if (!KEY_PATTERN.test(key)) {
+      return refuse("Only VERCEL_* keys can be deposited through this route.", summary);
+    }
+    if (Buffer.byteLength(value, "utf8") > MAX_VALUE_BYTES) {
+      return refuse("The value is too large for a credential deposit.", summary);
+    }
+    // The whole point of the flow is a credential the sandbox shell cannot see; there is no
+    // legitimate sandbox-exposed deposit, so a request for one is refused rather than clamped.
+    if (body.sandboxExposed === true) {
+      return refuse("Deposited credentials are never sandbox-exposed.", summary);
+    }
+
+    const project = await store.projects.findById(caller.projectId);
+    if (!project?.repoOwner || !project.repoName || !project.repoInstallationId) {
+      return refuse("This repository is not connected to GitHub.", summary);
+    }
+
+    // Committed lock only — see the module comment for why drafts don't count here.
+    const source = await getAgentSource(project.repoInstallationId, {
+      owner: project.repoOwner,
+      repo: project.repoName,
+    });
+    const lock = overlayLock(source.files[LOCK_PATH] ?? null, []);
+    const callerMember = caller.root === "agent" ? null : caller.name;
+    if (!hasAgentInstalled(lock, ISSUER_TEMPLATE_ID, callerMember)) {
+      return refuse(
+        "Only the Vercel issuer agent may deposit credentials for teammates.",
+        summary,
+      );
+    }
+
+    // Live roster member → real secret write + queued redeploy delivers it.
+    const roster = (await store.agents.listByProject(project.id)).filter(
+      (a) => a.kind === "member",
+    );
+    const target = roster.find((a) => a.name === member);
+    if (target) {
+      await getRuntime().secrets.set(
+        { projectId: project.id, agentId: target.id, environmentId: null, key },
+        value,
+        { sandboxExposed: false, updatedBy: null },
+      );
+      // The secret is durably stored from here on. If the redeploy queueing fails, the deposit
+      // must still report success — an `ok:false` would make the issuer revoke a token that IS
+      // in the store, leaving the target holding a dead credential. The next ordinary deploy
+      // delivers a merely-"stored" secret anyway.
+      let delivery: "queued" | "stored" = "queued";
+      try {
+        await invalidateAgentEnvironments({ agentIds: [target.id], createdBy: null });
+      } catch (err) {
+        console.error("[secrets.deposit] environment invalidation failed:", err);
+        delivery = "stored";
+      }
+      await audit("ok", null, { ...summary, delivery });
+      return data({ ok: true, delivery });
+    }
+
+    // Pending member (installed but not yet shipped): the member has repo files or a staged draft
+    // under agents/<name>/ but no agents row. Hold the sealed value in pending_secrets; the ship
+    // point migrates it (`migratePendingSecrets`).
+    const memberPrefix = `agents/${member}/`;
+    const committed = Object.keys(source.files).some((p) => p.startsWith(memberPrefix));
+    const drafted =
+      committed ||
+      (await listDrafts(project.id)).some((d) => d.path.startsWith(memberPrefix));
+    if (!drafted) {
+      return refuse(`No teammate named "${member}" exists in this project.`, summary);
+    }
+
+    const sealKey = decodeKey(process.env.HARNESST_SECRETS_KEY);
+    await writePendingSecret({
+      projectId: project.id,
+      memberName: member,
+      key,
+      sealed: seal(sealKey, value),
+      fingerprint: fingerprint(value),
+      sandboxExposed: false,
+      attachShared: false,
+      createdBy: null,
+    });
+    await audit("ok", null, { ...summary, delivery: "held" });
+    return data({ ok: true, delivery: "held" });
   };
+
   try {
-    body = (await request.json()) as typeof body;
-  } catch {
-    return refuse("Send a JSON body with `member`, `key`, and `value`.");
+    return await deposit();
+  } catch (err) {
+    // "Every authenticated attempt is audited" includes the ones that blow up. The message may
+    // quote internals, never the deposited value — the value is not interpolated anywhere.
+    await audit("error", String(err), {});
+    throw err;
   }
-
-  const member = typeof body.member === "string" ? body.member.trim() : "";
-  const key = typeof body.key === "string" ? body.key : "";
-  const value = typeof body.value === "string" ? body.value : "";
-  const summary = { member, key };
-  if (!member || !key || !value) {
-    return refuse("`member`, `key`, and `value` are all required.", summary);
-  }
-  if (!KEY_PATTERN.test(key)) {
-    return refuse("Only VERCEL_* keys can be deposited through this route.", summary);
-  }
-  if (Buffer.byteLength(value, "utf8") > MAX_VALUE_BYTES) {
-    return refuse("The value is too large for a credential deposit.", summary);
-  }
-  // The whole point of the flow is a credential the sandbox shell cannot see; there is no
-  // legitimate sandbox-exposed deposit, so a request for one is refused rather than clamped.
-  if (body.sandboxExposed === true) {
-    return refuse("Deposited credentials are never sandbox-exposed.", summary);
-  }
-
-  const project = await store.projects.findById(caller.projectId);
-  if (!project?.repoOwner || !project.repoName || !project.repoInstallationId) {
-    return refuse("This repository is not connected to GitHub.", summary);
-  }
-
-  // Committed lock only — see the module comment for why drafts don't count here.
-  const source = await getAgentSource(project.repoInstallationId, {
-    owner: project.repoOwner,
-    repo: project.repoName,
-  });
-  const lock = overlayLock(source.files[LOCK_PATH] ?? null, []);
-  const callerMember = caller.root === "agent" ? null : caller.name;
-  if (!hasAgentInstalled(lock, ISSUER_TEMPLATE_ID, callerMember)) {
-    return refuse(
-      "Only the Vercel issuer agent may deposit credentials for teammates.",
-      summary,
-    );
-  }
-
-  // Live roster member → real secret write + queued redeploy delivers it.
-  const roster = (await store.agents.listByProject(project.id)).filter(
-    (a) => a.kind === "member",
-  );
-  const target = roster.find((a) => a.name === member);
-  if (target) {
-    await getRuntime().secrets.set(
-      { projectId: project.id, agentId: target.id, environmentId: null, key },
-      value,
-      { sandboxExposed: false, updatedBy: null },
-    );
-    await invalidateAgentEnvironments({ agentIds: [target.id], createdBy: null });
-    await audit("ok", null, { ...summary, delivery: "queued" });
-    return data({ ok: true, delivery: "queued" });
-  }
-
-  // Pending member (installed but not yet shipped): the member has repo files or a staged draft
-  // under agents/<name>/ but no agents row. Hold the sealed value in pending_secrets; the ship
-  // point migrates it (`migratePendingSecrets`).
-  const memberPrefix = `agents/${member}/`;
-  const committed = Object.keys(source.files).some((p) => p.startsWith(memberPrefix));
-  const drafted =
-    committed ||
-    (await listDrafts(project.id)).some((d) => d.path.startsWith(memberPrefix));
-  if (!drafted) {
-    return refuse(`No teammate named "${member}" exists in this project.`, summary);
-  }
-
-  const sealKey = decodeKey(process.env.HARNESST_SECRETS_KEY);
-  await writePendingSecret({
-    projectId: project.id,
-    memberName: member,
-    key,
-    sealed: seal(sealKey, value),
-    fingerprint: fingerprint(value),
-    sandboxExposed: false,
-    attachShared: false,
-    createdBy: null,
-  });
-  await audit("ok", null, { ...summary, delivery: "held" });
-  return data({ ok: true, delivery: "held" });
 }

@@ -39,8 +39,9 @@ production app on Vercel" with hard security guarantees:
 3. Human approves → issuer resumes: project created (`POST /v11/projects`, adopting an existing
    same-name project on conflict), `vcp_` token minted (`POST /v3/user/tokens` with
    `projectId` + `expiresAt`), token deposited via `/api/secrets/deposit`. The tool result is
-   `{projectId, delivery: "queued"}` — never the token. If the deposit fails after the mint, the
-   token is revoked (`DELETE /v3/user/tokens/{id}`); it is never returned.
+   `{projectId, delivery}` — never the token. If the deposit fails after the mint, the token is
+   revoked (`DELETE /v3/user/tokens/{id}`); if that revocation itself fails, the error says so
+   and names the token id for manual cleanup. The token value is never returned either way.
 4. harnesst reconciles the dev member's env (`invalidateAgentEnvironments` → env-revision bump →
    queued same-release redeploy) → project-scoped `VERCEL_TOKEN` (plus `VERCEL_PROJECT_ID`) is
    present in the new container.
@@ -62,9 +63,12 @@ not prompt:
 2. The token travels child-env only (`VERCEL_TOKEN`, falling back to `VERCEL_MASTER_TOKEN` on
    the issuer); `--token`/`-t` arguments are rejected.
 3. `tokens`, `login`, `logout` subcommands are rejected (`vercel tokens add` prints bearer
-   tokens to stdout).
+   tokens to stdout). `api` is additionally rejected while `VERCEL_MASTER_TOKEN` is present —
+   raw REST access with the full-account credential could mint a token whose bearer value lands
+   in model-visible stdout.
 4. Defense-in-depth redaction of the configured token values (exact-string) plus `vcp_…`-shaped
-   strings from stdout/stderr; exact-match-first so deployment URLs/ids are never mangled.
+   strings and `"bearerToken"` JSON fields from stdout/stderr; exact-match-first so deployment
+   URLs/ids are never mangled.
 5. Output truncation cap; result is `{ok, exitCode, stdout, stderr}`.
 
 Approval is a policy, evaluated per call: `VERCEL_MASTER_TOKEN` present → always gated (the
@@ -86,7 +90,9 @@ includes `vercel-cli` (force-gated by the master token's presence).
 tokenTtlDays (default 90), justification}`. Execute: create project → mint project-scoped token →
 `POST ${HARNESST_SECRETS_DEPOSIT_URL}` (bearer `HARNESST_TEAM_TOKEN`) with
 `{member, key: "VERCEL_TOKEN", value, sandboxExposed: false}` → discard the value → return
-`{ok, projectId, projectName, tokenExpiresAt, delivery: "queued"}`. Revoke-on-deposit-failure.
+`{ok, projectId, projectName, tokenExpiresAt, delivery}` (the route's verdict passed through;
+`adopted: true` flags that an existing same-name project was granted rather than created).
+Revoke-on-deposit-failure, with honest reporting when the revoke itself fails.
 `VERCEL_PROJECT_ID` is deposited best-effort alongside. An optional `VERCEL_TEAM_ID` env scopes
 the project API calls to a Vercel team.
 
@@ -101,7 +107,9 @@ the project API calls to a Vercel team.
   `controller.server.ts`). Drafts are not overlaid: a staged install must not grant cross-member
   secret writes. Writable keys are restricted to `VERCEL_*`; `sandboxExposed: true` is refused.
 - **Effect:** live roster member → `secrets.set(...)` + `invalidateAgentEnvironments(...)`,
-  response `{ok: true, delivery: "queued"}`. Pending member (repo files or staged draft under
+  response `{ok: true, delivery: "queued"}` — or `delivery: "stored"` when the secret persisted
+  but queueing the redeploy failed (still success: an `ok:false` would make the issuer revoke a
+  token that IS in the store). Pending member (repo files or staged draft under
   `agents/<name>/`, no `agents` row yet) → sealed into `pending_secrets`
   (`{delivery: "held"}`); the ship point migrates it. Unknown member → refused.
 - **Audit:** every authenticated attempt is recorded via `recordCapabilityCall`

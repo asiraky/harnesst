@@ -122,6 +122,7 @@ export default defineTool({
     // 1. Create the project — or adopt an existing one by the same name, so a retry after a
     //    partial failure converges instead of erroring.
     let projectId: string;
+    let adopted = false;
     const created = await vercelCall(master, "POST", "/v11/projects", {
       name: projectName,
       ...(framework ? { framework } : {}),
@@ -138,6 +139,7 @@ export default defineTool({
         };
       }
       projectId = String(existing.data.id);
+      adopted = true;
     } else {
       return {
         ok: false,
@@ -172,10 +174,14 @@ export default defineTool({
 
     // 3. Deposit into the teammate's env. On ANY failure, revoke the minted token — a credential
     //    that never reached its destination must not stay live — and never surface its value.
-    const revoke = async () => {
-      if (tokenId) await vercelCall(master, "DELETE", `/v3/user/tokens/${encodeURIComponent(tokenId)}`);
+    //    Revocation itself can fail; report that honestly so the operator can revoke by hand.
+    const revoke = async (): Promise<boolean> => {
+      if (!tokenId) return false;
+      const res = await vercelCall(master, "DELETE", `/v3/user/tokens/${encodeURIComponent(tokenId)}`);
+      return res.ok;
     };
     let depositError: string | null = null;
+    let delivery = "queued";
     try {
       const res = await fetch(depositUrl, {
         method: "POST",
@@ -190,19 +196,27 @@ export default defineTool({
           sandboxExposed: false,
         }),
       });
-      const outcome = (await res.json().catch(() => ({}))) as { ok?: boolean; error?: string };
+      const outcome = (await res.json().catch(() => ({}))) as {
+        ok?: boolean;
+        error?: string;
+        delivery?: string;
+      };
       if (!res.ok || outcome.ok !== true) {
         depositError = outcome.error ?? `deposit route answered ${res.status}`;
+      } else if (typeof outcome.delivery === "string") {
+        delivery = outcome.delivery;
       }
     } catch (error) {
       depositError = String((error as Error).message ?? error);
     }
     if (depositError) {
-      await revoke();
+      const revoked = await revoke();
       return {
         ok: false,
         projectId,
-        error: `The token could not be delivered to "${targetMember}" (${depositError}); the minted token was revoked. Fix the delivery problem and provision again.`,
+        error: revoked
+          ? `The token could not be delivered to "${targetMember}" (${depositError}); the minted token was revoked. Fix the delivery problem and provision again.`
+          : `The token could not be delivered to "${targetMember}" (${depositError}), and revoking the minted token FAILED — a human must revoke token "${tokenId || "(unknown id)"}" in the Vercel dashboard before retrying.`,
       };
     }
 
@@ -229,13 +243,26 @@ export default defineTool({
       note = "VERCEL_PROJECT_ID could not be deposited (token delivery succeeded).";
     }
 
+    // `delivery` is the route's verdict: "queued" (live member, redeploy pending) or "held"
+    // (pending member — the token waits in escrow until the member ships). `adopted` flags that
+    // an EXISTING same-name project was granted, not a fresh one — worth a human glance.
     return {
       ok: true,
       projectId,
       projectName,
       tokenExpiresAt: new Date(expiresAt).toISOString(),
-      delivery: "queued",
-      ...(note ? { note } : {}),
+      delivery,
+      ...(adopted
+        ? {
+            adopted: true,
+            note: [
+              `An existing Vercel project named "${projectName}" was adopted rather than created — verify it is the intended app.`,
+              ...(note ? [note] : []),
+            ].join(" "),
+          }
+        : note
+          ? { note }
+          : {}),
     };
   },
 });
