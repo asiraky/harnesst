@@ -109,6 +109,10 @@ import {
 } from "~/db/queries.server";
 import { listDrafts, stageDraft } from "~/drafts/drafts.server";
 import { getAgentSource } from "~/github/cached.server";
+import {
+  agentGitHubAppSettingsUrl,
+  listSupersededAgentGitHubApps,
+} from "~/github/agent-apps.server";
 import { fetchAgentSource } from "~/github/repo.server";
 import {
   findStoredAppCredentialConflict,
@@ -302,6 +306,12 @@ interface DeploymentData {
      * installation, GitHub unreachable), which the panel reads as "type them instead".
      */
     repositories: string[] | null;
+    /** Apps this agent replaced; GitHub leaves them installed until an operator removes them. */
+    supersededApps: Array<{
+      appId: string;
+      slug: string;
+      settingsUrl: string;
+    }>;
     /**
      * Whether the channel's settings panel is editable (issue #254): true only when the LOCK
      * actually carries the install providing the channel, because `setChannelSettings` writes onto
@@ -493,6 +503,7 @@ export const loader = (args: LoaderFunctionArgs) =>
             appSlug: null,
             installations: null,
             repositories: null,
+            supersededApps: [],
             configurable: false,
             settings: {},
           },
@@ -681,6 +692,8 @@ export const loader = (args: LoaderFunctionArgs) =>
       let githubAppSlug: string | null = null;
       let githubInstallations: AppInstallation[] | null = null;
       let githubRepositories: string[] | null = null;
+      let supersededGithubApps: DeploymentData["githubSetup"]["supersededApps"] =
+        [];
       if (hasGithubSetup) {
         const secretRef = (key: string) => ({
           projectId: project.id,
@@ -716,6 +729,13 @@ export const loader = (args: LoaderFunctionArgs) =>
           githubInstallations = null; // GitHub/secrets hiccup — the card falls back to a link
           githubRepositories = null;
         }
+        supersededGithubApps = (
+          await listSupersededAgentGitHubApps(project.id, active.id)
+        ).map((app) => ({
+          appId: app.appId,
+          slug: app.slug,
+          settingsUrl: agentGitHubAppSettingsUrl(app),
+        }));
       }
       return {
         project,
@@ -748,6 +768,7 @@ export const loader = (args: LoaderFunctionArgs) =>
           appSlug: githubAppSlug,
           installations: githubInstallations,
           repositories: githubRepositories,
+          supersededApps: supersededGithubApps,
           // Bundle-aware (`findChannelInstall`): the marketplace steers people into the GitHub
           // BUNDLE, whose only lock row is the bundle itself, so a plain `findInstall("github")`
           // would find nothing and hide the panel from exactly the installs it exists for.
@@ -2440,6 +2461,24 @@ function GitHubChannelRow({
 
   return (
     <div className="rounded-lg border px-3 py-2">
+      {setup.supersededApps.length > 0 && (
+        <Alert className="mb-3 border-amber-500/50 bg-amber-500/5">
+          <AlertTitle>Remove the previous GitHub App</AlertTitle>
+          <AlertDescription>
+            {setup.supersededApps.map((app) => (
+              <p key={app.appId}>
+                <code>@{app.slug}</code> (App {app.appId}) was replaced but
+                GitHub does not uninstall or delete it. It still points at this
+                agent&rsquo;s webhook URL and may retain repository access.{" "}
+                <a href={app.settingsUrl} target="_blank" rel="noreferrer">
+                  Remove it on GitHub
+                </a>
+                .
+              </p>
+            ))}
+          </AlertDescription>
+        </Alert>
+      )}
       <div className="flex items-center justify-between gap-3">
         <div className="grid gap-0.5">
           <div className="flex items-center gap-2">

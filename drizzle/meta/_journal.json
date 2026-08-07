@@ -225,6 +225,13 @@
       "when": 1785755338725,
       "tag": "0031_wandering_kabuki",
       "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "7",
+      "when": 1786065914986,
+      "tag": "0032_rich_madame_masque",
+      "breakpoints": true
     }
   ]
 }

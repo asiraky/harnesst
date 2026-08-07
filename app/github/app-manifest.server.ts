@@ -207,6 +207,7 @@ export interface ManifestConversion {
   htmlUrl: string;
   /** Account (user or org) that owns the new App. */
   ownerLogin: string | null;
+  ownerType: string | null;
 }
 
 /**
@@ -240,7 +241,7 @@ export async function convertManifestCode(
     pem: string;
     webhook_secret: string | null;
     html_url: string;
-    owner: { login?: string } | null;
+    owner: { login?: string; type?: string } | null;
   };
   if (!body.slug || !body.pem) {
     throw new Error("GitHub's conversion response is missing the App credentials.");
@@ -252,6 +253,7 @@ export async function convertManifestCode(
     webhookSecret: body.webhook_secret ?? "",
     htmlUrl: body.html_url,
     ownerLogin: body.owner?.login ?? null,
+    ownerType: body.owner?.type ?? null,
   };
 }
 

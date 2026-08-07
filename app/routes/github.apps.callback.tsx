@@ -34,6 +34,7 @@ import {
   manifestStateKey,
   verifyManifestState,
 } from "~/github/app-manifest.server";
+import { recordCreatedAgentGitHubApp } from "~/github/agent-apps.server";
 import {
   isGitHubManifestCallbackStagingRequest,
   readStagedGitHubManifestCallback,
@@ -148,24 +149,54 @@ export const loader = (args: LoaderFunctionArgs) => {
       // sandbox-exposed so the agent can mint installation tokens to DO work (issue #26 —
       // this supersedes the personal GITHUB_TOKEN); the webhook secret stays runtime-only.
       const secrets = getRuntime().secrets;
+      const [previousAppId, previousSlug] = await Promise.all([
+        secrets.get({
+          projectId: project.id,
+          agentId: agent.id,
+          environmentId: null,
+          key: "GITHUB_APP_ID",
+        }),
+        secrets.get({
+          projectId: project.id,
+          agentId: agent.id,
+          environmentId: null,
+          key: "GITHUB_APP_SLUG",
+        }),
+      ]);
       const writes: Array<[key: string, value: string, sandbox: boolean]> = [
         ["GITHUB_APP_ID", converted.appId, true],
         ["GITHUB_APP_PRIVATE_KEY", converted.pem, true],
         ["GITHUB_WEBHOOK_SECRET", converted.webhookSecret, false],
         ["GITHUB_APP_SLUG", converted.slug, true],
       ];
-      for (const [key, value, sandboxExposed] of writes) {
-        await secrets.set(
-          {
-            projectId: project.id,
-            agentId: agent.id,
-            environmentId: null,
-            key,
-          },
-          value,
-          { sandboxExposed, updatedBy: auth.user.id },
-        );
-      }
+      await recordCreatedAgentGitHubApp(
+        {
+          projectId: project.id,
+          agentId: agent.id,
+          appId: converted.appId,
+          slug: converted.slug,
+          ownerLogin: converted.ownerLogin,
+          ownerType: converted.ownerType,
+          previous:
+            previousAppId && previousSlug
+              ? { appId: previousAppId, slug: previousSlug }
+              : null,
+        },
+        async () => {
+          for (const [key, value, sandboxExposed] of writes) {
+            await secrets.set(
+              {
+                projectId: project.id,
+                agentId: agent.id,
+                environmentId: null,
+                key,
+              },
+              value,
+              { sandboxExposed, updatedBy: auth.user.id },
+            );
+          }
+        },
+      );
       await invalidateAgentEnvironments({
         agentIds: [agent.id],
         createdBy: auth.user.id,
