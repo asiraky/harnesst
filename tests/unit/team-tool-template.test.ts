@@ -1,10 +1,9 @@
 /**
  * The generated delegation tools (Team delegation — D2/§5, fire-and-forget — #269). Each template
- * is a source STRING baked into a member's image, importing only `eve/tools`. We evaluate
- * them under the env contract — stubbing `defineTool` (returns the config) and injecting a
- * `process` — to prove: the roster is parsed crash-proof from HARNESST_TEAMMATES; the description
- * enumerates teammates; and the `teammate` input is a strict enum when teammates exist and an open
- * string when none are configured.
+ * is a source STRING baked into a member's image, importing only `eve/tools`. We evaluate its
+ * dynamic `session.started` resolver under the runtime env contract to prove the build cannot
+ * snapshot an empty roster: the description enumerates teammates, and the `teammate` input is a
+ * strict enum when teammates exist and an open string when none are configured.
  *
  * The DESCRIPTIONS ARE THE ROUTING MECHANISM between the blocking ask and the fire-and-forget
  * tell — nothing else decides which one the model reaches for — so the wording is pinned here the
@@ -27,19 +26,38 @@ interface ToolConfig {
   execute: (args: { teammate: string; message: string }) => Promise<unknown>;
 }
 
-/** Evaluate a template with a given process.env, returning the defineTool config. */
+interface DynamicToolConfig {
+  events: {
+    "session.started": () => ToolConfig;
+  };
+}
+
+/** Evaluate a dynamic template, then resolve it with the runtime process.env. */
 function evalTool(source: string, env: Record<string, string>): ToolConfig {
-  const body = ts
+  const process = { env: {} as Record<string, string> };
+  let body = ts
     .transpileModule(source, {
       compilerOptions: {
         module: ts.ModuleKind.ESNext,
         target: ts.ScriptTarget.ES2022,
       },
     })
-    .outputText.replace(/^import .*$/gm, "")
-    .replace("export default defineTool(", "return defineTool(");
-  const factory = new Function("defineTool", "process", body);
-  return factory((config: ToolConfig) => config, { env }) as ToolConfig;
+    .outputText.replace(/^import .*$/gm, "");
+  if (!body.includes("export default defineDynamic(")) {
+    body = body.replace("export default defineTool(", "return defineTool(");
+    process.env = env;
+    const staticFactory = new Function("defineTool", "process", body);
+    return staticFactory((config: ToolConfig) => config, process) as ToolConfig;
+  }
+  body = body.replace("export default defineDynamic(", "return defineDynamic(");
+  const factory = new Function("defineDynamic", "defineTool", "process", body);
+  const dynamic = factory(
+    (config: DynamicToolConfig) => config,
+    (config: ToolConfig) => config,
+    process,
+  ) as DynamicToolConfig;
+  process.env = env;
+  return dynamic.events["session.started"]();
 }
 
 const TOOLS = [
@@ -65,6 +83,21 @@ describe.each(TOOLS)("$name tool template", ({ source, mode }) => {
       (m) => m[1],
     );
     expect(imports).toEqual(["eve/tools"]);
+    expect(source).toContain("defineDynamic");
+    expect(source).toContain('"session.started"');
+  });
+
+  it("reads the roster at session runtime instead of image build time", () => {
+    const config = evalTool(source, {
+      HARNESST_TEAMMATES: JSON.stringify([
+        { name: "runtime-peer", role: "Loaded from the running container." },
+      ]),
+    });
+    expect(config.description).toContain("runtime-peer");
+    expect(
+      (config.inputSchema.properties as Record<string, { enum?: string[] }>)
+        .teammate.enum,
+    ).toEqual(["runtime-peer"]);
   });
 
   it("with HARNESST_TEAMMATES: enumerates teammates and enforces a strict enum", () => {
