@@ -1,0 +1,27 @@
+{
+  "id": "vercel-cli",
+  "subagentCompatible": true,
+  "type": "tool",
+  "name": "Vercel CLI",
+  "description": "Run the vercel CLI against exactly one Vercel project with a project-scoped token that never enters the sandbox shell or the model's context. Every command carries the agent's written justification and is human-approved by default.",
+  "version": "0.1.0",
+  "eve": ">=0.20.0",
+  "files": ["tools/vercel-cli.ts"],
+  "assistantSkill": "assistant-skill.md",
+  "dependencies": {
+    "vercel": "^58",
+    "zod": "^4.4.3"
+  },
+  "secrets": [
+    {
+      "name": "VERCEL_TOKEN",
+      "description": "Project-scoped Vercel token (vcp_…) delivered by the Vercel platform teammate's provisioning flow — leave it to arrive that way, or set it by hand for a standalone install. Read only by the tool process; never exposed to the sandbox shell.",
+      "provisioned": true
+    },
+    {
+      "name": "VERCEL_CLI_REQUIRE_APPROVAL",
+      "description": "Set to 0 to let this agent run vercel commands without per-command human approval. Any other value (or leaving it unset after install) keeps the approval gate on. Ignored on an agent holding the full-account token — that agent is always gated.",
+      "provisioned": true
+    }
+  ]
+}
