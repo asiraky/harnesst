@@ -378,6 +378,41 @@ export const agents = pgTable(
   (t) => [uniqueIndex("agents_project_name_uq").on(t.projectId, t.name)],
 );
 
+/**
+ * Every per-agent GitHub App created through the manifest flow. Unlike the active credentials in
+ * the secret store, these identities are append-only: replacing an App marks the outgoing row as
+ * superseded so harnesst can keep warning about the App GitHub may still have installed.
+ */
+export const agentGithubApps = pgTable(
+  "agent_github_apps",
+  {
+    id: varchar("id", { length: 12 }).primaryKey().$defaultFn(newId),
+    projectId: varchar("project_id", { length: 12 })
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    agentId: varchar("agent_id", { length: 12 })
+      .notNull()
+      .references(() => agents.id, { onDelete: "cascade" }),
+    /** Raw GitHub App id and slug are identities, not credentials. */
+    appId: text("app_id").notNull(),
+    slug: text("slug").notNull(),
+    /** Needed to link to the correct user/org-owned GitHub App settings page. */
+    ownerLogin: text("owner_login"),
+    ownerType: text("owner_type"),
+    /** Null while the callback has durably recorded creation but not committed all secret writes. */
+    activatedAt: timestamp("activated_at", { withTimezone: true }),
+    supersededAt: timestamp("superseded_at", { withTimezone: true }),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    uniqueIndex("agent_github_apps_agent_app_uq").on(t.agentId, t.appId),
+    uniqueIndex("agent_github_apps_current_agent_uq")
+      .on(t.agentId)
+      .where(sql`${t.activatedAt} is not null and ${t.supersededAt} is null`),
+    index("agent_github_apps_agent_created_idx").on(t.agentId, t.createdAt),
+  ],
+);
+
 /** A deploy environment for an agent (e.g. production, staging). Per-agent by decision (§7.9). */
 export const environments = pgTable(
   "environments",
