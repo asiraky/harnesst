@@ -20,6 +20,7 @@ import { randomBytes } from "node:crypto";
 import type { DataStore, Deployment, Release } from "~/data/ports";
 import {
   channelIdsForEntry,
+  hasAgentInstalled,
   hasChannelInstalled,
   hasToolInstalled,
   overlayLock,
@@ -635,6 +636,18 @@ export async function deployRelease(
     delete envVars.HARNESST_ASSETS_URL;
     if (lock && hasToolInstalled(lock, "asset-library", member)) {
       envVars.HARNESST_ASSETS_URL = `${controlPlaneBase}/api/assets`;
+      envVars.HARNESST_TEAM_TOKEN ??= mintDelegationToken(dep.id);
+    }
+
+    // Credential deposit (issue #364): where the Vercel issuer's provision tool drops a minted
+    // project-scoped token for a teammate. Gated on the committed lock carrying the vercel-issuer
+    // AGENT install for this member — a deposit URL plus a delegation token in any other
+    // container would advertise cross-member secret-write rights to code that never asked for
+    // them. The route re-derives the caller from the token and re-checks this same lock on every
+    // call, so the gate here is surface reduction, not the security boundary.
+    delete envVars.HARNESST_SECRETS_DEPOSIT_URL;
+    if (lock && hasAgentInstalled(lock, "vercel-issuer", member)) {
+      envVars.HARNESST_SECRETS_DEPOSIT_URL = `${controlPlaneBase}/api/secrets/deposit`;
       envVars.HARNESST_TEAM_TOKEN ??= mintDelegationToken(dep.id);
     }
 

@@ -409,6 +409,28 @@ export function hasToolInstalled(
 }
 
 /**
+ * Is the AGENT template `id` the install that created this member? Agent templates cannot be
+ * bundle-included (`includes.type` excludes "agent") and cannot target a subagent
+ * (`subagentCompatible` must be false), so unlike the channel/tool helpers there is nothing to
+ * look through — a direct, member-scoped row is the only shape that exists. This decides who
+ * receives a credential-deposit URL (#364): cross-member secret writes are authorized by the
+ * caller's committed lock carrying the issuer install, never by request payload.
+ */
+export function hasAgentInstalled(
+  lock: HarnesstLock,
+  id: string,
+  member: string | null,
+): boolean {
+  return lock.installs.some(
+    (e) =>
+      e.member === member &&
+      e.subagent === undefined &&
+      e.type === "agent" &&
+      e.id === id,
+  );
+}
+
+/**
  * The install providing channel `id` for `member` — directly or bundle-carried — if any.
  *
  * Member-scoped with no `subagent` parameter on purpose: channels are root-only in eve and

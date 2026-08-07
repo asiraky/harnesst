@@ -1,0 +1,16 @@
+{
+  "id": "vercel-bundle",
+  "subagentCompatible": true,
+  "type": "bundle",
+  "name": "Vercel",
+  "description": "Everything an agent needs to deploy to Vercel safely: the gated Vercel CLI tool (project-scoped token, human approval by default) plus the deploying skill that teaches the provisioning and deploy flow. Recommended way to make an agent a Vercel deployer.",
+  "version": "0.1.0",
+  "eve": ">=0.20.0",
+  "files": [],
+  "assistantSkill": "assistant-skill.md",
+  "setup": "This bundle installs the **Vercel CLI tool** and the **Deploying Vercel apps** skill together.\n\nLeave `VERCEL_TOKEN` unset at install — it is delivered automatically when the **Vercel Issuer** agent (install it from the marketplace as its own team member, with your full-account token) provisions a project for this agent. The delivered token is project-scoped: this agent can touch its one Vercel project and nothing else.\n\nPer-command human approval is on by default; every `vercel` command shows up in Front of House with the argv and the agent's justification. Set `VERCEL_CLI_REQUIRE_APPROVAL` to `0` on this agent once you trust it.\n\nOptional, for push-to-deploy: install the Vercel GitHub App on your org (one-time browser step) so pushes build automatically; CLI deploys work without it.",
+  "includes": [
+    { "type": "tool", "id": "vercel-cli" },
+    { "type": "skill", "id": "deploying-vercel-apps" }
+  ]
+}
