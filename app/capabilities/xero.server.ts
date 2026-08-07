@@ -15,11 +15,6 @@
  */
 import { z } from "zod";
 
-import {
-  findAgentArtifactVersion,
-  readArtifactBytes,
-} from "~/foh/artifact-store.server";
-
 import type {
   CapabilityDefinition,
   OperationContext,
@@ -343,13 +338,25 @@ interface ResolvedAttachment {
 }
 
 interface AttachmentArtifactDeps {
-  find: typeof findAgentArtifactVersion;
-  read: typeof readArtifactBytes;
+  find(input: { agentId: string; versionId: string }): Promise<{
+    artifact: { kind: string; name: string };
+    version: { contentType: string; storagePath: string };
+  } | null>;
+  read(storagePath: string): Promise<Buffer | null>;
 }
 
 const defaultAttachmentArtifactDeps: AttachmentArtifactDeps = {
-  find: findAgentArtifactVersion,
-  read: readArtifactBytes,
+  async find(input) {
+    // Keep persistence behind the operation boundary. The capability registry is also imported by
+    // catalog/typecheck tooling, where no runtime services (including DATABASE_URL) should exist.
+    const { findAgentArtifactVersion } =
+      await import("~/foh/artifact-store.server");
+    return findAgentArtifactVersion(input);
+  },
+  async read(storagePath) {
+    const { readArtifactBytes } = await import("~/foh/artifact-store.server");
+    return readArtifactBytes(storagePath);
+  },
 };
 
 export async function resolveXeroAttachment(
