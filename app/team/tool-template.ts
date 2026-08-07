@@ -1,6 +1,6 @@
 /**
  * The generated teammate delegation tools (Team delegation — D2/§5, fire-and-forget — #269). This
- * exports the SOURCE TEXT of static eve tools that harnesst bakes into an agent's image at
+ * exports the SOURCE TEXT of dynamic eve tools that harnesst bakes into an agent's image at
  * build time (never the repo): `ask-teammate` (blocking — the caller needs the answer),
  * `tell-teammate` (fire-and-forget — the caller hands work off and moves on), and `notify-user`
  * (#288 3c — fire-and-forget notification to the humans who run the agent). The two delegation
@@ -18,7 +18,7 @@
  *
  * Contract each source must uphold (also what the tests pin):
  *  - imports ONLY `eve/tools` (the only package every built agent may rely on);
- *  - module-load is crash-proof: bad/absent `HARNESST_TEAMMATES` → empty roster, tool still defines;
+ *  - session resolution is crash-proof: bad/absent `HARNESST_TEAMMATES` → empty roster;
  *  - the description enumerates teammates + roles and tells the model asks must be self-contained;
  *  - `execute` NEVER throws — every failure path returns `{ ok: false, error }`.
  */
@@ -91,7 +91,7 @@ const TELL_SPEC: ModeSpec = {
 
 /** Render one mode's full tool source. All mode-varying prose is injected as JSON literals. */
 function buildToolSource(spec: ModeSpec): string {
-  return `import { defineTool } from "eve/tools";
+  return `import { defineDynamic, defineTool } from "eve/tools";
 
 // harnesst bakes this file into a team member's image (see app/team/tool-template.ts). All
 // variability arrives via env — do not edit; a repo file at this path overrides it.
@@ -138,61 +138,66 @@ function buildDescription(teammates: Teammate[]) {
   ].join("\\n");
 }
 
-const teammates = loadTeammates();
-const names = teammates.map((t) => t.name);
-
-export default defineTool({
-  description: buildDescription(teammates),
-  inputSchema: {
-    type: "object",
-    properties: {
-      teammate: names.length
-        ? { type: "string", enum: names }
-        : { type: "string" },
-      message: {
-        type: "string",
-        description:
-          "A complete, self-contained request for the teammate. They cannot see your " +
-          "conversation, so include all the context and specifics they need.",
-      },
-    },
-    required: ["teammate", "message"],
-    additionalProperties: false,
-  },
-  async execute({ teammate, message }) {
-    const baseUrl = process.env.HARNESST_TEAM_URL;
-    const token = process.env.HARNESST_TEAM_TOKEN;
-    if (!baseUrl || !token) {
-      return { ok: false, error: "Teammate delegation is not configured for this agent." };
-    }
-${spec.timeoutSource}
-    try {
-      const res = await fetch(baseUrl.replace(/\\/+$/, "") + "/api/team/ask", {
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-          authorization: "Bearer " + token,
+export default defineDynamic({
+  events: {
+    "session.started": () => {
+      const teammates = loadTeammates();
+      const names = teammates.map((t) => t.name);
+      return defineTool({
+        description: buildDescription(teammates),
+        inputSchema: {
+          type: "object",
+          properties: {
+            teammate: names.length
+              ? { type: "string", enum: names }
+              : { type: "string" },
+            message: {
+              type: "string",
+              description:
+                "A complete, self-contained request for the teammate. They cannot see your " +
+                "conversation, so include all the context and specifics they need.",
+            },
+          },
+          required: ["teammate", "message"],
+          additionalProperties: false,
         },
-        body: JSON.stringify({ teammate, message, mode: ${JSON.stringify(spec.mode)} }),
-        signal: AbortSignal.timeout(timeoutMs),
+        async execute({ teammate, message }) {
+          const baseUrl = process.env.HARNESST_TEAM_URL;
+          const token = process.env.HARNESST_TEAM_TOKEN;
+          if (!baseUrl || !token) {
+            return { ok: false, error: "Teammate delegation is not configured for this agent." };
+          }
+${spec.timeoutSource.replace(/^    /gm, "          ")}
+          try {
+            const res = await fetch(baseUrl.replace(/\\/+$/, "") + "/api/team/ask", {
+              method: "POST",
+              headers: {
+                "content-type": "application/json",
+                authorization: "Bearer " + token,
+              },
+              body: JSON.stringify({ teammate, message, mode: ${JSON.stringify(spec.mode)} }),
+              signal: AbortSignal.timeout(timeoutMs),
+            });
+            const body = await res.json().catch(() => null);
+            if (!res.ok) {
+              const error =
+                body && typeof body.error === "string"
+                  ? body.error
+                  : "Delegation failed (HTTP " + res.status + ").";
+              return { ok: false, error };
+            }
+            return body || { ok: false, error: "The delegation relay returned an empty response." };
+          } catch (error) {
+            return {
+              ok: false,
+              error:
+                "Couldn't reach your teammate: " +
+                (error instanceof Error ? error.message : String(error)),
+            };
+          }
+        },
       });
-      const body = await res.json().catch(() => null);
-      if (!res.ok) {
-        const error =
-          body && typeof body.error === "string"
-            ? body.error
-            : "Delegation failed (HTTP " + res.status + ").";
-        return { ok: false, error };
-      }
-      return body || { ok: false, error: "The delegation relay returned an empty response." };
-    } catch (error) {
-      return {
-        ok: false,
-        error:
-          "Couldn't reach your teammate: " +
-          (error instanceof Error ? error.message : String(error)),
-      };
-    }
+    },
   },
 });
 `;

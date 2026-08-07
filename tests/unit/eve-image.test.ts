@@ -390,6 +390,8 @@ describe("ask-teammate tool injection (D2)", () => {
         String(p).endsWith(`agents/deployer/agent/tools/${file}`),
       );
       expect(toolWrite).toBeTruthy();
+      expect(String(toolWrite![1])).toContain("defineDynamic");
+      expect(String(toolWrite![1])).toContain('"session.started"');
       expect(String(toolWrite![1])).toContain("defineTool");
       expect(String(toolWrite![1])).toContain("/api/team/ask");
     }
