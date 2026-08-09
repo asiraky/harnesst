@@ -9,6 +9,14 @@
       "hash": "df5e8338e3e25c5a7259adf90de8e0e4618c21f6"
     },
     {
+      "id": "vercel-issuer",
+      "type": "agent",
+      "name": "Vercel Issuer",
+      "version": "0.1.0",
+      "description": "The team's Vercel platform engineer: creates Vercel projects and mints project-scoped tokens for teammates behind a human approval gate. Holds the one full-account token; every privileged operation shows the human the exact request and justification before it runs.",
+      "hash": "47711fbea586616127925023d1c8abbe80002b4d"
+    },
+    {
       "id": "github-bundle",
       "type": "bundle",
       "name": "GitHub",
@@ -23,6 +31,14 @@
       "version": "0.2.2",
       "description": "Everything an agent needs to work with Google Sheets: the connector (install → Connect Google → read/write spreadsheets) plus a usage skill teaching A1 notation, read-before-write, and the values vs batchUpdate operations. Recommended way to add Sheets.",
       "hash": "6ee4357e4bbd0e502f2a5c7ec9f7d6d0804c1f48"
+    },
+    {
+      "id": "vercel-bundle",
+      "type": "bundle",
+      "name": "Vercel",
+      "version": "0.1.0",
+      "description": "Everything an agent needs to deploy to Vercel safely: the gated Vercel CLI tool (project-scoped token, human approval by default) plus the deploying skill that teaches the provisioning and deploy flow. Recommended way to make an agent a Vercel deployer.",
+      "hash": "6c03cec725a1c0f57121b5bda2f97fdfd0b4689d"
     },
     {
       "id": "discord",
@@ -103,6 +119,14 @@
       "version": "0.1.1",
       "description": "How to deploy an app to Cloudflare and provision what it needs — wrangler config and deploys, KV/D1/R2/Queues/Pages, dry-runs, and getting deploy credentials into a CI pipeline. Cloudflare only; getting the code and wiring a specific forge's pipeline are separate skills.",
       "hash": "334882ea2677cd2806338ad18257a9f2c9fc3c10"
+    },
+    {
+      "id": "deploying-vercel-apps",
+      "type": "skill",
+      "name": "Deploying Vercel apps",
+      "version": "0.1.0",
+      "description": "How to take an app to production on Vercel through the gated Vercel CLI tool: getting a project provisioned by the platform teammate, deploying, configuring env, connecting git, and verifying before mutating.",
+      "hash": "12b4dcbad2f4e5aed683b55215f9dabf46875915"
     },
     {
       "id": "dev-toolchain",
@@ -191,6 +215,14 @@
       "version": "0.4.0",
       "description": "Publish a file from the agent's home directory into the Front of House conversation as durable, versioned evidence. Images render as cards, PDF documents receive authenticated download links, and static HTML pages open in a sandboxed preview. harnesst copies the bytes without sending them through model context. Publishing the same name again updates that card in place as a new version.",
       "hash": "843ae5669044af50e46108d1780e5b479398acfa"
+    },
+    {
+      "id": "vercel-cli",
+      "type": "tool",
+      "name": "Vercel CLI",
+      "version": "0.1.0",
+      "description": "Run the vercel CLI against exactly one Vercel project with a project-scoped token that never enters the sandbox shell or the model's context. Every command carries the agent's written justification and is human-approved by default.",
+      "hash": "6937a416e3e82079b132e25bf76a62f96dac4af5"
     }
   ]
 }

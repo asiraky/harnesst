@@ -121,6 +121,10 @@ Drawn from deliberately-punted items and the open questions in [`PRD.md`](./PRD.
   Google Sheets connector: the manifest's `auth` descriptor drives a harnesst-brokered OAuth flow in
   the install wizard, the grant is sealed in Postgres, and deploy injects it so eve's OpenAPI
   connection self-refreshes tokens. Follow-ups: user-scoped grants and more providers.
+- 🟡 **Vercel deployment engineer** (issue #364) — gated `vercel-cli` tool, `vercel-issuer`
+  agent minting project-scoped tokens behind human approval, and the `/api/secrets/deposit`
+  route; see [`SPEC-VERCEL-DEPLOYMENT.md`](./SPEC-VERCEL-DEPLOYMENT.md). Phase 2 is the guided
+  operator walkthrough.
 - ⬜ Rung-2 **publish to marketplace** — extract a live-tested tool/agent into a catalog PR.
 - ⬜ **Team templates** — a scaffold referencing agent templates plus a wiring spec.
 - ⬜ Third-party template **trust & safety** (review/signing) before non-first-party publishing.

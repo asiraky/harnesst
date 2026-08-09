@@ -1,0 +1,12 @@
+{
+  "id": "deploying-vercel-apps",
+  "subagentCompatible": true,
+  "type": "skill",
+  "name": "Deploying Vercel apps",
+  "description": "How to take an app to production on Vercel through the gated Vercel CLI tool: getting a project provisioned by the platform teammate, deploying, configuring env, connecting git, and verifying before mutating.",
+  "version": "0.1.0",
+  "eve": ">=0.1.0",
+  "files": ["skills/deploying-vercel-apps.md"],
+  "assistantSkill": "assistant-skill.md",
+  "setup": "This skill teaches an agent to deploy through the **Vercel CLI tool** — install both (or just install the **Vercel bundle**, which carries the two together).\n\n**Token posture:** leave the agent's `VERCEL_TOKEN` unset at install. It arrives automatically when the Vercel Issuer agent provisions a project for this agent — a project-scoped token (`vcp_…`) that structurally cannot touch any other Vercel project. Only set it by hand if you are running a standalone test with a token you minted yourself (make it project-scoped). The token is readable only by tool code — deliberately not the sandbox shell — so the `vercel` CLI does not work from the agent's shell; that is the security model, not a bug.\n\n**Per-command approval** is on by default: every `vercel` command the agent runs appears in Front of House with the argv and the agent's justification, waiting for your approve/deny. Once you trust the agent, set its `VERCEL_CLI_REQUIRE_APPROVAL` secret to `0` to let it run unattended within its one project.\n\n**Push-to-deploy (optional):** installing the Vercel GitHub App on your org (one-time browser step at vercel.com) lets Vercel build on every push; the agent can then use the CLI mainly for configuration, inspection, and promotion. Git-connected deploys are the reliable path today: CLI file-upload deploys only see files in the agent's tool runtime, not its sandbox workspace, so code the agent wrote in its sandbox must reach the project via git.\n\n**Plan note:** a Vercel Pro team ($20/mo, one seat is enough) is recommended; tokens consume no seats."
+}
