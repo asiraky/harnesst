@@ -4,10 +4,9 @@
  * the guard is FOH scope (`requireFohProject`, never the BOH-gated `requireProject`), the
  * agent travels as `agentId` (D14 URLs are id-based), a scaled-to-zero agent is WOKEN instead
  * of rejected (§6: opening a session with a stopped agent wakes it), and the supersede rule
- * runs before the turn (`beginFohTurn`: a new message resolves any parked question — eve
- * answers from the next message, so stale inbox items must not linger, D13). Channel-homed
- * rows split by payload: an answer to a pending ask delivers through the channel answer
- * route; free text succeeds the session into a fresh HTTP-homed one (#288 3b).
+ * runs before ordinary turns. Pending asks require a complete request-correlated answer batch;
+ * channel-homed answers use the channel route, while free text with no pending ask succeeds the
+ * session into a fresh HTTP-homed one (#288 3b).
  */
 import { getSessionAuth } from "~/auth/session.server";
 import { data, redirect, type ActionFunctionArgs } from "react-router";
@@ -44,6 +43,7 @@ import {
   createPlaygroundSession,
   getFohSessionForViewer,
   loadPlaygroundEntriesFromEve,
+  releaseRefusedTurnClaim,
   setPlaygroundSessionModel,
   type PlaygroundSession,
 } from "~/playground/sessions.server";
@@ -307,6 +307,43 @@ export async function action(args: ActionFunctionArgs) {
   }
   session = claimed;
 
+  // Re-check on the CLAIMED row so a stale pre-wake snapshot cannot allow a partial batch.
+  // Rejecting releases the claim without touching the park: eve has not been contacted.
+  if (session.pendingInputAt) {
+    const pendingItems = await getRuntime().data.inboxItems.findPendingBySession(
+      session.id,
+    );
+    const pendingIds = new Set(
+      pendingItems.flatMap((item) =>
+        (item.kind === "question" || item.kind === "approval") && item.requestId
+          ? [item.requestId]
+          : [],
+      ),
+    );
+    const answeredIds = new Set(
+      inputResponses?.map((answer) => answer.requestId) ?? [],
+    );
+    const incomplete =
+      !inputResponses ||
+      (pendingIds.size > 0 &&
+        (answeredIds.size !== pendingIds.size ||
+          [...pendingIds].some((requestId) => !answeredIds.has(requestId))));
+    if (incomplete) {
+      await releaseRefusedTurnClaim({
+        id: session.id,
+        claimId,
+        status: preClaimStatus,
+      });
+      throw data(
+        {
+          error:
+            "Answer every pending question or approval before sending another message.",
+        },
+        { status: 409 },
+      );
+    }
+  }
+
   // Post-claim re-decisions (#288): the pre-claim snapshot can be minutes stale (the wake
   // loop above blocks), so everything below is judged on the CLAIMED row. Answers correlate
   // only to a LIVE pending ask — when the park is gone (another tab answered it, or a
@@ -315,8 +352,8 @@ export async function action(args: ActionFunctionArgs) {
   // plain message instead.
   const answers =
     inputResponses && session.pendingInputAt ? inputResponses : null;
-  // Succession (#288 3b): free text into a channel-homed row starts a fresh HTTP-homed
-  // successor seeded with the old session's transcript. An answer to a pending ask keeps
+  // Succession (#288 3b): free text with no pending ask in a channel-homed row starts a fresh
+  // HTTP-homed successor seeded with the old session's transcript. An answer to a pending ask keeps
   // flowing through the channel answer route; anything else can never be delivered there
   // (eve's channel `send()` only takes answers), so the conversation moves home instead of
   // being refused. Re-decided from the claimed row: a racer that claims after another tab's
@@ -357,7 +394,7 @@ export async function action(args: ActionFunctionArgs) {
     seedContext = buildNoticeSeedContext(session.openingMessage);
   }
 
-  if (!isNewSession && !session.resumeVia) {
+  if (!isNewSession && !session.resumeVia && !answers) {
     // Supersede (D13): whatever this turn says, eve resolves any parked ask from it — clear
     // the needs-you park and its inbox items before streaming. NOT for a channel-homed row
     // (issue #282): its send can still be refused before the agent is contacted (an

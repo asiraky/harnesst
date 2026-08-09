@@ -14,7 +14,9 @@ import {
   openInboxQuestion,
   recordInboxFinished,
   resolveInboxForArchivedSession,
+  resolveInboxRequests,
   resolveInboxForSession,
+  unansweredInboxRequests,
   acknowledgeVisibleInboxOnRead,
 } from "~/foh/inbox.server";
 import { makeFakeStore, type FakeStore } from "../fakes/store";
@@ -85,7 +87,7 @@ describe("openInboxQuestion", () => {
     expect(await store.inboxItems.findPendingBySession(SESSION)).toHaveLength(1);
   });
 
-  it("does NOT dedupe across sessions or once the earlier item resolved", async () => {
+  it("does not dedupe across sessions and does not resurrect a resolved replay", async () => {
     const first = await openInboxQuestion(
       { projectId: PROJECT, sessionId: SESSION, userId: USER, request: request() },
       store,
@@ -96,13 +98,14 @@ describe("openInboxQuestion", () => {
       store,
     );
     expect(other.id).not.toBe(first.id);
-    // Resolved item no longer blocks a fresh park on the same request id.
+    // Eve replays input.requested; a resolved identity proves it was already answered.
     await store.inboxItems.resolve(first.id);
     const reopened = await openInboxQuestion(
       { projectId: PROJECT, sessionId: SESSION, userId: USER, request: request() },
       store,
     );
-    expect(reopened.id).not.toBe(first.id);
+    expect(reopened.id).toBe(first.id);
+    expect(reopened.status).toBe("resolved");
   });
 
   it("records an approval for confirmation requests", async () => {
@@ -116,6 +119,43 @@ describe("openInboxQuestion", () => {
       store,
     );
     expect(item).toMatchObject({ kind: "approval", userId: null });
+  });
+});
+
+describe("request-level answer lifecycle", () => {
+  it("resolves only delivered request ids", async () => {
+    const first = await openInboxQuestion(
+      { projectId: PROJECT, sessionId: SESSION, userId: USER, request: request() },
+      store,
+    );
+    const second = await openInboxQuestion(
+      {
+        projectId: PROJECT,
+        sessionId: SESSION,
+        userId: USER,
+        request: request({ requestId: "req_2" }),
+      },
+      store,
+    );
+
+    await resolveInboxRequests(SESSION, ["req_1"], store);
+
+    expect(store.getInboxItem(first.id)?.status).toBe("resolved");
+    expect(store.getInboxItem(second.id)?.status).toBe("pending");
+  });
+
+  it("filters resolved identities when input.requested is replayed", async () => {
+    const answered = request();
+    const item = await openInboxQuestion(
+      { projectId: PROJECT, sessionId: SESSION, userId: USER, request: answered },
+      store,
+    );
+    await store.inboxItems.resolve(item.id);
+    const pending = request({ requestId: "req_2" });
+
+    await expect(
+      unansweredInboxRequests(SESSION, [answered, pending], store),
+    ).resolves.toEqual([pending]);
   });
 });
 

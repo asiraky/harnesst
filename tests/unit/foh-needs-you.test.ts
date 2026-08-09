@@ -316,14 +316,14 @@ describe("composerAnswerFor (issue #282)", () => {
     });
   });
 
-  it("attaches nothing on an HTTP-homed session, pending request or not", () => {
+  it("correlates HTTP-homed composer text while a request is pending", () => {
     expect(
       composerAnswerFor({
         channelHomed: false,
         pendingRequest: ask("call_1"),
         text: "hello",
       }),
-    ).toBeNull();
+    ).toEqual({ requestId: "call_1", text: "hello" });
     expect(
       composerAnswerFor({ channelHomed: false, pendingRequest: null, text: "hi" }),
     ).toBeNull();

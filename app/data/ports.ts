@@ -427,6 +427,11 @@ export interface InboxItemRepo {
   ): Promise<void>;
   /** A session's pending items, oldest first (dedupe by requestId happens here). */
   findPendingBySession(sessionId: string): Promise<InboxItem[]>;
+  /** Newest item for one durable request identity, including resolved items. */
+  findBySessionRequestId(
+    sessionId: string,
+    requestId: string,
+  ): Promise<InboxItem | null>;
   /**
    * The viewer's unacknowledged pending items across their scoped projects, newest first: items
    * addressed to them (`user_id = userId`) plus team-wide items (`user_id IS NULL`) — D5.

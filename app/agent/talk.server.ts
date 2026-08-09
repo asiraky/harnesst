@@ -313,9 +313,31 @@ export function inputRequestsOf(
         normalizeChatInputSurface(r.surface) ??
         normalizeChatInputSurface(input?.surface),
       options: options.length > 0 ? options : undefined,
+      action: action
+        ? {
+            kind: boundedChatInputString(action.kind, 200),
+            toolName: boundedChatInputString(action.toolName, 200),
+            callId: boundedChatInputString(action.callId, 200),
+            input: boundedApprovalInput(action.input),
+          }
+        : null,
     });
   }
   return out;
+}
+
+/** Keep approval detail useful without allowing an agent to put an unbounded payload in UI state. */
+function boundedApprovalInput(value: unknown): unknown {
+  if (value === undefined) return undefined;
+  try {
+    const json = JSON.stringify(value);
+    if (json === undefined) return undefined;
+    return json.length <= 20_000
+      ? JSON.parse(json)
+      : `${json.slice(0, 20_000)}\n… (truncated)`;
+  } catch {
+    return "(unavailable)";
+  }
 }
 
 /**
@@ -564,11 +586,21 @@ export async function* streamTurn(input: {
           `The agent could not deliver your answer through its ${via.routePath} route (HTTP ${res.status})${
             failure.message ? `: ${failure.message}` : "."
           }`,
+          {
+            sessionId: input.sessionId,
+            continuationToken: input.continuationToken,
+            notDelivered: true,
+          },
         );
         return;
       }
       yield fail(
         `Agent returned ${res.status} ${res.statusText} for POST /eve/v1/session.`,
+        {
+          sessionId: input.sessionId,
+          continuationToken: input.continuationToken,
+          notDelivered: Boolean(input.inputResponses?.length),
+        },
       );
       return;
     }
@@ -578,14 +610,20 @@ export async function* streamTurn(input: {
     >;
     sessionId =
       res.headers.get("x-eve-session-id") ??
-      (typeof body.sessionId === "string" ? body.sessionId : null);
+      (typeof body.sessionId === "string"
+        ? body.sessionId
+        : (input.sessionId ?? null));
     // Follow-up responses omit the token — it stays valid for the whole session.
     continuationToken =
       typeof body.continuationToken === "string"
         ? body.continuationToken
         : (input.continuationToken ?? null);
   } catch (error) {
-    yield fail(`Couldn't reach the agent: ${(error as Error).message}`);
+    yield fail(`Couldn't reach the agent: ${(error as Error).message}`, {
+      sessionId: input.sessionId,
+      continuationToken: input.continuationToken,
+      notDelivered: Boolean(input.inputResponses?.length),
+    });
     return;
   }
   if (!sessionId) {

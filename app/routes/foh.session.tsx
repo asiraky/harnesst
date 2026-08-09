@@ -54,11 +54,16 @@ import { requireFohProject } from "~/foh/guard.server";
 import { channelLabelFor } from "~/foh/channel-resume";
 import { archivedOpenSessionShouldRevalidate } from "~/foh/archive-revalidation";
 import { failedSessionNotice } from "~/foh/failed-session";
-import { openInboxQuestion, resolveInboxForSession } from "~/foh/inbox.server";
+import {
+  openInboxQuestion,
+  resolveInboxForSession,
+  unansweredInboxRequests,
+} from "~/foh/inbox.server";
 import {
   composerAnswerFor,
   freeformAnswerable,
   newestPendingRequest,
+  pendingRequestsOfNewestTurn,
   repairFohSessionState,
 } from "~/foh/needs-you";
 import { fohSessionStatus } from "~/foh/status";
@@ -253,32 +258,41 @@ export const loader = (args: LoaderFunctionArgs) =>
               lastEntry,
             });
         if (repair.action === "park") {
-          // Status first, park second (issue #282 review): if the park write below fails
-          // transiently, a `waiting` row with the flag unset re-enters this branch on the
-          // next load — the reverse order could leave `failed` + flag set, a state no
-          // repair predicate matches, so the restore would never be retried.
-          if (
-            repair.restoreStatus &&
-            (await restoreRepairedSessionToWaiting(currentSession.id))
-          ) {
-            currentSession = { ...currentSession, status: "waiting" };
-          }
-          const at = new Date();
-          // The park claim reports whether it won its stop-wins guard; a stop that raced
-          // us must not get inbox items filed for its stopped session.
-          const parked = await markSessionPendingInput(currentSession.id, at);
-          if (parked) {
-            for (const request of repair.requests) {
-              await openInboxQuestion({
-                projectId: access.project.id,
-                sessionId: currentSession.id,
-                agentId: currentSession.agentId,
-                userId: currentSession.createdBy,
-                delegationId: currentSession.delegationId,
-                request,
-              });
+          const unanswered = await unansweredInboxRequests(
+            currentSession.id,
+            repair.requests,
+          );
+          if (unanswered.length === 0) {
+            await clearSessionPendingInput(currentSession.id);
+            currentSession = { ...currentSession, pendingInputAt: null };
+          } else {
+            // Status first, park second (issue #282 review): if the park write below fails
+            // transiently, a `waiting` row with the flag unset re-enters this branch on the
+            // next load — the reverse order could leave `failed` + flag set, a state no
+            // repair predicate matches, so the restore would never be retried.
+            if (
+              repair.restoreStatus &&
+              (await restoreRepairedSessionToWaiting(currentSession.id))
+            ) {
+              currentSession = { ...currentSession, status: "waiting" };
             }
-            currentSession = { ...currentSession, pendingInputAt: at };
+            const at = new Date();
+            // The park claim reports whether it won its stop-wins guard; a stop that raced
+            // us must not get inbox items filed for its stopped session.
+            const parked = await markSessionPendingInput(currentSession.id, at);
+            if (parked) {
+              for (const request of unanswered) {
+                await openInboxQuestion({
+                  projectId: access.project.id,
+                  sessionId: currentSession.id,
+                  agentId: currentSession.agentId,
+                  userId: currentSession.createdBy,
+                  delegationId: currentSession.delegationId,
+                  request,
+                });
+              }
+              currentSession = { ...currentSession, pendingInputAt: at };
+            }
           }
         } else if (repair.action === "settle") {
           await clearSessionPendingInput(currentSession.id);
@@ -407,6 +421,10 @@ export default function FohSession({ loaderData }: Route.ComponentProps) {
 
   const [live, setLive] = useState<LiveTurn | null>(null);
   const [sendError, setSendError] = useState<string | null>(null);
+  const [answerQueue, setAnswerQueue] = useState<{
+    batchKey: string;
+    items: Array<{ answer: ChatInputAnswer; label: string }>;
+  }>({ batchKey: "", items: [] });
   // Panel state is LOCAL, never loader data: this page revalidates every 2s while a turn runs (and
   // the shell every 10s), and a preview driven by loader data would be torn down on each poll.
   const preview = useArtifactPreview({ projectId, sessionId });
@@ -501,20 +519,33 @@ export default function FohSession({ loaderData }: Route.ComponentProps) {
     ],
   );
 
-  // The one request a typed composer answer would resolve (issue #282): the newest pending
-  // ask of the newest turn — from the live turn once it settles, else from the cached
-  // transcript. Mirrors the onAnswer wiring below (newest entry only).
-  const pendingRequest = useMemo<ChatInputRequest | null>(() => {
+  // The pending batch on the newest turn. Eve will not resume until every request in this
+  // batch has an answer, so FOH walks it oldest-first and delivers the completed batch once.
+  const pendingRequests = useMemo<ChatInputRequest[]>(() => {
     if (visibleLive) {
-      if (!visibleLive.done) return null;
-      if (!visibleLive.error) return visibleLive.inputRequests.at(-1) ?? null;
+      if (!visibleLive.done) return [];
+      if (!visibleLive.error) return visibleLive.inputRequests;
       // An errored live turn that produced no transcript entry (e.g. a send refused
       // before delivery) settled nothing at eve — the cached ask is still the live one,
       // and without this fallback the error would hide the answer box until a reload.
-      return newestPendingRequest(newestTurnEntry(entries));
+      return pendingRequestsOfNewestTurn(newestTurnEntry(entries));
     }
-    return newestPendingRequest(newestTurnEntry(entries));
+    return pendingRequestsOfNewestTurn(newestTurnEntry(entries));
   }, [entries, visibleLive]);
+  const pendingRequestIds = pendingRequests.map((request) => request.requestId);
+  const pendingBatchKey = `${sessionId}:${pendingRequestIds.join("\u0000")}`;
+  const queuedAnswers = useMemo(
+    () =>
+      answerQueue.batchKey === pendingBatchKey ? answerQueue.items : [],
+    [answerQueue, pendingBatchKey],
+  );
+  const queuedRequestIds = useMemo(
+    () => new Set(queuedAnswers.map(({ answer }) => answer.requestId)),
+    [queuedAnswers],
+  );
+  const pendingRequest =
+    pendingRequests.find((request) => !queuedRequestIds.has(request.requestId)) ??
+    null;
   // Only a request that ACCEPTS typed input turns the composer into the answer box — an
   // options-only approval is answered by its buttons, never by free text.
   const typedAnswerRequest =
@@ -523,7 +554,10 @@ export default function FohSession({ loaderData }: Route.ComponentProps) {
       : null;
 
   const send = useCallback(
-    async (message: string, answer?: ChatInputAnswer) => {
+    async (
+      message: string,
+      answer?: ChatInputAnswer | readonly ChatInputAnswer[],
+    ) => {
       // This closure outlives navigation (the reader keeps draining the fetch), so every
       // state update below is keyed to the session it was started for — a stale reader
       // must not touch the live view, error banner, or revalidation of the session the
@@ -559,19 +593,23 @@ export default function FohSession({ loaderData }: Route.ComponentProps) {
       form.set("message", message);
       form.set("agentId", agentId);
       form.set("playgroundSessionId", forSession);
-      // A clicked question/approval card answers exactly ITS request (issue #221 finding
-      // 2). On an HTTP-homed session, composer text stays the intentional continue/
-      // supersede path; on a channel-homed one it correlates to the newest pending ask
-      // (issue #282) — and with nothing pending it carries no correlation, which the
-      // server reads as succession into a fresh HTTP-homed session (#288 3b).
-      const correlated =
-        answer ??
-        composerAnswerFor({
-          channelHomed: channelLabel != null,
-          pendingRequest: typedAnswerRequest,
-          text: message,
-        });
-      if (correlated) form.set("inputResponses", JSON.stringify([correlated]));
+      // A pending request always gets an explicit correlation. The batch UI passes every
+      // collected response; ordinary composer text reaches this fallback only for one freeform
+      // request. With nothing pending, channel-homed free text starts a successor (#288 3b).
+      const correlated = Array.isArray(answer)
+        ? answer
+        : answer
+          ? [answer]
+          : (() => {
+              const typed = composerAnswerFor({
+                channelHomed: channelLabel != null,
+                pendingRequest: typedAnswerRequest,
+                text: message,
+              });
+              return typed ? [typed] : [];
+            })();
+      if (correlated.length > 0)
+        form.set("inputResponses", JSON.stringify(correlated));
 
       const controller = new AbortController();
       streamAbortRef.current = controller;
@@ -677,6 +715,48 @@ export default function FohSession({ loaderData }: Route.ComponentProps) {
       revalidator,
       sessionId,
     ],
+  );
+
+  const answerPending = useCallback(
+    async (label: string, answer?: ChatInputAnswer) => {
+      if (!answer || !pendingRequest) return false;
+      const next = [
+        ...queuedAnswers.filter(
+          (item) => item.answer.requestId !== answer.requestId,
+        ),
+        { answer, label },
+      ];
+      const complete = pendingRequests.every((request) =>
+        next.some((item) => item.answer.requestId === request.requestId),
+      );
+      if (!complete) {
+        setAnswerQueue({ batchKey: pendingBatchKey, items: next });
+        return true;
+      }
+      const accepted = await send(
+        next.map((item) => item.label).join("\n"),
+        next.map((item) => item.answer),
+      );
+      // If delivery was refused, preserve the earlier decisions and make only the final
+      // request answerable again so the whole batch can be retried without re-reviewing it.
+      setAnswerQueue({
+        batchKey: pendingBatchKey,
+        items: accepted ? [] : next.slice(0, -1),
+      });
+      return accepted;
+    },
+    [pendingBatchKey, pendingRequest, pendingRequests, queuedAnswers, send],
+  );
+
+  const sendFromComposer = useCallback(
+    (message: string) => {
+      if (!typedAnswerRequest) return send(message);
+      return answerPending(message, {
+        requestId: typedAnswerRequest.requestId,
+        text: message,
+      });
+    },
+    [answerPending, send, typedAnswerRequest],
   );
 
   const stopTurn = useCallback(async () => {
@@ -824,8 +904,12 @@ export default function FohSession({ loaderData }: Route.ComponentProps) {
                 entry={e}
                 // Only the newest turn's pending requests are answerable.
                 onAnswer={
-                  i === newestTurn.index && !visibleLive ? send : undefined
+                  i === newestTurn.index && !visibleLive
+                    ? (text, answer) => void answerPending(text, answer)
+                    : undefined
                 }
+                activeRequestId={pendingRequest?.requestId ?? null}
+                answeredRequestIds={queuedRequestIds}
                 onRetry={
                   i === newestTurn.index && !visibleLive && e.errorRetryable
                     ? () => {
@@ -888,23 +972,26 @@ export default function FohSession({ loaderData }: Route.ComponentProps) {
               take a couple of minutes).
             </p>
           )}
-          {channelLabel && typedAnswerRequest && !busy && (
+          {typedAnswerRequest && !busy && (
             <p className="mb-2 pl-1 text-xs text-muted-foreground">
-              Your reply answers {agentName}&rsquo;s question above and goes
-              back to the {channelLabel} thread.
+              Your reply answers the current request above
+              {channelLabel ? ` and goes back to the ${channelLabel} thread` : ""}.
             </p>
           )}
           <ChatComposer
             placeholder={
               // A pending channel ask correlates typed text to it (issue #282); with nothing
               // pending, free text succeeds the conversation here (#288 3b) — plain composer.
-              channelLabel && typedAnswerRequest
+              typedAnswerRequest
                 ? `Answer ${agentName}’s question…`
+                : pendingRequest
+                  ? `Use the approval controls above…`
                 : `Message ${agentName}…`
             }
             busy={busy}
+            disabled={Boolean(pendingRequest && !typedAnswerRequest)}
             focusKey={sessionId}
-            onSend={send}
+            onSend={sendFromComposer}
             controls={composerControls}
           />
         </div>
@@ -1090,6 +1177,8 @@ function LiveBubble({
 export function AgentEntry({
   entry,
   onAnswer,
+  activeRequestId,
+  answeredRequestIds,
   onRetry,
   busy,
   running,
@@ -1097,6 +1186,8 @@ export function AgentEntry({
   entry: ChatEntry;
   /** Set on the newest entry only — answers a pending input request via the send path. */
   onAnswer?: (text: string, answer?: ChatInputAnswer) => void;
+  activeRequestId?: string | null;
+  answeredRequestIds?: ReadonlySet<string>;
   /** Set on the newest errored entry only — resends the message to retry the turn. */
   onRetry?: () => void;
   busy?: boolean;
@@ -1136,6 +1227,8 @@ export function AgentEntry({
               requests={entry.inputRequests}
               onAnswer={onAnswer}
               busy={busy}
+              activeRequestId={activeRequestId}
+              answeredRequestIds={answeredRequestIds}
             />
           )}
         </AssistantBubble>

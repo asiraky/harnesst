@@ -495,10 +495,16 @@ export function InputRequestsBlock({
   requests,
   onAnswer,
   busy,
+  activeRequestId,
+  answeredRequestIds,
 }: {
   requests: ChatInputRequest[];
   onAnswer?: (text: string, answer?: ChatInputAnswer) => void;
   busy?: boolean;
+  /** When present, only this request is currently answerable. */
+  activeRequestId?: string | null;
+  /** Answers collected locally while the rest of a batch is still being reviewed. */
+  answeredRequestIds?: ReadonlySet<string>;
 }) {
   if (requests.length === 0) return null;
   return (
@@ -507,8 +513,13 @@ export function InputRequestsBlock({
         <InputRequestView
           key={request.requestId}
           request={request}
-          onAnswer={onAnswer}
+          onAnswer={
+            activeRequestId === undefined || activeRequestId === request.requestId
+              ? onAnswer
+              : undefined
+          }
           busy={busy}
+          answered={answeredRequestIds?.has(request.requestId) ?? false}
         />
       ))}
     </div>
@@ -519,10 +530,12 @@ function InputRequestView({
   request,
   onAnswer,
   busy,
+  answered,
 }: {
   request: ChatInputRequest;
   onAnswer?: (text: string, answer?: ChatInputAnswer) => void;
   busy?: boolean;
+  answered?: boolean;
 }) {
   const isConfirmation = request.display === "confirmation";
   const options = request.options ?? [];
@@ -549,6 +562,22 @@ function InputRequestView({
       <p className="text-sm leading-relaxed font-medium whitespace-pre-wrap text-foreground">
         {request.prompt}
       </p>
+      {isConfirmation && request.action && (
+        <details className="rounded-lg border border-border/70 bg-muted/30 px-3 py-2 text-xs">
+          <summary className="cursor-pointer font-medium text-foreground">
+            {request.action.toolName ?? "Tool call"}
+            {request.action.callId ? ` · ${request.action.callId}` : ""}
+          </summary>
+          {request.action.input !== undefined && (
+            <pre className="mt-2 max-h-72 overflow-auto whitespace-pre-wrap break-words font-mono text-[11px] leading-relaxed text-muted-foreground">
+              {formatApprovalInput(request.action.input)}
+            </pre>
+          )}
+        </details>
+      )}
+      {answered && (
+        <p className="text-xs font-medium text-muted-foreground">Answer queued.</p>
+      )}
       {options.length > 0 &&
         (asRows ? (
           <div className="grid gap-2">
@@ -622,6 +651,15 @@ function InputRequestView({
       )}
     </div>
   );
+}
+
+function formatApprovalInput(input: unknown): string {
+  if (typeof input === "string") return input;
+  try {
+    return JSON.stringify(input, null, 2);
+  } catch {
+    return "(unavailable)";
+  }
 }
 
 /** A multiple-choice option that carries a description — a full-width selectable row

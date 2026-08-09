@@ -23,6 +23,7 @@ const mocks = vi.hoisted(() => ({
   beginFohTurn: vi.fn(async () => {}),
   openInboxQuestion: vi.fn(async () => ({ id: "inb_1" })),
   resolveInboxForSession: vi.fn(async () => {}),
+  sessionHasPendingInboxRequests: vi.fn(async () => false),
   recordInboxFinished: vi.fn(async () => ({ id: "inb_fin" })),
   recordTurnStart: vi.fn(async () => {}),
   recordTurnFinish: vi.fn(async () => {}),
@@ -47,6 +48,7 @@ vi.mock("~/foh/inbox.server", () => ({
   beginFohTurn: mocks.beginFohTurn,
   openInboxQuestion: mocks.openInboxQuestion,
   resolveInboxForSession: mocks.resolveInboxForSession,
+  sessionHasPendingInboxRequests: mocks.sessionHasPendingInboxRequests,
   recordInboxFinished: mocks.recordInboxFinished,
 }));
 vi.mock("~/observability/record.server", () => ({
@@ -239,6 +241,21 @@ describe("streamTurnResponse — FOH needs-you chokepoint", () => {
       userId: "user_1",
       prompt: "All done.",
     });
+  });
+
+  it("keeps needs-you parked when request-level inbox state is still outstanding", async () => {
+    mocks.sessionHasPendingInboxRequests.mockResolvedValueOnce(true);
+    script([
+      { kind: "session", sessionId: "sess_ext", continuationToken: "tok_1" },
+      { kind: "turn", turnId: "turn_1" },
+      { kind: "done", result: result({ reply: null }) },
+    ]);
+
+    await run({ session: session({ pendingInputAt: new Date() }), channel: "foh" });
+
+    expect(mocks.clearSessionPendingInput).not.toHaveBeenCalled();
+    expect(mocks.resolveInboxForSession).not.toHaveBeenCalled();
+    expect(mocks.recordInboxFinished).not.toHaveBeenCalled();
   });
 
   it("clears the park and resolves asks on failure, without a finished item", async () => {
@@ -572,6 +589,64 @@ describe("streamTurnResponse — channel-homed delivery", () => {
     // does it exactly once, on the first streamed event from the agent.
     expect(mocks.beginFohTurn).toHaveBeenCalledTimes(1);
     expect(mocks.beginFohTurn).toHaveBeenCalledWith("ps_1");
+  });
+
+  it("preserves an HTTP-homed answer batch when eve fails before accepting it", async () => {
+    script([
+      {
+        kind: "done",
+        result: result({
+          ok: false,
+          turnId: null,
+          error: "Agent returned 503",
+          notDelivered: true,
+        }),
+      },
+    ]);
+
+    await readAll(
+      streamTurnResponse({
+        projectId: "proj_1",
+        target: TARGET,
+        session: session({ pendingInputAt: new Date() }),
+        message: "Approve",
+        channel: "foh",
+        title: null,
+        inputResponses: [{ requestId: "r1", optionId: "approve" }],
+        claimId: "claim_1",
+        preClaimStatus: "waiting",
+      }),
+    );
+
+    expect(mocks.beginFohTurn).not.toHaveBeenCalled();
+    expect(mocks.releaseRefusedTurnClaim).toHaveBeenCalledWith({
+      id: "ps_1",
+      claimId: "claim_1",
+      status: "waiting",
+    });
+    expect(mocks.clearSessionPendingInput).not.toHaveBeenCalled();
+    expect(mocks.resolveInboxForSession).not.toHaveBeenCalled();
+  });
+
+  it("resolves delivered HTTP answer ids only after eve accepts the POST", async () => {
+    script([
+      { kind: "session", sessionId: "sess_ext", continuationToken: "tok_1" },
+      { kind: "done", result: result({ reply: "ok" }) },
+    ]);
+
+    await readAll(
+      streamTurnResponse({
+        projectId: "proj_1",
+        target: TARGET,
+        session: session({ pendingInputAt: new Date() }),
+        message: "Approve",
+        channel: "foh",
+        title: null,
+        inputResponses: [{ requestId: "r1", optionId: "approve" }],
+      }),
+    );
+
+    expect(mocks.beginFohTurn).toHaveBeenCalledWith("ps_1", ["r1"]);
   });
 
   it("fails the turn instead of falling back to HTTP when the bearer cannot be minted", async () => {

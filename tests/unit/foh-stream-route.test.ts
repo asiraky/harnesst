@@ -18,6 +18,7 @@ const mocks = vi.hoisted(() => ({
   createPlaygroundSession: vi.fn(),
   setPlaygroundSessionModel: vi.fn(async () => true),
   claimPlaygroundSessionForTurn: vi.fn(),
+  releaseRefusedTurnClaim: vi.fn(async () => true),
   clearSessionHandles: vi.fn(),
   loadPlaygroundEntriesFromEve: vi.fn(),
   streamTurnResponse: vi.fn(() => new Response("ok")),
@@ -28,6 +29,9 @@ const mocks = vi.hoisted(() => ({
     async ({ message }: { message: string }) => message,
   ),
   agentsFindById: vi.fn(),
+  findPendingBySession: vi.fn(
+    async (): Promise<Array<{ kind: string; requestId: string | null }>> => [],
+  ),
 }));
 
 vi.mock("~/auth/session.server", () => ({
@@ -53,6 +57,7 @@ vi.mock("~/playground/sessions.server", () => ({
   createPlaygroundSession: mocks.createPlaygroundSession,
   setPlaygroundSessionModel: mocks.setPlaygroundSessionModel,
   claimPlaygroundSessionForTurn: mocks.claimPlaygroundSessionForTurn,
+  releaseRefusedTurnClaim: mocks.releaseRefusedTurnClaim,
   clearSessionHandles: mocks.clearSessionHandles,
   loadPlaygroundEntriesFromEve: mocks.loadPlaygroundEntriesFromEve,
 }));
@@ -73,7 +78,12 @@ vi.mock("~/models/model-directive.server", () => ({
   signModelDirective: mocks.signModelDirective,
 }));
 vi.mock("~/seams/index.server", () => ({
-  getRuntime: () => ({ data: { agents: { findById: mocks.agentsFindById } } }),
+  getRuntime: () => ({
+    data: {
+      agents: { findById: mocks.agentsFindById },
+      inboxItems: { findPendingBySession: mocks.findPendingBySession },
+    },
+  }),
 }));
 
 import { action } from "~/routes/api.foh.stream";
@@ -153,6 +163,7 @@ beforeEach(() => {
   mocks.clearSessionHandles.mockResolvedValue(undefined);
   mocks.loadPlaygroundEntriesFromEve.mockResolvedValue([]);
   mocks.streamTurnResponse.mockReturnValue(new Response("ok"));
+  mocks.findPendingBySession.mockResolvedValue([]);
 });
 
 describe("FOH stream route", () => {
@@ -393,21 +404,24 @@ describe("FOH stream route", () => {
         inputResponses: [{ requestId: "req_1", optionId: "approve" }],
       }),
     );
+    expect(mocks.beginFohTurn).not.toHaveBeenCalled();
   });
 
-  it("answers exactly one request of a two-approval batch", async () => {
-    // The regression this guards (issue #221 finding 2): eve's text resolver matches a bare
-    // "Approve" against EVERY pending confirmation. The correlated payload must carry only
-    // the clicked card's requestId.
+  it("forwards every correlated answer in a two-approval batch", async () => {
     mocks.claimPlaygroundSessionForTurn.mockResolvedValue(
       sessionRow({ status: "running", pendingInputAt: new Date() }),
     );
+    mocks.findPendingBySession.mockResolvedValue([
+      { kind: "approval", requestId: "req_1" },
+      { kind: "approval", requestId: "req_2" },
+    ]);
     await action(
       args({
         agentId: "agent_1",
         playgroundSessionId: "ps_1",
-        message: "Approve",
+        message: "Approve\nDeny",
         inputResponses: JSON.stringify([
+          { requestId: "req_1", optionId: "approve" },
           { requestId: "req_2", optionId: "approve" },
         ]),
       }),
@@ -415,8 +429,35 @@ describe("FOH stream route", () => {
     const [forwarded] = mocks.streamTurnResponse.mock.calls[0] as unknown as [
       { inputResponses: Array<{ requestId: string }> },
     ];
-    expect(forwarded.inputResponses).toHaveLength(1);
-    expect(forwarded.inputResponses[0].requestId).toBe("req_2");
+    expect(forwarded.inputResponses.map((answer) => answer.requestId)).toEqual([
+      "req_1",
+      "req_2",
+    ]);
+  });
+
+  it("rejects a partial answer batch without contacting eve", async () => {
+    mocks.claimPlaygroundSessionForTurn.mockResolvedValue(
+      sessionRow({ status: "running", pendingInputAt: new Date() }),
+    );
+    mocks.findPendingBySession.mockResolvedValue([
+      { kind: "approval", requestId: "req_1" },
+      { kind: "approval", requestId: "req_2" },
+    ]);
+
+    await expect(
+      action(
+        args({
+          agentId: "agent_1",
+          playgroundSessionId: "ps_1",
+          message: "Approve",
+          inputResponses: JSON.stringify([
+            { requestId: "req_1", optionId: "approve" },
+          ]),
+        }),
+      ),
+    ).rejects.toMatchObject({ init: { status: 409 } });
+    expect(mocks.releaseRefusedTurnClaim).toHaveBeenCalled();
+    expect(mocks.streamTurnResponse).not.toHaveBeenCalled();
   });
 
   it("drops answers when the session has no eve continuation (fresh row)", async () => {
@@ -448,7 +489,7 @@ describe("FOH stream route", () => {
     );
   });
 
-  it("succeeds a channel-homed row on free text: prologue seed, handles untouched, succession send (#288 3b)", async () => {
+  it("succeeds a channel-homed row on free text when no request is outstanding (#288 3b)", async () => {
     const via = {
       channel: "github",
       routePath: "/eve/v1/github/harnesst/answer",
@@ -456,7 +497,7 @@ describe("FOH stream route", () => {
       state: {},
     };
     mocks.getFohSessionForViewer.mockResolvedValue(
-      sessionRow({ resumeVia: via, pendingInputAt: new Date() }),
+      sessionRow({ resumeVia: via, pendingInputAt: null }),
     );
     mocks.claimPlaygroundSessionForTurn.mockResolvedValue(
       sessionRow({ resumeVia: via, status: "running" }),
@@ -466,8 +507,7 @@ describe("FOH stream route", () => {
       {
         id: "e2",
         role: "assistant",
-        text: "",
-        inputRequests: [{ requestId: "req_1", prompt: "Which branch?" }],
+        text: "Ready when you are.",
       },
     ]);
 
@@ -518,9 +558,7 @@ describe("FOH stream route", () => {
     expect(forwarded.messagePrefix).toContain(
       "User: Issue #2: pricing page 404s",
     );
-    expect(forwarded.messagePrefix).toContain(
-      "Assistant (asked): Which branch?",
-    );
+    expect(forwarded.messagePrefix).toContain("Assistant: Ready when you are.");
     expect(forwarded.inputResponses).toBeNull();
   });
 

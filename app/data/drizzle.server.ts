@@ -832,6 +832,20 @@ export const drizzleDataStore: DataStore = {
         )
         .orderBy(asc(inboxItems.createdAt));
     },
+    async findBySessionRequestId(sessionId, requestId) {
+      const [row] = await db
+        .select()
+        .from(inboxItems)
+        .where(
+          and(
+            eq(inboxItems.sessionId, sessionId),
+            eq(inboxItems.requestId, requestId),
+          ),
+        )
+        .orderBy(desc(inboxItems.createdAt))
+        .limit(1);
+      return row ?? null;
+    },
     async listPendingForProjects(projectIds, userId) {
       if (projectIds.length === 0) return [];
       return db

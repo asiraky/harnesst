@@ -16,6 +16,9 @@ const dbState = vi.hoisted(() => ({
 const inbox = vi.hoisted(() => ({
   openInboxQuestion: vi.fn(async () => ({ id: "inb_1" })),
   resolveInboxForSession: vi.fn(async () => {}),
+  unansweredInboxRequests: vi.fn(
+    async (_sessionId: string, requests: unknown[]) => requests,
+  ),
 }));
 
 vi.mock("~/db/client.server", () => ({
@@ -45,6 +48,7 @@ vi.mock("~/db/client.server", () => ({
 vi.mock("~/foh/inbox.server", () => ({
   openInboxQuestion: inbox.openInboxQuestion,
   resolveInboxForSession: inbox.resolveInboxForSession,
+  unansweredInboxRequests: inbox.unansweredInboxRequests,
 }));
 
 import {
@@ -111,6 +115,9 @@ beforeEach(() => {
   dbState.updates.length = 0;
   dbState.inserts.length = 0;
   vi.clearAllMocks();
+  inbox.unansweredInboxRequests.mockImplementation(
+    async (_sessionId: string, requests: unknown[]) => requests,
+  );
 });
 
 afterEach(() => {
@@ -156,6 +163,20 @@ describe("reconcilePlaygroundSessionFromEve — FOH needs-you recovery", () => {
 
     expect(pendingWrites()[0].pendingInputAt).toEqual(parkedAt);
     expect(out.pendingInputAt).toEqual(parkedAt);
+  });
+
+  it("does not resurrect a request whose inbox identity is already resolved", async () => {
+    stubEveTail([askEvent, { type: "session.waiting" }]);
+    inbox.unansweredInboxRequests.mockResolvedValueOnce([]);
+
+    const out = await reconcilePlaygroundSessionFromEve({
+      session: session({ pendingInputAt: new Date() }),
+      target: TARGET,
+    });
+
+    expect(out.pendingInputAt).toBeNull();
+    expect(inbox.openInboxQuestion).not.toHaveBeenCalled();
+    expect(inbox.resolveInboxForSession).toHaveBeenCalledWith("ps_1");
   });
 
   it("settles a park answered by a completed later turn", async () => {

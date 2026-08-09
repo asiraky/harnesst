@@ -533,6 +533,32 @@ describe("streamTurn", () => {
     body = JSON.parse(String(fetchMock.mock.calls[0][1]?.body));
     expect(body.inputResponses).toBeUndefined();
   });
+
+  it("marks an HTTP answer batch undelivered when eve rejects it before acceptance", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn<typeof fetch>().mockResolvedValueOnce(
+        new Response("unavailable", { status: 503 }),
+      ),
+    );
+
+    const events = [];
+    for await (const event of streamTurn({
+      baseUrl: "https://agent.example.test",
+      message: "Approve",
+      sessionId: "sess_1",
+      continuationToken: "tok_1",
+      inputResponses: [{ requestId: "req_1", optionId: "approve" }],
+    })) {
+      events.push(event);
+    }
+
+    const done = events.at(-1);
+    expect(done?.kind).toBe("done");
+    if (done?.kind !== "done") throw new Error("no done event");
+    expect(done.result.notDelivered).toBe(true);
+    expect(done.result.sessionId).toBe("sess_1");
+  });
 });
 
 describe("dispatchTurn (#269 fire-and-forget)", () => {
