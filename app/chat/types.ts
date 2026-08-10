@@ -36,6 +36,13 @@ export interface ChatInputRequest {
   /** One frame for every visual option in this request; never chosen independently per card. */
   surface?: ChatInputSurface | null;
   options?: ChatInputOption[];
+  /** Tool-call details attached to an approval request. Kept additive for ordinary questions. */
+  action?: {
+    kind?: string | null;
+    toolName?: string | null;
+    callId?: string | null;
+    input?: unknown;
+  } | null;
 }
 
 export interface ChatInputOption {

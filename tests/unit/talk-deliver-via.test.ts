@@ -300,8 +300,8 @@ describe("streamTurn delivery", () => {
     // NOT a spent resume — a GitHub outage or a model error must leave the row bound so a retry
     // can still reach the same thread.
     expect(done.result.resumeExpired).toBeUndefined();
-    // The delivery was attempted (the route answered) — not an undelivered refusal.
-    expect(done.result.notDelivered).toBeUndefined();
+    // The route rejected before eve accepted the answers; the pending approvals stay retryable.
+    expect(done.result.notDelivered).toBe(true);
   });
 
   it("keeps the row bound when the route reports its own send failure as a 409", async () => {
@@ -331,5 +331,6 @@ describe("streamTurn delivery", () => {
     if (done?.kind !== "done") throw new Error("no done event");
     expect(done.result.error).toContain("github 502");
     expect(done.result.resumeExpired).toBeUndefined();
+    expect(done.result.notDelivered).toBe(true);
   });
 });

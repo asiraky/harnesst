@@ -46,10 +46,11 @@ export async function openInboxQuestion(
   },
   store: DataStore = getRuntime().data,
 ): Promise<InboxItem> {
-  const pending = await store.inboxItems.findPendingBySession(input.sessionId);
-  const existing = pending.find(
-    (item) => item.requestId != null && item.requestId === input.request.requestId,
+  const existing = await store.inboxItems.findBySessionRequestId(
+    input.sessionId,
+    input.request.requestId,
   );
+  // Replayed input.requested events must not resurrect an answer that was already delivered.
   if (existing) return existing;
   return store.inboxItems.insert({
     projectId: input.projectId,
@@ -64,6 +65,26 @@ export async function openInboxQuestion(
   });
 }
 
+/** Remove request identities whose inbox history proves an answer was already delivered. */
+export async function unansweredInboxRequests(
+  sessionId: string,
+  requests: readonly ChatInputRequest[],
+  store: DataStore = getRuntime().data,
+): Promise<ChatInputRequest[]> {
+  const states = await Promise.all(
+    requests.map(async (request) => ({
+      request,
+      item: await store.inboxItems.findBySessionRequestId(
+        sessionId,
+        request.requestId,
+      ),
+    })),
+  );
+  return states.flatMap(({ request, item }) =>
+    item?.status === "resolved" ? [] : [request],
+  );
+}
+
 /**
  * Resolve a session's pending question/approval items — on continuation send (the answer
  * supersedes them), terminal failure, or a newer turn starting.
@@ -73,6 +94,38 @@ export async function resolveInboxForSession(
   store: DataStore = getRuntime().data,
 ): Promise<void> {
   await store.inboxItems.resolveBySession(sessionId, ["question", "approval"]);
+}
+
+/** Resolve only the request identities actually delivered to eve. */
+export async function resolveInboxRequests(
+  sessionId: string,
+  requestIds: readonly string[],
+  store: DataStore = getRuntime().data,
+): Promise<void> {
+  if (requestIds.length === 0) return;
+  const wanted = new Set(requestIds);
+  const pending = await store.inboxItems.findPendingBySession(sessionId);
+  const writes: Array<Promise<void>> = [];
+  for (const item of pending) {
+    if (
+      (item.kind === "question" || item.kind === "approval") &&
+      item.requestId != null &&
+      wanted.has(item.requestId)
+    ) {
+      writes.push(store.inboxItems.resolve(item.id));
+    }
+  }
+  await Promise.all(writes);
+}
+
+export async function sessionHasPendingInboxRequests(
+  sessionId: string,
+  store: DataStore = getRuntime().data,
+): Promise<boolean> {
+  const pending = await store.inboxItems.findPendingBySession(sessionId);
+  return pending.some(
+    (item) => item.kind === "question" || item.kind === "approval",
+  );
 }
 
 /**
@@ -143,16 +196,18 @@ export async function recordInboxNotice(
 }
 
 /**
- * The FOH send-path supersede rule (map gotcha "answering an old question"): before a new
- * turn is streamed into a session, clear the park and resolve its pending question/approval
- * items — whether the message answers the question or just moves on, eve resolves the parked
- * request from the next message, so stale items must not invite answers to questions eve no
- * longer holds. Call from the FOH stream route before `streamTurnResponse`.
+ * FOH turn-begin bookkeeping. A correlated answer resolves only the request ids actually
+ * delivered; an ordinary turn with no pending input keeps the legacy full cleanup.
  */
 export async function beginFohTurn(
   sessionId: string,
+  answeredRequestIds: readonly string[] = [],
   store: DataStore = getRuntime().data,
 ): Promise<void> {
+  if (answeredRequestIds.length > 0) {
+    await resolveInboxRequests(sessionId, answeredRequestIds, store);
+    return;
+  }
   await clearSessionPendingInput(sessionId);
   await resolveInboxForSession(sessionId, store);
 }

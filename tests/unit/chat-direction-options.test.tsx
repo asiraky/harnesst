@@ -26,6 +26,25 @@ const fields = [
 ];
 
 describe("direction option cards", () => {
+  it("renders approval tool identity and structured input", () => {
+    const html = render({
+      requestId: "req_approval",
+      prompt: "Approve tool call",
+      display: "confirmation",
+      action: {
+        toolName: "write-sheet",
+        callId: "call_7",
+        input: { spreadsheetId: "sheet_1", updates: { total: 42 } },
+      },
+      options: [{ id: "yes", label: "Yes" }],
+    });
+
+    expect(html).toContain("write-sheet");
+    expect(html).toContain("call_7");
+    expect(html).toContain("spreadsheetId");
+    expect(html).toContain("sheet_1");
+  });
+
   it("renders a web sketch whole in a landscape frame with facts outside it", () => {
     const html = render({
       requestId: "req_1",

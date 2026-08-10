@@ -983,6 +983,15 @@ export function makeFakeStore(): FakeStore {
           .filter((i) => i.sessionId === sessionId && i.status === "pending")
           .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
       },
+      async findBySessionRequestId(sessionId, requestId) {
+        return (
+          [...inboxItems.values()]
+            .filter(
+              (i) => i.sessionId === sessionId && i.requestId === requestId,
+            )
+            .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())[0] ?? null
+        );
+      },
       async listPendingForProjects(projectIds, userId) {
         const scope = new Set(projectIds);
         return [...inboxItems.values()]

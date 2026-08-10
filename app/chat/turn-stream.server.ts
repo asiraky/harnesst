@@ -31,6 +31,7 @@ import {
   openInboxQuestion,
   recordInboxFinished,
   resolveInboxForSession,
+  sessionHasPendingInboxRequests,
 } from "~/foh/inbox.server";
 import { finalizeDelegationOnResume } from "~/team/resume.server";
 import {
@@ -254,14 +255,13 @@ export function streamTurnResponse(input: {
         let recorded = false;
         let startRecording: Promise<void> = Promise.resolve();
         let result: TurnResult | null = null;
-        // Deferred supersede for channel-homed FOH rows (issue #282): the route skips its
-        // pre-turn `beginFohTurn` for them, because clearing the parked ask before delivery
-        // is known to happen is exactly how a refused send used to erase the needs-you
-        // question. The first streamed event that isn't a pre-delivery refusal proves the
-        // agent was contacted — the park resolves there instead. Succession turns (#288 3b)
-        // ride the same deferral: their row is still channel-homed until the rebind, and a
-        // send that dies before reaching eve must leave the parked ask answerable.
-        let deferredFohBegin = isFoh && activeSession.resumeVia != null;
+        // Correlated answers and channel-homed turns defer `beginFohTurn`: request items cannot
+        // resolve until streamTurn's `session` event proves eve accepted the POST. A transport
+        // failure yields only `done`, leaving the original park and retry path untouched.
+        let deferredFohBegin =
+          isFoh &&
+          (activeSession.resumeVia != null ||
+            Boolean(input.inputResponses && input.inputResponses.length > 0));
         const turnController = new AbortController();
         activeTurnControllers.set(activeSession.id, turnController);
 
@@ -372,13 +372,17 @@ export function streamTurnResponse(input: {
             signal: turnController.signal,
             timeoutMs: TURN_IDLE_TIMEOUT_MS,
           })) {
-            if (
-              deferredFohBegin &&
-              !(event.kind === "done" && event.result.notDelivered)
-            ) {
+            if (deferredFohBegin && event.kind === "session") {
               deferredFohBegin = false;
               try {
-                await beginFohTurn(activeSession.id);
+                const answeredRequestIds = input.inputResponses?.map(
+                  (answer) => answer.requestId,
+                );
+                if (answeredRequestIds?.length) {
+                  await beginFohTurn(activeSession.id, answeredRequestIds);
+                } else {
+                  await beginFohTurn(activeSession.id);
+                }
               } catch (e) {
                 console.error(`${tag} foh deferred turn-begin failed`, e);
               }
@@ -635,7 +639,20 @@ export function streamTurnResponse(input: {
             // A refused send (`notDelivered`) is none of these: eve still holds the pending
             // question, so the park state and any delegation stay exactly as they were.
             if (isFoh && !notDelivered) {
-              const decision = settleFohTurn(settled);
+              let hasOutstandingRequests = false;
+              try {
+                hasOutstandingRequests = await sessionHasPendingInboxRequests(
+                  activeSession.id,
+                );
+              } catch (e) {
+                // Conservatively keep the explicit input.requested outcome below; loader-side
+                // reconciliation retries inbox truth if this read failed.
+                console.error(`${tag} foh outstanding-request check failed`, e);
+              }
+              const decision = settleFohTurn({
+                ...settled,
+                hasOutstandingRequests,
+              });
               try {
                 if (decision.clearPending) {
                   await clearSessionPendingInput(activeSession.id);

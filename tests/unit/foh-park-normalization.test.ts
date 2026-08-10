@@ -4,6 +4,29 @@ import { inputRequestsOf } from "~/agent/talk.server";
 import { normalizeParkRequests } from "~/foh/park.server";
 
 describe("normalizeParkRequests rich option presentation", () => {
+  it("preserves tool-call details for channel-homed approval cards", () => {
+    const [request] = normalizeParkRequests([
+      {
+        requestId: "req_approval",
+        prompt: "Approve tool call: write-sheet",
+        display: "confirmation",
+        action: {
+          kind: "tool-call",
+          toolName: "write-sheet",
+          callId: "call_7",
+          input: { spreadsheetId: "sheet_1", updates: { total: 42 } },
+        },
+      },
+    ])!;
+
+    expect(request.action).toEqual({
+      kind: "tool-call",
+      toolName: "write-sheet",
+      callId: "call_7",
+      input: { spreadsheetId: "sheet_1", updates: { total: 42 } },
+    });
+  });
+
   it("keeps bounded media references and typed card fields", () => {
     const requests = normalizeParkRequests([
       {
@@ -127,6 +150,12 @@ describe("normalizeParkRequests rich option presentation", () => {
         {
           requestId: "req_1",
           prompt: "Choose",
+          action: {
+            kind: "tool-call",
+            toolName: "write-sheet",
+            callId: "call_1",
+            input: { row: 3 },
+          },
           surface: "mobile",
           options: [
             {
@@ -162,5 +191,11 @@ describe("normalizeParkRequests rich option presentation", () => {
       ],
     });
     expect(requests[0].surface).toBe("mobile");
+    expect(requests[0].action).toEqual({
+      kind: "tool-call",
+      toolName: "write-sheet",
+      callId: "call_1",
+      input: { row: 3 },
+    });
   });
 });

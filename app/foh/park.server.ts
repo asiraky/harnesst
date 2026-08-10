@@ -99,8 +99,8 @@ function deny(error: string): ParkResult {
 }
 
 /**
- * Validate one inbound request into the harnesst-side shape. eve's `InputRequest` carries more
- * (the originating tool call); only what a human needs to answer is persisted.
+ * Validate one inbound request into the harnesst-side shape, including the originating tool
+ * call so a human can inspect what an approval authorizes.
  */
 export function normalizeParkRequests(value: unknown): ChatInputRequest[] | null {
   if (!Array.isArray(value) || value.length === 0) return null;
@@ -141,6 +141,10 @@ export function normalizeParkRequests(value: unknown): ChatInputRequest[] | null
             ];
           })
       : [];
+    const action =
+      typeof entry.action === "object" && entry.action !== null
+        ? (entry.action as Record<string, unknown>)
+        : null;
     out.push({
       requestId,
       prompt,
@@ -149,9 +153,30 @@ export function normalizeParkRequests(value: unknown): ChatInputRequest[] | null
         typeof entry.allowFreeform === "boolean" ? entry.allowFreeform : null,
       surface: normalizeChatInputSurface(entry.surface),
       options,
+      action: action
+        ? {
+            kind: boundedChatInputString(action.kind, 200),
+            toolName: boundedChatInputString(action.toolName, 200),
+            callId: boundedChatInputString(action.callId, 200),
+            input: boundedParkActionInput(action.input),
+          }
+        : null,
     });
   }
   return out;
+}
+
+function boundedParkActionInput(value: unknown): unknown {
+  if (value === undefined) return undefined;
+  try {
+    const json = JSON.stringify(value);
+    if (json === undefined) return undefined;
+    return json.length <= 20_000
+      ? JSON.parse(json)
+      : `${json.slice(0, 20_000)}\n… (truncated)`;
+  } catch {
+    return "(unavailable)";
+  }
 }
 
 export async function parkChannelQuestion(

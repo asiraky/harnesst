@@ -33,6 +33,8 @@ export interface FohTurnSettle {
 export function settleFohTurn(result: {
   ok: boolean;
   inputRequests: readonly ChatInputRequest[];
+  /** Request-level inbox state after this turn's delivered answers were resolved. */
+  hasOutstandingRequests?: boolean;
 }): FohTurnSettle {
   if (!result.ok) {
     // The session shows done-with-error; a stale park must not keep asking for a human.
@@ -43,7 +45,7 @@ export function settleFohTurn(result: {
       recordFinished: false,
     };
   }
-  if (result.inputRequests.length > 0) {
+  if (result.inputRequests.length > 0 || result.hasOutstandingRequests) {
     return {
       outcome: "parked",
       clearPending: false,
@@ -196,22 +198,26 @@ export function repairFohSessionState(input: {
 }
 
 /**
- * The one input request a typed composer answer would resolve: the NEWEST pending request of
- * the newest transcript entry, when that entry is an un-errored assistant ask (the needs-you
- * doctrine: such a turn IS parked). Within a turn requests only accumulate, so the last one
- * is the newest; an errored entry or a user entry has nothing pending.
+ * Pending requests on the newest transcript turn. An errored entry or a user entry has none.
  */
-export function newestPendingRequest(
+export function pendingRequestsOfNewestTurn(
   lastEntry: {
     role: string;
     inputRequests?: ChatInputRequest[];
     error?: string | null;
   } | null,
-): ChatInputRequest | null {
+): ChatInputRequest[] {
   if (!lastEntry || lastEntry.role !== "assistant" || lastEntry.error) {
-    return null;
+    return [];
   }
-  return lastEntry.inputRequests?.at(-1) ?? null;
+  return lastEntry.inputRequests ?? [];
+}
+
+/** Backwards-compatible single-target helper for callers that intentionally want the newest. */
+export function newestPendingRequest(
+  lastEntry: Parameters<typeof pendingRequestsOfNewestTurn>[0],
+): ChatInputRequest | null {
+  return pendingRequestsOfNewestTurn(lastEntry).at(-1) ?? null;
 }
 
 /**
@@ -228,19 +234,14 @@ export function freeformAnswerable(
 
 /**
  * The request-correlated answer a plain composer send carries (issue #282). On a channel-homed
- * session (`resumeVia` set) with a pending request, typed text correlates to that newest
- * request — the freeform half of the HITL contract, delivered through the channel answer
- * route. With nothing pending the send carries no correlation, which the stream route reads
- * as succession into a fresh HTTP-homed session (#288 3b). HTTP-homed sessions return null:
- * their composer text stays the intentional continue/supersede path with no correlation
- * attached (a clicked option card passes its own explicit answer and never comes through
- * here).
+ * session with a pending request, typed text correlates to that request. This applies to both
+ * HTTP- and channel-homed sessions: while eve is parked, uncorrelated free text can be swallowed.
  */
 export function composerAnswerFor(input: {
   channelHomed: boolean;
   pendingRequest: { requestId: string } | null;
   text: string;
 }): ChatInputAnswer | null {
-  if (!input.channelHomed || !input.pendingRequest) return null;
+  if (!input.pendingRequest) return null;
   return { requestId: input.pendingRequest.requestId, text: input.text };
 }

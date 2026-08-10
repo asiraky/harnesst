@@ -34,6 +34,7 @@ import {
   openInboxQuestion,
   resolveInboxForArchivedSession,
   resolveInboxForSession,
+  unansweredInboxRequests,
 } from "~/foh/inbox.server";
 import { reconcileNeedsYouFromTail } from "~/foh/needs-you";
 import { fohSessionStatus, sortSessionsForList } from "~/foh/status";
@@ -1539,14 +1540,25 @@ export async function reconcilePlaygroundSessionFromEve(input: {
     try {
       const decision = reconcileNeedsYouFromTail(tail.events);
       if (decision.action === "park") {
-        const at = pendingInputAt ?? new Date();
-        // The park claim reports whether it won its stop-wins guard; when stop got there
-        // first, the inbox items must not be filed for the stopped session.
-        const parked = await markSessionPendingInput(input.session.id, at);
-        if (parked) {
-          pendingInputAt = at;
-          for (const data of decision.requestData) {
-            for (const request of inputRequestsOf(data)) {
+        const observed = decision.requestData.flatMap((event) =>
+          inputRequestsOf(event),
+        );
+        const unanswered = await unansweredInboxRequests(
+          input.session.id,
+          observed,
+        );
+        if (unanswered.length === 0) {
+          pendingInputAt = null;
+          await clearSessionPendingInput(input.session.id);
+          await resolveInboxForSession(input.session.id);
+        } else {
+          const at = pendingInputAt ?? new Date();
+          // The park claim reports whether it won its stop-wins guard; when stop got there
+          // first, the inbox items must not be filed for the stopped session.
+          const parked = await markSessionPendingInput(input.session.id, at);
+          if (parked) {
+            pendingInputAt = at;
+            for (const request of unanswered) {
               await openInboxQuestion({
                 projectId: input.session.projectId,
                 sessionId: input.session.id,
