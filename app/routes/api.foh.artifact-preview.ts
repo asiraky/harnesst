@@ -43,14 +43,18 @@ export async function action(args: ActionFunctionArgs) {
   }
 
   // Visibility is the CONVERSATION's, not the repo's: FOH sessions are per-creator confidential,
-  // so repo scope alone would let one member preview another's page.
-  const session = await getFohSessionForViewer({
-    id: artifact.sessionId,
-    projectId: access.project.id,
-    viewerId: auth.user.id,
-    includeAll: access.backOfHouse,
-  });
-  if (!session) throw data({ ok: false, error: "Not found" }, { status: 404 });
+  // so repo scope alone would let one member preview another's page. A session-less artifact
+  // (#370) sits in no conversation — repo access is the whole check.
+  if (artifact.sessionId) {
+    const session = await getFohSessionForViewer({
+      id: artifact.sessionId,
+      projectId: access.project.id,
+      viewerId: auth.user.id,
+      includeAll: access.backOfHouse,
+    });
+    if (!session)
+      throw data({ ok: false, error: "Not found" }, { status: 404 });
+  }
 
   // The requested version, defaulting to the newest. Selected from the artifact's OWN versions
   // rather than looked up by id alone, so the field cannot become a cross-artifact selector on a

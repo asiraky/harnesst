@@ -232,6 +232,13 @@
       "when": 1786066750048,
       "tag": "0032_first_khan",
       "breakpoints": true
+    },
+    {
+      "idx": 33,
+      "version": "7",
+      "when": 1786322386527,
+      "tag": "0033_artifact_share_tokens",
+      "breakpoints": true
     }
   ]
 }

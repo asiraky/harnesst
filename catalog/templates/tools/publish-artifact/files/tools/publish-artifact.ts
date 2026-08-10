@@ -48,25 +48,29 @@ async function readDocument(
 //
 // Two kinds, two safety stories. An IMAGE has its real type sniffed from the bytes and is served
 // back behind the user's own sign-in. A PAGE is agent-authored HTML, so harnesst never serves it
-// same-origin-and-trusted: it goes out through a short-lived preview URL whose response sandboxes
-// itself (no network, no forms, no storage, no cookies), which is why a page has no permanent link
-// to quote back — the user opens it from the card.
+// same-origin-and-trusted: it opens through URLs whose responses sandbox themselves (no network,
+// no forms, no storage, no cookies) — the in-app preview, and since issue #370 the stable public
+// `shareUrl` every publish returns, which anyone can open with no sign-in.
 //
-// The unit is a NAME in a conversation, not a file: publishing the same name again appends a
-// VERSION to the card that is already on screen instead of adding a second one, which is what makes
-// the "show me" → "change it" → "show me again" loop read as one thing being refined.
+// The unit is a NAME, not a file: publishing the same name again appends a VERSION to the same
+// artifact instead of creating a second one, which is what makes the "show me" → "change it" →
+// "show me again" loop read as one thing being refined. In a live conversation the artifact also
+// lands as a card there; from a background run there is no conversation and no card (#370) — the
+// artifact belongs to the agent, reachable through its shareUrl and the repo's Artifacts page.
 //
 // HARNESST_FOH_ARTIFACTS_URL and HARNESST_TEAM_TOKEN are injected at deploy when this tool is
 // installed; both absent means the agent is running somewhere that has no Front of House, which is
 // reported as an ordinary refusal rather than a crash.
 export default defineTool({
   description:
-    "Publish a file from /workspace/home into this conversation as durable evidence the user can " +
-    "open. Images render, HTML pages open in a sandboxed preview, and PDF documents get an " +
-    "authenticated download link. PDF documents are capped at 4 MiB; other artifacts at 25 MB. To revise " +
-    "something, publish the same file name again — the existing card updates to a new version " +
-    "instead of adding a second card. Mention in your reply that you published it; only call this " +
-    "while answering the user (a background run has nowhere to land).",
+    "Publish a file from /workspace/home as durable evidence the user can open. Images render, " +
+    "HTML pages open in a sandboxed preview, and PDF documents get a download link. PDF documents " +
+    "are capped at 4 MiB; other artifacts at 25 MB. To revise something, publish the same file " +
+    "name again — the existing artifact updates to a new version instead of duplicating. Every " +
+    "publish returns a stable public shareUrl anyone can open without signing in — quote it in " +
+    "your reply when the user should share the result. Works from a live conversation (the file " +
+    "also lands as a card there) and from background/scheduled runs (no card; the shareUrl and " +
+    "the repository's Artifacts page are how people reach it).",
   inputSchema: z.object({
     path: z
       .string()
@@ -145,6 +149,11 @@ export default defineTool({
             kind: string;
             /** Null for a page: it is reachable only through the preview the user opens. */
             url: string | null;
+            /**
+             * Stable PUBLIC link to the artifact's newest version — no sign-in needed, safe to
+             * quote in a reply or send to a channel. Null only when sharing was revoked.
+             */
+            shareUrl: string | null;
             name: string;
             contentType: string;
             byteSize: number;

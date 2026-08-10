@@ -22,6 +22,7 @@ import { getSessionAuth } from "~/auth/session.server";
 import {
   artifactIsSingleFileKind,
   artifactRendersInline,
+  safeArtifactFileName,
 } from "~/foh/artifact-media";
 import {
   findArtifactVersion,
@@ -31,12 +32,6 @@ import {
 } from "~/foh/artifact-store.server";
 import { requireFohProject } from "~/foh/guard.server";
 import { getFohSessionForViewer } from "~/playground/sessions.server";
-
-/** A quoted `filename` for the disposition header — never the raw agent-supplied name. */
-function safeFileName(name: string): string {
-  const cleaned = name.replace(/[^A-Za-z0-9._-]/g, "_").slice(0, 100);
-  return cleaned || "artifact";
-}
 
 export async function loader(args: LoaderFunctionArgs) {
   const auth = await getSessionAuth(args);
@@ -62,13 +57,18 @@ export async function loader(args: LoaderFunctionArgs) {
     throw data("Not found", { status: 404 });
   }
 
-  const session = await getFohSessionForViewer({
-    id: artifact.sessionId,
-    projectId: access.project.id,
-    viewerId: auth.user.id,
-    includeAll: access.backOfHouse,
-  });
-  if (!session) throw data("Not found", { status: 404 });
+  // A session-less artifact (#370, background publish) sits in no conversation, so there is no
+  // per-creator confidentiality to enforce beyond the repo access already checked above — it is
+  // agent output, not somebody's private chat.
+  if (artifact.sessionId) {
+    const session = await getFohSessionForViewer({
+      id: artifact.sessionId,
+      projectId: access.project.id,
+      viewerId: auth.user.id,
+      includeAll: access.backOfHouse,
+    });
+    if (!session) throw data("Not found", { status: 404 });
+  }
 
   // The requested version, or the newest. Looked up CONSTRAINED to the artifact, so a version id
   // belonging to another artifact is not found rather than served — the artifact is what the
@@ -96,7 +96,7 @@ export async function loader(args: LoaderFunctionArgs) {
       // An SVG is safe inside an `<img>` (scripts never run in an image context) but a direct
       // navigation to this URL would execute them same-origin. A download disposition kills that:
       // navigations honour it, image loads ignore it. Raster formats stay inline.
-      "Content-Disposition": `${inline ? "inline" : "attachment"}; filename="${safeFileName(artifact.name)}"`,
+      "Content-Disposition": `${inline ? "inline" : "attachment"}; filename="${safeArtifactFileName(artifact.name)}"`,
       "X-Content-Type-Options": "nosniff",
       // Only a version-scoped URL is immutable. Without the segment this means "whatever is
       // newest", which a year-long cache would freeze at whatever it first happened to be.

@@ -13,12 +13,13 @@
  * on" is the same question for an image, document and page, and answering it separately would be
  * multiple chances to answer it differently.
  */
-import { and, count, desc, eq, gte, lte, sum } from "drizzle-orm";
+import { and, count, desc, eq, gte, isNull, lte, sum } from "drizzle-orm";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 import { db } from "~/db/client.server";
 import { artifactFiles, artifacts, artifactVersions } from "~/db/schema";
+import { newShareToken } from "~/lib/id";
 
 export type Artifact = typeof artifacts.$inferSelect;
 export type ArtifactVersion = typeof artifactVersions.$inferSelect;
@@ -81,9 +82,13 @@ export interface ArtifactFileInput {
 export interface RecordArtifactInput {
   projectId: string;
   agentId: string;
-  sessionId: string;
+  /** Null for a background publish (#370): the artifact exists without a card in any conversation. */
+  sessionId: string | null;
   deploymentId: string;
-  /** Identity, with the session: republishing this name appends a version to the same card. */
+  /**
+   * Identity, with the session — or with the agent's session-less bucket when there is none:
+   * republishing this name appends a version to the same artifact either way.
+   */
   name: string;
   title: string | null;
   kind: string;
@@ -173,9 +178,14 @@ export async function recordArtifact(
     .values(row)
     .onConflictDoNothing()
     .returning();
+  // The insert conflicted on whichever partial unique index covers this row — `(session, name)`
+  // when a conversation is attached, `(agent, name) where session is null` when not (#370) — so the
+  // re-read must key the same way, or a lost race would report "contended" instead of appending.
   const artifact =
     created ??
-    (await findSessionArtifact({ sessionId: row.sessionId, name: row.name }));
+    (row.sessionId
+      ? await findSessionArtifact({ sessionId: row.sessionId, name: row.name })
+      : await findUnattachedArtifact({ agentId: row.agentId, name: row.name }));
   if (!artifact) return { ok: false, reason: "contended" };
   // The kind is pinned for the artifact's life, and this is the only place that can hold it: two
   // concurrent FIRST publishes of one name with different kinds both read "no such artifact" in
@@ -348,6 +358,29 @@ export async function findSessionArtifact(input: {
   return row ?? null;
 }
 
+/**
+ * The artifact a name resolves to in an agent's session-less bucket (#370) — the identity a
+ * background publish keys on. Scoped to the AGENT, not the project: two agents in one repo can both
+ * background-publish `report.html` without colliding, mirroring how two conversations always could.
+ */
+export async function findUnattachedArtifact(input: {
+  agentId: string;
+  name: string;
+}): Promise<Artifact | null> {
+  const [row] = await db
+    .select()
+    .from(artifacts)
+    .where(
+      and(
+        eq(artifacts.agentId, input.agentId),
+        isNull(artifacts.sessionId),
+        eq(artifacts.name, input.name),
+      ),
+    )
+    .limit(1);
+  return row ?? null;
+}
+
 /** Every stored version of one artifact, newest first — what the preview panel's picker lists. */
 export async function listArtifactVersions(
   artifactId: string,
@@ -412,7 +445,12 @@ export async function findAgentArtifactVersion(input: {
 
 /** What a publish is measured against (see `publishArtifact`'s budgets). */
 export interface ArtifactUsage {
-  /** Distinct artifacts (cards) already in this conversation, ever — NOT their versions. */
+  /**
+   * Distinct artifacts already in this publish's ceiling bucket, ever — NOT their versions. The
+   * bucket is the conversation when one is attached, or the agent's session-less pile when not
+   * (#370): each background-publishing agent gets its own ceiling instead of sharing one row of
+   * accounting with every conversation.
+   */
   sessionCount: number;
   /** Versions this repo published inside the budget window. */
   projectCount: number;
@@ -435,14 +473,20 @@ export interface ArtifactUsage {
  */
 export async function artifactUsage(input: {
   projectId: string;
-  sessionId: string;
+  agentId: string;
+  /** Null for a session-less publish — the ceiling then counts the agent's unattached artifacts. */
+  sessionId: string | null;
   /** Start of the rolling project window. */
   since: Date;
 }): Promise<ArtifactUsage> {
   const [session] = await db
     .select({ value: count() })
     .from(artifacts)
-    .where(eq(artifacts.sessionId, input.sessionId));
+    .where(
+      input.sessionId
+        ? eq(artifacts.sessionId, input.sessionId)
+        : and(eq(artifacts.agentId, input.agentId), isNull(artifacts.sessionId)),
+    );
   const [project] = await db
     .select({ value: count(), bytes: sum(artifactVersions.byteSize) })
     .from(artifactVersions)
@@ -526,4 +570,76 @@ export async function findArtifactFile(input: {
     )
     .limit(1);
   return row ?? null;
+}
+
+/**
+ * One artifact by its public share token (#370). The token IS the entire authorization on the
+ * public route — no cookie, no session — which is exactly why the lookup takes nothing else: there
+ * is no second fact the route could constrain it with without inventing one. Safe because the token
+ * is 32 chars of nanoid (~190 bits, `newShareToken`), unique-indexed, and NULL (revoked or legacy)
+ * rows are unreachable — `eq` never matches NULL.
+ */
+export async function findArtifactByShareToken(
+  token: string,
+): Promise<Artifact | null> {
+  if (!token) return null;
+  const [row] = await db
+    .select()
+    .from(artifacts)
+    .where(eq(artifacts.shareToken, token))
+    .limit(1);
+  return row ?? null;
+}
+
+/**
+ * Kill an artifact's public link (#370): NULL the token, and every URL that embedded it 404s on
+ * the next request. Scoped to the project in the WHERE like every BOH mutation, so an id from
+ * another tenant updates nothing. Returns the updated row, or null when the id wasn't theirs.
+ */
+export async function revokeArtifactShareToken(input: {
+  id: string;
+  projectId: string;
+}): Promise<Artifact | null> {
+  const [row] = await db
+    .update(artifacts)
+    .set({ shareToken: null })
+    .where(
+      and(eq(artifacts.id, input.id), eq(artifacts.projectId, input.projectId)),
+    )
+    .returning();
+  return row ?? null;
+}
+
+/**
+ * Mint a fresh public link (#370) — the old token stops working in the same statement the new one
+ * starts, so "rotate" needs no revoke-then-enable window. Also how a revoked or legacy (pre-#370,
+ * NULL token) artifact gets a link at all.
+ */
+export async function regenerateArtifactShareToken(input: {
+  id: string;
+  projectId: string;
+}): Promise<Artifact | null> {
+  const [row] = await db
+    .update(artifacts)
+    .set({ shareToken: newShareToken() })
+    .where(
+      and(eq(artifacts.id, input.id), eq(artifacts.projectId, input.projectId)),
+    )
+    .returning();
+  return row ?? null;
+}
+
+/**
+ * Every artifact in a repo, newest first — the BOH artifacts page (#370). Session-attached
+ * and session-less alike: the page is where an operator finds a background publish that, by
+ * definition, surfaced in no conversation.
+ */
+export async function listProjectArtifacts(
+  projectId: string,
+): Promise<Artifact[]> {
+  return db
+    .select()
+    .from(artifacts)
+    .where(eq(artifacts.projectId, projectId))
+    .orderBy(desc(artifacts.createdAt), desc(artifacts.id));
 }

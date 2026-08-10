@@ -7,7 +7,10 @@ import {
 
 import { auth } from "~/lib/auth.server";
 import { marketingHostRedirect } from "~/lib/marketing-host.server";
-import { previewHostAppRedirect } from "~/lib/preview-origin.server";
+import {
+  isPublicSharePath,
+  previewHostAppRedirect,
+} from "~/lib/preview-origin.server";
 import {
   clearGoogleCallbackCookie,
   isGoogleCallbackStagingRequest,
@@ -291,8 +294,13 @@ export const betterAuthSessionMiddleware: MiddlewareFunction<Response> = async (
   if (isGitHubInstallationCallbackStagingRequest(request)) {
     return hardenDynamicResponse(stageGitHubInstallationCallback(request));
   }
+  // Public share links (#370) are cookie-FREE by contract: the response must not vary by browser
+  // session, and a rolling-refresh `set-cookie` on a URL anyone may hold would hand harnesst
+  // cookies to a page whose whole design is "no cookies here".
   const ownsSession =
-    !isBetterAuthEndpoint(pathname) && !isMachineEndpoint(pathname);
+    !isBetterAuthEndpoint(pathname) &&
+    !isMachineEndpoint(pathname) &&
+    !isPublicSharePath(pathname);
 
   let refreshHeaders: Headers | undefined;
   if (ownsSession) {
