@@ -13,10 +13,12 @@ import {
   useId,
   useMemo,
   useRef,
+  useState,
   type ComponentPropsWithoutRef,
   type ReactNode,
 } from "react";
 import {
+  ArrowDown,
   ArrowUp,
   ChevronRight,
   CircleHelp,
@@ -65,34 +67,80 @@ export function ChatTranscript({
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const pinnedRef = useRef(true);
-  const scrollToBottom = () => {
+  const [pinned, setPinned] = useState(true);
+  // Scrolls we issue ourselves must not be mistaken for the user scrolling back down —
+  // onScroll can't tell them apart on its own.
+  const programmaticRef = useRef(false);
+  const lastScrollTopRef = useRef(0);
+  const setPin = (value: boolean) => {
+    pinnedRef.current = value;
+    setPinned(value);
+  };
+  const scrollToBottom = (behavior?: ScrollBehavior) => {
     const el = ref.current;
-    if (el) el.scrollTop = el.scrollHeight;
+    if (!el) return;
+    programmaticRef.current = true;
+    el.scrollTo({ top: el.scrollHeight, behavior });
   };
   useEffect(() => {
     if (pinnedRef.current) scrollToBottom();
   }, [dep]);
   useEffect(() => {
     if (forceScrollDep == null || forceScrollDep === "") return;
-    pinnedRef.current = true;
+    setPin(true);
     scrollToBottom();
   }, [forceScrollDep]);
   return (
-    // Full-bleed scroll region (content centered inside) so the wheel works anywhere
-    // across the viewport, not just over the centered column.
-    <div
-      ref={ref}
-      className="min-h-0 flex-1 overflow-y-auto overscroll-contain"
-      onScroll={(e) => {
-        const el = e.currentTarget;
-        pinnedRef.current =
-          el.scrollHeight - el.scrollTop - el.clientHeight < PIN_THRESHOLD;
-      }}
-    >
-      <div className="mx-auto w-full max-w-5xl px-4 pt-6 sm:px-6">
-        {lead}
-        <div className="space-y-6 pb-2">{children}</div>
+    <div className="relative min-h-0 flex-1">
+      {/* Full-bleed scroll region (content centered inside) so the wheel works anywhere
+          across the viewport, not just over the centered column. */}
+      <div
+        ref={ref}
+        className="h-full overflow-y-auto overscroll-contain"
+        onWheel={(e) => {
+          // Any upward wheel intent unpins immediately — waiting for the scroll
+          // position to drift PIN_THRESHOLD away loses the race against streaming
+          // content that keeps snapping the view back down.
+          if (e.deltaY < 0) {
+            programmaticRef.current = false;
+            setPin(false);
+          }
+        }}
+        onScroll={(e) => {
+          const el = e.currentTarget;
+          const distanceFromBottom =
+            el.scrollHeight - el.scrollTop - el.clientHeight;
+          const scrolledUp = el.scrollTop < lastScrollTopRef.current - 1;
+          lastScrollTopRef.current = el.scrollTop;
+          if (programmaticRef.current && !scrolledUp) {
+            // Our own scroll-to-bottom only ever moves down — an upward move is
+            // always the user, even mid-programmatic-scroll.
+            if (distanceFromBottom < 2) programmaticRef.current = false;
+            return;
+          }
+          programmaticRef.current = false;
+          if (scrolledUp) setPin(false);
+          else if (distanceFromBottom < PIN_THRESHOLD) setPin(true);
+        }}
+      >
+        <div className="mx-auto w-full max-w-5xl px-4 pt-6 sm:px-6">
+          {lead}
+          <div className="space-y-6 pb-2">{children}</div>
+        </div>
       </div>
+      {!pinned && (
+        <button
+          type="button"
+          aria-label="Scroll to bottom"
+          onClick={() => {
+            setPin(true);
+            scrollToBottom("smooth");
+          }}
+          className="absolute bottom-4 left-1/2 -translate-x-1/2 flex size-9 items-center justify-center rounded-full border bg-background/95 text-foreground shadow-md backdrop-blur transition-colors hover:bg-accent"
+        >
+          <ArrowDown className="size-4" />
+        </button>
+      )}
     </div>
   );
 }
