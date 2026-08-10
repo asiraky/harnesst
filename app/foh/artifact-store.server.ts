@@ -13,7 +13,18 @@
  * on" is the same question for an image, document and page, and answering it separately would be
  * multiple chances to answer it differently.
  */
-import { and, count, desc, eq, gte, isNull, lte, sum } from "drizzle-orm";
+import {
+  and,
+  count,
+  desc,
+  eq,
+  getTableColumns,
+  gte,
+  isNull,
+  lte,
+  sql,
+  sum,
+} from "drizzle-orm";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 
@@ -630,16 +641,32 @@ export async function regenerateArtifactShareToken(input: {
 }
 
 /**
- * Every artifact in a repo, newest first — the BOH artifacts page (#370). Session-attached
- * and session-less alike: the page is where an operator finds a background publish that, by
- * definition, surfaced in no conversation.
+ * Every artifact in a repo, most recently PUBLISHED first — the BOH artifacts page (#370).
+ * Session-attached and session-less alike: the page is where an operator finds a background
+ * publish that, by definition, surfaced in no conversation. "Published" means the newest
+ * version's timestamp, not the artifact row's birth — a daily report republished under one
+ * name must surface at the top each day, not sit at its first-ever publish date.
  */
 export async function listProjectArtifacts(
   projectId: string,
-): Promise<Artifact[]> {
+): Promise<Array<Artifact & { lastPublishedAt: Date }>> {
+  const lastPublishedAt = sql`(
+    select max(${artifactVersions.createdAt})
+    from ${artifactVersions}
+    where ${artifactVersions.artifactId} = ${artifacts.id}
+  )`.mapWith(artifactVersions.createdAt);
   return db
-    .select()
+    .select({
+      ...getTableColumns(artifacts),
+      // Coalesce guards the (should-be-impossible) artifact with zero surviving versions.
+      lastPublishedAt: sql`coalesce(${lastPublishedAt}, ${artifacts.createdAt})`.mapWith(
+        artifactVersions.createdAt,
+      ),
+    })
     .from(artifacts)
     .where(eq(artifacts.projectId, projectId))
-    .orderBy(desc(artifacts.createdAt), desc(artifacts.id));
+    .orderBy(
+      desc(sql`coalesce(${lastPublishedAt}, ${artifacts.createdAt})`),
+      desc(artifacts.id),
+    );
 }

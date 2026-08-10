@@ -21,7 +21,7 @@ import {
 
 import { ConfirmDialog } from "~/components/confirm-dialog";
 import { RelativeTime } from "~/components/localized-values";
-import { AppShell, PageHeader, repoCrumbs } from "~/components/shell";
+import { AgentNav, AppShell, PageHeader, repoCrumbs } from "~/components/shell";
 import { Alert, AlertDescription, AlertTitle } from "~/components/ui/alert";
 import { Button } from "~/components/ui/button";
 import {
@@ -45,6 +45,8 @@ import {
   regenerateArtifactShareToken,
   revokeArtifactShareToken,
 } from "~/foh/artifact-store.server";
+import { listAgents } from "~/db/queries.server";
+import { contextPath } from "~/lib/paths";
 import { requireProject } from "~/project/guard.server";
 import type { Route } from "./+types/projects.$projectId.artifacts";
 
@@ -59,9 +61,14 @@ export const loader = (args: LoaderFunctionArgs) =>
       const project = await requireProject(auth, args.params.projectId, {
         request: args.request,
       });
-      const artifacts = await listProjectArtifacts(project.id);
+      const [artifacts, roster] = await Promise.all([
+        listProjectArtifacts(project.id),
+        listAgents(project.id),
+      ]);
       return {
         project: { id: project.id, name: project.name },
+        isTeam: project.layout === "team",
+        roster: roster.map((agent) => ({ name: agent.name })),
         artifacts: artifacts.map((artifact) => ({
           id: artifact.id,
           name: artifact.name,
@@ -70,7 +77,7 @@ export const loader = (args: LoaderFunctionArgs) =>
           attached: artifact.sessionId !== null,
           versionNumber: artifact.versionNumber,
           byteSize: artifact.byteSize,
-          createdAt: artifact.createdAt,
+          publishedAt: artifact.lastPublishedAt,
           shareUrl: artifactShareUrl(artifact.shareToken),
         })),
       };
@@ -132,7 +139,7 @@ export default function ProjectArtifactsPage({
   loaderData,
   actionData,
 }: Route.ComponentProps) {
-  const { project, artifacts } = loaderData;
+  const { project, isTeam, roster, artifacts } = loaderData;
   const submit = useSubmit();
   const navigation = useNavigation();
   const busy = navigation.state !== "idle";
@@ -142,9 +149,15 @@ export default function ProjectArtifactsPage({
       breadcrumbs={repoCrumbs({
         projectId: project.id,
         repoName: project.name,
-        tail: [{ label: "Published artifacts" }],
+        isTeam,
+        tail: [{ label: "Artifacts" }],
       })}
     >
+      <AgentNav
+        base={contextPath(project.id, null)}
+        level={isTeam ? "repo" : "single"}
+        roster={roster}
+      />
       <PageHeader
         title="Published artifacts"
         description="Everything this repository's agents have published — including files published by background runs, which appear only here. Each artifact's public link opens its newest version for anyone holding the URL, with no sign-in; revoke a link to kill it, or rotate it to invalidate every copy in the wild."
@@ -227,7 +240,7 @@ export default function ProjectArtifactsPage({
                       {sizeLabel(artifact.byteSize)}
                     </TableCell>
                     <TableCell className="text-muted-foreground">
-                      <RelativeTime value={artifact.createdAt} />
+                      <RelativeTime value={artifact.publishedAt} />
                     </TableCell>
                     <TableCell className="text-right">
                       <div className="flex items-center justify-end gap-1">

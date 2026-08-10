@@ -538,14 +538,18 @@ const TABS: Record<NavLevel, { path: string; label: string }[]> = {
     { path: "/deployment", label: "Deployment" },
     { path: "/playground", label: "Playground" },
     { path: "/runs", label: "Runs" },
+    { path: "/artifacts", label: "Artifacts" },
     { path: "/assistant", label: "Assistant" },
     { path: "/settings", label: "Settings" },
   ],
   // Team landing: the repo-wide surfaces. Assistant is project-level (one per repo), so it lives
   // here at the repo level for teams, NOT on each member.
+  // Artifacts is project-level like Assistant: session-less (background-run) publishes have no
+  // conversation card, so this tab is the ONLY discoverable surface for them (#370).
   repo: [
     { path: "", label: "Agents" },
     { path: "/deployment", label: "Deployment" },
+    { path: "/artifacts", label: "Artifacts" },
     { path: "/assistant", label: "Assistant" },
     { path: "/settings", label: "Settings" },
   ],
