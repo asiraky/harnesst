@@ -4,7 +4,7 @@
   "type": "agent",
   "name": "Vercel Issuer",
   "description": "The team's Vercel platform engineer: creates Vercel projects and mints project-scoped tokens for teammates behind a human approval gate. Holds the one full-account token; every privileged operation shows the human the exact request and justification before it runs.",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "eve": ">=0.22.0",
   "model": "anthropic/claude-sonnet-5",
   "files": ["agent.ts", "instructions.md", "tools/vercel-provision.ts"],
@@ -18,6 +18,10 @@
     {
       "name": "VERCEL_MASTER_TOKEN",
       "description": "Full-account Vercel token (vercel.com/account/tokens) — the trust root that creates projects and mints project-scoped tokens. Read only by this agent's tool code; never exposed to the sandbox shell, and both tools that can use it always require human approval."
+    },
+    {
+      "name": "VERCEL_TEAM_ID",
+      "description": "Optional — leave blank to skip. Your Vercel team id (starts with team_; dashboard → team → Settings → General → Team ID). When set, projects are created inside that team; when unset, they are created in your personal account (Hobby) scope, which carries Vercel's non-commercial restrictions. Set it if you created a Pro team. An id, not a credential."
     }
   ]
 }
