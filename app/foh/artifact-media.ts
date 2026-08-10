@@ -347,6 +347,12 @@ export function artifactRendersInline(contentType: string): boolean {
   return ARTIFACT_INLINE_TYPES.includes(contentType);
 }
 
+/** A quoted `filename` for a disposition header — never the raw agent-supplied name. */
+export function safeArtifactFileName(name: string): string {
+  const cleaned = name.replace(/[^A-Za-z0-9._-]/g, "_").slice(0, 100);
+  return cleaned || "artifact";
+}
+
 /** Whether this kind may use the cookie-authenticated single-file serving route. */
 export function artifactIsSingleFileKind(
   kind: string,

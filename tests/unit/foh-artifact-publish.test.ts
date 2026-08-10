@@ -5,7 +5,9 @@
  * derived from the live turn on the CALLING deployment; deriving it from "the agent's newest
  * conversation" instead was a cross-member image leak, because one deployment serves every member's
  * FOH sessions and those sessions are per-creator confidential. Two live turns are refused rather
- * than guessed, and a publish with no live turn is refused too.
+ * than guessed. No live turn at all publishes SESSION-LESS (#370): a real artifact with a public
+ * share link but no card, its sandbox read from the control plane's own run ledger — never from
+ * anything the request claimed.
  *
  * The budgets are the second: the caller is an agent that can loop, nothing ever deletes stored
  * bytes, and every in-flight copy holds its tar in this process's heap.
@@ -117,6 +119,7 @@ type Deps = PublishArtifactDeps & {
 function makeDeps(
   over: {
     find?: PublishArtifactDeps["findSession"];
+    background?: PublishArtifactDeps["findBackgroundRun"];
     copy?: PublishArtifactDeps["copyFile"];
     copyBundle?: PublishArtifactDeps["copyBundle"];
     usage?: PublishArtifactDeps["usage"];
@@ -134,16 +137,26 @@ function makeDeps(
       (row) => row.sessionId === input.sessionId && row.name === input.name,
     ) ?? null;
 
+  const findUnattached: PublishArtifactDeps["findUnattached"] = async (input) =>
+    rows.find(
+      (row) =>
+        row.agentId === input.agentId &&
+        row.sessionId === null &&
+        row.name === input.name,
+    ) ?? null;
+
   const record: PublishArtifactDeps["record"] = async (input) => {
     const { files: members, keepVersions, maxVersions, ...row } = input;
-    let artifact = await findArtifact({
-      sessionId: row.sessionId,
-      name: row.name,
-    });
+    // The store's identity dispatch (#370): `(session, name)` when a conversation is attached,
+    // `(agent, name)` in the session-less bucket when not.
+    let artifact = row.sessionId
+      ? await findArtifact({ sessionId: row.sessionId, name: row.name })
+      : await findUnattached({ agentId: row.agentId, name: row.name });
     if (!artifact) {
       artifact = {
         ...row,
         id: `art_${rows.length + 1}`,
+        shareToken: `share_${rows.length + 1}_${"x".repeat(24)}`,
         latestVersionId: null,
         versionNumber: 0,
         versionCount: 0,
@@ -229,6 +242,10 @@ function makeDeps(
       return `${sha256.slice(0, 2)}/${sha256}`;
     },
     findArtifact,
+    findUnattached,
+    findBackgroundRun:
+      over.background ??
+      (async () => ({ ok: false as const, reason: "none" as const })),
     record,
     now: () => NOW,
   };
@@ -305,10 +322,14 @@ describe("publishArtifact destination", () => {
     });
   });
 
-  it("refuses when no conversation is running a turn instead of falling back to the newest one", async () => {
+  it("publishes session-less from a background run, reading the sandbox from the run ledger (#370)", async () => {
     const deploymentId = await seedDeployment();
     const deps = makeDeps({
       find: async () => ({ ok: false, reason: "no_live_turn" }),
+      background: async () => ({
+        ok: true,
+        sandboxSessionId: "wrun_background",
+      }),
     });
 
     const result = await publishArtifact(
@@ -316,14 +337,113 @@ describe("publishArtifact destination", () => {
       deps,
     );
 
-    expect(result.ok).toBe(false);
-    if (result.ok) return;
-    expect(result.error).toMatch(
-      /no Front of House conversation waiting on you/i,
+    expect(result).toMatchObject({ ok: true, name: "chart.png", version: 1 });
+    if (!result.ok) return;
+    // The public link is what makes a card-less publish reachable at all.
+    expect(result.shareUrl).toMatch(/\/a\/share_1_/);
+    // No conversation: no card, no transcript position — but a real artifact row.
+    expect(deps.rows[0]).toMatchObject({
+      sessionId: null,
+      streamIndex: 0,
+      projectId: PROJECT,
+      agentId: "agent_1",
+      deploymentId,
+    });
+    // The sandbox comes from the control plane's own run ledger, never the request body; the
+    // world is still the authenticated deployment's environment.
+    expect(deps.copies[0]).toMatchObject({
+      worldKey: "env_1",
+      sandboxSessionId: "wrun_background",
+    });
+  });
+
+  it("republishing a name from background runs refines one session-less artifact (#370)", async () => {
+    const deploymentId = await seedDeployment();
+    const deps = makeDeps({
+      find: async () => ({ ok: false, reason: "no_live_turn" }),
+      background: async () => ({ ok: true, sandboxSessionId: "wrun_bg" }),
+    });
+
+    const first = await publishArtifact(
+      { deploymentId, path: "artifacts/chart.png" },
+      deps,
     );
+    deps.copyFile = async () => ({
+      ok: true,
+      bytes: Buffer.concat([PNG, Buffer.from([0xff])]),
+    });
+    const second = await publishArtifact(
+      { deploymentId, path: "artifacts/chart.png" },
+      deps,
+    );
+
+    expect(first).toMatchObject({ ok: true, version: 1 });
+    expect(second).toMatchObject({ ok: true, version: 2, updated: true });
+    expect(deps.rows).toHaveLength(1);
+  });
+
+  it("refuses a background publish when no run is traceable, and when several are", async () => {
+    const deploymentId = await seedDeployment();
+    const none = makeDeps({
+      find: async () => ({ ok: false, reason: "no_live_turn" }),
+    });
+    const several = makeDeps({
+      find: async () => ({ ok: false, reason: "no_live_turn" }),
+      background: async () => ({ ok: false, reason: "ambiguous" }),
+    });
+
+    const refusedNone = await publishArtifact(
+      { deploymentId, path: "artifacts/chart.png" },
+      none,
+    );
+    const refusedSeveral = await publishArtifact(
+      { deploymentId, path: "artifacts/chart.png" },
+      several,
+    );
+
+    expect(refusedNone.ok).toBe(false);
+    if (refusedNone.ok) return;
+    expect(refusedNone.error).toMatch(/conversation or a background run/i);
+    expect(refusedSeveral.ok).toBe(false);
+    if (refusedSeveral.ok) return;
+    expect(refusedSeveral.error).toMatch(/More than one background run/i);
     // Nothing was read: a refusal must not cost a 25 MB copy either.
+    expect(none.copies).toHaveLength(0);
+    expect(several.copies).toHaveLength(0);
+    expect(none.rows).toHaveLength(0);
+  });
+
+  it("publishes a session-less document from its request bytes without needing any sandbox", async () => {
+    const deploymentId = await seedDeployment();
+    let consulted = false;
+    const deps = makeDeps({
+      find: async () => ({ ok: false, reason: "no_live_turn" }),
+      background: async () => {
+        consulted = true;
+        return { ok: false, reason: "none" };
+      },
+    });
+
+    const result = await publishArtifact(
+      {
+        deploymentId,
+        path: "artifacts/report.pdf",
+        kind: "document",
+        documentBytes: PDF,
+      },
+      deps,
+    );
+
+    expect(result).toMatchObject({
+      ok: true,
+      kind: "document",
+      contentType: "application/pdf",
+    });
+    // The bytes arrived in the request, so "which sandbox" never needed answering — a scheduled
+    // job whose run hook failed to report can still deliver a PDF.
+    expect(consulted).toBe(false);
     expect(deps.copies).toHaveLength(0);
-    expect(deps.rows).toHaveLength(0);
+    expect(deps.rows[0]).toMatchObject({ sessionId: null });
   });
 
   it("refuses when two conversations are live at once rather than guessing between members", async () => {
@@ -917,10 +1037,42 @@ describe("publishArtifact budgets", () => {
     expect(deps.copies).toHaveLength(0);
   });
 
+  it("re-bases the per-conversation ceiling onto the agent's session-less pile for a background publish (#370)", async () => {
+    const deploymentId = await seedDeployment();
+    const seen: Array<{ agentId: string; sessionId: string | null }> = [];
+    const deps = makeDeps({
+      find: async () => ({ ok: false, reason: "no_live_turn" }),
+      background: async () => ({ ok: true, sandboxSessionId: "wrun_bg" }),
+      usage: async (input) => {
+        seen.push(input);
+        return {
+          sessionCount: MAX_ARTIFACTS_PER_SESSION,
+          projectCount: 1,
+          projectBytes: 10,
+        };
+      },
+    });
+
+    const result = await publishArtifact(
+      { deploymentId, path: "artifacts/chart.png" },
+      deps,
+    );
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error).toMatch(/published outside conversations/i);
+    // The bucket the count was asked for is the agent's, not any conversation's.
+    expect(seen[0]).toMatchObject({ agentId: "agent_1", sessionId: null });
+    expect(deps.copies).toHaveLength(0);
+  });
+
   it("refuses on the repo's daily count and byte ceilings, and measures them over the window", async () => {
     const deploymentId = await seedDeployment();
-    const seen: Array<{ since: Date; projectId: string; sessionId: string }> =
-      [];
+    const seen: Array<{
+      since: Date;
+      projectId: string;
+      sessionId: string | null;
+    }> = [];
     const byCount = makeDeps({
       usage: async (input) => {
         seen.push(input);

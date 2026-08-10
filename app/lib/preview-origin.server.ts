@@ -119,6 +119,18 @@ export function isArtifactPreviewPath(pathname: string): boolean {
 }
 
 /**
+ * The public artifact share family, `/a/<token>` (#370) — the second path the sandbox origin
+ * serves. It has to be listed here for the same reason the preview family is: the share route
+ * bounces itself onto the preview origin (agent-authored bytes never serve from the app origin
+ * when a sandbox origin exists), so `previewHostAppRedirect` treating `/a/…` as "not mine" would
+ * ping-pong every share link between the two hosts. Same case rule as above.
+ */
+export function isPublicSharePath(pathname: string): boolean {
+  const normalized = pathname.toLowerCase();
+  return normalized === "/a" || normalized.startsWith("/a/");
+}
+
+/**
  * The other half of the split, applied by the root session middleware: on the sandbox origin,
  * anything that is NOT a preview goes back to the app origin.
  *
@@ -133,7 +145,8 @@ export function previewHostAppRedirect(request: Request): Response | null {
   if (method !== "GET" && method !== "HEAD") return null;
   if (!isPreviewHost(request)) return null;
   const url = new URL(request.url);
-  if (isArtifactPreviewPath(url.pathname)) return null;
+  if (isArtifactPreviewPath(url.pathname) || isPublicSharePath(url.pathname))
+    return null;
   const app = appOrigin();
   return app ? redirect(`${app}${url.pathname}${url.search}`) : null;
 }

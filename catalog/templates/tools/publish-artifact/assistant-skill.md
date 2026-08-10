@@ -7,10 +7,18 @@ description:
 # Publish Artifact (installed tool)
 
 Publishes an image, PDF document, or static HTML page from the current agent or subagent's home
-directory into the Front of House conversation, where it appears as a card the user can see. For a
-PDF in a declared subagent's isolated sandbox, the tool reads the file and sends it in the private
-tool request; the bytes never enter model context. Harnesst stores the exact bytes at publish time,
-so the card survives the agent scaling to zero or redeploying.
+directory. In a live Front of House conversation it appears as a card the user can see; from a
+background or scheduled run it is published without a card, reachable through its public link. For
+a PDF in a declared subagent's isolated sandbox, the tool reads the file and sends it in the
+private tool request; the bytes never enter model context. Harnesst stores the exact bytes at
+publish time, so the artifact survives the agent scaling to zero or redeploying.
+
+Every publish returns `shareUrl`: a stable PUBLIC link to the artifact's newest version that
+anyone holding it can open, with no harnesst sign-in. Quote it in your reply (or post it to a
+channel) whenever the result is meant to be shared; keep it out of the reply when the content is
+sensitive — the URL itself is the only key, and an operator can revoke or rotate it from the
+repository's Artifacts page. Republishing the same name updates what the link shows; the link
+itself does not change.
 
 **Images** — PNG, JPEG, WebP or SVG, up to 25 MB. The type is read from the file's own bytes, so
 renaming something else to `.png` is refused. Images are served back behind the user's own sign-in
@@ -41,8 +49,9 @@ reason. Put data in the page — a `<script>` literal, or a `<script type="appli
 read with `textContent`. Stylesheets, scripts, fonts and images loaded with `<link>`, `<script src>`
 and `<img src>` are fine; only the network APIs are closed.
 
-That is also why a page publish returns no URL: there is no permanent link to quote, so say in the
-reply that you published the page and let the card open it.
+The same sandbox applies when a page is opened through its public `shareUrl`, which always serves
+the newest version. A page publish returns no in-app `url` (the preview is minted when the user
+opens the card), so `shareUrl` is the one link you can quote for a page.
 
 **Revising something you already published** — publish it again under the SAME file name. The card
 already in the conversation updates in place to the new version, with a version picker the user can
@@ -63,10 +72,15 @@ Every kind must live under `/workspace/home`: write it to `/workspace/home/artif
 directory if needed), or publish a browser screenshot straight out of
 `/workspace/home/agent-browser/screenshots/` when the agent-browser skill is installed too.
 
-Publishing only works from INSIDE the turn you are answering someone in harnesst: the card goes to
-that conversation, and harnesst refuses rather than guess when there is no live conversation (a
-background/channel run) or when the agent happens to be answering two people at once. So publish as
-part of the reply that mentions it, not from a scheduled job or a follow-up pass.
+WHERE a publish lands depends on when it happens. Inside the turn you are answering someone in
+harnesst, the card goes to that conversation — publish as part of the reply that mentions it.
+From a background, scheduled or channel run there is no conversation: the publish still succeeds,
+with no card, and the `shareUrl` (plus the repository's back-of-house Artifacts page) is how
+anyone reaches it — so a background run that produces something should include the `shareUrl` in
+whatever it reports. Background publishes of one name are their own artifact, separate from any
+conversation's card with the same name. harnesst still refuses rather than guess when the agent is
+answering two people at once, or when several background runs are executing on the same deployment
+and it cannot tell whose workspace holds the file.
 
 Pair it with whatever produced the artifact: an agent that downloads evidence, takes screenshots,
 renders a chart, or builds a page can preserve the exact output without moving its bytes through

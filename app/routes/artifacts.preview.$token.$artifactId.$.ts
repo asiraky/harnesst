@@ -67,13 +67,17 @@ export async function loader({ params, request }: LoaderFunctionArgs) {
     : await latestArtifactVersion(artifactId);
   if (!version || !version.entryPath) throw notFound();
 
-  const session = await getFohSessionForViewer({
-    id: artifact.sessionId,
-    projectId: artifact.projectId,
-    viewerId: claim.userId,
-    includeAll: claim.backOfHouse,
-  });
-  if (!session) throw notFound();
+  // A session-less artifact (#370) has no conversation whose visibility could be re-checked; the
+  // signed claim's project match above is the whole authorization, as it is for the share route.
+  if (artifact.sessionId) {
+    const session = await getFohSessionForViewer({
+      id: artifact.sessionId,
+      projectId: artifact.projectId,
+      viewerId: claim.userId,
+      includeAll: claim.backOfHouse,
+    });
+    if (!session) throw notFound();
+  }
 
   // An empty splat is the entry document, so `/artifacts/preview/<token>/<id>/` opens the page —
   // the SELECTED version's, which is what makes the panel's picker work with no change to the URL

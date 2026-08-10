@@ -77,6 +77,10 @@ export default [
     "artifacts/preview/:token/:artifactId/*",
     "routes/artifacts.preview.$token.$artifactId.$.ts",
   ),
+  // Public artifact share links (#370): `/a/<token>`, token-only — no id segment, so the URL
+  // reveals nothing but the capability itself. Same top-level-path reasoning as the preview above;
+  // the splat is the page-bundle member path, empty for the entry document or a single file.
+  route("a/:token/*", "routes/a.$token.$.ts"),
   // Marketing surface. The landing lives inside the FOH index route (host split, D11:
   // MARKETING_HOST serves it; every other host serves FOH). Case studies + sitemap +
   // robots stay pathname-routed with per-host behavior in their loaders.
@@ -146,6 +150,12 @@ export default [
     "routes/projects.$projectId.sessions.archived.tsx",
   ),
   route("repos/:projectId/runs", "routes/projects.$projectId.runs.tsx"),
+  // Published artifacts + public share-link management (#370). Back of house: the only place a
+  // background (session-less) publish surfaces, and where links are revoked or rotated.
+  route(
+    "repos/:projectId/artifacts",
+    "routes/projects.$projectId.artifacts.tsx",
+  ),
   memberRoute("/runs", "routes/projects.$projectId.runs.tsx", "member-runs"),
   route(
     "repos/:projectId/runs/:runId",

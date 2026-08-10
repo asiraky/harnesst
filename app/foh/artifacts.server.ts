@@ -57,15 +57,18 @@ import {
   sniffArtifactContentType,
   sniffArtifactDocumentContentType,
 } from "~/foh/artifact-media";
+import { backgroundRunForDeployment } from "~/foh/background-run.server";
 import { fohArtifactSandboxSessionId } from "~/foh/session-workspace";
 import {
   artifactUsage,
   findSessionArtifact,
+  findUnattachedArtifact,
   recordArtifact,
   writeArtifactBytes,
   type ArtifactFileInput,
   type RecordArtifactResult,
 } from "~/foh/artifact-store.server";
+import { appOrigin } from "~/lib/marketing-host.server";
 import { liveFohTurnForDeployment } from "~/playground/sessions.server";
 import { getRuntime } from "~/seams/index.server";
 
@@ -154,10 +157,14 @@ export interface PublishArtifactDeps {
   writeBytes: (sha256: string, bytes: Buffer) => Promise<string>;
   /** Resolve `(session, name)` to the artifact a republish lands on, or null for a new one. */
   findArtifact: typeof findSessionArtifact;
+  /** The same, in the agent's session-less bucket — identity for a background publish (#370). */
+  findUnattached: typeof findUnattachedArtifact;
   /** Append these bytes to that artifact as a version (or recognise them as the one on top). */
   record: typeof recordArtifact;
   /** The conversation an artifact published by this agent belongs to — the live turn's, only. */
   findSession: typeof liveFohTurnForDeployment;
+  /** The sandbox a background publish reads from, when no FOH turn is live (#370). */
+  findBackgroundRun: typeof backgroundRunForDeployment;
   /** Consumption the publish is held against (see the budgets above). */
   usage: typeof artifactUsage;
   now: () => Date;
@@ -170,8 +177,10 @@ export function defaultPublishArtifactDeps(): PublishArtifactDeps {
     copyBundle: copyArtifactBundleFromInstance,
     writeBytes: writeArtifactBytes,
     findArtifact: findSessionArtifact,
+    findUnattached: findUnattachedArtifact,
     record: recordArtifact,
     findSession: liveFohTurnForDeployment,
+    findBackgroundRun: backgroundRunForDeployment,
     usage: artifactUsage,
     now: () => new Date(),
   };
@@ -201,6 +210,11 @@ export type PublishArtifactResult =
        * hand the agent. It says "published" in the reply; the card opens the preview.
        */
       url: string | null;
+      /**
+       * Stable PUBLIC link (#370): `/a/<token>`, serving the latest version to anyone holding it —
+       * no sign-in, every kind including pages. Null only when sharing was revoked for this name.
+       */
+      shareUrl: string | null;
       name: string;
       contentType: string;
       byteSize: number;
@@ -313,6 +327,14 @@ export async function publishArtifact(
   // one deployment serves every member's conversation with this agent, so the newest row is
   // routinely someone else's and publishing into it would show one member's image to another
   // (and let them download the bytes). See `liveFohTurnForDeployment`.
+  //
+  // NO live turn no longer refuses (#370): the publish lands session-less — a real artifact with a
+  // public share URL, just no card in any conversation. What the fallback must re-derive is the
+  // SANDBOX: the FOH row named it, so a background publish takes it from the control plane's own
+  // run ledger instead (`backgroundRunForDeployment` — the body still names nothing). A document
+  // carries its bytes in the request and needs no sandbox at all. Ambiguity still refuses on both
+  // paths: several live conversations or several concurrent background sessions is the same
+  // "whose files would these be" question, answered the same way.
   const found = await deps.findSession({
     projectId: project.id,
     agentId: agent.id,
@@ -320,28 +342,67 @@ export async function publishArtifact(
     staleAfterMs: TURN_IDLE_TIMEOUT_MS,
     now: deps.now(),
   });
-  if (!found.ok) {
+  if (!found.ok && found.reason === "ambiguous") {
     return deny(
-      found.reason === "ambiguous"
-        ? "You are working on more than one Front of House conversation at once, so harnesst cannot tell which one this file belongs to. Publish it when only this conversation is running."
-        : "There is no Front of House conversation waiting on you right now, so there is nowhere to show the file. Publish it while you are answering someone in harnesst.",
+      "You are working on more than one Front of House conversation at once, so harnesst cannot tell which one this file belongs to. Publish it when only this conversation is running.",
     );
   }
-  const session = found.session;
-  const sandboxSessionId = fohArtifactSandboxSessionId(session);
-  if (!sandboxSessionId || !session.worldKey) {
-    return deny(
-      "harnesst could not identify this conversation's isolated workspace, so it refused to publish a file from anywhere else.",
-    );
+  let destination: {
+    sessionId: string | null;
+    streamIndex: number;
+    sandboxSessionId: string | null;
+    worldKey: string;
+  };
+  if (found.ok) {
+    const session = found.session;
+    const sandboxSessionId = fohArtifactSandboxSessionId(session);
+    if (!sandboxSessionId || !session.worldKey) {
+      return deny(
+        "harnesst could not identify this conversation's isolated workspace, so it refused to publish a file from anywhere else.",
+      );
+    }
+    destination = {
+      sessionId: session.id,
+      streamIndex: session.streamIndex,
+      sandboxSessionId,
+      worldKey: session.worldKey,
+    };
+  } else if (kind === "document" && input.documentBytes) {
+    destination = {
+      sessionId: null,
+      streamIndex: 0,
+      sandboxSessionId: null,
+      worldKey: deployment.environmentId,
+    };
+  } else {
+    const run = await deps.findBackgroundRun({
+      deploymentId: deployment.id,
+      now: deps.now(),
+    });
+    if (!run.ok) {
+      return deny(
+        run.reason === "ambiguous"
+          ? "More than one background run is executing on this deployment right now, so harnesst cannot tell whose workspace this file is in. Publish it when only one run is active."
+          : "harnesst cannot see a conversation or a background run to read this file from. Publish it from inside a run, while the file's workspace is live.",
+      );
+    }
+    destination = {
+      sessionId: null,
+      streamIndex: 0,
+      sandboxSessionId: run.sandboxSessionId,
+      worldKey: deployment.environmentId,
+    };
   }
 
-  // IDENTITY (#292): a name inside a conversation. Republishing it appends a version to the card
-  // that is already on screen, which is the whole refine loop — "make it bolder", publish again,
-  // the same card updates. Resolved before the copy so both refusals below are free.
-  const existing = await deps.findArtifact({
-    sessionId: session.id,
-    name: source.name,
-  });
+  // IDENTITY (#292): a name inside a conversation — or, session-less, a name in the agent's
+  // unattached bucket (#370). Republishing it appends a version to the same artifact either way,
+  // which is the whole refine loop. Resolved before the copy so both refusals below are free.
+  const existing = destination.sessionId
+    ? await deps.findArtifact({
+        sessionId: destination.sessionId,
+        name: source.name,
+      })
+    : await deps.findUnattached({ agentId: agent.id, name: source.name });
   if (existing && existing.kind !== kind) {
     // The kind is pinned for the artifact's life: the serving routes are chosen by it (an image is
     // served same-origin behind the viewer's cookie, a page only through the sandboxed preview), so
@@ -362,15 +423,20 @@ export async function publishArtifact(
 
   const usage = await deps.usage({
     projectId: project.id,
-    sessionId: session.id,
+    agentId: agent.id,
+    sessionId: destination.sessionId,
     since: new Date(deps.now().getTime() - ARTIFACT_BUDGET_WINDOW_MS),
   });
   // Only a NEW card is held to the conversation ceiling: that budget bounds how much a transcript
   // holds, and a republish adds no card. Its bytes are still charged to the daily repo ceiling
-  // below, which is the one that bounds the disk.
+  // below, which is the one that bounds the disk. Session-less, the same ceiling re-bases onto the
+  // agent's unattached pile (#370) — a background loop minting fresh names is exactly the runaway
+  // the conversation count was bounding.
   if (!existing && usage.sessionCount >= MAX_ARTIFACTS_PER_SESSION) {
     return deny(
-      `This conversation already holds ${MAX_ARTIFACTS_PER_SESSION} published files, which is the limit. Describe the file instead, or start a new conversation.`,
+      destination.sessionId
+        ? `This conversation already holds ${MAX_ARTIFACTS_PER_SESSION} published files, which is the limit. Describe the file instead, or start a new conversation.`
+        : `This agent already holds ${MAX_ARTIFACTS_PER_SESSION} files published outside conversations, which is the limit. Republish an existing name to update it instead of minting new ones.`,
     );
   }
   if (
@@ -391,13 +457,13 @@ export async function publishArtifact(
   const common = {
     projectId: project.id,
     agentId: agent.id,
-    sessionId: session.id,
+    sessionId: destination.sessionId,
     deploymentId: deployment.id,
     name: source.name,
     title: input.title?.trim()
       ? input.title.trim().slice(0, MAX_TITLE_LENGTH)
       : null,
-    streamIndex: session.streamIndex,
+    streamIndex: destination.streamIndex,
     keepVersions: MAX_ARTIFACT_VERSIONS_KEPT,
     maxVersions: MAX_ARTIFACT_VERSIONS_TOTAL,
   };
@@ -411,8 +477,8 @@ export async function publishArtifact(
         source,
         common,
         capSha,
-        sandboxSessionId,
-        worldKey: session.worldKey,
+        sandboxSessionId: destination.sandboxSessionId,
+        worldKey: destination.worldKey,
       },
       deps,
     );
@@ -423,8 +489,8 @@ export async function publishArtifact(
       source,
       common,
       capSha,
-      sandboxSessionId,
-      worldKey: session.worldKey,
+      sandboxSessionId: destination.sandboxSessionId,
+      worldKey: destination.worldKey,
     },
     kind,
     input.documentBytes,
@@ -436,7 +502,7 @@ export async function publishArtifact(
 interface ArtifactRowCommon {
   projectId: string;
   agentId: string;
-  sessionId: string;
+  sessionId: string | null;
   deploymentId: string;
   name: string;
   title: string | null;
@@ -445,10 +511,23 @@ interface ArtifactRowCommon {
   maxVersions: number;
 }
 
+/**
+ * The stable public link for a share token (#370): absolute when the app knows its own origin
+ * (`BETTER_AUTH_URL`), a path the caller can resolve otherwise. Null token — sharing revoked, or a
+ * pre-#370 row — is null: there is no public URL, not a broken one.
+ */
+export function artifactShareUrl(shareToken: string | null): string | null {
+  if (!shareToken) return null;
+  const origin = appOrigin();
+  const path = `/a/${shareToken}`;
+  return origin ? `${origin}${path}` : path;
+}
+
 interface PublishHalfInput {
   deployment: { id: string };
   worldKey: string;
-  sandboxSessionId: string;
+  /** Null only for a session-less document publish, whose bytes arrived in the request (#370). */
+  sandboxSessionId: string | null;
   source: { path: string; name: string };
   common: ArtifactRowCommon;
   /**
@@ -498,20 +577,28 @@ async function publishFile(
   suppliedBytes: Buffer | undefined,
   deps: PublishArtifactDeps,
 ): Promise<PublishArtifactResult> {
-  const copied = suppliedBytes
-    ? { ok: true as const, bytes: suppliedBytes }
-    : await (async () => {
-        const slot = await withArtifactCopySlot(() =>
-          deps.copyFile({
-            deploymentId: deployment.id,
-            worldKey,
-            sandboxSessionId,
-            path: source.path,
-            maxBytes: ARTIFACT_MAX_BYTES,
-          }),
-        );
-        return slot.ok ? slot.value : ({ ok: false, error: BUSY } as const);
-      })();
+  // Unreachable via `publishArtifact` (a null sandbox is only ever paired with supplied bytes) but
+  // the type allows it, and the safe answer is the workspace refusal, not a copy aimed at "".
+  if (!suppliedBytes && !sandboxSessionId) {
+    return deny(
+      "harnesst could not identify this run's isolated workspace, so it refused to publish a file from anywhere else.",
+    );
+  }
+  const copied =
+    suppliedBytes || !sandboxSessionId
+      ? { ok: true as const, bytes: suppliedBytes! }
+      : await (async () => {
+          const slot = await withArtifactCopySlot(() =>
+            deps.copyFile({
+              deploymentId: deployment.id,
+              worldKey,
+              sandboxSessionId,
+              path: source.path,
+              maxBytes: ARTIFACT_MAX_BYTES,
+            }),
+          );
+          return slot.ok ? slot.value : ({ ok: false, error: BUSY } as const);
+        })();
   if (!copied.ok) return deny(copied.error);
 
   const contentType =
@@ -559,6 +646,7 @@ async function publishFile(
     // Version-scoped, so the URL in transcript data stays immutably cacheable while the card it
     // sits on goes on changing.
     url: artifactUrl(artifact.projectId, artifact.id, version.id),
+    shareUrl: artifactShareUrl(artifact.shareToken),
     name: artifact.name,
     contentType: version.contentType,
     byteSize: version.byteSize,
@@ -586,6 +674,13 @@ async function publishBundle(
   }: PublishHalfInput,
   deps: PublishArtifactDeps,
 ): Promise<PublishArtifactResult> {
+  // A bundle is always copied out of a sandbox, so a null here (typed for the document path) is a
+  // wiring error upstream — refuse the same way a lost workspace does.
+  if (!sandboxSessionId) {
+    return deny(
+      "harnesst could not identify this run's isolated workspace, so it refused to publish a file from anywhere else.",
+    );
+  }
   const slot = await withArtifactCopySlot(() =>
     deps.copyBundle({
       deploymentId: deployment.id,
@@ -675,9 +770,11 @@ async function publishBundle(
     artifactId: artifact.id,
     artifactVersionId: version.id,
     kind: artifact.kind,
-    // No stable URL by design — a bundle is reachable only through a short-lived preview token the
-    // app mints when the user opens the card.
+    // No stable APP url by design — a bundle is reachable only through a short-lived preview token
+    // the app mints when the user opens the card. The PUBLIC link (#370) is the exception: it goes
+    // out through the sandboxed share route, which is its own trust story.
     url: null,
+    shareUrl: artifactShareUrl(artifact.shareToken),
     name: artifact.name,
     contentType: version.contentType,
     byteSize: version.byteSize,

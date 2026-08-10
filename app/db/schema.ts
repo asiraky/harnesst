@@ -18,7 +18,7 @@ import { sql } from "drizzle-orm";
 
 // Type-only (erased at runtime, so no import cycle): the publish pipeline's step shape.
 import type { PipelineStep } from "~/data/ports";
-import { newId } from "~/lib/id";
+import { newId, newShareToken } from "~/lib/id";
 import {
   organization,
   session as authSession,
@@ -1610,14 +1610,20 @@ export const inboxItems = pgTable(
  * is reallocated on every wake and its container is disposable, so an artifact whose lifetime was
  * tied to either would break the moment the agent scaled to zero.
  *
- * A row is a transcript element, not a file record: it is keyed to the FOH session it was
- * published into plus the `stream_index` position the cache had reached, so the card renders in
- * the turn it belongs to (see `mergeArtifactEntries`) and survives every reload.
+ * A row fundamentally belongs to (project, agent); landing a CARD in a conversation is the
+ * optional extra (issue #370). A publish made inside a live FOH turn keys the row to that session
+ * plus the `stream_index` position the cache had reached, so the card renders in the turn it
+ * belongs to (see `mergeArtifactEntries`) and survives every reload. A publish from a background
+ * run — a schedule firing, a channel turn — has no conversation to land in, so `session_id` is
+ * null, no card exists anywhere, and the artifact is reachable through its share URL and the
+ * back-of-house listing instead.
  *
  * THE UNIT IS "A NAMED ARTIFACT IN A CONVERSATION", NOT A FILE (issue #292). Republishing the same
  * name appends a row to `artifact_versions` and leaves this row's id — and therefore the card — in
  * place, which is what makes the refine loop ("make it bolder", republish) update the card the user
- * is already looking at instead of stacking a second one. The content columns below (`entry_path`,
+ * is already looking at instead of stacking a second one. Session-less artifacts get the equivalent
+ * identity one scope up: a NAME in the agent's no-session bucket (`artifacts_agent_unattached_name_uq`),
+ * with the same republish/version semantics. The content columns below (`entry_path`,
  * `content_type`, `byte_size`, `sha256`, `storage_path`) are the LATEST version's, denormalized so
  * the transcript read stays one indexed select; the versions table is the record.
  *
@@ -1635,9 +1641,18 @@ export const artifacts = pgTable(
     agentId: varchar("agent_id", { length: 12 })
       .notNull()
       .references(() => agents.id, { onDelete: "cascade" }),
-    sessionId: varchar("session_id", { length: 12 })
-      .notNull()
-      .references(() => playgroundSessions.id, { onDelete: "cascade" }),
+    /**
+     * The FOH conversation whose card this is — NULL for a session-less publish (issue #370: a
+     * background/scheduled run has no conversation, and an artifact must never land in someone
+     * else's). The cascade is deliberate and is what DEFINES conversation deletion for artifacts:
+     * deleting a conversation deletes its artifacts and their share URLs go 404; archiving deletes
+     * nothing, so an archived conversation's share links keep working. Session-less rows are keyed
+     * to the agent alone and outlive every conversation.
+     */
+    sessionId: varchar("session_id", { length: 12 }).references(
+      () => playgroundSessions.id,
+      { onDelete: "cascade" },
+    ),
     /** Soft ref (no FK): which deployment published it. Provenance only — deployments come and go. */
     deploymentId: varchar("deployment_id", { length: 12 }),
     /** File name as the agent published it (basename only — never a path). */
@@ -1677,7 +1692,8 @@ export const artifacts = pgTable(
      * Cache-space transcript position (see `playground_events.stream_index`) the card sorts after.
      * FROZEN at first publish (#292): a republish that moved it would slide the card down past the
      * turns that happened in between, which is the opposite of updating in place. Each version
-     * keeps its own publish position on its own row.
+     * keeps its own publish position on its own row. Session-less rows (#370) write 0: they never
+     * enter a transcript (`listArtifactsForSession` keys on the session), so the value is inert.
      */
     streamIndex: integer("stream_index").notNull(),
     /**
@@ -1694,6 +1710,15 @@ export const artifacts = pgTable(
      * the versions themselves, because the card's copy is a poll behind.
      */
     versionCount: integer("version_count").notNull().default(1),
+    /**
+     * Public share capability (issue #370): the whole authentication for `/a/<token>`, anyone with
+     * the link reads the latest version. Minted app-side (`newShareToken`, nanoid(32), ~190 bits)
+     * on every NEW artifact; deliberately a separate secret from the guessable 12-char row id.
+     * NULL means no public URL: rows that predate the feature, and rows whose sharing was revoked.
+     * Revocation is "set null", regeneration is "set a fresh token" — both back-of-house actions;
+     * a republish never touches it, so a revoked artifact does not quietly re-enable itself.
+     */
+    shareToken: text("share_token").$defaultFn(newShareToken),
     createdAt: createdAt(),
   },
   (t) => [
@@ -1701,8 +1726,21 @@ export const artifacts = pgTable(
     // Identity (#292). Republishing a name resolves to THIS row and appends a version, so the
     // conversation gets one card per name however many times the agent refines it. It replaced a
     // unique index on `(session_id, sha256)`: content identity belongs to the version now, and
-    // keeping it here would have collided two versions that reverted to earlier bytes.
-    uniqueIndex("artifacts_session_name_uq").on(t.sessionId, t.name),
+    // keeping it here would have collided two versions that reverted to earlier bytes. Partial
+    // since #370: session-less rows have no conversation to be unique inside.
+    uniqueIndex("artifacts_session_name_uq")
+      .on(t.sessionId, t.name)
+      .where(sql`${t.sessionId} is not null`),
+    // Identity for session-less publishes (#370): a NAME in the agent's no-session bucket, so a
+    // scheduled run republishing `report.html` refines one artifact instead of stacking rows —
+    // the same republish/version semantics a conversation gets, one scope up.
+    uniqueIndex("artifacts_agent_unattached_name_uq")
+      .on(t.agentId, t.name)
+      .where(sql`${t.sessionId} is null`),
+    // The share route's only lookup. Partial: null means "no public URL", not a key.
+    uniqueIndex("artifacts_share_token_uq")
+      .on(t.shareToken)
+      .where(sql`${t.shareToken} is not null`),
   ],
 );
 

@@ -12,12 +12,20 @@
  * `varchar("id", { length: 12 }).primaryKey().$defaultFn(newId)` (Better Auth-owned identity
  * ids stay text). The column width enforces the format at the DB layer.
  */
-import { customAlphabet } from "nanoid";
+import { customAlphabet, nanoid } from "nanoid";
 
 const ALPHABET = "abcdefghijklmnopqrstuvwxyz";
 
 /** Mint a new 12-char [a-z] id. */
 export const newId = customAlphabet(ALPHABET, 12);
+
+/**
+ * Mint an artifact share token (issue #370): 32 chars over nanoid's default 64-symbol URL-safe
+ * alphabet, ~190 bits. Deliberately NOT `newId()`: a share token is an unauthenticated bearer
+ * capability — anyone holding the URL reads the bytes — so it must be unguessable in a way the
+ * 12-char [a-z] row ids (~56 bits, and routinely visible in logs and transcripts) are not.
+ */
+export const newShareToken = (): string => nanoid(32);
 
 /**
  * Fold a possibly-legacy id to lowercase for a lowercase-only context (Docker repository
