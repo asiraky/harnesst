@@ -12,9 +12,9 @@
       "id": "vercel-issuer",
       "type": "agent",
       "name": "Vercel Issuer",
-      "version": "0.1.0",
+      "version": "0.1.1",
       "description": "The team's Vercel platform engineer: creates Vercel projects and mints project-scoped tokens for teammates behind a human approval gate. Holds the one full-account token; every privileged operation shows the human the exact request and justification before it runs.",
-      "hash": "47711fbea586616127925023d1c8abbe80002b4d"
+      "hash": "4d3765edaa7b4a117fcc174381f284ed4598dbb0"
     },
     {
       "id": "github-bundle",

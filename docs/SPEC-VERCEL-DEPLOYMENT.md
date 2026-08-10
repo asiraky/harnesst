@@ -93,8 +93,9 @@ tokenTtlDays (default 90), justification}`. Execute: create project → mint pro
 `{ok, projectId, projectName, tokenExpiresAt, delivery}` (the route's verdict passed through;
 `adopted: true` flags that an existing same-name project was granted rather than created).
 Revoke-on-deposit-failure, with honest reporting when the revoke itself fails.
-`VERCEL_PROJECT_ID` is deposited best-effort alongside. An optional `VERCEL_TEAM_ID` env scopes
-the project API calls to a Vercel team.
+`VERCEL_PROJECT_ID` is deposited best-effort alongside. An optional `VERCEL_TEAM_ID` (declared
+on the template so the install wizard prompts for it; blank ⇒ skip) scopes the project API calls
+to a Vercel team — unset, projects are created in the personal-account (Hobby) scope.
 
 ### `POST /api/secrets/deposit` — the one new harnesst route
 
