@@ -19,10 +19,14 @@ import {
   changeAction,
   groupDrafts,
   initialPublishSteps,
+  memberProgress,
+  phaseBarModel,
   publishControlState,
   publishDisabledReason,
   publishedVersion,
+  resolveDeployProgress,
   runningStepSummary,
+  type DeploymentSnapshot,
   type PublishChangeRow,
   type PublishControlState,
 } from "~/publish/publish-panel";
@@ -369,18 +373,18 @@ describe("PublishReviewChanges", () => {
   });
 });
 
-describe("PipelineStepList", () => {
-  it("renders every step from the start, skip reasons, substeps, and the failure output", () => {
+describe("PipelineStepList (issue #375 redesign)", () => {
+  it("renders every phase segment from the start, skip reasons, and member cards", () => {
     const steps: PipelineStep[] = [
       { key: "check", label: "Checking your changes", status: "succeeded" },
       {
         key: "build",
         label: "Building your agents",
-        status: "failed",
-        error: "src/agent.ts(3,7): error TS2304: Cannot find name 'foo'.",
+        status: "running",
+        detail: "1 of 2",
         substeps: [
-          { label: "ivy", status: "succeeded" },
-          { label: "otto", status: "failed" },
+          { label: "ivy", status: "succeeded", startedAt: "2026-08-14T00:00:00.000Z" },
+          { label: "otto", status: "running", startedAt: "2026-08-14T00:00:05.000Z" },
         ],
       },
       { key: "commit", label: "Saving to your repository", status: "pending" },
@@ -393,15 +397,21 @@ describe("PipelineStepList", () => {
       { key: "deploy", label: "Starting your agents", status: "pending" },
     ];
     const html = renderInRouter(<PipelineStepList steps={steps} />);
-    expect(html).toContain('role="list"');
-    for (const step of steps) expect(html).toContain(step.label);
-    // The failed step shows the compiler's own output, and later steps stay pending (present).
-    expect(html).toContain("Cannot find name");
-    expect(html).toContain("ivy");
-    expect(html).toContain("otto");
+    // Every phase is a bar segment carrying its live status — an absent phase reads as a bug.
+    for (const key of ["check", "build", "commit", "version", "deploy"]) {
+      expect(html).toContain(`data-phase="${key}"`);
+    }
+    expect(html).toContain('data-phase="build" data-status="running"');
+    expect(html).toContain('data-phase="version" data-status="skipped"');
     expect(html).toContain(
       "Skipped — This change only affects the assistant&#x27;s configuration",
     );
+    // One card per member, phase text and all.
+    expect(html).toContain('data-member="ivy" data-phase="built"');
+    expect(html).toContain('data-member="otto" data-phase="building"');
+    expect(html).toContain("Building image…");
+    // The running step's one-liner shows the completion counter.
+    expect(html).toContain("Building your agents — 1 of 2");
   });
 
   it("live-announces only the running step", () => {
@@ -413,7 +423,7 @@ describe("PipelineStepList", () => {
     expect(html).toContain("orphan gate");
   });
 
-  it("auto-expands a failure — output and recovery actions render without interaction — and later steps stay pending", () => {
+  it("auto-expands a failure — output and recovery actions render without interaction — and later phases stay pending", () => {
     const steps = initialPublishSteps();
     steps[0].status = "succeeded";
     steps[1].status = "failed";
@@ -435,18 +445,232 @@ describe("PipelineStepList", () => {
     expect(html).toContain("Ask the assistant to fix this");
     expect(html).toContain('href="/repos/proj_1/assistant?fix=task_9"');
     expect(html).toContain("Back to changes");
-    // Steps after the failure render as pending, never as failed — only one step ever fails.
+    // Phases after the failure render as pending, never as failed — only one step ever fails.
     for (const key of ["commit", "version", "deploy"]) {
-      expect(html).toContain(`data-step="${key}" data-status="pending"`);
+      expect(html).toContain(`data-phase="${key}" data-status="pending"`);
     }
     expect(html.match(/data-status="failed"/g)).toHaveLength(1);
   });
 
-  it("shows the recorded version label on the succeeded version step", () => {
+  it("puts a member-scoped failure on its card, not duplicated in the aggregate block", () => {
+    const steps = initialPublishSteps();
+    steps[0].status = "succeeded";
+    steps[1].status = "failed";
+    steps[1].error =
+      "The build failed (`agents/otto/agent`) — nothing was published:\n\nerror TS2304";
+    steps[1].substeps = [
+      { label: "ivy", status: "succeeded" },
+      { label: "otto", status: "failed", error: "error TS2304" },
+    ];
+    const html = renderInRouter(<PipelineStepList steps={steps} onBackToChanges={() => {}} />);
+    // The failed card is red and carries its own output…
+    expect(html).toContain('data-member="otto" data-phase="failed"');
+    expect(html.match(/error TS2304/g)).toHaveLength(1);
+    // …and the aggregate ("The build failed…") is not repeated below the cards.
+    expect(html).not.toContain("nothing was published");
+    expect(html).toContain("Back to changes");
+  });
+
+  it("renders the all-green settled state with no spinner and no failure block", () => {
     const steps = initialPublishSteps();
     for (const step of steps) step.status = "succeeded";
-    steps.find((s) => s.key === "version")!.detail = "v13";
     const html = renderInRouter(<PipelineStepList steps={steps} />);
-    expect(html).toContain("v13");
+    for (const key of ["check", "build", "commit", "version", "deploy"]) {
+      expect(html).toContain(`data-phase="${key}" data-status="succeeded"`);
+    }
+    expect(html).not.toContain("animate-spin");
+    expect(html).not.toContain("<pre");
+  });
+
+  it("shows a ticking elapsed time on an in-flight member card", () => {
+    const steps = initialPublishSteps();
+    steps[1].status = "running";
+    steps[1].substeps = [
+      {
+        label: "ivy",
+        status: "running",
+        // Started a minute ago — the card renders "1m Ns", not nothing.
+        startedAt: new Date(Date.now() - 61_000).toISOString(),
+      },
+    ];
+    const html = renderInRouter(<PipelineStepList steps={steps} />);
+    expect(html).toMatch(/1m \d+s/);
+  });
+});
+
+describe("phaseBarModel", () => {
+  it("maps the five steps to compact segments, carrying status and skip reason", () => {
+    const steps = initialPublishSteps();
+    steps[0].status = "succeeded";
+    steps[1].status = "skipped";
+    steps[1].reason = "assistant only";
+    expect(phaseBarModel(steps)).toEqual([
+      { key: "check", label: "Check", status: "succeeded" },
+      { key: "build", label: "Build", status: "skipped", reason: "assistant only" },
+      { key: "commit", label: "Save", status: "pending" },
+      { key: "version", label: "Version", status: "pending" },
+      { key: "deploy", label: "Deploy", status: "pending" },
+    ]);
+  });
+
+  it("renders a full pending bar before the first poll returns steps", () => {
+    const segments = phaseBarModel(null);
+    expect(segments).toHaveLength(5);
+    expect(segments.every((s) => s.status === "pending")).toBe(true);
+  });
+});
+
+describe("memberProgress", () => {
+  const T0 = "2026-08-14T00:00:00.000Z";
+  const T1 = "2026-08-14T00:01:00.000Z";
+  const T2 = "2026-08-14T00:02:00.000Z";
+
+  function stepsWith(over: {
+    build?: PipelineStep["substeps"];
+    deploy?: PipelineStep["substeps"];
+  }): PipelineStep[] {
+    const steps = initialPublishSteps();
+    if (over.build) steps[1].substeps = over.build;
+    if (over.deploy) steps[4].substeps = over.deploy;
+    return steps;
+  }
+
+  it("joins build and deploy substeps by label: build start, deploy outcome", () => {
+    const cards = memberProgress(
+      stepsWith({
+        build: [{ label: "ivy", status: "succeeded", startedAt: T0, finishedAt: T1 }],
+        deploy: [
+          { label: "ivy", status: "succeeded", deploymentId: "dep_1", finishedAt: T2 },
+        ],
+      }),
+    );
+    // The card's clock starts at the BUILD start (the member's first activity), ends at the
+    // deploy's finish, and the deploy substep's resolved status names the phase.
+    expect(cards).toEqual([
+      { label: "ivy", phase: "live", startedAt: T0, finishedAt: T2 },
+    ]);
+  });
+
+  it("an untouched member (no build substep) starts queued and its clock is the deploy's", () => {
+    const cards = memberProgress(
+      stepsWith({
+        build: [{ label: "ivy", status: "succeeded", startedAt: T0 }],
+        deploy: [
+          { label: "ivy", status: "pending" },
+          { label: "otto", status: "pending", startedAt: T1 },
+        ],
+      }),
+    );
+    expect(cards).toEqual([
+      // Built, waiting on the deploy pool…
+      { label: "ivy", phase: "built", startedAt: T0 },
+      // …vs never built at all: queued.
+      { label: "otto", phase: "queued", startedAt: T1 },
+    ]);
+  });
+
+  it("a running deploy substep is 'starting'; a failed one is 'failed' with its error", () => {
+    const cards = memberProgress(
+      stepsWith({
+        deploy: [
+          { label: "ivy", status: "running", startedAt: T1 },
+          { label: "otto", status: "failed", startedAt: T1, finishedAt: T2, error: "boom" },
+        ],
+      }),
+    );
+    expect(cards).toEqual([
+      { label: "ivy", phase: "starting", startedAt: T1 },
+      { label: "otto", phase: "failed", startedAt: T1, finishedAt: T2, error: "boom" },
+    ]);
+  });
+
+  it("a failed build outranks the member's deploy substep — the deploy never really ran", () => {
+    const cards = memberProgress(
+      stepsWith({
+        build: [
+          { label: "ivy", status: "failed", startedAt: T0, finishedAt: T1, error: "TS2304" },
+        ],
+        deploy: [{ label: "ivy", status: "pending" }],
+      }),
+    );
+    expect(cards).toEqual([
+      { label: "ivy", phase: "failed", startedAt: T0, finishedAt: T1, error: "TS2304" },
+    ]);
+  });
+
+  it("members mid-build (no deploy substeps yet) map straight from the build statuses", () => {
+    const cards = memberProgress(
+      stepsWith({
+        build: [
+          { label: "ivy", status: "running", startedAt: T0 },
+          { label: "otto", status: "pending" },
+        ],
+      }),
+    );
+    expect(cards).toEqual([
+      { label: "ivy", phase: "building", startedAt: T0 },
+      { label: "otto", phase: "queued" },
+    ]);
+  });
+
+  it("degrades without timestamps (pre-#375 rows): cards render, just with no timer fields", () => {
+    const cards = memberProgress(
+      stepsWith({ deploy: [{ label: "ivy", status: "succeeded" }] }),
+    );
+    expect(cards).toEqual([{ label: "ivy", phase: "live" }]);
+  });
+
+  it("is empty when there are no substeps at all (single-agent pre-deploy, or no steps)", () => {
+    expect(memberProgress(initialPublishSteps())).toEqual([]);
+    expect(memberProgress(null)).toEqual([]);
+  });
+});
+
+describe("resolveDeployProgress — row timestamps (issue #375)", () => {
+  it("merges the deployment row's clock into the substep: created = started, updated = finished", () => {
+    const steps = initialPublishSteps();
+    steps[4].status = "succeeded";
+    steps[4].substeps = [{ label: "ivy", status: "succeeded", deploymentId: "dep_1" }];
+    const rows = new Map<string, DeploymentSnapshot>([
+      [
+        "dep_1",
+        {
+          status: "live",
+          errorDetail: null,
+          createdAt: "2026-08-14T00:00:00.000Z",
+          updatedAt: "2026-08-14T00:00:30.000Z",
+        },
+      ],
+    ]);
+    const resolved = resolveDeployProgress(steps, rows);
+    expect(resolved?.[4].substeps?.[0]).toMatchObject({
+      status: "succeeded",
+      startedAt: "2026-08-14T00:00:00.000Z",
+      finishedAt: "2026-08-14T00:00:30.000Z",
+    });
+  });
+
+  it("a still-starting row carries its start but no finish", () => {
+    const steps = initialPublishSteps();
+    steps[4].status = "succeeded";
+    steps[4].substeps = [{ label: "ivy", status: "succeeded", deploymentId: "dep_1" }];
+    const rows = new Map<string, DeploymentSnapshot>([
+      ["dep_1", { status: "building", errorDetail: null, createdAt: "2026-08-14T00:00:00.000Z" }],
+    ]);
+    const sub = resolveDeployProgress(steps, rows)?.[4].substeps?.[0];
+    expect(sub).toMatchObject({ status: "running", startedAt: "2026-08-14T00:00:00.000Z" });
+    expect(sub?.finishedAt).toBeUndefined();
+  });
+
+  it("rows without timestamps (older readers) still resolve statuses — no timer fields", () => {
+    const steps = initialPublishSteps();
+    steps[4].status = "succeeded";
+    steps[4].substeps = [{ label: "ivy", status: "succeeded", deploymentId: "dep_1" }];
+    const rows = new Map<string, DeploymentSnapshot>([
+      ["dep_1", { status: "failed", errorDetail: "port in use" }],
+    ]);
+    const sub = resolveDeployProgress(steps, rows)?.[4].substeps?.[0];
+    expect(sub).toMatchObject({ status: "failed", error: "port in use" });
+    expect(sub?.startedAt).toBeUndefined();
   });
 });

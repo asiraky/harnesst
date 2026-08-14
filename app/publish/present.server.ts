@@ -45,12 +45,24 @@ export async function presentTasks(
           id: deployments.id,
           status: deployments.status,
           errorDetail: deployments.errorDetail,
+          createdAt: deployments.createdAt,
+          updatedAt: deployments.updatedAt,
         })
         .from(deployments)
         .where(inArray(deployments.id, ids))
     : [];
   const snapshots = new Map<string, DeploymentSnapshot>(
-    rows.map((d) => [d.id, { status: d.status, errorDetail: d.errorDetail }]),
+    rows.map((d) => [
+      d.id,
+      {
+        status: d.status,
+        errorDetail: d.errorDetail,
+        // The deploy phase's clock (issue #375): created = queued, last update = its terminal
+        // transition. Serialized here because DeploymentSnapshot crosses to the client as JSON.
+        createdAt: d.createdAt?.toISOString(),
+        updatedAt: d.updatedAt?.toISOString(),
+      },
+    ]),
   );
   return new Map(tasks.map((t) => [t.id, presentOne(t, snapshots)]));
 }

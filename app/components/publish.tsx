@@ -24,9 +24,10 @@
  * who saved it and when (the assistant is visually distinct from teammates), an expandable
  * diff per file, discard per file / discard all, and the environment question ONLY when §2.8
  * resolution has to ask (answered once, then persisted). Pipeline mode renders the task's
- * `steps` as the full §4.3 vertical stepper: on failure the failed step auto-expands its
- * output with the two recovery actions ("Ask the assistant to fix this" hands the error to
- * the assistant as pre-filled context; "Back to changes" returns to review mode). When the
+ * `steps` as a phase progress bar plus per-member progress cards with elapsed timers
+ * (issue #375, PipelineStepList below): on failure the failed card carries its output and the
+ * two recovery actions render ("Ask the assistant to fix this" hands the error to the
+ * assistant as pre-filled context; "Back to changes" returns to review mode). When the
  * watched publish completes, the panel shows "Live · vN" with a link to the running agents
  * and auto-dismisses after a short delay.
  *
@@ -39,7 +40,6 @@ import {
   CheckCircle2,
   ChevronRight,
   Circle,
-  CircleSlash,
   Loader2,
   Rocket,
   Sparkles,
@@ -72,10 +72,15 @@ import type { PipelineStep, PipelineStepStatus } from "~/data/ports";
 import { cn } from "~/lib/utils";
 import {
   initialPublishSteps,
+  memberProgress,
+  phaseBarModel,
   publishControlState,
   publishDisabledReason,
   publishedVersion,
+  runningStepSummary,
   type ChangeAction,
+  type MemberProgress,
+  type PhaseSegment,
   type PublishChangeRow,
   type PublishControlState,
   type PublishDiffPayload,
@@ -533,7 +538,8 @@ export function PublishPanel({
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
-      <DialogContent className="sm:max-w-xl">
+      {/* Pipeline and success modes render the member card grid — give them the wider frame. */}
+      <DialogContent className={mode === "review" ? "sm:max-w-xl" : "sm:max-w-2xl"}>
         {mode === "success" && success ? (
           <>
             <DialogHeader>
@@ -543,6 +549,7 @@ export function PublishPanel({
                   aria-hidden
                 />
                 Live{success.version ? ` · ${success.version}` : ""}
+                <PublishOverallTimer steps={success.steps} />
               </DialogTitle>
               <DialogDescription>
                 Your changes are live.{" "}
@@ -565,7 +572,10 @@ export function PublishPanel({
         ) : mode === "pipeline" ? (
           <>
             <DialogHeader>
-              <DialogTitle>{failed ? "Publish failed" : "Publishing"}</DialogTitle>
+              <DialogTitle className="flex items-center gap-2">
+                {failed ? "Publish failed" : "Publishing"}
+                <PublishOverallTimer steps={steps} />
+              </DialogTitle>
               <DialogDescription>
                 {failed
                   ? "One step failed — nothing you saved was lost."
@@ -843,28 +853,180 @@ function DiffPane({ projectId, path }: { projectId: string; path: string }) {
   );
 }
 
-const STEP_ICON: Record<PipelineStepStatus, React.ReactNode> = {
-  pending: <Circle className="size-3.5 text-muted-foreground/50" aria-hidden />,
-  running: <Loader2 className="size-3.5 animate-spin text-primary" aria-hidden />,
-  succeeded: (
-    <Check className="size-3.5 text-emerald-600 dark:text-emerald-400" aria-hidden />
-  ),
-  failed: <XCircle className="size-3.5 text-destructive" aria-hidden />,
-  skipped: <CircleSlash className="size-3.5 text-muted-foreground/50" aria-hidden />,
-};
+/** Second-resolution clock for the elapsed timers; ticks only while `active`. */
+function useNowTicker(active: boolean): number {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!active) return;
+    setNow(Date.now());
+    const timer = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, [active]);
+  return now;
+}
+
+/** "42s" / "3m 12s" — the panel's elapsed-time format. */
+function formatElapsed(ms: number): string {
+  const s = Math.max(0, Math.floor(ms / 1000));
+  const m = Math.floor(s / 60);
+  return m > 0 ? `${m}m ${s % 60}s` : `${s}s`;
+}
+
+/** [startMs, endMs|null] of the whole pipeline: first step start → last finish (null = still going). */
+function overallRange(steps: PipelineStep[]): [number, number | null] | null {
+  const starts = steps.map((s) => s.startedAt).filter((t): t is string => !!t);
+  if (starts.length === 0) return null;
+  const start = Math.min(...starts.map((t) => Date.parse(t)));
+  if (steps.some((s) => s.status === "running")) return [start, null];
+  const ends = steps.map((s) => s.finishedAt).filter((t): t is string => !!t);
+  if (ends.length === 0) return [start, null];
+  return [start, Math.max(...ends.map((t) => Date.parse(t)))];
+}
 
 /**
- * §4.3's vertical stepper — the pipeline UI at full density (the header control and task strip
- * derive their one-liners from the same steps). Every step is visible from the start (pending
- * greyed) so the whole shape is legible before anything happens; the running step shows a
- * spinner and its live detail; build/deploy substeps render inline, one per member; skipped
- * steps stay visible, greyed, with their reason (an absent step reads as a bug). On failure
- * the failed step turns red and auto-expands: the full output renders in a monospace block
- * preserving newlines, with the two recovery actions beneath it — "Ask the assistant to fix
- * this" (hands the error to the assistant as pre-filled context) and "Back to changes"
- * (returns to review mode; nothing was lost). Steps after a failure stay pending — only one
- * step ever fails. role="list" with aria-live="polite" on the running step's row announces
- * transitions without spamming. Exported for unit tests.
+ * The whole publish's elapsed time, ticking while any step runs. Rendered beside the panel
+ * title; steps recorded before timestamps existed (issue #375) render nothing.
+ */
+export function PublishOverallTimer({ steps }: { steps: PipelineStep[] }) {
+  const range = overallRange(steps);
+  const now = useNowTicker(range !== null && range[1] === null);
+  if (!range) return null;
+  const [start, end] = range;
+  return (
+    <span className="text-sm font-normal tabular-nums text-muted-foreground">
+      {formatElapsed((end ?? now) - start)}
+    </span>
+  );
+}
+
+const PHASE_BAR_COLOR: Record<PipelineStepStatus, string> = {
+  pending: "bg-muted",
+  running: "animate-pulse bg-primary",
+  succeeded: "bg-emerald-500 dark:bg-emerald-400",
+  failed: "bg-destructive",
+  skipped: "bg-muted",
+};
+
+/** The check → build → save → version → deploy progress bar across the top of the panel. */
+function PhaseBar({ segments }: { segments: PhaseSegment[] }) {
+  return (
+    <ol role="list" aria-label="Publish steps" className="flex min-w-0 gap-1">
+      {segments.map((seg) => (
+        <li
+          key={seg.key}
+          data-phase={seg.key}
+          data-status={seg.status}
+          className="min-w-0 flex-1"
+          title={seg.reason ? `Skipped — ${seg.reason}` : undefined}
+        >
+          <div className={cn("h-1.5 rounded-full", PHASE_BAR_COLOR[seg.status])} aria-hidden />
+          <span
+            className={cn(
+              "mt-1 block truncate text-center text-[10px]",
+              seg.status === "pending" || seg.status === "skipped"
+                ? "text-muted-foreground/70"
+                : seg.status === "failed"
+                  ? "font-medium text-destructive"
+                  : "font-medium text-foreground",
+              seg.status === "skipped" && "line-through",
+            )}
+          >
+            {seg.label}
+          </span>
+        </li>
+      ))}
+    </ol>
+  );
+}
+
+const CARD_PHASE: Record<
+  MemberProgress["phase"],
+  { text: string; icon: React.ReactNode; textClass: string }
+> = {
+  queued: {
+    text: "Queued",
+    icon: <Circle className="size-3.5 text-muted-foreground/50" aria-hidden />,
+    textClass: "text-muted-foreground",
+  },
+  building: {
+    text: "Building image…",
+    icon: <Loader2 className="size-3.5 animate-spin text-primary" aria-hidden />,
+    textClass: "text-foreground",
+  },
+  built: {
+    text: "Built — waiting to deploy",
+    icon: <Check className="size-3.5 text-muted-foreground" aria-hidden />,
+    textClass: "text-muted-foreground",
+  },
+  starting: {
+    text: "Starting…",
+    icon: <Loader2 className="size-3.5 animate-spin text-primary" aria-hidden />,
+    textClass: "text-foreground",
+  },
+  live: {
+    text: "Live",
+    icon: (
+      <CheckCircle2 className="size-3.5 text-emerald-600 dark:text-emerald-400" aria-hidden />
+    ),
+    textClass: "text-emerald-600 dark:text-emerald-400",
+  },
+  failed: {
+    text: "Failed",
+    icon: <XCircle className="size-3.5 text-destructive" aria-hidden />,
+    textClass: "text-destructive",
+  },
+};
+
+/** One member's progress card: name, phase, elapsed time, and its own error when it failed. */
+function MemberCard({ card, now }: { card: MemberProgress; now: number }) {
+  const phase = CARD_PHASE[card.phase];
+  const terminal = card.phase === "live" || card.phase === "failed";
+  const started = card.startedAt ? Date.parse(card.startedAt) : null;
+  const ended = card.finishedAt ? Date.parse(card.finishedAt) : null;
+  const elapsed =
+    started !== null ? formatElapsed((terminal && ended !== null ? ended : now) - started) : null;
+  return (
+    <li
+      data-member={card.label}
+      data-phase={card.phase}
+      className={cn(
+        "min-w-0 rounded-md border p-2.5",
+        card.phase === "failed" && "border-destructive/40 bg-destructive/5",
+        card.phase === "live" && "border-emerald-500/30 bg-emerald-500/5",
+      )}
+    >
+      <div className="flex items-center gap-1.5">
+        <span className="shrink-0">{phase.icon}</span>
+        <span className="min-w-0 truncate font-mono text-xs font-medium">{card.label}</span>
+        {elapsed && (
+          <span className="ml-auto shrink-0 text-[10px] tabular-nums text-muted-foreground">
+            {elapsed}
+          </span>
+        )}
+      </div>
+      <p className={cn("mt-1 pl-5 text-xs", phase.textClass)}>{phase.text}</p>
+      {card.phase === "failed" && card.error && (
+        <pre className="mt-1.5 max-h-40 overflow-auto whitespace-pre-wrap break-words rounded border border-destructive/30 bg-background/60 p-1.5 font-mono text-[11px] text-destructive">
+          {card.error}
+        </pre>
+      )}
+    </li>
+  );
+}
+
+/**
+ * The pipeline view (issue #375 redesign): a segmented phase progress bar (check → build →
+ * save → version → deploy), the running step's one-liner, and one progress card per member
+ * showing where it is on its build→deploy journey with a live elapsed timer — under parallel
+ * builds/deploys several cards are genuinely in flight at once, and this is where that shows.
+ * Skipped phases stay visible (greyed, reason as title text; an absent phase reads as a bug).
+ *
+ * On failure the failed member's card turns red and carries its own output; failures outside
+ * the member cards (check/save/version, or an aggregate with no card to own it) render in the
+ * monospace block below. The two recovery actions follow — "Ask the assistant to fix this"
+ * (hands the error over as pre-filled context) and "Back to changes" (returns to review mode;
+ * nothing was lost). role="list" + aria-live="polite" announce transitions without spamming.
+ * Exported for unit tests.
  */
 export function PipelineStepList({
   steps,
@@ -880,77 +1042,63 @@ export function PipelineStepList({
   /** On failure: returns the panel to review mode — nothing was lost. */
   onBackToChanges?: () => void;
 }) {
+  const settled = steps.every((s) => s.status !== "running");
+  const now = useNowTicker(!settled);
+  const cards = memberProgress(steps);
+  const failedStep = steps.find((s) => s.status === "failed") ?? null;
+  // Member-scoped failures (build/deploy) already render on their card — repeating the
+  // aggregate below would show the same output twice.
+  const errorOnCards =
+    (failedStep?.key === "build" || failedStep?.key === "deploy") &&
+    cards.some((c) => c.phase === "failed" && c.error);
+  const summary = runningStepSummary(steps);
   return (
-    <ol role="list" className="min-w-0 space-y-2 text-sm">
-      {steps.map((step) => (
-        <li key={step.key} data-step={step.key} data-status={step.status} className="min-w-0">
-          <div
-            className="flex items-center gap-2"
-            aria-live={step.status === "running" ? "polite" : undefined}
-          >
-            <span className="shrink-0">{STEP_ICON[step.status]}</span>
-            <span
-              className={cn(
-                "min-w-0 truncate",
-                step.status === "pending" || step.status === "skipped"
-                  ? "text-muted-foreground"
-                  : "font-medium",
-                step.status === "failed" && "text-destructive",
-              )}
-            >
-              {step.label}
-            </span>
-            {step.detail && (step.status === "running" || step.status === "succeeded") && (
-              <span className="shrink-0 truncate text-xs text-muted-foreground">
-                {step.detail}
-              </span>
-            )}
-          </div>
-          {step.status === "skipped" && step.reason && (
-            <p className="pl-5.5 text-xs text-muted-foreground">
-              Skipped — {step.reason.replace(/^Skipped — /, "")}
-            </p>
+    <div className="min-w-0 space-y-3 text-sm">
+      <PhaseBar segments={phaseBarModel(steps)} />
+      <p
+        className="flex min-h-4 items-center gap-1.5 text-xs text-muted-foreground"
+        aria-live="polite"
+      >
+        {summary && (
+          <>
+            <Loader2 className="size-3 shrink-0 animate-spin" aria-hidden />
+            <span className="min-w-0 truncate">{summary}</span>
+          </>
+        )}
+      </p>
+      {cards.length > 0 && (
+        <ul role="list" className="grid min-w-0 grid-cols-1 gap-2 sm:grid-cols-2">
+          {cards.map((card) => (
+            <MemberCard key={card.label} card={card} now={now} />
+          ))}
+        </ul>
+      )}
+      {failedStep && (
+        <div className="space-y-2">
+          {failedStep.error && !errorOnCards && (
+            <pre className="max-h-64 overflow-auto whitespace-pre-wrap break-words rounded-md border border-destructive/30 bg-destructive/5 p-2 font-mono text-xs text-destructive">
+              {failedStep.error}
+            </pre>
           )}
-          {step.substeps && step.substeps.length > 0 && (
-            <ul className="mt-1 space-y-0.5 pl-5.5 text-xs">
-              {step.substeps.map((sub) => (
-                <li key={sub.label} className="flex items-center gap-1.5">
-                  <span className="shrink-0 [&_svg]:size-3">
-                    {STEP_ICON[sub.status]}
-                  </span>
-                  <span className="min-w-0 truncate font-mono">{sub.label}</span>
-                </li>
-              ))}
-            </ul>
-          )}
-          {step.status === "failed" && (
-            <div className="mt-1.5 space-y-2">
-              {step.error && (
-                <pre className="max-h-64 overflow-auto whitespace-pre-wrap break-words rounded-md border border-destructive/30 bg-destructive/5 p-2 font-mono text-xs text-destructive">
-                  {step.error}
-                </pre>
+          {(assistantFixHref || onBackToChanges) && (
+            <div className="flex flex-wrap items-center gap-2">
+              {assistantFixHref && (
+                <Button asChild size="sm" variant="outline">
+                  <Link to={assistantFixHref} onClick={onAskAssistant}>
+                    <Sparkles className="h-3.5 w-3.5" aria-hidden />
+                    Ask the assistant to fix this
+                  </Link>
+                </Button>
               )}
-              {(assistantFixHref || onBackToChanges) && (
-                <div className="flex flex-wrap items-center gap-2">
-                  {assistantFixHref && (
-                    <Button asChild size="sm" variant="outline">
-                      <Link to={assistantFixHref} onClick={onAskAssistant}>
-                        <Sparkles className="h-3.5 w-3.5" aria-hidden />
-                        Ask the assistant to fix this
-                      </Link>
-                    </Button>
-                  )}
-                  {onBackToChanges && (
-                    <Button size="sm" variant="ghost" onClick={onBackToChanges}>
-                      Back to changes
-                    </Button>
-                  )}
-                </div>
+              {onBackToChanges && (
+                <Button size="sm" variant="ghost" onClick={onBackToChanges}>
+                  Back to changes
+                </Button>
               )}
             </div>
           )}
-        </li>
-      ))}
-    </ol>
+        </div>
+      )}
+    </div>
   );
 }

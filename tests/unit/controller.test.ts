@@ -752,6 +752,10 @@ describe("cutover on deploy", () => {
     );
     expect(drainJob?.kind).toBe("drain_deployment");
     expect(drainJob?.payload.deploymentId).toBe(depA.id);
+    // The payload anchors both clocks at cutover: the poll-backoff start and the 24h ceiling.
+    const drainStarted = Date.parse(drainJob!.payload.drainStartedAt as string);
+    expect(drainStarted).toBeGreaterThanOrEqual(scheduledAt - 2000);
+    expect(drainStarted).toBeLessThanOrEqual(scheduledAt + 2000);
     const deadline = Date.parse(drainJob!.payload.deadlineAt as string);
     expect(deadline).toBeGreaterThanOrEqual(
       scheduledAt + DEPLOYMENT_DRAIN_CEILING_MS - 2000,

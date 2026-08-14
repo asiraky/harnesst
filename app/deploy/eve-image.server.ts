@@ -35,7 +35,15 @@
  * real Docker sandbox backend — no change to customer repos required.
  */
 import { execFile } from "node:child_process";
-import { mkdir, mkdtemp, rm, rmdir, writeFile } from "node:fs/promises";
+import {
+  lutimes,
+  mkdir,
+  mkdtemp,
+  readdir,
+  rm,
+  rmdir,
+  writeFile,
+} from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -290,7 +298,42 @@ export interface EveImageBuildInput {
   injectTeammateTool?: boolean;
 }
 
-/** Fetch repo@ref into `workDir/src`, ensuring Dockerfile/.dockerignore. Returns srcDir. */
+/**
+ * Fixed timestamp applied to every entry in a staged build context (issue #375). Tarball
+ * extraction restores per-commit mtimes and the platform injections above stamp wall-clock
+ * times, so without normalization the `COPY . .` layer's cache key changes on every publish
+ * even when the tree is byte-identical — every "unchanged" member pays a full `eve build`.
+ */
+export const BUILD_CONTEXT_EPOCH = new Date(0);
+
+/**
+ * Recursively pin every file, directory and symlink under `dir` to BUILD_CONTEXT_EPOCH so
+ * docker's COPY cache keys depend on content only. Post-order (children before their parent)
+ * so touching a child can never re-dirty an already-normalized directory. `lutimes`, not
+ * `utimes`: repo tarballs can contain symlinks — including dangling ones, which `utimes`
+ * would follow and throw ENOENT on.
+ */
+export async function normalizeContextMtimes(dir: string): Promise<void> {
+  const entries = await readdir(dir, { withFileTypes: true });
+  for (const entry of entries) {
+    const entryPath = path.join(dir, entry.name);
+    if (entry.isDirectory()) {
+      await normalizeContextMtimes(entryPath);
+    } else {
+      await lutimes(entryPath, BUILD_CONTEXT_EPOCH, BUILD_CONTEXT_EPOCH);
+    }
+  }
+  await lutimes(dir, BUILD_CONTEXT_EPOCH, BUILD_CONTEXT_EPOCH);
+}
+
+/**
+ * Fetch repo@ref into `workDir/src`, ensuring Dockerfile/.dockerignore. Returns srcDir.
+ *
+ * INVARIANT (issue #375): the returned tree has every mtime pinned to BUILD_CONTEXT_EPOCH so
+ * `COPY` layer cache keys depend on content only. Any code that writes into the context after
+ * this returns must re-run `normalizeContextMtimes` before `docker build` — see buildStagedTree,
+ * which re-normalizes after applying the draft overlay.
+ */
 async function fetchSource(
   input: EveImageBuildInput,
   workDir: string,
@@ -367,6 +410,11 @@ async function fetchSource(
   // Eve's sandbox state before the sandbox container is created. Always replace the reserved build
   // path: it is platform machinery, not a customer override surface.
   await writeSessionWorkspaceChannel(buildDir);
+
+  // Deterministic context (issue #375): pin every mtime AFTER the last platform injection, over
+  // the whole srcDir (a root-layout build's context IS srcDir), so an unchanged tree cache-hits
+  // straight through `COPY . .` and `eve build` at deploy time.
+  await normalizeContextMtimes(srcDir);
   return srcDir;
 }
 
@@ -454,6 +502,9 @@ export async function buildAssistantImage(input: {
       path.join(buildDir, ".dockerignore"),
       HARNESST_DOCKERIGNORE,
     );
+    // `cp -R` stamped wall-clock mtimes on every template file, so an identical template would
+    // still miss the COPY layer cache on every rebuild — pin them like every other context.
+    await normalizeContextMtimes(buildDir);
 
     const buildStage = buildStageTagFor(input.imageRef);
     const opts = { maxBuffer: 64 * 1024 * 1024 };
@@ -606,6 +657,10 @@ export async function buildStagedTree(
     // The overlay is customer-authored and runs after the initial platform injection. Restore the
     // reserved channel last so a draft at the same path cannot replace the workspace boundary.
     await writeSessionWorkspaceChannel(buildDir);
+    // The overlay + channel rewrite re-dirtied mtimes after fetchSource's normalization pass —
+    // re-pin the whole tree (idempotent, one lstat+lutimes per entry) so the publish build's
+    // layers are cache-identical to the deploy-time build of the same commit (issue #375).
+    await normalizeContextMtimes(srcDir);
     const tags = provisionalTags({
       taskId: input.taskId,
       projectId: input.projectId,
