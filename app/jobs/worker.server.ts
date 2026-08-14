@@ -16,6 +16,7 @@ import type { DataStore } from "~/data/ports";
 import { deployRelease, rollbackTo } from "~/deploy/controller.server";
 import { reconcileLiveDeployments } from "~/deploy/liveness.server";
 import { ensureSandboxReaperStarted } from "~/deploy/sandbox-reaper.server";
+import { concurrencyFromEnv } from "~/lib/concurrency";
 import { PUBLISH_INTERRUPTED_MESSAGE } from "~/publish/pipeline.server";
 import { getRuntime } from "~/seams/index.server";
 import type { DeployReleasePayload, Job } from "./queue.server";
@@ -24,7 +25,7 @@ import { claimNext, enqueue, markDone, markFailed } from "./queue.server";
 const POLL_MS = Number(process.env.HARNESST_WORKER_POLL_MS ?? 2000);
 
 /** Deploy/rollback jobs in flight at once; 1 restores the old strictly-serial worker. */
-const DEPLOY_CONCURRENCY = Number(process.env.HARNESST_DEPLOY_CONCURRENCY || 3);
+const DEPLOY_CONCURRENCY = concurrencyFromEnv(process.env.HARNESST_DEPLOY_CONCURRENCY, 3);
 
 /** The pooled kinds. Everything else runs inline — builds and publishes stay serial. */
 const POOLED_KINDS = new Set<Job["kind"]>(["deploy_release", "rollback_release"]);

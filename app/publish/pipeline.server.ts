@@ -68,7 +68,7 @@ import {
   NonFastForwardError,
 } from "~/github/write.server";
 import { enqueue } from "~/jobs/queue.server";
-import { mapWithConcurrency } from "~/lib/concurrency";
+import { concurrencyFromEnv, mapWithConcurrency } from "~/lib/concurrency";
 import { isAssistantConfigPath } from "~/project/guard.server";
 import { initialPublishSteps } from "~/publish/publish-panel";
 import { getRuntime } from "~/seams/index.server";
@@ -660,7 +660,7 @@ export async function runPublish(
 
     const limit =
       deps.buildConcurrency ??
-      Number(process.env.HARNESST_PUBLISH_BUILD_CONCURRENCY || 2);
+      concurrencyFromEnv(process.env.HARNESST_PUBLISH_BUILD_CONCURRENCY, 2);
     // Settled results, not fail-fast: one root's failure must not abandon a sibling's in-flight
     // docker build (its provisional tag would leak past the finally's cleanupTags).
     const settled = await mapWithConcurrency(buildRoots, limit, buildOne);

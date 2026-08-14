@@ -5,7 +5,7 @@
  */
 import { describe, expect, it } from "vitest";
 
-import { mapWithConcurrency } from "~/lib/concurrency";
+import { concurrencyFromEnv, mapWithConcurrency } from "~/lib/concurrency";
 
 /** A promise that resolves only when `release()` is called — for observing in-flight counts. */
 function gate<T>(value: T) {
@@ -100,5 +100,30 @@ describe("mapWithConcurrency", () => {
       order.push(n);
     });
     expect(order).toEqual([1, 2]);
+  });
+
+  it("a NaN limit still processes every item — zero workers would fake an all-clear", async () => {
+    const seen: number[] = [];
+    const results = await mapWithConcurrency([1, 2, 3], NaN, async (n) => {
+      seen.push(n);
+      return n;
+    });
+    expect(seen).toEqual([1, 2, 3]);
+    expect(results.every((r) => r.status === "fulfilled")).toBe(true);
+  });
+});
+
+describe("concurrencyFromEnv", () => {
+  it("parses a positive integer and rejects everything else in favor of the fallback", () => {
+    expect(concurrencyFromEnv("4", 3)).toBe(4);
+    expect(concurrencyFromEnv("1", 3)).toBe(1);
+    // A typo'd knob must degrade to the default — NaN would mean zero pool workers in the
+    // build step and an UNBOUNDED in-flight check in the job worker.
+    expect(concurrencyFromEnv("two", 3)).toBe(3);
+    expect(concurrencyFromEnv("", 3)).toBe(3); // Number("") is 0
+    expect(concurrencyFromEnv("0", 3)).toBe(3);
+    expect(concurrencyFromEnv("-2", 3)).toBe(3);
+    expect(concurrencyFromEnv("2.5", 3)).toBe(3);
+    expect(concurrencyFromEnv(undefined, 3)).toBe(3);
   });
 });

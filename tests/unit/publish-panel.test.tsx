@@ -662,6 +662,48 @@ describe("resolveDeployProgress — row timestamps (issue #375)", () => {
     expect(sub?.finishedAt).toBeUndefined();
   });
 
+  it("a replaced row keeps its start but drops the finish — updatedAt is the LATER drain/stop", () => {
+    const steps = initialPublishSteps();
+    steps[4].status = "succeeded";
+    steps[4].substeps = [{ label: "ivy", status: "succeeded", deploymentId: "dep_1" }];
+    const rows = new Map<string, DeploymentSnapshot>([
+      [
+        "dep_1",
+        {
+          status: "stopped",
+          errorDetail: null,
+          createdAt: "2026-08-14T00:00:00.000Z",
+          // Twelve hours later — when it was replaced, NOT when it came up.
+          updatedAt: "2026-08-14T12:00:00.000Z",
+        },
+      ],
+    ]);
+    const sub = resolveDeployProgress(steps, rows)?.[4].substeps?.[0];
+    expect(sub).toMatchObject({ status: "succeeded", startedAt: "2026-08-14T00:00:00.000Z" });
+    expect(sub?.finishedAt).toBeUndefined();
+  });
+
+  it("rolls the latest substep finish up into the deploy step — not the queue-time stamp", () => {
+    const steps = initialPublishSteps();
+    steps[4].status = "succeeded";
+    // The pipeline stamped the step finished the moment the jobs were QUEUED…
+    steps[4].startedAt = "2026-08-14T00:00:00.000Z";
+    steps[4].finishedAt = "2026-08-14T00:00:30.000Z";
+    steps[4].substeps = [
+      { label: "ivy", status: "succeeded", deploymentId: "dep_1" },
+      { label: "otto", status: "succeeded", deploymentId: "dep_2" },
+    ];
+    const rows = new Map<string, DeploymentSnapshot>([
+      ["dep_1", { status: "live", errorDetail: null, updatedAt: "2026-08-14T00:02:00.000Z" }],
+      ["dep_2", { status: "live", errorDetail: null, updatedAt: "2026-08-14T00:04:00.000Z" }],
+    ]);
+    const step = resolveDeployProgress(steps, rows)?.[4];
+    // …but the phase really ended when the last agent came up; without this the overall
+    // timer snaps back from four minutes to thirty seconds on success.
+    expect(step?.status).toBe("succeeded");
+    expect(step?.finishedAt).toBe("2026-08-14T00:04:00.000Z");
+  });
+
   it("rows without timestamps (older readers) still resolve statuses — no timer fields", () => {
     const steps = initialPublishSteps();
     steps[4].status = "succeeded";

@@ -983,8 +983,12 @@ function MemberCard({ card, now }: { card: MemberProgress; now: number }) {
   const terminal = card.phase === "live" || card.phase === "failed";
   const started = card.startedAt ? Date.parse(card.startedAt) : null;
   const ended = card.finishedAt ? Date.parse(card.finishedAt) : null;
+  // A terminal card with no recorded finish (e.g. a deployment since replaced — its honest
+  // finish time is gone) shows no duration at all rather than a clock that keeps counting.
   const elapsed =
-    started !== null ? formatElapsed((terminal && ended !== null ? ended : now) - started) : null;
+    started !== null && (!terminal || ended !== null)
+      ? formatElapsed((terminal ? ended! : now) - started)
+      : null;
   return (
     <li
       data-member={card.label}

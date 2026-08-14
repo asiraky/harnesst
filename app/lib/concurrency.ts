@@ -26,10 +26,23 @@ export async function mapWithConcurrency<T, R>(
       }
     }
   };
+  // A NaN limit must clamp to 1, not propagate: Array.from({length: NaN}) is ZERO workers,
+  // which would return a sparse result array the caller reads as "no failures".
+  const bound = Number.isFinite(limit) ? Math.floor(limit) : 1;
   const workers = Array.from(
-    { length: Math.max(1, Math.min(limit, items.length)) },
+    { length: Math.max(1, Math.min(bound, items.length)) },
     () => worker(),
   );
   await Promise.all(workers);
   return results;
+}
+
+/**
+ * A concurrency knob read from the environment: a positive integer, else `fallback`. A typo'd
+ * value must degrade to the default — Number("two") is NaN, and NaN silently disables every
+ * comparison it touches (zero pool workers, an unbounded in-flight check).
+ */
+export function concurrencyFromEnv(raw: string | undefined, fallback: number): number {
+  const n = Number(raw);
+  return Number.isInteger(n) && n >= 1 ? n : fallback;
 }

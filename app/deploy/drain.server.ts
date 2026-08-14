@@ -197,7 +197,14 @@ export async function drainDeployment(
         drainStartedAt: startedAt,
       },
       {
-        runAt: new Date(Date.now() + drainPollDelayMs(Date.now(), Date.parse(startedAt))),
+        // Capped at the deadline: a slow-interval poll scheduled just under the ceiling must
+        // not overshoot it by up to five minutes — the ceiling is a hard promise.
+        runAt: new Date(
+          Math.min(
+            Date.now() + drainPollDelayMs(Date.now(), Date.parse(startedAt)),
+            Date.parse(payload.deadlineAt),
+          ),
+        ),
         maxAttempts: 3,
       },
       store,

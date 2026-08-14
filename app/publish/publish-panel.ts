@@ -89,22 +89,34 @@ export function resolveDeployProgress(
       if (row.status === "pending" || row.status === "building") {
         return { ...sub, ...times, status: "running" as const };
       }
-      // live — or already replaced by a later deploy (draining/stopped): it did come up.
+      // live — or already replaced by a later deploy (draining/stopped): it did come up. But
+      // `updatedAt` only records WHEN it came up while the row is still `live` — a replaced
+      // row's updatedAt is the later drain/stop transition, hours after the fact. No honest
+      // finish time survives replacement, so omit it rather than show a wrong duration.
       return {
         ...sub,
         ...times,
-        finishedAt: row.updatedAt ?? sub.finishedAt,
+        ...(row.status === "live" ? { finishedAt: row.updatedAt ?? sub.finishedAt } : {}),
         status: "succeeded" as const,
       };
     });
     // Re-derive the step's presented status from the substeps; a step the pipeline recorded
     // as failed (queue-time failure) keeps its record.
     if (step.status !== "succeeded") return { ...step, substeps };
+    // The step's own clock must follow the rows too: the pipeline stamped finishedAt when the
+    // last deploy was QUEUED, so without this the overall timer snaps back to the queueing
+    // duration the moment the rows settle. The latest substep finish is the phase's real end.
+    const finishes = substeps.map((s) => s.finishedAt).filter((t): t is string => !!t);
+    const finishedAt =
+      finishes.length > 0
+        ? finishes.reduce((a, b) => (Date.parse(a) >= Date.parse(b) ? a : b))
+        : step.finishedAt;
     const failed = substeps.filter((s) => s.status === "failed");
     if (failed.length > 0) {
       return {
         ...step,
         substeps,
+        finishedAt,
         status: "failed" as const,
         error: `Couldn't start ${failed.map((s) => s.label).join(", ")}:\n\n${failed
           .map((s) => s.error)
@@ -115,7 +127,7 @@ export function resolveDeployProgress(
     if (substeps.some((s) => s.status === "running")) {
       return { ...step, substeps, status: "running" as const };
     }
-    return { ...step, substeps };
+    return { ...step, substeps, finishedAt };
   });
 }
 
