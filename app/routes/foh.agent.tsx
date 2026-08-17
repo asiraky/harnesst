@@ -4,7 +4,8 @@
  * shows the no-session empty state; /s/:sessionId shows the conversation).
  */
 import { ChevronLeft, Loader2, Plus, Settings2 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { toast } from "sonner";
 import {
   data,
   redirect,
@@ -237,20 +238,6 @@ export default function FohAgent({ loaderData }: Route.ComponentProps) {
             {newSessionFetcher.data.error}
           </p>
         )}
-        {archive.notice?.kind === "archived" && (
-          <div className="flex items-center gap-2 border-b bg-muted/50 px-3 py-2 text-xs">
-            <span className="min-w-0 flex-1 truncate text-muted-foreground">
-              Session archived — {archive.notice.title}
-            </span>
-            <button
-              type="button"
-              className="shrink-0 font-medium underline underline-offset-4 hover:text-foreground"
-              onClick={() => archive.undo()}
-            >
-              Undo
-            </button>
-          </div>
-        )}
         {sessions.length === 0 ? (
           <p className="px-3 py-6 text-center text-sm text-muted-foreground">
             No sessions with {agentName} yet.
@@ -304,21 +291,23 @@ export function ErrorBoundary({ error }: Route.ErrorBoundaryProps) {
 }
 
 /**
- * The undo strip is a courtesy, not a decision point — archiving is reversible from the
- * back-of-house shelf forever, so the strip gets out of the way on its own rather than
- * accumulating dismissed banners at the top of the list.
+ * The undo toast is a courtesy, not a decision point — archiving is reversible from the
+ * back-of-house shelf forever, so it gets out of the way on its own rather than
+ * accumulating dismissed banners.
  */
-const ARCHIVE_NOTICE_MS = 10_000;
-
-type ArchiveNotice =
-  | { kind: "archived"; sessionId: string; title: string }
-  | { kind: "refused"; sessionId: string; message: string };
+const ARCHIVE_UNDO_MS = 10_000;
 
 /**
- * FOH archive/undo (#278). Local state, not loader data: the FOH shell revalidates on a 10s
- * timer, which would wipe a strip that lived in the loader payload halfway through the undo
- * window. Each response REPLACES the notice outright, so a second archive can never leave the
- * first session's title on screen next to the second one's Undo.
+ * One fixed toast id: a second archive REPLACES the first toast, so two Undos never stack
+ * and the first session's title can never sit on screen next to the second one's Undo.
+ */
+const ARCHIVE_TOAST_ID = "foh-archive-undo";
+
+/**
+ * FOH archive/undo (#278). The undo lives in a toast, not a strip above the list — inserting
+ * a strip shifted every row down when it appeared and back up when the archived row left on
+ * revalidation. The refusal stays local state, not loader data: the FOH shell revalidates on
+ * a 10s timer, which would wipe copy that lived in the loader payload while the user reads it.
  */
 function useArchive({
   projectId,
@@ -331,70 +320,82 @@ function useArchive({
 }) {
   const fetcher = useFetcher<typeof archiveAction>();
   const navigate = useNavigate();
-  const [notice, setNotice] = useState<ArchiveNotice | null>(null);
+  const [refusal, setRefusal] = useState<{
+    sessionId: string;
+    message: string;
+  } | null>(null);
   const result = fetcher.data;
 
-  useEffect(() => {
-    if (!result) return;
-    if (!result.ok) {
-      setNotice({
-        kind: "refused",
-        sessionId: result.sessionId,
-        message: result.error,
-      });
-    } else if (result.intent === "unarchive") {
-      setNotice(null);
-    } else {
-      setNotice({
-        kind: "archived",
-        sessionId: result.sessionId,
-        title: result.title,
-      });
-    }
-  }, [result]);
-
-  useEffect(() => {
-    if (!notice) return;
-    const timer = setTimeout(() => setNotice(null), ARCHIVE_NOTICE_MS);
-    return () => clearTimeout(timer);
-  }, [notice]);
-
-  // React Router REUSES this component across `/t/:projectId/:agentId`, so without this the strip
-  // outlives the list it belongs to: switching agents mid-window would leave an Undo that silently
-  // restores the previous agent's conversation, and switching repos would post the old session id
-  // to the new repo's endpoint. The notice belongs to one list; it dies with it.
-  useEffect(() => setNotice(null), [basePath]);
-
-  // The conversation the user is reading can be the one they just archived — the server now
-  // 404s it, so step back to the list rather than let the revalidation break the pane.
-  useEffect(() => {
-    if (notice?.kind !== "archived" || notice.sessionId !== openSessionId)
-      return;
-    navigate(basePath, { replace: true });
-  }, [notice, openSessionId, basePath, navigate]);
-
   const submit = (sessionId: string, intent: "archive" | "unarchive") => {
-    setNotice(null);
+    setRefusal(null);
     fetcher.submit(
       { intent, playgroundSessionId: sessionId },
       { method: "post", action: `/api/foh/${projectId}/archive` },
     );
   };
 
+  // The toast's Undo fires long after the render that created it; the ref keeps it aimed at
+  // the current submit (and its current projectId) instead of a stale closure.
+  const submitRef = useRef(submit);
+  useEffect(() => {
+    submitRef.current = submit;
+  });
+
+  // Keyed on the response alone: the fetcher's identity churns through idle → loading → idle
+  // around every submit, and re-running on that churn would resurrect a toast the user had
+  // just dismissed via Undo.
+  useEffect(() => {
+    if (!result) return;
+    if (!result.ok) {
+      setRefusal({ sessionId: result.sessionId, message: result.error });
+      return;
+    }
+    if (result.intent !== "archive") return;
+    const { sessionId, title } = result;
+    toast("Session archived", {
+      id: ARCHIVE_TOAST_ID,
+      description: title,
+      duration: ARCHIVE_UNDO_MS,
+      action: {
+        label: "Undo",
+        onClick: () => submitRef.current(sessionId, "unarchive"),
+      },
+    });
+  }, [result]);
+
+  useEffect(() => {
+    if (!refusal) return;
+    const timer = setTimeout(() => setRefusal(null), ARCHIVE_UNDO_MS);
+    return () => clearTimeout(timer);
+  }, [refusal]);
+
+  // React Router REUSES this component across `/t/:projectId/:agentId`, so without this the
+  // toast outlives the list it belongs to: switching agents mid-window would leave an Undo that
+  // silently restores the previous agent's conversation, and switching repos would post the old
+  // session id to the new repo's endpoint. The undo belongs to one list; it dies with it.
+  useEffect(() => {
+    setRefusal(null);
+    return () => {
+      toast.dismiss(ARCHIVE_TOAST_ID);
+    };
+  }, [basePath]);
+
+  // The conversation the user is reading can be the one they just archived — the server now
+  // 404s it, so step back to the list rather than let the revalidation break the pane.
+  useEffect(() => {
+    if (!result?.ok || result.intent !== "archive") return;
+    if (openSessionId !== null && result.sessionId === openSessionId) {
+      navigate(basePath, { replace: true });
+    }
+  }, [result, openSessionId, basePath, navigate]);
+
   return {
-    notice,
-    refusal:
-      notice?.kind === "refused"
-        ? { sessionId: notice.sessionId, message: notice.message }
-        : null,
+    refusal,
     pendingId:
       fetcher.state === "idle"
         ? null
         : (fetcher.formData?.get("playgroundSessionId")?.toString() ?? null),
     archive: (sessionId: string) => submit(sessionId, "archive"),
-    undo: () => {
-      if (notice?.kind === "archived") submit(notice.sessionId, "unarchive");
-    },
   };
 }
 

@@ -11,6 +11,7 @@ import {
   betterAuthSessionMiddleware,
   getSessionAuth,
 } from "~/auth/session.server";
+import { Toaster } from "~/components/ui/sonner";
 import "./app.css";
 import type { Route } from "./+types/root";
 
@@ -99,5 +100,10 @@ export function Layout({ children }: { children: React.ReactNode }) {
 }
 
 export default function App() {
-  return <Outlet />;
+  return (
+    <>
+      <Outlet />
+      <Toaster />
+    </>
+  );
 }
