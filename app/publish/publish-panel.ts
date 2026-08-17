@@ -43,6 +43,10 @@ export function publishedVersion(steps: PipelineStep[] | null | undefined): stri
 export interface DeploymentSnapshot {
   status: string;
   errorDetail: string | null;
+  /** Row timestamps (ISO), when the reader has them — the deploy phase's elapsed-time source
+   *  (issue #375). Optional so older readers/tests without them keep working (no timers). */
+  createdAt?: string;
+  updatedAt?: string;
 }
 
 /**
@@ -66,27 +70,53 @@ export function resolveDeployProgress(
       if (!sub.deploymentId) return sub;
       const row = deployments.get(sub.deploymentId);
       if (!row) return sub;
+      // The row's timestamps are the deploy phase's clock (issue #375): started when the row
+      // was created, finished when it last moved — which for a terminal status is the moment
+      // it became live/failed. Merged here so the panel reads one shape for every substep.
+      const times = {
+        startedAt: row.createdAt ?? sub.startedAt,
+        finishedAt: sub.finishedAt,
+      };
       if (row.status === "failed") {
         return {
           ...sub,
+          ...times,
+          finishedAt: row.updatedAt ?? sub.finishedAt,
           status: "failed" as const,
           error: row.errorDetail ?? "The deployment failed — see the Deployment tab.",
         };
       }
       if (row.status === "pending" || row.status === "building") {
-        return { ...sub, status: "running" as const };
+        return { ...sub, ...times, status: "running" as const };
       }
-      // live — or already replaced by a later deploy (draining/stopped): it did come up.
-      return { ...sub, status: "succeeded" as const };
+      // live — or already replaced by a later deploy (draining/stopped): it did come up. But
+      // `updatedAt` only records WHEN it came up while the row is still `live` — a replaced
+      // row's updatedAt is the later drain/stop transition, hours after the fact. No honest
+      // finish time survives replacement, so omit it rather than show a wrong duration.
+      return {
+        ...sub,
+        ...times,
+        ...(row.status === "live" ? { finishedAt: row.updatedAt ?? sub.finishedAt } : {}),
+        status: "succeeded" as const,
+      };
     });
     // Re-derive the step's presented status from the substeps; a step the pipeline recorded
     // as failed (queue-time failure) keeps its record.
     if (step.status !== "succeeded") return { ...step, substeps };
+    // The step's own clock must follow the rows too: the pipeline stamped finishedAt when the
+    // last deploy was QUEUED, so without this the overall timer snaps back to the queueing
+    // duration the moment the rows settle. The latest substep finish is the phase's real end.
+    const finishes = substeps.map((s) => s.finishedAt).filter((t): t is string => !!t);
+    const finishedAt =
+      finishes.length > 0
+        ? finishes.reduce((a, b) => (Date.parse(a) >= Date.parse(b) ? a : b))
+        : step.finishedAt;
     const failed = substeps.filter((s) => s.status === "failed");
     if (failed.length > 0) {
       return {
         ...step,
         substeps,
+        finishedAt,
         status: "failed" as const,
         error: `Couldn't start ${failed.map((s) => s.label).join(", ")}:\n\n${failed
           .map((s) => s.error)
@@ -97,8 +127,124 @@ export function resolveDeployProgress(
     if (substeps.some((s) => s.status === "running")) {
       return { ...step, substeps, status: "running" as const };
     }
-    return { ...step, substeps };
+    return { ...step, substeps, finishedAt };
   });
+}
+
+/** One segment of the panel's phase progress bar — a pipeline step, compactly labeled. */
+export interface PhaseSegment {
+  key: PipelineStep["key"];
+  /** Short label that fits on a bar segment ("Build"), not the stepper's full sentence. */
+  label: string;
+  status: PipelineStep["status"];
+  /** The skip reason, surfaced as the segment's title text. */
+  reason?: string;
+}
+
+const PHASE_LABELS: Record<PipelineStep["key"], string> = {
+  check: "Check",
+  build: "Build",
+  commit: "Save",
+  version: "Version",
+  deploy: "Deploy",
+};
+
+/** The five steps as progress-bar segments (issue #375's panel redesign). Pure projection. */
+export function phaseBarModel(steps: PipelineStep[] | null | undefined): PhaseSegment[] {
+  return (steps ?? initialPublishSteps()).map((s) => ({
+    key: s.key,
+    label: PHASE_LABELS[s.key],
+    status: s.status,
+    ...(s.reason ? { reason: s.reason } : {}),
+  }));
+}
+
+/** Where one member is in its build→deploy journey — the panel's per-member card. */
+export interface MemberProgress {
+  label: string;
+  /** The card's phase, joining the build and deploy substeps that share the member's label. */
+  phase: "queued" | "building" | "built" | "starting" | "live" | "failed";
+  /** ISO time the member's first activity began — the card's elapsed timer starts here. */
+  startedAt?: string;
+  /** ISO time the member reached a terminal phase — the timer stops here. */
+  finishedAt?: string;
+  error?: string;
+}
+
+/**
+ * Per-member progress cards for the pipeline panel (issue #375), joining the build step's and
+ * deploy step's substeps by member label. Call it on RESOLVED steps (resolveDeployProgress) so
+ * deploy substeps already carry live statuses and row timestamps. An untouched member has no
+ * build substep and first appears when the deploy step queues it; a member mid-build has no
+ * deploy substep yet. Cards keep the deploy substeps' order (the roster order the pipeline
+ * queued), with build-only members appended in build order.
+ */
+export function memberProgress(steps: PipelineStep[] | null | undefined): MemberProgress[] {
+  const build = steps?.find((s) => s.key === "build");
+  const deploy = steps?.find((s) => s.key === "deploy");
+  const buildByLabel = new Map((build?.substeps ?? []).map((s) => [s.label, s]));
+  const cards: MemberProgress[] = [];
+  const seen = new Set<string>();
+
+  for (const dep of deploy?.substeps ?? []) {
+    seen.add(dep.label);
+    const b = buildByLabel.get(dep.label);
+    // A failed build outranks whatever the deploy substep says (it never ran).
+    if (b?.status === "failed") {
+      cards.push(card(dep.label, "failed", b.startedAt, b.finishedAt, b.error));
+      continue;
+    }
+    const startedAt = b?.startedAt ?? dep.startedAt;
+    switch (dep.status) {
+      case "failed":
+        cards.push(card(dep.label, "failed", startedAt, dep.finishedAt, dep.error));
+        break;
+      case "running":
+        cards.push(card(dep.label, "starting", startedAt));
+        break;
+      case "succeeded":
+        cards.push(card(dep.label, "live", startedAt, dep.finishedAt));
+        break;
+      default:
+        // pending: queued behind the deploy pool — or simply not resolved yet.
+        cards.push(card(dep.label, b ? "built" : "queued", startedAt));
+    }
+  }
+
+  for (const sub of build?.substeps ?? []) {
+    if (seen.has(sub.label)) continue;
+    switch (sub.status) {
+      case "failed":
+        cards.push(card(sub.label, "failed", sub.startedAt, sub.finishedAt, sub.error));
+        break;
+      case "running":
+        cards.push(card(sub.label, "building", sub.startedAt));
+        break;
+      case "succeeded":
+        // Built, deploy not queued yet (commit/version still ahead of it).
+        cards.push(card(sub.label, "built", sub.startedAt));
+        break;
+      default:
+        cards.push(card(sub.label, "queued", sub.startedAt));
+    }
+  }
+  return cards;
+}
+
+function card(
+  label: string,
+  phase: MemberProgress["phase"],
+  startedAt?: string,
+  finishedAt?: string,
+  error?: string,
+): MemberProgress {
+  return {
+    label,
+    phase,
+    ...(startedAt ? { startedAt } : {}),
+    ...(finishedAt ? { finishedAt } : {}),
+    ...(error ? { error } : {}),
+  };
 }
 
 /** Every deployment id the steps' deploy substeps recorded (what the route reads back). */

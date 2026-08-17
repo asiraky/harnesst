@@ -19,8 +19,9 @@
  * the ref update non-fast-forward, and the pipeline rebuilds against the new head and retries
  * the commit exactly once before failing with a clear message. Nothing unbuilt ever lands.
  *
- * The pipeline itself finishes when every member's deploy is QUEUED (the worker is
- * concurrency-1, so it cannot wait on jobs behind itself). Each queued deploy substep records
+ * The pipeline itself finishes when every member's deploy is QUEUED (the deploys run on the
+ * same worker that is running this publish job, so waiting on them here would deadlock). Each
+ * queued deploy substep records
  * its deploymentId; the publish state route re-reads those rows and presents the deploy step as
  * still running/failed until every agent is actually live — the record says what the pipeline
  * did, the presentation says what is true now.
@@ -67,6 +68,7 @@ import {
   NonFastForwardError,
 } from "~/github/write.server";
 import { enqueue } from "~/jobs/queue.server";
+import { concurrencyFromEnv, mapWithConcurrency } from "~/lib/concurrency";
 import { isAssistantConfigPath } from "~/project/guard.server";
 import { initialPublishSteps } from "~/publish/publish-panel";
 import { getRuntime } from "~/seams/index.server";
@@ -111,6 +113,11 @@ export interface PublishPipelineDeps {
   enqueueJob: typeof enqueue;
   /** Post-commit pruning of model overrides whose target the change-set deleted (issue #344). */
   cleanupSubagentOverrides: typeof cleanupSubagentOverrides;
+  /**
+   * Max member builds in flight inside the build step (issue #375). Defaults to
+   * HARNESST_PUBLISH_BUILD_CONCURRENCY (2 if unset); 1 restores serial builds.
+   */
+  buildConcurrency?: number;
 }
 
 function defaultDeps(): PublishPipelineDeps {
@@ -496,10 +503,29 @@ export async function runPublish(
   const steps = initialPublishSteps();
   const step = (key: PipelineStep["key"]): PipelineStep =>
     steps.find((s) => s.key === key)!;
-  const save = () => updateTaskSteps(taskId, steps, store);
+  // Saves are whole-snapshot writes of `steps`, so overlapping saves (parallel member builds,
+  // issue #375) could persist a STALE snapshot last. Chain them: each save writes after the
+  // previous one lands. A failed write still rejects at its own call site, without poisoning
+  // the chain for later saves.
+  let saveChain: Promise<unknown> = Promise.resolve();
+  const save = () => {
+    const write = saveChain.then(() => updateTaskSteps(taskId, steps, store));
+    saveChain = write.catch(() => {});
+    return write;
+  };
+  /** Flip a step to running and stamp its start time (issue #375: the panel's elapsed timers).
+   *  A CAS retry re-begins commit/build — restamp, the retry pass is what the timer should show. */
+  const begin = (key: PipelineStep["key"]): PipelineStep => {
+    const s = step(key);
+    s.status = "running";
+    s.startedAt = new Date().toISOString();
+    delete s.finishedAt;
+    return s;
+  };
   const succeed = async (key: PipelineStep["key"]) => {
     const s = step(key);
     s.status = "succeeded";
+    s.finishedAt = new Date().toISOString();
     delete s.detail;
     await save();
   };
@@ -508,6 +534,7 @@ export async function runPublish(
     const s = step(key);
     s.status = "failed";
     s.error = error;
+    s.finishedAt = new Date().toISOString();
     delete s.detail;
     await save();
     await failTask(taskId, error, store);
@@ -552,11 +579,11 @@ export async function runPublish(
   let baseHeadSha: string | null = null;
 
   /**
-   * The build step (§3.2): one sequential build per member root the change-set touches (one
-   * docker tag namespace per task, but the underlying builder still races on shared caches —
-   * and the worker is concurrency-1 anyway). Pins the built tree to the head sha it captures,
-   * which the commit then CASes on. Rerunnable: a CAS retry calls it again, capturing the moved
-   * head. Returns false after failing the task.
+   * The build step (§3.2): one build per member root the change-set touches, at most
+   * `buildConcurrency` in flight at once (issue #375; per-task docker tag namespaces keep the
+   * builds independent, and docker serializes shared-layer cache writes itself). Pins the built
+   * tree to the head sha it captures, which the commit then CASes on. Rerunnable: a CAS retry
+   * calls it again, capturing the moved head. Returns false after failing the task.
    */
   const runBuildStep = async (files: PublishFile[]): Promise<boolean> => {
     const buildStep = step("build");
@@ -569,7 +596,7 @@ export async function runPublish(
       agents.find((a) => a.root === root)?.name ??
       root.match(/^agents\/([^/]+)\//)?.[1] ??
       "the repository";
-    buildStep.status = "running";
+    begin("build");
     const subs = buildRoots.map((root) => ({
       label: labelFor(root),
       status: "pending" as const,
@@ -580,11 +607,24 @@ export async function runPublish(
     const headSha = await deps.getBranchHead(installationId, repo, connected.defaultBranch);
     baseHeadSha = headSha;
 
-    for (const [i, agentRoot] of buildRoots.entries()) {
+    // Under parallel builds "which one is running" is a set, so the step detail is a completion
+    // counter; the per-root substeps carry the live statuses.
+    let done = 0;
+    const updateDetail = () => {
+      buildStep.detail =
+        buildRoots.length > 1 ? `${done} of ${buildRoots.length}` : subs[0]?.label;
+    };
+    updateDetail();
+    await save();
+
+    /** One root's build; returns a failure description or null. Never throws on a failed build. */
+    const buildOne = async (
+      agentRoot: string,
+      i: number,
+    ): Promise<{ root: string; output: string } | null> => {
       const sub = subs[i];
       sub.status = "running";
-      buildStep.detail =
-        buildRoots.length > 1 ? `${sub.label} (${i + 1} of ${buildRoots.length})` : sub.label;
+      sub.startedAt = new Date().toISOString();
       await save();
       const result = await deps.checkBuild({
         projectId: connected.id,
@@ -600,15 +640,14 @@ export async function runPublish(
         // (root under agents/) get the generated ask-teammate tool baked in (D2).
         injectTeammateTool: !!agentRoot && agentRoot !== "agent",
       });
+      done++;
+      updateDetail();
+      sub.finishedAt = new Date().toISOString();
       if (!result.ok) {
         sub.status = "failed";
         sub.error = result.output;
-        const scope = buildRoots.length > 1 && agentRoot ? ` (\`${agentRoot}\`)` : "";
-        await failAt(
-          "build",
-          `The build failed${scope} — nothing was published, and your changes are still saved. Fix this and publish again:\n\n${result.output}`,
-        );
-        return false;
+        await save();
+        return { root: agentRoot, output: result.output };
       }
       sub.status = "succeeded";
       if (result.provisionalTag) {
@@ -616,8 +655,40 @@ export async function runPublish(
         cleanupTags.push(result.provisionalTag);
       }
       await save();
+      return null;
+    };
+
+    const limit =
+      deps.buildConcurrency ??
+      concurrencyFromEnv(process.env.HARNESST_PUBLISH_BUILD_CONCURRENCY, 2);
+    // Settled results, not fail-fast: one root's failure must not abandon a sibling's in-flight
+    // docker build (its provisional tag would leak past the finally's cleanupTags).
+    const settled = await mapWithConcurrency(buildRoots, limit, buildOne);
+    const failures = settled.flatMap((r, i) => {
+      if (r.status === "rejected") {
+        // checkBuild threw (infra error, not a build failure) — record it on the substep too.
+        const sub = subs[i];
+        sub.status = "failed";
+        sub.error = r.reason instanceof Error ? r.reason.message : String(r.reason);
+        sub.finishedAt = new Date().toISOString();
+        return [{ root: buildRoots[i], output: sub.error }];
+      }
+      return r.value ? [r.value] : [];
+    });
+    if (failures.length > 0) {
+      const scopeOf = (root: string) =>
+        buildRoots.length > 1 && root ? ` (\`${root}\`)` : "";
+      const message =
+        failures.length === 1
+          ? `The build failed${scopeOf(failures[0].root)} — nothing was published, and your changes are still saved. Fix this and publish again:\n\n${failures[0].output}`
+          : `${failures.length} builds failed — nothing was published, and your changes are still saved. Fix these and publish again:\n\n${failures
+              .map((f) => `\`${f.root || "the repository"}\`:\n\n${f.output}`)
+              .join("\n\n")}`;
+      await failAt("build", message);
+      return false;
     }
     buildStep.status = "succeeded";
+    buildStep.finishedAt = new Date().toISOString();
     delete buildStep.detail;
     await save();
     return true;
@@ -625,7 +696,7 @@ export async function runPublish(
 
   try {
     // ── check ─────────────────────────────────────────────────────────────────────────────
-    step("check").status = "running";
+    begin("check");
     await save();
     let files: PublishFile[];
     let envName: string | null = null;
@@ -718,7 +789,7 @@ export async function runPublish(
     if (!assistantConfigOnly && !(await runBuildStep(files))) return outcome;
 
     // ── commit ────────────────────────────────────────────────────────────────────────────
-    step("commit").status = "running";
+    begin("commit");
     await save();
     const message = commitMessage(files);
     let sha: string;
@@ -772,7 +843,7 @@ export async function runPublish(
             refreshError,
           );
         }
-        commitStep.status = "running";
+        begin("commit");
         delete commitStep.detail;
         await save();
         try {
@@ -857,7 +928,7 @@ export async function runPublish(
     }
 
     // ── version ───────────────────────────────────────────────────────────────────────────
-    step("version").status = "running";
+    begin("version");
     await save();
     let releases: Awaited<ReturnType<typeof ensureReleasesForCommit>>;
     let roster: (typeof agents)[number][];
@@ -919,6 +990,7 @@ export async function runPublish(
     // per member; use the first, as the version history does.
     const versionStep = step("version");
     versionStep.status = "succeeded";
+    versionStep.finishedAt = new Date().toISOString();
     versionStep.detail = releases[0]?.release.version;
     await save();
 
@@ -929,8 +1001,7 @@ export async function runPublish(
     // deployment row's story, so every queued substep records its deploymentId and the publish
     // state route re-reads those rows until each agent is live or failed (§3.2: report
     // deploy-time work honestly, never pretend the team was already up).
-    const deployStep = step("deploy");
-    deployStep.status = "running";
+    const deployStep = begin("deploy");
     const deploySubs = roster.map((a) => ({
       label: a.name,
       status: "pending" as const,
@@ -941,6 +1012,7 @@ export async function runPublish(
     for (const [i, agent] of roster.entries()) {
       const sub = deploySubs[i];
       sub.status = "running";
+      sub.startedAt = new Date().toISOString();
       await save();
       const release = releases.find((r) => r.release.agentId === agent.id)?.release;
       const envs = await store.environments.listByAgent(agent.id);
@@ -950,6 +1022,7 @@ export async function runPublish(
         sub.error = !release
           ? `No version was created for ${agent.name}.`
           : `${agent.name} has no "${envName}" environment.`;
+        sub.finishedAt = new Date().toISOString();
         await save();
         continue;
       }
@@ -967,6 +1040,7 @@ export async function runPublish(
         sub.status = "failed";
         sub.error = error instanceof Error ? error.message : String(error);
       }
+      sub.finishedAt = new Date().toISOString();
       await save();
     }
     const failedMembers = deploySubs.filter((s) => s.status === "failed");
@@ -987,6 +1061,7 @@ export async function runPublish(
       return outcome;
     }
     deployStep.status = "succeeded";
+    deployStep.finishedAt = new Date().toISOString();
     await save();
     await completeTask(taskId, { resultUrl: publishResultUrl(connected.id, taskId) }, store);
     outcome.status = "succeeded";

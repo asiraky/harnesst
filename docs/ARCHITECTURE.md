@@ -38,7 +38,8 @@ box. They are what keep the managed service and the OSS product **one codebase**
 
    _Known limitation (#288):_ `@workflow/world-local` is single-instance, but a redeploy cutover
    briefly runs the draining old container and its replacement against the same world-data volume
-   (the drain window is up to 15 minutes). The new instance's active-run recovery can re-enqueue a
+   (the drain window lasts until in-flight runs finish, up to `HARNESST_DEPLOYMENT_DRAIN_CEILING_MS`
+   — 24h by default). The new instance's active-run recovery can re-enqueue a
    run the old instance is still executing, duplicating that run's side effects. Accepted for now;
    goes away when scaffolded agents adopt the Postgres World.
 

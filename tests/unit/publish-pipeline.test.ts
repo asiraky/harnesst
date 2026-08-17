@@ -194,11 +194,19 @@ describe("runPublish — happy path", () => {
       version: "succeeded",
       deploy: "succeeded",
     });
-    // The build step was visibly running, with per-root progress, while each root built.
-    expect(observed).toEqual([
-      { status: "running", detail: "ivy (1 of 2)" },
-      { status: "running", detail: "otto (2 of 2)" },
-    ]);
+    // The build step was visibly running while each root built. Builds overlap now, so the
+    // detail is a completion counter ("done of total") rather than a which-root pointer — the
+    // per-root substeps carry the live statuses.
+    expect(observed).toHaveLength(2);
+    for (const o of observed) {
+      expect(o.status).toBe("running");
+      expect(o.detail).toMatch(/^[01] of 2$/);
+    }
+    // The pipeline stamps wall-clock bounds on each step for the panel's elapsed timers.
+    const buildStepRow = row!.steps!.find((s) => s.key === "build")!;
+    expect(buildStepRow.startedAt).toEqual(expect.any(String));
+    expect(buildStepRow.finishedAt).toEqual(expect.any(String));
+    expect(buildStepRow.substeps?.every((s) => s.startedAt && s.finishedAt)).toBe(true);
     // The succeeded version step records the team version label — the panel's "Live · vN"
     // success headline reads it off the steps.
     expect(row!.steps!.find((s) => s.key === "version")?.detail).toBe("v1");
@@ -221,8 +229,11 @@ describe("runPublish — happy path", () => {
     expect((await store.deployments.listByEnvironment("env_ivy_production")).length).toBe(1);
     expect((await store.deployments.listByEnvironment("env_otto_production")).length).toBe(1);
 
-    // Provisional tags never outlive the publish.
-    expect(deps.removeProvisionalImages).toHaveBeenCalledWith([
+    // Provisional tags never outlive the publish. (Order-insensitive: parallel builds finish
+    // in whatever order docker settles them.)
+    expect(
+      vi.mocked(deps.removeProvisionalImages).mock.calls[0][0].slice().sort(),
+    ).toEqual([
       "harnesst/publish-task:agents/ivy/agent",
       "harnesst/publish-task:agents/otto/agent",
     ]);
@@ -284,7 +295,7 @@ describe("runPublish — happy path", () => {
 
     expect((await store.workspaceTasks.findById(task.id))?.status).toBe("succeeded");
     expect(
-      vi.mocked(deps.checkBuild).mock.calls.map(([req]) => req.agentRoot),
+      vi.mocked(deps.checkBuild).mock.calls.map(([req]) => req.agentRoot).sort(),
     ).toEqual(["agents/ivy/agent", "agents/otto/agent"]);
     expect(
       vi.mocked(deps.checkBuild).mock.calls.some(([req]) => req.agentRoot === undefined),
@@ -301,8 +312,167 @@ describe("runPublish — happy path", () => {
 
     expect((await store.workspaceTasks.findById(task.id))?.status).toBe("succeeded");
     expect(
-      vi.mocked(deps.checkBuild).mock.calls.map(([req]) => req.agentRoot),
+      vi.mocked(deps.checkBuild).mock.calls.map(([req]) => req.agentRoot).sort(),
     ).toEqual(["agents/ivy/agent", "agents/otto/agent"]);
+  });
+});
+
+describe("runPublish — parallel builds (issue #375)", () => {
+  /** A third member so the pool (limit 2) genuinely has to hold a build back. */
+  function seedThirdMember(): void {
+    store.seedAgent({ id: "agent_mia", projectId: PROJECT, name: "mia", root: "agents/mia/agent" });
+    store.seedEnvironment({
+      id: "env_mia_production",
+      projectId: PROJECT,
+      agentId: "agent_mia",
+      name: "production",
+    });
+  }
+
+  it("runs at most buildConcurrency builds in flight; the third waits for a slot", async () => {
+    seedTeam();
+    seedThirdMember();
+    await stageDrafts({
+      "agents/ivy/agent/agent.ts": "export default {};",
+      "agents/otto/agent/agent.ts": "export default {};",
+      "agents/mia/agent/agent.ts": "export default {};",
+    });
+    const task = await seedTask();
+    let inFlight = 0;
+    let peak = 0;
+    const deps = makeDeps({
+      buildConcurrency: 2,
+      checkBuild: vi.fn(async (req: { agentRoot?: string }) => {
+        inFlight++;
+        peak = Math.max(peak, inFlight);
+        await new Promise((r) => setTimeout(r, 5));
+        inFlight--;
+        return { ok: true as const, provisionalTag: `harnesst/publish-task:${req.agentRoot}` };
+      }),
+    });
+
+    await runPublish(payload(task.id), deps, store);
+
+    expect((await store.workspaceTasks.findById(task.id))?.status).toBe("succeeded");
+    expect(deps.checkBuild).toHaveBeenCalledTimes(3);
+    expect(peak).toBe(2);
+  });
+
+  it("a failing root doesn't abandon its in-flight sibling: one failAt, sibling recorded, tags cleaned", async () => {
+    seedTeam();
+    await stageDrafts({
+      "agents/ivy/agent/agent.ts": "broken",
+      "agents/otto/agent/agent.ts": "export default {};",
+    });
+    const task = await seedTask();
+    const deps = makeDeps({
+      buildConcurrency: 2,
+      checkBuild: vi.fn(async (req: { agentRoot?: string }) => {
+        if (req.agentRoot === "agents/ivy/agent") {
+          // Fail fast, while otto's build is still in flight.
+          return { ok: false as const, output: "TS2304: Cannot find name 'foo'." };
+        }
+        await new Promise((r) => setTimeout(r, 10));
+        return { ok: true as const, provisionalTag: `harnesst/publish-task:${req.agentRoot}` };
+      }),
+    });
+
+    await runPublish(payload(task.id), deps, store);
+
+    const row = await store.workspaceTasks.findById(task.id);
+    expect(row?.status).toBe("failed");
+    // A single failure keeps today's message, scoped to the failing root.
+    expect(row?.error).toContain("The build failed (`agents/ivy/agent`)");
+    expect(row?.error).toContain("TS2304");
+    // The sibling ran to completion and was recorded — not abandoned mid-build.
+    const subs = row!.steps!.find((s) => s.key === "build")!.substeps!;
+    expect(subs.find((s) => s.label === "ivy")).toMatchObject({ status: "failed" });
+    expect(subs.find((s) => s.label === "otto")).toMatchObject({ status: "succeeded" });
+    // …and its provisional tag still gets cleaned up.
+    expect(vi.mocked(deps.removeProvisionalImages).mock.calls[0][0]).toEqual([
+      "harnesst/publish-task:agents/otto/agent",
+    ]);
+    // Nothing landed.
+    expect(deps.commitToDefaultBranch).not.toHaveBeenCalled();
+    expect(await drainJobs()).toEqual([]);
+  });
+
+  it("multiple failing roots aggregate into one failure message naming each root", async () => {
+    seedTeam();
+    await stageDrafts({
+      "agents/ivy/agent/agent.ts": "broken",
+      "agents/otto/agent/agent.ts": "broken too",
+    });
+    const task = await seedTask();
+    const deps = makeDeps({
+      buildConcurrency: 2,
+      checkBuild: vi.fn(async (req: { agentRoot?: string }) => ({
+        ok: false as const,
+        output: `error in ${req.agentRoot}`,
+      })),
+    });
+
+    await runPublish(payload(task.id), deps, store);
+
+    const row = await store.workspaceTasks.findById(task.id);
+    expect(row?.status).toBe("failed");
+    expect(row?.error).toContain("2 builds failed");
+    expect(row?.error).toContain("`agents/ivy/agent`");
+    expect(row?.error).toContain("`agents/otto/agent`");
+  });
+
+  it("a checkBuild that THROWS (infra error) fails that root's substep and the task", async () => {
+    seedTeam();
+    await stageDrafts({
+      "agents/ivy/agent/agent.ts": "export default {};",
+      "agents/otto/agent/agent.ts": "export default {};",
+    });
+    const task = await seedTask();
+    const deps = makeDeps({
+      buildConcurrency: 2,
+      checkBuild: vi.fn(async (req: { agentRoot?: string }) => {
+        if (req.agentRoot === "agents/ivy/agent") throw new Error("docker daemon unreachable");
+        return { ok: true as const, provisionalTag: `harnesst/publish-task:${req.agentRoot}` };
+      }),
+    });
+
+    await runPublish(payload(task.id), deps, store);
+
+    const row = await store.workspaceTasks.findById(task.id);
+    expect(row?.status).toBe("failed");
+    expect(row?.error).toContain("docker daemon unreachable");
+    const subs = row!.steps!.find((s) => s.key === "build")!.substeps!;
+    expect(subs.find((s) => s.label === "ivy")).toMatchObject({
+      status: "failed",
+      error: "docker daemon unreachable",
+    });
+    expect(subs.find((s) => s.label === "otto")).toMatchObject({ status: "succeeded" });
+  });
+
+  it("buildConcurrency 1 restores strictly serial builds", async () => {
+    seedTeam();
+    await stageDrafts({
+      "agents/ivy/agent/agent.ts": "export default {};",
+      "agents/otto/agent/agent.ts": "export default {};",
+    });
+    const task = await seedTask();
+    let inFlight = 0;
+    let peak = 0;
+    const deps = makeDeps({
+      buildConcurrency: 1,
+      checkBuild: vi.fn(async (req: { agentRoot?: string }) => {
+        inFlight++;
+        peak = Math.max(peak, inFlight);
+        await new Promise((r) => setTimeout(r, 2));
+        inFlight--;
+        return { ok: true as const, provisionalTag: `harnesst/publish-task:${req.agentRoot}` };
+      }),
+    });
+
+    await runPublish(payload(task.id), deps, store);
+
+    expect((await store.workspaceTasks.findById(task.id))?.status).toBe("succeeded");
+    expect(peak).toBe(1);
   });
 });
 
