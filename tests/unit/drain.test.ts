@@ -6,7 +6,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { DEPLOYMENT_CONTAINER_CLEANUP_GRACE_MS } from "~/deploy/cleanup.server";
-import { DEPLOYMENT_DRAIN_POLL_MS, drainDeployment } from "~/deploy/drain.server";
+import {
+  DEPLOYMENT_DRAIN_BACKOFF_AFTER_MS,
+  DEPLOYMENT_DRAIN_POLL_MS,
+  DEPLOYMENT_DRAIN_POLL_SLOW_MS,
+  drainDeployment,
+  drainPollDelayMs,
+} from "~/deploy/drain.server";
 import type { DeployTarget } from "~/seams/types";
 import { fakeDeployTarget, fakeSecrets } from "../fakes/infra";
 import { makeFakeStore, type FakeStore } from "../fakes/store";
@@ -72,17 +78,86 @@ describe("drainDeployment", () => {
     store.seedRun({ id: "run_1", projectId: PROJECT, deploymentId: id, status: "running" });
     const stoppedIds: string[] = [];
     const deps = { store, deployTarget: fakeDeployTarget({ stoppedIds }), secrets: fakeSecrets() };
+    const startedAt = new Date().toISOString();
 
-    const result = await drainDeployment({ deploymentId: id, deadlineAt: FUTURE }, deps);
+    const result = await drainDeployment(
+      { deploymentId: id, deadlineAt: FUTURE, drainStartedAt: startedAt },
+      deps,
+    );
 
     expect(result).toEqual({ status: "waiting", runningRuns: 1 });
     expect(stoppedIds).toEqual([]);
     expect((await store.deployments.findById(id))?.status).toBe("draining");
-    // The next poll is enqueued one interval out, carrying the same deadline.
+    // The next poll is enqueued one interval out, carrying the same deadline and start.
     expect(await store.jobs.claimNext(new Date())).toBeNull();
     const next = await store.jobs.claimNext(new Date(Date.now() + DEPLOYMENT_DRAIN_POLL_MS + 1000));
     expect(next?.kind).toBe("drain_deployment");
-    expect(next?.payload).toEqual({ deploymentId: id, deadlineAt: FUTURE });
+    expect(next?.payload).toEqual({
+      deploymentId: id,
+      deadlineAt: FUTURE,
+      drainStartedAt: startedAt,
+    });
+  });
+
+  it("backs off to the slow poll once the drain is older than the backoff threshold", async () => {
+    const id = await seedDraining();
+    store.seedRun({ id: "run_1", projectId: PROJECT, deploymentId: id, status: "running" });
+    const deps = { store, deployTarget: fakeDeployTarget(), secrets: fakeSecrets() };
+    const oldStart = new Date(
+      Date.now() - DEPLOYMENT_DRAIN_BACKOFF_AFTER_MS - 60_000,
+    ).toISOString();
+
+    const result = await drainDeployment(
+      { deploymentId: id, deadlineAt: FUTURE, drainStartedAt: oldStart },
+      deps,
+    );
+
+    expect(result).toEqual({ status: "waiting", runningRuns: 1 });
+    // Not claimable at the fast interval — only at the slow one.
+    expect(
+      await store.jobs.claimNext(new Date(Date.now() + DEPLOYMENT_DRAIN_POLL_MS + 1000)),
+    ).toBeNull();
+    const next = await store.jobs.claimNext(
+      new Date(Date.now() + DEPLOYMENT_DRAIN_POLL_SLOW_MS + 1000),
+    );
+    expect(next?.kind).toBe("drain_deployment");
+    expect(next?.payload).toMatchObject({ drainStartedAt: oldStart });
+  });
+
+  it("caps the re-poll at the deadline — a slow poll near the ceiling must not overshoot it", async () => {
+    const id = await seedDraining();
+    store.seedRun({ id: "run_1", projectId: PROJECT, deploymentId: id, status: "running" });
+    const deps = { store, deployTarget: fakeDeployTarget(), secrets: fakeSecrets() };
+    // Deep in slow-poll territory, with the deadline closer than one slow interval away.
+    const oldStart = new Date(
+      Date.now() - DEPLOYMENT_DRAIN_BACKOFF_AFTER_MS - 60_000,
+    ).toISOString();
+    const nearDeadline = new Date(Date.now() + 2 * 60_000).toISOString();
+
+    const result = await drainDeployment(
+      { deploymentId: id, deadlineAt: nearDeadline, drainStartedAt: oldStart },
+      deps,
+    );
+
+    expect(result).toEqual({ status: "waiting", runningRuns: 1 });
+    // Claimable AT the deadline — not a full slow interval past it.
+    const next = await store.jobs.claimNext(new Date(Date.parse(nearDeadline) + 1000));
+    expect(next?.kind).toBe("drain_deployment");
+    expect(next?.payload).toMatchObject({ deadlineAt: nearDeadline });
+  });
+
+  it("treats a payload without drainStartedAt (pre-backoff job) as started now — fast poll", async () => {
+    const id = await seedDraining();
+    store.seedRun({ id: "run_1", projectId: PROJECT, deploymentId: id, status: "running" });
+    const deps = { store, deployTarget: fakeDeployTarget(), secrets: fakeSecrets() };
+
+    const result = await drainDeployment({ deploymentId: id, deadlineAt: FUTURE }, deps);
+
+    expect(result).toEqual({ status: "waiting", runningRuns: 1 });
+    // Claimable at the fast interval, and the re-enqueue writes the field so it converges.
+    const next = await store.jobs.claimNext(new Date(Date.now() + DEPLOYMENT_DRAIN_POLL_MS + 1000));
+    expect(next?.kind).toBe("drain_deployment");
+    expect((next?.payload as { drainStartedAt?: string }).drainStartedAt).toBeDefined();
   });
 
   it("stops past the ceiling even with a turn in flight, failing it visibly", async () => {
@@ -143,6 +218,24 @@ describe("drainDeployment", () => {
       expect(result).toEqual({ status: "skipped", reason: `deployment is ${status}` });
     }
     expect(stoppedIds).toEqual([]);
+  });
+
+  describe("drainPollDelayMs", () => {
+    const T0 = Date.parse("2026-01-01T00:00:00Z");
+
+    it("polls fast while the drain is younger than the backoff threshold", () => {
+      expect(drainPollDelayMs(T0, T0)).toBe(DEPLOYMENT_DRAIN_POLL_MS);
+      expect(drainPollDelayMs(T0 + DEPLOYMENT_DRAIN_BACKOFF_AFTER_MS - 1, T0)).toBe(
+        DEPLOYMENT_DRAIN_POLL_MS,
+      );
+    });
+
+    it("switches to the slow poll at the threshold and beyond", () => {
+      expect(drainPollDelayMs(T0 + DEPLOYMENT_DRAIN_BACKOFF_AFTER_MS, T0)).toBe(
+        DEPLOYMENT_DRAIN_POLL_SLOW_MS,
+      );
+      expect(drainPollDelayMs(T0 + 24 * 60 * 60 * 1000, T0)).toBe(DEPLOYMENT_DRAIN_POLL_SLOW_MS);
+    });
   });
 
   it("propagates a stop failure so the worker retries the drain", async () => {

@@ -240,13 +240,20 @@ export interface PipelineStep {
   key: "check" | "build" | "commit" | "version" | "deploy";
   label: string; // "Building your agents"
   status: PipelineStepStatus;
-  detail?: string; // "Ivy (2 of 3)"
+  detail?: string; // "2 of 3"
   reason?: string; // why skipped
   error?: string; // full failure output, preserving newlines
+  /** ISO timestamps stamped at the running/terminal transitions (issue #375: the publish panel
+   *  renders elapsed timers from them). Optional — rows written before they existed lack them,
+   *  and the panel simply shows no timer. */
+  startedAt?: string;
+  finishedAt?: string;
   substeps?: {
     label: string;
     status: PipelineStepStatus;
     error?: string;
+    startedAt?: string;
+    finishedAt?: string;
     /**
      * Deploy substeps: the queued deployment row. The pipeline succeeds the substep when the
      * deploy is QUEUED; the publish state route re-reads this row and presents the substep as

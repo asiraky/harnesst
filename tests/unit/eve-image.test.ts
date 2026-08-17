@@ -60,13 +60,17 @@ vi.mock("~/github/client.server", () => ({
   })),
 }));
 
-// Wrap writeFile so build-context injection is observable — it still writes to the temp dir.
+// Wrap writeFile and lutimes so build-context injection and mtime normalization are
+// observable — both still hit the real temp dir.
 vi.mock("node:fs/promises", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:fs/promises")>();
   return {
     ...actual,
     writeFile: vi.fn((...args: Parameters<typeof actual.writeFile>) =>
       actual.writeFile(...args),
+    ),
+    lutimes: vi.fn((...args: Parameters<typeof actual.lutimes>) =>
+      actual.lutimes(...args),
     ),
   };
 });
@@ -342,6 +346,79 @@ describe("buildStagedTree", () => {
       expect.any(Object),
       expect.any(Function),
     );
+  });
+});
+
+/**
+ * Issue #375 — the build context must be byte- AND mtime-identical between publishes of
+ * unchanged content, or `COPY . .` busts docker's layer cache and every member rebuilds fully.
+ */
+describe("build-context mtime normalization (issue #375)", () => {
+  beforeEach(() => {
+    execFile.mockClear();
+    execFile.mockImplementation(defaultExecFile);
+  });
+
+  it("re-pins the whole staged tree to the epoch after the last context write", async () => {
+    const { buildStagedTree, BUILD_CONTEXT_EPOCH } = await import(
+      "~/deploy/eve-image.server"
+    );
+    const fsp = await import("node:fs/promises");
+    const writeFile = fsp.writeFile as unknown as ReturnType<typeof vi.fn>;
+    const lutimes = fsp.lutimes as unknown as ReturnType<typeof vi.fn>;
+    writeFile.mockClear();
+    lutimes.mockClear();
+
+    await buildStagedTree({
+      projectId: "proj_1",
+      repo: { owner: "acme", repo: "agents" },
+      ref: "abc123",
+      installationId: "inst_1",
+      overlay: [{ path: "agent/agent.ts", content: "export default {};" }],
+    });
+
+    expect(lutimes).toHaveBeenCalled();
+    for (const call of lutimes.mock.calls) {
+      expect(call[1]).toBe(BUILD_CONTEXT_EPOCH);
+      expect(call[2]).toBe(BUILD_CONTEXT_EPOCH);
+    }
+    // Every injection write lands BEFORE the final normalization pass — a write after it would
+    // re-dirty the tree and silently bust the cache again.
+    const lastWrite = Math.max(...writeFile.mock.invocationCallOrder);
+    const lastNormalize = Math.max(...lutimes.mock.invocationCallOrder);
+    expect(lastNormalize).toBeGreaterThan(lastWrite);
+  });
+
+  it("normalizeContextMtimes pins nested files, dirs, and dangling symlinks without throwing", async () => {
+    const { normalizeContextMtimes, BUILD_CONTEXT_EPOCH } = await import(
+      "~/deploy/eve-image.server"
+    );
+    const { mkdtemp, lstat, symlink } = await vi.importActual<
+      typeof import("node:fs/promises")
+    >("node:fs/promises");
+    const { writeFile: realWriteFile } = await vi.importActual<
+      typeof import("node:fs/promises")
+    >("node:fs/promises");
+    const os = await import("node:os");
+    const path = await import("node:path");
+
+    const dir = await mkdtemp(path.join(os.tmpdir(), "harnesst-mtime-"));
+    await mkdir(path.join(dir, "a/b"), { recursive: true });
+    await realWriteFile(path.join(dir, "a/b/file.ts"), "x");
+    // GitHub tarballs can contain symlinks to paths outside the archive — `utimes` would
+    // follow this one and throw ENOENT; `lutimes` stamps the link itself.
+    await symlink("./does-not-exist", path.join(dir, "a/dangling"));
+
+    await normalizeContextMtimes(dir);
+
+    const targets = [dir, "a", "a/b", "a/b/file.ts", "a/dangling"].map((s) =>
+      s === dir ? dir : path.join(dir, s),
+    );
+    for (const target of targets) {
+      expect((await lstat(target)).mtime.getTime()).toBe(
+        BUILD_CONTEXT_EPOCH.getTime(),
+      );
+    }
   });
 });
 
