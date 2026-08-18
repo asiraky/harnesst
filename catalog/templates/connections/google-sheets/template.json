@@ -4,7 +4,7 @@
   "type": "connection",
   "name": "Google Sheets",
   "description": "Read and write Google Sheets from this agent. Install it, then click Connect Google on the agent's Deployment tab to authorize your account, and the agent gets google_sheets__* tools (read/append/update cells, metadata, batch updates) via eve's OpenAPI connection — access tokens self-refresh at runtime.",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "eve": ">=0.20.0",
   "files": ["connections/google-sheets.ts", "data/google-sheets.openapi.json"],
   "assistantSkill": "assistant-skill.md",

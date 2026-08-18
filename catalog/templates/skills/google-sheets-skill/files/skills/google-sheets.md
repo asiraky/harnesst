@@ -72,10 +72,42 @@ for genuine structural edits.
 
 - Read/write in reasonable chunks; a single call returning an enormous grid is slow — request only
   the ranges you need.
-- **Permission denied / 403**: the **connected Google account** doesn't have access to that
-  spreadsheet. Share the sheet with that account (or connect an account that already has access) —
-  the agent can only reach spreadsheets its connected identity can open.
-- **404**: wrong `spreadsheetId`, or a sheet/tab name that doesn't exist — re-check with
-  `spreadsheets_get`.
 - A first call in a session may pause for human approval (the connection is approval-gated by
   default); that is expected, not an error.
+
+### Always check `status` — a failed call still looks like a successful tool result
+
+Every `google_sheets__*` call returns `{ status, statusText, body }`. A failure is **not** raised as
+a tool error: on a bad call `body` holds Google's error object instead of data, and the result
+otherwise looks exactly like a successful one. Read `status` before you read `body`. Treating an
+error body as data is how a broken run turns into a confidently wrong answer.
+
+- **`401`** — the credential is bad or expired. Reconnect Google from the agent's Deployment tab.
+  This, not a `5xx`, is what an expired token actually looks like.
+- **`403`** — the **connected Google account** doesn't have access to that spreadsheet. Share the
+  sheet with that account (or connect an account that already has access) — the agent can only
+  reach spreadsheets its connected identity can open.
+- **`404`** — wrong `spreadsheetId`, or a sheet/tab name that doesn't exist — re-check with
+  `spreadsheets_get`.
+- **`400`** — a malformed range or request body. Fix the call; retrying it unchanged will not help.
+
+### Transient failures: `429` and `5xx`
+
+`429`, `500`, `502`, `503`, and `504` — including a body of
+`{"error":{"status":"UNAVAILABLE","message":"The service is currently unavailable."}}` — mean Google
+is rate-limiting or briefly down. **The call was not answered; nothing about your data is known.**
+These clear on their own, usually within minutes.
+
+Retry with real backoff, and give the outage time to end: wait ~30s before the second attempt, ~1
+minute before the third, ~2 minutes before the fourth. Two attempts fired back-to-back is not a
+retry — the whole sequence lands inside the same handful of seconds, which is exactly the window
+that is still broken.
+
+If the calls still fail after backing off, **stop the task and report it as failed**, naming the
+status and the operation. Do not carry on as if the read had returned nothing:
+
+- a `5xx` on a read means **unknown**, never **empty**;
+- never publish a report, summary, or "0 processed / 0 found" message built on a failed read — that
+  is indistinguishable from a genuine nothing-to-do run, and a human will read it as one;
+- never write to a spreadsheet based on a read that failed. Read-before-write (above) is only a
+  safeguard when the read actually succeeded.
