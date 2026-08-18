@@ -28,9 +28,9 @@
       "id": "google-sheets-bundle",
       "type": "bundle",
       "name": "Google Sheets",
-      "version": "0.2.2",
-      "description": "Everything an agent needs to work with Google Sheets: the connector (install → Connect Google → read/write spreadsheets) plus a usage skill teaching A1 notation, read-before-write, and the values vs batchUpdate operations. Recommended way to add Sheets.",
-      "hash": "6ee4357e4bbd0e502f2a5c7ec9f7d6d0804c1f48"
+      "version": "0.2.3",
+      "description": "Everything an agent needs to work with Google Sheets: the connector (install → Connect Google → read/write spreadsheets) plus a usage skill teaching A1 notation, read-before-write, the values vs batchUpdate operations, and how to handle transient Google outages. Recommended way to add Sheets.",
+      "hash": "cbc689229ac4410c95b4da315a24040bc7773dbc"
     },
     {
       "id": "vercel-bundle",
@@ -76,9 +76,9 @@
       "id": "google-sheets",
       "type": "connection",
       "name": "Google Sheets",
-      "version": "0.2.2",
+      "version": "0.2.3",
       "description": "Read and write Google Sheets from this agent. Install it, then click Connect Google on the agent's Deployment tab to authorize your account, and the agent gets google_sheets__* tools (read/append/update cells, metadata, batch updates) via eve's OpenAPI connection — access tokens self-refresh at runtime.",
-      "hash": "9a65811d77c6298e8a023f52e0ed561e8f75be92"
+      "hash": "fac499d42f30ee92afd1b05594e291335d46415b"
     },
     {
       "id": "mayi",
@@ -148,9 +148,9 @@
       "id": "google-sheets-skill",
       "type": "skill",
       "name": "Google Sheets usage",
-      "version": "0.1.1",
-      "description": "Practical guidance for driving the google_sheets__* tools: A1 notation, read-before-write discipline, RAW vs USER_ENTERED, append vs update, and the batchUpdate request shapes for structural changes.",
-      "hash": "882ce8e3e9a2ddd280983dc8ab6769d31284873e"
+      "version": "0.2.0",
+      "description": "Practical guidance for driving the google_sheets__* tools: A1 notation, read-before-write discipline, RAW vs USER_ENTERED, append vs update, the batchUpdate request shapes for structural changes, and how to handle transient 429/5xx failures without reporting them as empty results.",
+      "hash": "c782f859f7a7c6718acbafc1b4ce88c1b4e88ef2"
     },
     {
       "id": "harnesst-mcp-authoring",

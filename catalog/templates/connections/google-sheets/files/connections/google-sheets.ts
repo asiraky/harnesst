@@ -65,6 +65,10 @@ export default defineOpenAPIConnection({
     "Google Sheets v4 — read and write spreadsheet cells and metadata for the connected Google " +
     "account. Use google_sheets__spreadsheets_values_get / _batchGet to read, _update / _append " +
     "to write cell values, and _batchUpdate (spreadsheets:batchUpdate) for structural changes " +
-    "(add sheets, formatting). Ranges use A1 notation, e.g. 'Sheet1!A1:C10'.",
+    "(add sheets, formatting). Ranges use A1 notation, e.g. 'Sheet1!A1:C10'. Every call returns " +
+    "{ status, statusText, body } and a failed call is NOT a tool error — check status before " +
+    "reading body. 429/5xx (Google's 'UNAVAILABLE') leaves the call's outcome unknown: retry reads " +
+    "with backoff over minutes, re-read before retrying a write (a failed _append may still have " +
+    "landed), and never report a failed read as an empty result.",
   auth: { getToken },
 });
