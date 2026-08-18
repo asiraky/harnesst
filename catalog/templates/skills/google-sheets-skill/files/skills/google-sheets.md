@@ -95,13 +95,26 @@ error body as data is how a broken run turns into a confidently wrong answer.
 
 `429`, `500`, `502`, `503`, and `504` — including a body of
 `{"error":{"status":"UNAVAILABLE","message":"The service is currently unavailable."}}` — mean Google
-is rate-limiting or briefly down. **The call was not answered; nothing about your data is known.**
-These clear on their own, usually within minutes.
+is rate-limiting or briefly down. **The call was not answered, so its outcome is unknown.** These
+clear on their own, usually within minutes.
 
 Retry with real backoff, and give the outage time to end: wait ~30s before the second attempt, ~1
 minute before the third, ~2 minutes before the fourth. Two attempts fired back-to-back is not a
 retry — the whole sequence lands inside the same handful of seconds, which is exactly the window
 that is still broken.
+
+**Retry reads freely; never blind-retry a write.** `spreadsheets_values_get` / `_batchGet` /
+`spreadsheets_get` change nothing, so repeating one is always safe. A write that returns `5xx` may
+still have been applied — Google can fail on the way back to you — and retrying it blindly is how
+`spreadsheets_values_append` ends up adding the same rows twice, or `addSheet` creating a duplicate
+tab. After a failed `_append` / `_update` / `_clear` / `batchUpdate`:
+
+1. wait out the backoff;
+2. **re-read** the target range and check whether the write actually landed;
+3. only repeat the write if it did not.
+
+`_update` to an exact range is naturally idempotent once you have re-read and confirmed the target;
+`_append` is not, and is the one that silently duplicates.
 
 If the calls still fail after backing off, **stop the task and report it as failed**, naming the
 status and the operation. Do not carry on as if the read had returned nothing:

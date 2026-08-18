@@ -78,7 +78,7 @@
       "name": "Google Sheets",
       "version": "0.2.3",
       "description": "Read and write Google Sheets from this agent. Install it, then click Connect Google on the agent's Deployment tab to authorize your account, and the agent gets google_sheets__* tools (read/append/update cells, metadata, batch updates) via eve's OpenAPI connection — access tokens self-refresh at runtime.",
-      "hash": "6c72636189ba455f37a276676b82e9f3a2d8bba7"
+      "hash": "fac499d42f30ee92afd1b05594e291335d46415b"
     },
     {
       "id": "mayi",
@@ -150,7 +150,7 @@
       "name": "Google Sheets usage",
       "version": "0.2.0",
       "description": "Practical guidance for driving the google_sheets__* tools: A1 notation, read-before-write discipline, RAW vs USER_ENTERED, append vs update, the batchUpdate request shapes for structural changes, and how to handle transient 429/5xx failures without reporting them as empty results.",
-      "hash": "c99761c5c647606f4aeb73c998241c45b8c0c686"
+      "hash": "c782f859f7a7c6718acbafc1b4ce88c1b4e88ef2"
     },
     {
       "id": "harnesst-mcp-authoring",
