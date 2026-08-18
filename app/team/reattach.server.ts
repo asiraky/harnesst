@@ -62,8 +62,9 @@ export const DELEGATION_REATTACH_POLL_MS = Number(
 );
 
 /**
- * Per-tick idle budget. Deliberately short: the worker runs jobs SERIALLY (concurrency 1), so a
- * tick that sat on an open stream for minutes would block deploys and publishes behind it.
+ * Per-tick idle budget. Deliberately short: reattach ticks run INLINE in the worker's serial
+ * claim loop (only deploy/rollback jobs are pooled), so a tick that sat on an open stream for
+ * minutes would block every job behind it.
  */
 const REATTACH_SLICE_IDLE_MS = 15_000;
 
@@ -202,8 +203,9 @@ async function peerTarget(
  * eve's durable stream is the transcript store — the slice only watches for the turn to settle.
  *
  * Bounded by WALL CLOCK, not just by the idle budget: a busy turn emitting an event every few
- * seconds would reset the idle timer forever, and with the worker at concurrency 1 that one turn
- * would block every deploy and publish behind it — and never reach the deadline check. Breaking out
+ * seconds would reset the idle timer forever, and since reattach ticks run inline in the worker's
+ * serial claim loop, that one turn would block every job behind it — and never reach the deadline
+ * check. Breaking out
  * of the generator runs its `finally`, which cancels the reader and closes the stream; the tick
  * then reports `waiting` exactly as if the slice had gone idle.
  */

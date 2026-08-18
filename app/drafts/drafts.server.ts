@@ -460,6 +460,13 @@ export async function normalizeOpenRouterPackageDrafts(
     (await normalizeOrgModelImportDrafts(input)).map((file) => [file.path, file]),
   );
 
+  // package.json paths whose content ensureOpenRouterDependency ACTUALLY changed — only these
+  // made the repo's committed lockfile stale. A user-authored package.json that already carries
+  // the provider dep (or differs from the repo copy for unrelated reasons) keeps its lock: the
+  // deletion below is permanent (harnesst never regenerates lockfiles) and downgrades every
+  // future build's cached `npm ci` to a cold `npm install` (issue #375).
+  const rewrittenPkgPaths = new Set<string>();
+
   // If a stale package draft is selected, fix it in-place before the build gate sees it.
   for (const file of byPath.values()) {
     if (
@@ -467,7 +474,9 @@ export async function normalizeOpenRouterPackageDrafts(
       (file.content?.includes(OPENROUTER_PROVIDER_PACKAGE) ||
         file.content?.includes(LEGACY_OPENROUTER_PROVIDER_PACKAGE))
     ) {
-      file.content = ensureOpenRouterDependency(file.content);
+      const normalized = ensureOpenRouterDependency(file.content);
+      if (normalized !== file.content) rewrittenPkgPaths.add(file.path);
+      file.content = normalized;
     }
   }
 
@@ -490,6 +499,7 @@ export async function normalizeOpenRouterPackageDrafts(
       (await readAgentFile(input.project.repoInstallationId, repo, pkgPath));
     if (base === null) continue;
     const normalized = ensureOpenRouterDependency(base);
+    if (normalized !== base) rewrittenPkgPaths.add(pkgPath);
     if (normalized !== base || !selected) {
       byPath.set(pkgPath, { path: pkgPath, content: normalized });
     }
@@ -498,10 +508,12 @@ export async function normalizeOpenRouterPackageDrafts(
   // A harnesst dependency rewrite makes the repo's committed package-lock.json stale, and both
   // the build gate and the deployed image run `npm ci`, which hard-fails on any lock mismatch.
   // Stage the lock's deletion alongside the changed package.json so the build falls back to
-  // `npm install` (harnesst never authors lockfiles, so it can't regenerate one).
+  // `npm install` (harnesst never authors lockfiles, so it can't regenerate one). Gated on
+  // rewrittenPkgPaths: ONLY a package.json harnesst itself rewrote justifies losing the lock —
+  // a user edit ships with whatever lock state the user committed.
   for (const file of [...byPath.values()]) {
     if (!file.path.endsWith("package.json") || typeof file.content !== "string") continue;
-    if (!file.content.includes(OPENROUTER_PROVIDER_PACKAGE)) continue;
+    if (!rewrittenPkgPaths.has(file.path)) continue;
     const lockPath = file.path.replace(/package\.json$/, "package-lock.json");
     if (byPath.has(lockPath)) continue;
     const repoPkg = await readAgentFile(input.project.repoInstallationId, repo, file.path);

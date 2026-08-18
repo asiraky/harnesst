@@ -415,6 +415,39 @@ RUN npm ci
     expect(files.some((f) => f.path === "Dockerfile")).toBe(false);
   });
 
+  it("keeps the lockfile for a user edit harnesst didn't rewrite (issue #375)", async () => {
+    // The user staged their own package.json change (an extra dependency) on top of an
+    // already-normalized dep set — ensureOpenRouterDependency is a no-op, so the repo's lock
+    // is exactly as (in)valid as the user left it. Deleting it would permanently downgrade
+    // every future build's cached `npm ci` to a cold `npm install`.
+    const userDraft =
+      JSON.stringify(
+        {
+          dependencies: {
+            "@ai-sdk/anthropic": "^4.0.12",
+            "@ai-sdk/openai": "^4.0.11",
+            "@ai-sdk/openai-compatible": "^3.0.7",
+            ai: "^7.0.0",
+            eve: "^0.22.0",
+            "left-pad": "^1.3.0",
+            zod: "^4.4.3",
+          },
+        },
+        null,
+        2,
+      ) + "\n";
+    // The repo copy differs (no left-pad) — the old `differs from repo` heuristic fired here.
+    readAgentFileMock.mockImplementation(async (_inst, _repo, path) => {
+      if (path === "package.json")
+        return userDraft.replace(/^\s*"left-pad".*\n/m, "");
+      if (path === "package-lock.json") return '{"lockfileVersion": 3}';
+      return null;
+    });
+    const files = await normalize([{ path: "package.json", content: userDraft }]);
+    expect(files.some((f) => f.path === "package-lock.json")).toBe(false);
+    expect(files.find((f) => f.path === "package.json")?.content).toBe(userDraft);
+  });
+
   it("keeps the lockfile when the normalized package.json matches the repo's", async () => {
     // A pinned eve: normalization leaves this package.json byte-identical to the repo's.
     // (A floating "latest" would be rewritten, which correctly saves the lock's deletion.)

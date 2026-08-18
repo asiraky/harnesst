@@ -851,7 +851,8 @@ export async function deployRelease(
     // work goes to the new deployment immediately, and (b) closes `ingestRunStart`'s run-start
     // gate, so no new `running` row can attach to it — while its container keeps running to finish
     // in-flight turns. The drain watcher (drain.server.ts) stops the container once the runs table
-    // shows it idle or the 15-minute ceiling passes; only THEN is the container-cleanup scheduled.
+    // shows it idle or the drain ceiling (24h by default) passes; only THEN is the container-cleanup
+    // scheduled.
     // The old version keeps serving until this moment, so a failed deploy never takes anything down.
     // (The weighted multi-version splitter survives in the data model, but the product model is
     // single-live-per-environment for now.)
@@ -904,7 +905,7 @@ export async function deployRelease(
       });
     }
     // Hand each drained sibling to the watcher with the ceiling encoded as an absolute deadline
-    // anchored at cutover — so every re-poll of the job shares one 15-minute window regardless of
+    // anchored at cutover — so every re-poll of the job shares one drain window regardless of
     // how long individual ticks take. The watcher stops the container and schedules its cleanup.
     const drainDeadline = new Date(Date.now() + DEPLOYMENT_DRAIN_CEILING_MS);
     await Promise.all(
