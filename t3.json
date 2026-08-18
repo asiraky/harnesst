@@ -1,0 +1,17 @@
+{
+    "$schema": "https://t3.codes/schema/t3.json",
+    "defaultThreadEnvMode": "worktree",
+    "scripts": [
+        {
+            "name": "Setup Worktree",
+            "command": "sh ~/.clawd/t3-setup.sh",
+            "icon": "configure",
+            "runOnWorktreeCreate": true
+        },
+        {
+            "name": "Reap Stale Worktrees",
+            "command": "node scripts/worktree-reap.mjs",
+            "icon": "debug"
+        }
+    ]
+}
