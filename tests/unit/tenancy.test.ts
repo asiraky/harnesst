@@ -77,6 +77,11 @@ describe("tenant isolation", () => {
     const project = await createProject({ orgId: ORG_A, name: "Customerdemo" }, store);
     expect(project.slug).toBe("customerdemo-2");
   });
+
+  it("keeps a truncated auto-derived slug valid when the cut lands on a hyphen", async () => {
+    const project = await createProject({ orgId: ORG_A, name: `${"a".repeat(59)} b` }, store);
+    expect(project.slug).toBe("a".repeat(59));
+  });
 });
 
 describe("renameProject", () => {
