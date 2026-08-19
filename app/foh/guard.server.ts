@@ -6,7 +6,7 @@
  * Out-of-scope projects 404 for members — indistinguishable from nonexistent, so a member
  * can't probe which repos exist in the workspace.
  */
-import { data } from "react-router";
+import { data, redirect } from "react-router";
 
 import type { SessionAuth } from "~/auth/session.server";
 import { listMemberProjectIds } from "~/auth/teams.server";
@@ -17,6 +17,7 @@ import {
   type ActiveWorkspace,
 } from "~/auth/workspace.server";
 import { getProject, type Project } from "~/db/queries.server";
+import { canonicalProjectUrl } from "~/project/guard.server";
 
 export interface FohAccess {
   project: Project;
@@ -55,6 +56,10 @@ export async function requireFohProject(
     if (!memberProjects.includes(project.id)) {
       throw data("Project not found", { status: 404 });
     }
+  }
+  if (opts?.request && projectId) {
+    const canonical = canonicalProjectUrl(opts.request, projectId, project.slug);
+    if (canonical) throw redirect(canonical, { status: 301 });
   }
   return { project, active, backOfHouse };
 }

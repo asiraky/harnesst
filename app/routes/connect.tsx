@@ -270,7 +270,7 @@ export async function action(args: ActionFunctionArgs) {
         roster: layout === "team" ? [] : [{ name: agentName, root: "agent" }],
       });
       await ensureRepoTeam(org.id, project);
-      throw redirect(`/repos/${project.id}`);
+      throw redirect(`/repos/${project.slug}`);
     } catch (error) {
       if (error instanceof Response) throw error;
       return { error: (error as Error).message };
@@ -336,7 +336,7 @@ export async function action(args: ActionFunctionArgs) {
   // We just read the source to validate — warm the cache so the first project load is instant.
   warmAgentSource(installationGrantId, { owner, repo }, source);
 
-  throw redirect(`/repos/${project.id}`);
+  throw redirect(`/repos/${project.slug}`);
 }
 
 export function meta() {

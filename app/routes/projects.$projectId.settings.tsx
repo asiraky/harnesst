@@ -79,7 +79,7 @@ import {
 } from "~/components/ui/select";
 import type { Environment } from "~/data/ports";
 import { deleteRepository } from "~/deploy/repository.server";
-import { listAgentEnvironments } from "~/db/queries.server";
+import { listAgentEnvironments, renameProject } from "~/db/queries.server";
 import {
   createIngestToken,
   listIngestTokens,
@@ -101,6 +101,7 @@ import {
 import { getAgentSource } from "~/github/cached.server";
 import { fetchAgentSource, readAgentFile } from "~/github/repo.server";
 import { contextPath, subagentContextPath } from "~/lib/paths";
+import { slugifyProjectName } from "~/lib/project-slug";
 import {
   catalogProviderEvidence,
   catalogLocator,
@@ -476,7 +477,7 @@ export const loader = (args: LoaderFunctionArgs) =>
         agentName,
         source.paths,
       );
-      if (agentName && !active) throw redirect(`/repos/${project.id}`);
+      if (agentName && !active) throw redirect(`/repos/${project.slug}`);
       const draftPaths = drafts.map((d) => ({
         path: d.path,
         content: d.content,
@@ -817,7 +818,7 @@ export async function action(args: ActionFunctionArgs) {
   const form = await args.request.formData();
   const intent = String(form.get("intent") ?? "");
   const back = `${subagentContextPath(
-    project.id,
+    project.slug,
     agentFromParams(args.params),
     subagentSegmentsFromParams(args.params) ?? [],
   )}/settings`;
@@ -836,6 +837,16 @@ export async function action(args: ActionFunctionArgs) {
   }
 
   try {
+    // ── Repository identity: instant harnesst-only display name + canonical URL slug ──
+    if (intent === "rename-repo") {
+      const result = await renameProject(project.id, {
+        name: String(form.get("name") ?? ""),
+        slug: String(form.get("slug") ?? ""),
+      });
+      if (!result.ok) return { renameErrors: { [result.field]: result.error } };
+      throw redirect(`/repos/${result.project.slug}/settings?repository-renamed=1`);
+    }
+
     // ── Model: stage agent.ts for the active member (same rails as every edit) ──
     if (intent === "set-model") {
       const model = String(form.get("model") ?? "").trim();
@@ -1418,11 +1429,12 @@ export default function Settings({
   // The member segment survives at a nested level — the subagent lives inside the member's URL.
   const memberSegment =
     level === "member" || (nested && isTeam) ? activeAgent : null;
-  const base = subagentContextPath(project.id, memberSegment, subagentPath);
+  const base = subagentContextPath(project.slug, memberSegment, subagentPath);
   const [params] = useSearchParams();
   const justUpdated = params.get("updated");
   const justRepaired = params.get("repaired");
   const justUninstalled = params.get("uninstalled");
+  const repositoryRenamed = params.get("repository-renamed");
   const newToken =
     actionData && "token" in actionData
       ? (actionData.token as string | null)
@@ -1447,7 +1459,7 @@ export default function Settings({
   return (
     <AppShell
       breadcrumbs={repoCrumbs({
-        projectId: project.id,
+        projectId: project.slug,
         repoName: project.name,
         isTeam: memberSegment !== null,
         agentName: activeAgent,
@@ -1496,6 +1508,14 @@ export default function Settings({
           <AlertDescription>
             Cleaning up deployments and harnesst data. This can take a few
             minutes; you&apos;ll be sent back to the Dashboard when it finishes.
+          </AlertDescription>
+        </Alert>
+      )}
+      {repositoryRenamed && (
+        <Alert className="mb-6">
+          <AlertTitle>Repository details updated</AlertTitle>
+          <AlertDescription>
+            The harnesst name and canonical URL are now up to date. The GitHub repository was not changed.
           </AlertDescription>
         </Alert>
       )}
@@ -1561,7 +1581,7 @@ export default function Settings({
 
       {isTeam && roster.length === 0 && (
         <div className="mb-10">
-          <EmptyTeamState agentsHref={`/repos/${project.id}`} />
+          <EmptyTeamState agentsHref={`/repos/${project.slug}`} />
         </div>
       )}
 
@@ -1619,7 +1639,16 @@ export default function Settings({
             pendingName={pendingName}
           />
         )}
-        {showRepo && <ArchivedSessionsSection projectId={project.id} />}
+        {showRepo && <ArchivedSessionsSection projectId={project.slug} />}
+        {showRepo && (
+          <RepositoryIdentitySection
+            key={project.slug}
+            project={project}
+            errors={
+              actionData && "renameErrors" in actionData ? actionData.renameErrors : undefined
+            }
+          />
+        )}
         {showRepo && <GeneralSection project={project} />}
         {showRepo && (
           <IngestSection loaderData={loaderData} newToken={newToken} />
@@ -1872,7 +1901,7 @@ function MarketplaceInstallsSection({
                   {showOwner &&
                     (install.member ? (
                       <Link
-                        to={`${contextPath(project.id, install.member)}/settings`}
+                        to={`${contextPath(project.slug, install.member)}/settings`}
                         className="text-xs underline-offset-4 hover:underline"
                       >
                         {install.member}
@@ -1991,6 +2020,76 @@ function MarketplaceInstallsSection({
               ))}
             </ul>
           )}
+        </CardContent>
+      </Card>
+    </section>
+  );
+}
+
+/** Harnesst-only repository identity; changing it never writes to GitHub or the repo tree. */
+function RepositoryIdentitySection({
+  project,
+  errors,
+}: {
+  project: { name: string; slug: string };
+  errors?: { name?: string; slug?: string };
+}) {
+  const navigation = useNavigation();
+  const [name, setName] = useState(project.name);
+  const [slug, setSlug] = useState(project.slug);
+  const [slugCustomized, setSlugCustomized] = useState(
+    project.slug !== slugifyProjectName(project.name),
+  );
+  const busy = navigation.state !== "idle" && navigation.formData?.get("intent") === "rename-repo";
+
+  return (
+    <section>
+      <SectionHeader icon={Pencil} accent="indigo" title="Repository identity" />
+      <Card>
+        <CardContent className="py-4">
+          <Form method="post" className="space-y-4">
+            <input type="hidden" name="intent" value="rename-repo" />
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div className="space-y-2">
+                <Label htmlFor="repository-name">Name</Label>
+                <Input
+                  id="repository-name"
+                  name="name"
+                  value={name}
+                  aria-invalid={errors?.name ? true : undefined}
+                  onChange={(event) => {
+                    const next = event.target.value;
+                    setName(next);
+                    if (!slugCustomized) setSlug(slugifyProjectName(next));
+                  }}
+                />
+                {errors?.name && <p className="text-sm text-destructive">{errors.name}</p>}
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="repository-slug">URL slug</Label>
+                <Input
+                  id="repository-slug"
+                  name="slug"
+                  value={slug}
+                  aria-invalid={errors?.slug ? true : undefined}
+                  onChange={(event) => {
+                    setSlug(event.target.value);
+                    setSlugCustomized(true);
+                  }}
+                />
+                {errors?.slug && <p className="text-sm text-destructive">{errors.slug}</p>}
+              </div>
+            </div>
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <p className="text-sm text-muted-foreground">
+                This changes harnesst only. Existing id-based links keep working; the GitHub
+                repository is untouched.
+              </p>
+              <Button type="submit" disabled={busy}>
+                {busy ? "Saving…" : "Save name and URL"}
+              </Button>
+            </div>
+          </Form>
         </CardContent>
       </Card>
     </section>

@@ -32,6 +32,8 @@ export interface FohSidebarAgent {
 
 export interface FohSidebarTeam {
   projectId: string;
+  /** Canonical page URL segment; projectId remains available for API/storage identity. */
+  projectSlug?: string;
   name: string;
   agents: FohSidebarAgent[];
 }
@@ -145,6 +147,7 @@ export async function loadFohSidebar(
   return {
     teams: projects.map((project, i) => ({
       projectId: project.id,
+      projectSlug: project.slug,
       name: project.name,
       agents: rosters[i].map((agent) => ({
         id: agent.id,

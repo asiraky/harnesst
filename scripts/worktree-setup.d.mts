@@ -8,6 +8,7 @@ export type PortEntry = {
   instance: number;
   tunnelShortId?: string;
   tunnelHost?: string;
+  path?: string;
 };
 export type PortsRegistry = Record<string, PortEntry>;
 

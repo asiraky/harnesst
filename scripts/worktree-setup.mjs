@@ -7,6 +7,16 @@
  * Usage (from main repo root):
  *   node scripts/worktree-setup.mjs [--skip-validate] <prefix>/<kebab-name>
  *
+ * Or, for a worktree that already exists at an arbitrary location (t3code's
+ * `runOnWorktreeCreate` script; see t3.json — T3CODE_WORKTREE_PATH is used
+ * when the flag and feature name are absent):
+ *   node scripts/worktree-setup.mjs --worktree-path <abs-path>
+ *
+ * In `--worktree-path` mode all derived names (registry key, tunnel label,
+ * DB name) come from the worktree directory's basename — stable even when
+ * t3code later renames the branch — and the entry in `_ports.json` records
+ * the worktree's absolute path so `worktree-reap.mjs` can reconcile it.
+ *
  * Called by the global `clawd -w <prefix>/<kebab-name>` launcher (~/.claude/clawd.sh) after
  * `git worktree add` has created the worktree at
  * `.worktrees/<prefix>-<kebab-name>`.
@@ -70,10 +80,11 @@ import {
   rmSync,
   writeFileSync,
 } from "node:fs";
-import { join } from "node:path";
+import { basename, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import {
   enrichPortEntry,
+  getMainCheckoutRoot,
   processIsRunning,
   readJson,
   renderAndValidateConfig,
@@ -131,6 +142,49 @@ function parseFeature(input, skipValidate) {
   const dir = input.replace(/\//g, "-");
   const dbSuffix = input.replace(/[-/]/g, "_");
   return { full: input, short, dir, dbSuffix };
+}
+
+/**
+ * Derive names for an externally-managed worktree (`--worktree-path` mode,
+ * e.g. one created by t3code under `~/.t3/worktrees/<repo>/<dir>`).
+ *
+ * Names key off the worktree directory's basename, not the branch: t3code
+ * renames the branch after the first turn (auto-generated from the prompt),
+ * so the directory name is the only identity that stays stable for the
+ * worktree's whole life. The basename is sanitized to the same kebab shape
+ * clawd-derived dirs have, keeping DB names, tunnel labels, and registry
+ * keys consistent.
+ *
+ * `full` (used for display and the AGENTS.md git-safety notes) is the
+ * worktree's current branch when available, falling back to the dir name on
+ * a detached HEAD.
+ */
+function parseExternalFeature(worktreePath, branch) {
+  const name = basename(worktreePath)
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  if (!name) {
+    die(`cannot derive a name from worktree path "${worktreePath}"`);
+  }
+  const full = branch ?? name;
+  const lastSlash = full.lastIndexOf("/");
+  const short = lastSlash === -1 ? full : full.slice(lastSlash + 1);
+  return { full, short, dir: name, dbSuffix: name.replace(/-/g, "_") };
+}
+
+/**
+ * Branch checked out in the given worktree, or undefined on a detached HEAD.
+ * Unlike getCurrentBranch this never dies on detachment — external worktrees
+ * (t3code) may legitimately sit on a placeholder state and the caller has a
+ * fallback name.
+ */
+function getWorktreeBranch(cwd) {
+  const res = run(["git", "-C", cwd, "rev-parse", "--abbrev-ref", "HEAD"]);
+  if (res.code !== 0)
+    die(`failed to read branch of worktree ${cwd}: ${res.stderr.trim()}`);
+  const branch = res.stdout.trim();
+  return branch === "HEAD" || !branch ? undefined : branch;
 }
 
 function repoPath(root, relPath, ...parts) {
@@ -432,17 +486,17 @@ function worktreeMdTemplate(
   targetDb,
   canonicalDb,
   baseBranch,
-  worktreeRootDir,
+  dirLabel,
   tunnelActive,
 ) {
   return `# Worktree: ${feat.full}
 
-You are inside a git worktree at \`${worktreeRootDir}/${feat.dir}\`, not the main checkout. Use the URL and ports below when starting the dev server or driving the app via browser automation.
+You are inside a git worktree at \`${dirLabel}\`, not the main checkout. Use the URL and ports below when starting the dev server or driving the app via browser automation.
 
 ## Identity
 
 - **Branch**: \`${feat.full}\`
-- **Worktree dir**: \`${worktreeRootDir}/${feat.dir}\`
+- **Worktree dir**: \`${dirLabel}\`
 - **Session name**: \`${feat.short}\` (terminal title / agent session name)
 - **DB**: \`${targetDb}\`
 
@@ -617,12 +671,33 @@ function cloneDatabase(conn, canonical, target) {
 }
 
 function main() {
-  const argv = process.argv.slice(2);
+  // Bare invocation inside a t3code setup terminal: the runner exports
+  // T3CODE_WORKTREE_PATH, so `node scripts/worktree-setup.mjs` with no args
+  // is equivalent to passing --worktree-path explicitly.
+  let argv = process.argv.slice(2);
+  if (argv.length === 0 && process.env.T3CODE_WORKTREE_PATH) {
+    argv = ["--worktree-path", process.env.T3CODE_WORKTREE_PATH];
+  }
+
   let skipValidate = false;
   let input = "";
-  for (const arg of argv) {
+  let externalPath;
+  for (let index = 0; index < argv.length; index += 1) {
+    const arg = argv[index];
     if (arg === "--skip-validate") {
       skipValidate = true;
+      continue;
+    }
+    if (arg === "--worktree-path") {
+      if (externalPath !== undefined) {
+        die("--worktree-path may only be provided once");
+      }
+      const value = argv[index + 1];
+      if (!value || value.startsWith("--")) {
+        die("missing path after --worktree-path");
+      }
+      externalPath = value;
+      index += 1;
       continue;
     }
     if (!input) {
@@ -631,19 +706,46 @@ function main() {
     }
     die(`unexpected argument "${arg}"`);
   }
-  if (!input) {
+  if (input && externalPath !== undefined) {
+    die("pass either a feature name or --worktree-path, not both");
+  }
+  if (!input && externalPath === undefined) {
     die(
-      "missing feature name. usage: node scripts/worktree-setup.mjs [--skip-validate] <prefix>/<kebab-name>",
+      "missing feature name. usage: node scripts/worktree-setup.mjs [--skip-validate] <prefix>/<kebab-name> | --worktree-path <path>",
     );
   }
-  const feat = parseFeature(input, skipValidate);
 
-  const root = getRepoRoot();
-  const worktreePath = repoPath(root, WORKTREE_ROOT_DIR, feat.dir);
-  if (!existsSync(worktreePath)) {
-    die(
-      `worktree not found at ${worktreePath}. create it first via \`git worktree add\`.`,
-    );
+  let root;
+  let worktreePath;
+  let feat;
+  let dirLabel;
+  if (externalPath !== undefined) {
+    worktreePath = resolve(externalPath);
+    if (!existsSync(worktreePath)) {
+      die(
+        `worktree not found at ${worktreePath}. create it first via \`git worktree add\`.`,
+      );
+    }
+    feat = parseExternalFeature(worktreePath, getWorktreeBranch(worktreePath));
+    try {
+      root = getMainCheckoutRoot(worktreePath);
+    } catch (err) {
+      die(`failed to resolve main repo root from ${worktreePath}: ${err.message}`);
+    }
+    if (!existsSync(join(root, "package.json"))) {
+      die(`resolved main root ${root} does not look like the repo root`);
+    }
+    dirLabel = worktreePath;
+  } else {
+    feat = parseFeature(input, skipValidate);
+    root = getRepoRoot();
+    worktreePath = repoPath(root, WORKTREE_ROOT_DIR, feat.dir);
+    if (!existsSync(worktreePath)) {
+      die(
+        `worktree not found at ${worktreePath}. create it first via \`git worktree add\`.`,
+      );
+    }
+    dirLabel = `${WORKTREE_ROOT_DIR}/${feat.dir}`;
   }
 
   // Capture the main checkout's current branch as the base the worktree
@@ -689,7 +791,11 @@ function main() {
   } catch (err) {
     die(`failed to assign tunnel identity: ${err.message}`);
   }
-  registry[feat.dir] = ports;
+  // Record the absolute path for externally-managed worktrees (t3code) so
+  // worktree-reap.mjs can reconcile the entry; clawd entries omit it and
+  // imply `.worktrees/<key>`.
+  registry[feat.dir] =
+    externalPath !== undefined ? { ...ports, path: worktreePath } : ports;
   saveRegistry(registryPath, registry);
   if (tunnelMetadata) {
     try {
@@ -741,7 +847,7 @@ function main() {
     targetDb,
     canonicalDb,
     baseBranch,
-    WORKTREE_ROOT_DIR,
+    dirLabel,
     Boolean(tunnelMetadata),
   );
 
@@ -773,9 +879,12 @@ function main() {
     : "";
   writeFileSync(
     agentsMdPath,
+    // Marker is the header prefix, not the full `# Worktree: <branch>` line:
+    // external worktrees (t3code) rename their branch after the first turn,
+    // so a re-run's full header wouldn't match the one already appended.
     withWorktreeAppendix(
       rawAgentsMd,
-      `# Worktree: ${feat.full}`,
+      "# Worktree: ",
       `${worktreeMd}${gitSafetySection(feat)}`,
     ),
   );

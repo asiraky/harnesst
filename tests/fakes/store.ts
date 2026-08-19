@@ -565,9 +565,14 @@ export function makeFakeStore(): FakeStore {
           ) ?? null
         );
       },
-      async getByOrg(orgId, pid) {
-        const p = projects.get(pid);
-        return p && p.orgId === orgId ? p : null;
+      async getByOrg(orgId, idOrSlug) {
+        const byId = projects.get(idOrSlug);
+        if (byId?.orgId === orgId) return byId;
+        return (
+          [...projects.values()].find(
+            (p) => p.orgId === orgId && p.slug === idOrSlug,
+          ) ?? null
+        );
       },
       async listByOrg(orgId) {
         return [...projects.values()]
@@ -596,6 +601,26 @@ export function makeFakeStore(): FakeStore {
         };
         projects.set(row.id, row);
         return row;
+      },
+      async rename(pid, input) {
+        const p = projects.get(pid);
+        if (!p) throw new Error("Project not found");
+        if (
+          [...projects.values()].some(
+            (other) =>
+              other.id !== pid &&
+              other.orgId === p.orgId &&
+              other.slug === input.slug,
+          )
+        ) {
+          throw Object.assign(new Error("duplicate project slug"), {
+            code: "23505",
+            constraint_name: "projects_org_slug_uq",
+          });
+        }
+        const renamed = { ...p, ...input, updatedAt: new Date(++seq) };
+        projects.set(pid, renamed);
+        return renamed;
       },
       async setLiveEnvironmentName(pid, name) {
         const p = projects.get(pid);

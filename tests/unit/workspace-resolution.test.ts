@@ -12,7 +12,35 @@ import { describe, expect, it, vi } from "vitest";
 vi.mock("~/lib/auth.server", () => ({ auth: { api: {} } }));
 
 import { chooseWorkspaceEntry } from "~/auth/workspace.server";
-import { resolveCrossWorkspaceRedirect } from "~/project/guard.server";
+import { canonicalProjectUrl, resolveCrossWorkspaceRedirect } from "~/project/guard.server";
+
+describe("canonicalProjectUrl", () => {
+  it("redirects a page GET from id to slug and preserves the suffix and query", () => {
+    expect(canonicalProjectUrl(
+      new Request("https://example.test/repos/abcdefghijkl/runs?status=live"),
+      "abcdefghijkl", "support-agents",
+    )).toBe("/repos/support-agents/runs?status=live");
+    expect(canonicalProjectUrl(
+      new Request("https://example.test/t/abcdefghijkl/agent-1"),
+      "abcdefghijkl", "support-agents",
+    )).toBe("/t/support-agents/agent-1");
+  });
+
+  it("does not redirect actions, canonical pages, or API routes", () => {
+    expect(canonicalProjectUrl(
+      new Request("https://example.test/repos/abcdefghijkl/settings", { method: "POST" }),
+      "abcdefghijkl", "support-agents",
+    )).toBeNull();
+    expect(canonicalProjectUrl(
+      new Request("https://example.test/repos/support-agents/settings"),
+      "support-agents", "support-agents",
+    )).toBeNull();
+    expect(canonicalProjectUrl(
+      new Request("https://example.test/api/repos/abcdefghijkl/publish"),
+      "abcdefghijkl", "support-agents",
+    )).toBeNull();
+  });
+});
 
 describe("chooseWorkspaceEntry", () => {
   it("creates a workspace when the user has no memberships", () => {

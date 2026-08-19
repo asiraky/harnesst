@@ -179,8 +179,8 @@ export interface EnvironmentRepo {
 export interface ProjectRepo {
   findById(id: string): Promise<Project | null>;
   findByRepo(owner: string, repo: string): Promise<Project | null>;
-  /** Tenant-scoped read: returns the project only if it belongs to `orgId` (D2). */
-  getByOrg(orgId: string, id: string): Promise<Project | null>;
+  /** Tenant-scoped read by id first, then org-scoped slug (D2). */
+  getByOrg(orgId: string, idOrSlug: string): Promise<Project | null>;
   /** A tenant's projects, newest first. */
   listByOrg(orgId: string): Promise<Project[]>;
   /** Does this org already have a project with this slug? (uniqueness within a tenant). */
@@ -195,6 +195,8 @@ export interface ProjectRepo {
     repoInstallationId?: string | null;
     defaultBranch?: string;
   }): Promise<Project>;
+  /** Rename harnesst's display name + URL slug; external repository identity is untouched. */
+  rename(id: string, input: { name: string; slug: string }): Promise<Project>;
   /**
    * Persist the environment Publish deploys into (§2.8: resolved once — from the only env name,
    * or the user's one-time answer — and never asked again).

@@ -148,7 +148,7 @@ function FohShell({ data }: { data: ShellData }) {
                     </p>
                     {backOfHouse && (
                       <Link
-                        to={bohTeamHref(team.projectId)}
+                        to={bohTeamHref(team.projectSlug ?? team.projectId)}
                         prefetch="intent"
                         aria-label={`Manage ${team.name} in Repositories`}
                         title="Manage in Repositories"
@@ -167,7 +167,7 @@ function FohShell({ data }: { data: ShellData }) {
                       {team.agents.map((agent) => (
                         <li key={agent.id}>
                           <NavLink
-                            to={`/t/${team.projectId}/${agent.id}`}
+                            to={`/t/${team.projectSlug ?? team.projectId}/${agent.id}`}
                             prefetch="intent"
                             className={({ isActive }) =>
                               cn(
@@ -195,7 +195,7 @@ function FohShell({ data }: { data: ShellData }) {
                   )}
                   {/* §3 mock: the team's ⚡ activity feed lives under its member list. */}
                   <NavLink
-                    to={`/t/${team.projectId}/activity`}
+                    to={`/t/${team.projectSlug ?? team.projectId}/activity`}
                     prefetch="intent"
                     className={({ isActive }) =>
                       cn(

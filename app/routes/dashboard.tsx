@@ -159,7 +159,7 @@ export default function Dashboard({ loaderData }: Route.ComponentProps) {
 export function TeamCard({ card }: { card: ProjectCard }) {
   const { project, members } = card;
   return (
-    <Link to={`/repos/${project.id}`} className="group">
+    <Link to={`/repos/${project.slug}`} className="group">
       <Card className="h-full border-primary/20 transition-colors group-hover:border-ring/60">
         <CardHeader>
           <div className="flex items-center justify-between gap-2">
@@ -198,7 +198,7 @@ export function TeamCard({ card }: { card: ProjectCard }) {
 
 function AgentCard({ project }: { project: Project }) {
   return (
-    <Link to={`/repos/${project.id}`} className="group">
+    <Link to={`/repos/${project.slug}`} className="group">
       <Card className="h-full transition-colors group-hover:border-ring/60">
         <CardHeader>
           <div className="flex items-center justify-between gap-2">

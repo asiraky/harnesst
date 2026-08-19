@@ -13,9 +13,10 @@ export function bohTeamHref(projectId: string): string {
 
 /** One member's BOH config surface; collapses to the repo level for single-agent repos. */
 export function bohAgentHref(
-  project: Pick<Project, "id" | "layout">,
+  project: Pick<Project, "id" | "layout"> & Partial<Pick<Project, "slug">>,
   agentName: string,
 ): string {
-  if (project.layout !== "team") return bohTeamHref(project.id);
-  return `/repos/${project.id}/agents/${encodeURIComponent(agentName)}`;
+  const projectPath = project.slug ?? project.id;
+  if (project.layout !== "team") return bohTeamHref(projectPath);
+  return `/repos/${projectPath}/agents/${encodeURIComponent(agentName)}`;
 }
