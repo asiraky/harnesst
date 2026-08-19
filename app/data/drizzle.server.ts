@@ -364,13 +364,20 @@ export const drizzleDataStore: DataStore = {
         .limit(1);
       return row ?? null;
     },
-    async getByOrg(orgId, id) {
-      const [row] = await db
+    async getByOrg(orgId, idOrSlug) {
+      // Id must win when a slug happens to equal another project's id.
+      const [byId] = await db
         .select()
         .from(projects)
-        .where(and(eq(projects.orgId, orgId), eq(projects.id, id)))
+        .where(and(eq(projects.orgId, orgId), eq(projects.id, idOrSlug)))
         .limit(1);
-      return row ?? null;
+      if (byId) return byId;
+      const [bySlug] = await db
+        .select()
+        .from(projects)
+        .where(and(eq(projects.orgId, orgId), eq(projects.slug, idOrSlug)))
+        .limit(1);
+      return bySlug ?? null;
     },
     async listByOrg(orgId) {
       return db
@@ -389,6 +396,15 @@ export const drizzleDataStore: DataStore = {
     },
     async create(input) {
       const [row] = await db.insert(projects).values(input).returning();
+      return row;
+    },
+    async rename(id, input) {
+      const [row] = await db
+        .update(projects)
+        .set({ ...input, updatedAt: new Date() })
+        .where(eq(projects.id, id))
+        .returning();
+      if (!row) throw new Error("Project not found");
       return row;
     },
     async setLiveEnvironmentName(id, name) {

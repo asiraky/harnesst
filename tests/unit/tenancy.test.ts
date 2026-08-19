@@ -10,6 +10,7 @@ import {
   createProject,
   getProject,
   listProjects,
+  renameProject,
   resolveUniqueSlug,
 } from "~/db/queries.server";
 import {
@@ -44,6 +45,13 @@ describe("tenant isolation", () => {
     expect(await getProject(ORG_B, a.id, store)).toBeUndefined();
   });
 
+  it("resolves by id before an org-scoped slug with the same exact value", async () => {
+    const byId = store.seedProject({ id: "customerdemo", orgId: ORG_A, name: "By id", slug: "by-id" });
+    store.seedProject({ id: "anotherproje", orgId: ORG_A, name: "By slug", slug: byId.id });
+    expect((await getProject(ORG_A, byId.id, store))?.name).toBe("By id");
+    expect((await getProject(ORG_A, "by-id", store))?.id).toBe(byId.id);
+  });
+
   it("lists only the tenant's projects", async () => {
     const a = await createProject({ orgId: ORG_A, name: "Alpha Agent" }, store);
     const b = await createProject({ orgId: ORG_B, name: "Beta Agent" }, store);
@@ -62,6 +70,49 @@ describe("tenant isolation", () => {
     expect((await store.environments.listByProject(first.id)).map((e) => e.name)).toEqual([
       "default",
     ]);
+  });
+
+  it("suffixes an auto-derived slug that exactly matches any live project id", async () => {
+    store.seedProject({ id: "customerdemo", orgId: ORG_B, name: "Existing id", slug: "existing-id" });
+    const project = await createProject({ orgId: ORG_A, name: "Customerdemo" }, store);
+    expect(project.slug).toBe("customerdemo-2");
+  });
+});
+
+describe("renameProject", () => {
+  it("accepts an id-shaped slug but rejects an exact live project id", async () => {
+    const project = await createProject({ orgId: ORG_A, name: "Alpha" }, store);
+    store.seedProject({ id: "existingproj", orgId: ORG_B, name: "Elsewhere", slug: "elsewhere" });
+    const accepted = await renameProject(project.id, { name: "Customer Demo", slug: "customerdemo" }, store);
+    expect(accepted.ok && accepted.project.slug).toBe("customerdemo");
+    expect(await renameProject(project.id, { name: "Customer Demo", slug: "existingproj" }, store)).toEqual({
+      ok: false, field: "slug", error: "That URL is already taken.",
+    });
+  });
+
+  it("returns field errors for invalid or colliding slugs and catches a race", async () => {
+    const project = await createProject({ orgId: ORG_A, name: "Alpha" }, store);
+    await createProject({ orgId: ORG_A, name: "Taken" }, store);
+    expect(await renameProject(project.id, { name: "Alpha", slug: "Not Valid" }, store)).toMatchObject({ ok: false, field: "slug" });
+    expect(await renameProject(project.id, { name: "Alpha", slug: "taken" }, store)).toEqual({
+      ok: false, field: "slug", error: "That URL is already taken.",
+    });
+    store.projects.rename = async () => {
+      throw Object.assign(new Error("raced"), { code: "23505", constraint_name: "projects_org_slug_uq" });
+    };
+    expect(await renameProject(project.id, { name: "Alpha", slug: "free-now" }, store)).toEqual({
+      ok: false, field: "slug", error: "That URL is already taken.",
+    });
+  });
+
+  it("changes only name and slug, leaving ids and dependent rows untouched", async () => {
+    const project = await createProject({ orgId: ORG_A, name: "Before" }, store);
+    const agentsBefore = await store.agents.listByProject(project.id);
+    const result = await renameProject(project.id, { name: "After", slug: "after" }, store);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.project).toMatchObject({ id: project.id, orgId: project.orgId, name: "After", slug: "after" });
+    expect(await store.agents.listByProject(project.id)).toEqual(agentsBefore);
   });
 });
 

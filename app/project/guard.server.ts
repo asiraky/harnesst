@@ -47,6 +47,26 @@ export async function resolveCrossWorkspaceRedirect(input: {
   return (await input.isMember(project.orgId)) ? project.orgId : null;
 }
 
+/** Return the canonical slug URL for a project page GET, preserving the rest of the URL. */
+export function canonicalProjectUrl(
+  request: Request,
+  projectParam: string,
+  slug: string,
+): string | null {
+  if (request.method !== "GET" || projectParam === slug) return null;
+  const url = new URL(request.url);
+  const segments = url.pathname.split("/");
+  const scope = segments.findIndex(
+    (segment, index) =>
+      index === 1 &&
+      (segment === "repos" || segment === "t") &&
+      decodeURIComponent(segments[index + 1] ?? "") === projectParam,
+  );
+  if (scope < 0) return null;
+  segments[scope + 1] = encodeURIComponent(slug);
+  return segments.join("/") + url.search;
+}
+
 /**
  * Validate the Better Auth organization membership and load the org-scoped project, or throw
  * 403/404.
@@ -96,6 +116,10 @@ export async function requireProject(
       }
     }
     throw data("Project not found", { status: 404 });
+  }
+  if (opts?.request && projectId) {
+    const canonical = canonicalProjectUrl(opts.request, projectId, project.slug);
+    if (canonical) throw redirect(canonical, { status: 301 });
   }
   return project;
 }

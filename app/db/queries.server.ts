@@ -12,21 +12,12 @@ import {
 } from "~/deploy/environments.server";
 import { getRuntime } from "~/seams/index.server";
 import type { DeployTarget } from "~/seams/types";
+import { PROJECT_SLUG_PATTERN, slugifyProjectName } from "~/lib/project-slug";
 
 export type { Agent, Project, Environment } from "~/data/ports";
 
 /** The default roster for a repo whose layout is unknown/single: a team of one. */
 export const SINGLE_AGENT_ROSTER = [{ name: "agent", root: "agent" }] as const;
-
-/** Turn a repo name into a URL-safe slug. */
-function slugify(input: string): string {
-  return input
-    .toLowerCase()
-    .trim()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 60);
-}
 
 /**
  * Resolve a slug that's unique within the org: start from `base`, then suffix `-2`, `-3`, …
@@ -39,7 +30,8 @@ export async function resolveUniqueSlug(
   const root = base || "agent";
   let slug = root;
   for (let n = 2; await exists(slug); n++) {
-    slug = `${root}-${n}`;
+    const suffix = `-${n}`;
+    slug = `${root.slice(0, 60 - suffix.length)}${suffix}`;
   }
   return slug;
 }
@@ -65,8 +57,11 @@ export async function createProject(
   },
   store: DataStore = getRuntime().data,
 ): Promise<Project> {
-  const slug = await resolveUniqueSlug(slugify(input.slug ?? input.name), (s) =>
-    store.projects.slugExists(input.orgId, s),
+  const slug = await resolveUniqueSlug(
+    slugifyProjectName(input.slug ?? input.name),
+    async (candidate) =>
+      (await store.projects.slugExists(input.orgId, candidate)) ||
+      (await store.projects.findById(candidate)) !== null,
   );
   const { slug: _ignore, roster: rosterInput, ...rest } = input;
   const project = await store.projects.create({ ...rest, slug });
@@ -365,13 +360,79 @@ export function listProjects(
   return store.projects.listByOrg(orgId);
 }
 
-/** Fetch one project by id, scoped to the tenant. Returns undefined if not found/not owned. */
+/** Fetch one project by id first, then slug, scoped to the tenant. */
 export async function getProject(
   orgId: string,
   projectId: string,
   store: DataStore = getRuntime().data,
 ): Promise<Project | undefined> {
   return (await store.projects.getByOrg(orgId, projectId)) ?? undefined;
+}
+
+export type RenameProjectResult =
+  | { ok: true; project: Project }
+  | { ok: false; field: "name" | "slug"; error: string };
+
+function isProjectSlugUniqueViolation(error: unknown): boolean {
+  let current: unknown = error;
+  while (current && typeof current === "object") {
+    const pg = current as {
+      code?: string;
+      constraint_name?: string;
+      constraint?: string;
+      cause?: unknown;
+    };
+    if (
+      pg.code === "23505" &&
+      (pg.constraint_name === "projects_org_slug_uq" ||
+        pg.constraint === "projects_org_slug_uq")
+    ) return true;
+    current = pg.cause;
+  }
+  return false;
+}
+
+/** Validate and instantly rename harnesst's project row; no repository content is changed. */
+export async function renameProject(
+  projectId: string,
+  input: { name: string; slug: string },
+  store: DataStore = getRuntime().data,
+): Promise<RenameProjectResult> {
+  const project = await store.projects.findById(projectId);
+  if (!project) throw new Error("Project not found");
+
+  const name = input.name.trim();
+  if (!name) return { ok: false, field: "name", error: "Name is required." };
+
+  const suppliedSlug = input.slug.trim();
+  const autoSlug = suppliedSlug === "";
+  let slug = autoSlug ? slugifyProjectName(name) : suppliedSlug;
+  if (slug.length < 2 || slug.length > 60 || !PROJECT_SLUG_PATTERN.test(slug)) {
+    return {
+      ok: false,
+      field: "slug",
+      error: "Use 2–60 lowercase letters, numbers, and single hyphens (no leading or trailing hyphen).",
+    };
+  }
+
+  const unavailable = async (candidate: string) =>
+    (candidate !== project.slug &&
+      (await store.projects.slugExists(project.orgId, candidate))) ||
+    (await store.projects.findById(candidate)) !== null;
+
+  if (autoSlug) slug = await resolveUniqueSlug(slug, unavailable);
+  else if (await unavailable(slug)) {
+    return { ok: false, field: "slug", error: "That URL is already taken." };
+  }
+
+  try {
+    return { ok: true, project: await store.projects.rename(project.id, { name, slug }) };
+  } catch (error) {
+    if (isProjectSlugUniqueViolation(error)) {
+      return { ok: false, field: "slug", error: "That URL is already taken." };
+    }
+    throw error;
+  }
 }
 
 /**
