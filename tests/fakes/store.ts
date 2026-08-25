@@ -131,7 +131,6 @@ export function makeFakeStore(): FakeStore {
         name: p.name ?? "Agent",
         slug: p.slug ?? "agent",
         layout: p.layout ?? "single",
-        teamId: p.teamId ?? null,
         repoOwner: p.repoOwner ?? null,
         repoName: p.repoName ?? null,
         repoInstallationId: p.repoInstallationId ?? null,
@@ -589,8 +588,6 @@ export function makeFakeStore(): FakeStore {
           name: input.name,
           slug: input.slug,
           layout: input.layout ?? "single",
-          // Repo teams (FOH D9) are minted by ensureProjectTeam, never at insert.
-          teamId: null,
           repoOwner: input.repoOwner ?? null,
           repoName: input.repoName ?? null,
           repoInstallationId: input.repoInstallationId ?? null,

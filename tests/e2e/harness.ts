@@ -178,17 +178,18 @@ export async function createWorkspace(
 }
 
 /**
- * Add an existing signed-up user as a plain workspace `member` (optionally into a repo
- * team) and pin the workspace active on their session.
+ * Add an existing signed-up user as a plain workspace `member` (optionally with a `read`
+ * grant on one repo) and pin the workspace active on their session.
  */
 export async function addMember(
   user: TestUser,
   organizationId: string,
-  teamId?: string,
+  projectId?: string,
 ): Promise<void> {
   const { auth } = await import("~/lib/auth.server");
   const { db } = await import("~/db/client.server");
-  const { member, teamMember } = await import("~/db/auth-schema");
+  const { member } = await import("~/db/auth-schema");
+  const { projectAccess } = await import("~/db/schema");
   await db.insert(member).values({
     id: crypto.randomUUID(),
     organizationId,
@@ -196,12 +197,12 @@ export async function addMember(
     role: "member",
     createdAt: new Date(),
   });
-  if (teamId) {
-    await db.insert(teamMember).values({
-      id: crypto.randomUUID(),
-      teamId,
+  if (projectId) {
+    await db.insert(projectAccess).values({
+      projectId,
       userId: user.userId,
-      createdAt: new Date(),
+      role: "read",
+      grantedBy: null,
     });
   }
   await auth.api.setActiveOrganization({

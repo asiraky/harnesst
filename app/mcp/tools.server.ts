@@ -11,6 +11,11 @@ import {
   stageDraft as stageDraftDirect,
 } from "~/drafts/drafts.server";
 import {
+  resolveProjectRoleForUser,
+  roleSatisfies,
+  type ProjectRole,
+} from "~/auth/project-access.server";
+import {
   getProject as getProjectForOrg,
   listProjects as listProjectsForOrg,
 } from "~/db/queries.server";
@@ -41,6 +46,12 @@ type DeployTeamVersionResult = Pick<ShipResult, "deployed" | "skipped">;
 
 export interface McpToolDeps {
   store: DataStore;
+  /**
+   * The key owner's effective role on a repo (app/auth/project-access.server). MCP is a
+   * build/deploy surface, so every project tool requires `write`; a repo the owner holds no
+   * grant on is reported as not found, exactly like the web routes.
+   */
+  projectRole(projectId: string): Promise<ProjectRole | null>;
   stageDraft: typeof stageDraftDirect;
   /** Runs the full publish pipeline (check → build → commit → version → deploy) in-request. */
   publish(input: {
@@ -250,6 +261,14 @@ export function createMcpToolService(
   const store = overrides.store ?? getRuntime().data;
   const deps: McpToolDeps = {
     store,
+    projectRole:
+      overrides.projectRole ??
+      ((projectId) =>
+        resolveProjectRoleForUser({
+          userId: identity.userId,
+          orgId: identity.orgId,
+          projectId,
+        })),
     stageDraft:
       overrides.stageDraft ?? ((input) => stageDraftDirect(input, store)),
     publish:
@@ -274,6 +293,9 @@ export function createMcpToolService(
   async function authorizeProject(projectId: string): Promise<Project> {
     const project = await getProjectForOrg(identity.orgId, projectId, store);
     if (!project) {
+      throw new McpToolError("Project not found.", "not_found");
+    }
+    if (!roleSatisfies(await deps.projectRole(project.id), "write")) {
       throw new McpToolError("Project not found.", "not_found");
     }
     return project;
@@ -343,7 +365,13 @@ export function createMcpToolService(
 
   return {
     async listProjects() {
-      const projects = await listProjectsForOrg(identity.orgId, store);
+      const all = await listProjectsForOrg(identity.orgId, store);
+      const roles = await Promise.all(
+        all.map((project) => deps.projectRole(project.id)),
+      );
+      const projects = all.filter((_, index) =>
+        roleSatisfies(roles[index], "write"),
+      );
       return {
         projects: projects.map((project) => ({
           id: project.id,

@@ -240,9 +240,6 @@ export default [
   // Workspace task-progress indicator (issue #142): running + recent terminal publish tasks
   // for this project. GET polls the list; POST intent=dismiss clears a terminal row.
   route("repos/:projectId/tasks", "routes/api.tasks.tsx"),
-  // Invite-to-repo (FOH invites & roles): GET lists the repo team's pending invitations,
-  // POST intent=invite sends one carrying the repo's teamId.
-  route("api/repos/:projectId/invite", "routes/api.repos.$projectId.invite.ts"),
   // Playground streaming turn: the page POSTs here and reads an NDJSON stream of the turn.
   // Single registration — team-member selection travels as a form field, not a URL param.
   route(

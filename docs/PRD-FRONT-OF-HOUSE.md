@@ -181,21 +181,30 @@ the new host; self-host works with no marketing host configured.
 
 ### Invites & roles (portal replacement)
 
-Access to FOH is workspace membership, on Better Auth machinery harnesst already runs:
+Access is two layers, on Better Auth's organization plugin (no teams):
 
-- **Roles gate the houses.** Org members carry a role (owner / admin / member). `member` =
-  front of house only; `admin` / `owner` = front and back. Route guards on
-  BOH (`/repos/...`) enforce it.
-- **Repo scope via Better Auth teams.** Enable the organization plugin's `teams` feature; one
-  team per repo, kept in sync with the repo lifecycle (created/deleted alongside it). A
-  member sees the repos whose team they belong to; admins/owners see all repos.
-- **Invite flow.** From back of house, invite an email to a repo — the org invitation carries
-  the repo's `teamId`. Recipient clicks the invite email, verifies their mailbox (existing
-  `requireEmailVerificationOnInvitation` gate), and lands in FOH as a `member` scoped to that
-  repo.
-- **Portal deletion.** Delete the portal surface (`/a/:slug` routes, portal components,
-  `chat_portals` machinery) and its bespoke auth (the portal OTP and magic-link plugins in
-  `app/lib/auth.server.ts`).
+- **Workspace role** (`owner` / `admin` / `member`). `owner` implicitly holds `write` on every
+  repo and is the only role that can grant or revoke ownership. `admin` manages members,
+  settings and the GitHub install and can create repos — but has **no implicit repo access**.
+  `member` has nothing beyond its repo grants. `/org/*`, `/connect` and the marketplace are
+  gated on owner/admin (`requireWorkspaceAdmin`).
+- **Repo access** (`project_access`: per user, per repo, `read` | `write`). `read` = front of
+  house (chat, inbox, activity). `write` = back of house too (build, deploy, settings for that
+  repo). A repo a user holds no grant on is invisible — the guard returns 404, never 403, so
+  nobody can probe which repos a workspace holds. There is deliberately no third "repo admin"
+  level: anyone who can edit and deploy can already exfiltrate the repo's secrets. Creating a
+  repo grants its creator `write`. `requireProjectAccess` is the single chokepoint; every
+  `:projectId` route goes through it (`requireProject` = write, `requireFohProject` = read).
+- **Invite flow.** Only owners/admins grant access, from `/org/members` (Option A): the invite
+  names a workspace role plus per-repo read/write grants, stored in
+  `invitation_project_grants` and applied on accept (an `afterAcceptInvitation` hook, so the
+  direct API path is covered too). A `member` invitation must name at least one repo; a
+  decayed one (every repo deleted since) is refused at accept and resend. The same page edits
+  existing members' roles and per-repo access and removes members (revoking all grants).
+- **Workspaces.** Any user can create additional workspaces from `/workspaces` (they become
+  owner); the header switcher always shows the current one.
+- **Portal deletion.** The portal surface (`/a/:slug` routes, portal components,
+  `chat_portals` machinery) and its bespoke auth are deleted; FOH replaces it.
 
 ### FOH UI
 
@@ -274,14 +283,17 @@ agents. Email-dependent criteria go through the file mailbox driver.
 
 **Invites & roles (portal replacement):**
 
-- [ ] Invite an email to a repo from back of house: the recipient receives the invite email,
-      accepts (mailbox verification enforced), and lands in FOH as a workspace `member`
-      seeing that repo's agents — and their own sessions only.
-- [ ] The invited member can run the core loop with those agents (new session, live stream,
+- [x] Invite an email from `/org/members` with per-repo read/write grants: the recipient
+      receives the invite email, accepts (mailbox verification enforced), and lands in FOH
+      seeing exactly the granted repos — and their own sessions only.
+- [x] The invited member can run the core loop with those agents (new session, live stream,
       needs-you, answer, complete).
-- [ ] A `member` requesting a back-of-house URL (`/repos/...`) is denied; `admin`/`owner`
-      reach both houses and see all repos in FOH.
-- [ ] The portal surface (`/a/:slug`), `chat_portals` machinery, and the portal OTP/magic-link
+- [x] A viewer without `write` on a repo requesting its back-of-house URL (`/repos/...`) is
+      denied; without any grant the repo is a 404. Owners see everything; admins only what
+      they were granted.
+- [x] Owners/admins can change members' workspace roles and per-repo access, and remove
+      members, from `/org/members`.
+- [x] The portal surface (`/a/:slug`), `chat_portals` machinery, and the portal OTP/magic-link
       auth plugins are deleted.
 
 **Legibility:**

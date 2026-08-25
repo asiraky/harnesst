@@ -7,11 +7,16 @@ import { data, redirect } from "react-router";
 
 import type { SessionAuth } from "~/auth/session.server";
 import {
+  resolveProjectRole,
+  resolveProjectRoleForUser,
+  roleSatisfies,
+  type ProjectRole,
+} from "~/auth/project-access.server";
+import {
   ensureWorkspace,
-  listUserWorkspaces,
-  requireBackOfHouse,
   resolveActiveWorkspace,
   setActiveWorkspace,
+  type ActiveWorkspace,
 } from "~/auth/workspace.server";
 import {
   findProjectAnyOrg,
@@ -32,8 +37,9 @@ export type ConnectedProject = Project & {
  * workspace the viewer belongs to (issue #56). Pure over its injected lookups so the branching
  * is unit-testable without a DB or auth provider:
  *  - project unknown, or already in the current org → null (the normal 404 / no-op).
- *  - project in another org where the viewer IS a member → that org id (auto-switch target).
- *  - project in another org where the viewer is NOT a member → null (stays a 404).
+ *  - project in another org where the viewer holds a grant → that org id (auto-switch target).
+ *  - otherwise → null (stays a 404). `isMember` must check the viewer's access to THIS repo,
+ *    not mere workspace membership, or an ungranted member could probe which ids exist.
  */
 export async function resolveCrossWorkspaceRedirect(input: {
   projectId: string;
@@ -67,9 +73,19 @@ export function canonicalProjectUrl(
   return segments.join("/") + url.search;
 }
 
+export interface ProjectAccess {
+  project: Project;
+  active: ActiveWorkspace;
+  /** The viewer's effective role on this repo — at least the `minRole` they asked for. */
+  role: ProjectRole;
+}
+
 /**
- * Validate the Better Auth organization membership and load the org-scoped project, or throw
- * 403/404.
+ * THE per-repo chokepoint. Resolve the workspace, load the org-scoped project, then require the
+ * viewer to hold at least `minRole` on it (project-access.server): owners implicitly hold
+ * `write` everywhere; everyone else — admins included — needs a grant. A repo the viewer has no
+ * grant on is a 404, indistinguishable from nonexistent, so nobody can probe which repos a
+ * workspace holds.
  *
  * Pass `opts.request` from page-document GET loaders (never from actions or api routes) to opt
  * into two request-aware behaviors (issue #56): an org-less session provisions/adopts/chooses a
@@ -77,11 +93,12 @@ export function canonicalProjectUrl(
  * viewer belongs to silently switches them into it. A stale-tab POST with no request stays a
  * hard 404 — it must never silently change the active workspace.
  */
-export async function requireProject(
+export async function requireProjectAccess(
   auth: SessionAuth,
   projectId: string | undefined,
+  minRole: ProjectRole,
   opts?: { request?: Request },
-): Promise<Project> {
+): Promise<ProjectAccess> {
   let active = await resolveActiveWorkspace(auth);
   if (!active) {
     if (!opts?.request) throw data("No organization", { status: 403 });
@@ -91,10 +108,6 @@ export async function requireProject(
     active = await resolveActiveWorkspace(auth);
     if (!active) throw data("No organization", { status: 403 });
   }
-  // Every /repos page and /api/repos resource route funnels through here, so this is THE
-  // back-of-house chokepoint (D10): front-of-house members are turned away before any
-  // project data loads. FOH routes use their own guard, never requireProject.
-  requireBackOfHouse(active, opts?.request ? "page" : "api");
   const project = projectId
     ? await getProject(active.org.id, projectId)
     : undefined;
@@ -104,10 +117,14 @@ export async function requireProject(
         projectId,
         currentOrgId: active.org.id,
         findById: (id) => findProjectAnyOrg(id),
+        // Only a repo the viewer can actually reach may pull them into another workspace;
+        // an ungranted member gets the same 404 as for a nonexistent id.
         isMember: async (orgId) =>
-          (await listUserWorkspaces(auth)).some(
-            (workspace) => workspace.id === orgId,
-          ),
+          (await resolveProjectRoleForUser({
+            userId: auth.user.id,
+            orgId,
+            projectId,
+          })) !== null,
       });
       if (target) {
         const url = new URL(opts.request.url);
@@ -117,11 +134,39 @@ export async function requireProject(
     }
     throw data("Project not found", { status: 404 });
   }
+  const role = await resolveProjectRole({
+    userId: auth.user.id,
+    workspaceRole: active.member.role,
+    orgId: active.org.id,
+    projectId: project.id,
+  });
+  if (!roleSatisfies(role, minRole)) {
+    // No grant at all → 404 (do not reveal the repo exists). A read-only viewer on a write
+    // surface → page routes go back to front of house, api routes get a hard 403.
+    if (!role) throw data("Project not found", { status: 404 });
+    if (opts?.request) throw redirect("/");
+    throw Response.json(
+      { error: "You have read-only access to this repository." },
+      { status: 403 },
+    );
+  }
   if (opts?.request && projectId) {
     const canonical = canonicalProjectUrl(opts.request, projectId, project.slug);
     if (canonical) throw redirect(canonical, { status: 301 });
   }
-  return project;
+  return { project, active, role: role as ProjectRole };
+}
+
+/**
+ * The back-of-house guard: every /repos page and /api/repos resource route funnels through
+ * here and requires `write` on the repo. FOH routes use `requireFohProject` (read).
+ */
+export async function requireProject(
+  auth: SessionAuth,
+  projectId: string | undefined,
+  opts?: { request?: Request },
+): Promise<Project> {
+  return (await requireProjectAccess(auth, projectId, "write", opts)).project;
 }
 
 /** Narrow a project to one with a connected repo, or throw 400. */

@@ -1,27 +1,32 @@
 /**
- * FOH sidebar scoping (app/foh/sidebar.server.ts) over the FakeStore: admins/owners see every
- * org repo (and lazily mint missing repo teams, D9); members see only their teams' repos;
- * needs-you badges count the viewer-visible pending question/approval items per agent (D5),
- * while the 🔔 count includes finished items too.
+ * FOH sidebar scoping (app/foh/sidebar.server.ts) over the FakeStore: the viewer sees exactly
+ * the repos they hold a grant on (owners get every repo from `listAccessibleProjects`, which
+ * is injected here), each team carries the viewer's repo role; needs-you badges count the
+ * viewer-visible pending question/approval items per agent (D5), while the 🔔 count includes
+ * finished items too.
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-// teams.server pulls in the Better Auth instance — the sidebar takes injected deps, so the
-// real module never runs in this suite.
-vi.mock("~/auth/teams.server", () => ({
-  ensureProjectTeam: vi.fn(),
-  listMemberProjectIds: vi.fn(),
+// project-access.server pulls in the db client — the sidebar takes injected deps, so the real
+// module never runs in this suite.
+vi.mock("~/auth/project-access.server", () => ({
+  listAccessibleProjects: vi.fn(),
 }));
 
-import { listViewerProjectIds, loadFohSidebar } from "~/foh/sidebar.server";
+import {
+  listViewerProjectIds,
+  loadFohSidebar,
+  type FohViewer,
+} from "~/foh/sidebar.server";
 import { makeFakeStore, type FakeStore } from "../fakes/store";
 
 let store: FakeStore;
+const viewer: FohViewer = { userId: "u1", orgId: "org_1", workspaceRole: "member" };
 
 beforeEach(() => {
   store = makeFakeStore();
-  store.seedProject({ id: "proj_a", orgId: "org_1", name: "repo-a", teamId: "team_a" });
-  store.seedProject({ id: "proj_b", orgId: "org_1", name: "repo-b", teamId: null });
+  store.seedProject({ id: "proj_a", orgId: "org_1", name: "repo-a" });
+  store.seedProject({ id: "proj_b", orgId: "org_1", name: "repo-b" });
   store.seedProject({ id: "proj_other", orgId: "org_2", name: "other-org" });
   store.seedAgent({ id: "agent_ivy", projectId: "proj_a", name: "ivy" });
   store.seedAgent({ id: "agent_sam", projectId: "proj_a", name: "sam" });
@@ -39,66 +44,61 @@ const flatPresence = async (ids: string[]) =>
   new Map(ids.map((id) => [id, "idle" as const]));
 
 describe("listViewerProjectIds", () => {
-  it("admins see every org project", async () => {
-    const ids = await listViewerProjectIds(
-      { userId: "u1", orgId: "org_1", backOfHouse: true },
-      { store },
-    );
-    expect(new Set(ids)).toEqual(new Set(["proj_a", "proj_b"]));
+  it("returns exactly the granted project ids", async () => {
+    const ids = await listViewerProjectIds(viewer, {
+      store,
+      accessibleProjects: async () => [
+        { projectId: "proj_a", role: "read" },
+        { projectId: "proj_b", role: "write" },
+      ],
+    });
+    expect(ids).toEqual(["proj_a", "proj_b"]);
   });
 
-  it("members see only their teams' projects", async () => {
-    const ids = await listViewerProjectIds(
-      { userId: "u1", orgId: "org_1", backOfHouse: false },
-      { store, memberProjectIds: async () => ["proj_a"] },
-    );
-    expect(ids).toEqual(["proj_a"]);
+  it("passes the viewer through to the grant lookup", async () => {
+    const accessibleProjects = vi.fn(async () => []);
+    await listViewerProjectIds(viewer, { store, accessibleProjects });
+    expect(accessibleProjects).toHaveBeenCalledWith(viewer);
   });
 });
 
 describe("loadFohSidebar", () => {
-  it("scopes teams to the member's repos and never leaks other orgs", async () => {
-    const sidebar = await loadFohSidebar(
-      { userId: "u1", orgId: "org_1", backOfHouse: false },
-      {
-        store,
-        memberProjectIds: async () => ["proj_a"],
-        presence: flatPresence,
-      },
-    );
+  it("scopes teams to the granted repos and never leaks other orgs", async () => {
+    const sidebar = await loadFohSidebar(viewer, {
+      store,
+      accessibleProjects: async () => [
+        { projectId: "proj_a", role: "read" },
+        // A grant on another org's project (impossible in prod, but never trust it).
+        { projectId: "proj_other", role: "write" },
+      ],
+      presence: flatPresence,
+    });
     expect(sidebar.teams.map((t) => t.projectId)).toEqual(["proj_a"]);
+    expect(sidebar.teams[0].role).toBe("read");
     expect(sidebar.teams[0].agents.map((a) => a.name)).toEqual(["ivy", "sam"]);
   });
 
-  it("admins see all org repos and lazily ensure missing teams", async () => {
-    const ensureTeam = vi.fn(async () => "team_new");
-    const sidebar = await loadFohSidebar(
-      { userId: "u1", orgId: "org_1", backOfHouse: true },
-      { store, ensureTeam, presence: flatPresence },
-    );
-    expect(new Set(sidebar.teams.map((t) => t.projectId))).toEqual(
-      new Set(["proj_a", "proj_b"]),
-    );
-    // Only the team-less repo gets minted.
-    expect(ensureTeam).toHaveBeenCalledTimes(1);
-    expect(ensureTeam).toHaveBeenCalledWith(
-      "org_1",
-      expect.objectContaining({ id: "proj_b" }),
-    );
+  it("carries the per-repo role so the shell can gate the build link", async () => {
+    const sidebar = await loadFohSidebar(viewer, {
+      store,
+      accessibleProjects: async () => [
+        { projectId: "proj_a", role: "read" },
+        { projectId: "proj_b", role: "write" },
+      ],
+      presence: flatPresence,
+    });
+    expect(
+      Object.fromEntries(sidebar.teams.map((t) => [t.projectId, t.role])),
+    ).toEqual({ proj_a: "read", proj_b: "write" });
   });
 
-  it("a failing ensureTeam never takes down the sidebar", async () => {
-    const sidebar = await loadFohSidebar(
-      { userId: "u1", orgId: "org_1", backOfHouse: true },
-      {
-        store,
-        ensureTeam: async () => {
-          throw new Error("better auth down");
-        },
-        presence: flatPresence,
-      },
-    );
-    expect(sidebar.teams).toHaveLength(2);
+  it("a viewer with no grants gets an empty sidebar", async () => {
+    const sidebar = await loadFohSidebar(viewer, {
+      store,
+      accessibleProjects: async () => [],
+      presence: flatPresence,
+    });
+    expect(sidebar.teams).toEqual([]);
   });
 
   it("counts needs-you badges per agent under D5 visibility; finished feeds only the bell", async () => {
@@ -146,19 +146,16 @@ describe("loadFohSidebar", () => {
       agentId: "agent_ivy",
       userId: "u1",
     });
-    const sidebar = await loadFohSidebar(
-      { userId: "u1", orgId: "org_1", backOfHouse: false },
-      {
-        store,
-        memberProjectIds: async () => ["proj_a"],
-        presence: flatPresence,
-        sessionsByIds: async (ids) =>
-          ids.map((id) => ({
-            id,
-            archivedAt: id === "s5" ? new Date("2026-07-02T00:00:00Z") : null,
-          })),
-      },
-    );
+    const sidebar = await loadFohSidebar(viewer, {
+      store,
+      accessibleProjects: async () => [{ projectId: "proj_a", role: "read" }],
+      presence: flatPresence,
+      sessionsByIds: async (ids) =>
+        ids.map((id) => ({
+          id,
+          archivedAt: id === "s5" ? new Date("2026-07-02T00:00:00Z") : null,
+        })),
+    });
     const agents = Object.fromEntries(
       sidebar.teams[0].agents.map((a) => [a.name, a.needsYou]),
     );

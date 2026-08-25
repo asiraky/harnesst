@@ -35,10 +35,11 @@ import { TEMPLATE_TYPES, type TemplateType } from "~/marketplace/manifest";
 import { getRuntime } from "~/seams/index.server";
 import {
   ensureWorkspace,
-  requireBackOfHouse,
+  requireWorkspaceAdmin,
   resolveActiveWorkspace,
 } from "~/auth/workspace.server";
 import { listProjects } from "~/db/queries.server";
+import { listAccessibleProjectIds } from "~/auth/project-access.server";
 import { getAgentSource } from "~/github/cached.server";
 import { listDrafts } from "~/drafts/drafts.server";
 import { overlayLock, installedKeys } from "~/marketplace/lock";
@@ -135,10 +136,14 @@ const TYPE_META: Record<TemplateType, TypeMeta> = {
  */
 async function collectInstalledKeys(
   org: { id: string } | null | undefined,
+  accessible: Set<string>,
 ): Promise<string[]> {
   if (!org) return [];
+  // Only repos the viewer holds a grant on: reading an ungranted repo's source here would
+  // leak what is installed in a repo they cannot otherwise see.
   const projects = (await listProjects(org.id)).filter(
-    (p) => p.repoInstallationId && p.repoOwner && p.repoName,
+    (p) =>
+      accessible.has(p.id) && p.repoInstallationId && p.repoOwner && p.repoName,
   );
   const perProject = await Promise.all(
     projects.map(async (p) => {
@@ -170,11 +175,19 @@ export const loader = (args: LoaderFunctionArgs) =>
     async ({ auth }) => {
       await ensureWorkspace(args.request, auth);
       const active = await resolveActiveWorkspace(auth);
-      // Back of house is admin/owner-only (D10); front-of-house members live at `/`.
-      if (active) requireBackOfHouse(active, "page");
+      if (active) requireWorkspaceAdmin(active, "page");
       const org = active?.org;
       // Installed keys are catalog-independent, so both return branches carry them.
-      const installed = await collectInstalledKeys(org);
+      const accessible = active
+        ? new Set(
+            await listAccessibleProjectIds({
+              userId: auth.user.id,
+              workspaceRole: active.member.role,
+              orgId: active.org.id,
+            }),
+          )
+        : new Set<string>();
+      const installed = await collectInstalledKeys(org, accessible);
       try {
         const index = await getRuntime().catalog.index();
         return {

@@ -3,66 +3,32 @@
  *
  * The invite form refuses to MINT a `member` invitation without repos, but that alone cannot
  * hold the acceptance criterion — "no workspace invite can leave a user as a `member` with no
- * team" — because a stored grant can decay after it is sent:
- *
- *   - invitations created before this route existed carry `role = member` with `team_id = null`;
- *   - Better Auth strips a deleted team from every pending invitation (`crud-team.mjs`
- *     deleteTeam), so deleting the last selected repo empties a grant that was valid when sent.
- *
- * Either way the invitee accepts into limbo: not an admin, so no back of house; on no team, so
- * no front of house either. The invariant therefore has to be checked where it is consumed —
- * at acceptance, and before an admin extends a stale invitation by resending it.
+ * access" — because a stored grant can decay after it is sent: every repo it named can be
+ * deleted (the grant rows cascade away with the project). The invitee would then accept into
+ * limbo: no workspace powers, no repo. The invariant therefore has to be checked where it is
+ * consumed — at acceptance, and before an admin extends a stale invitation by resending it.
  */
 import { eq } from "drizzle-orm";
 
 import { db } from "~/db/client.server";
 import { invitation } from "~/db/auth-schema";
-import { listProjects } from "~/db/queries.server";
+import { isWorkspaceAdmin } from "./roles";
+import { listInvitationGrants } from "./project-access.server";
 
 export type InvitationGrant = {
+  id: string;
   role?: string | null;
-  /** Absent whenever the teams plugin is off, null once its last team is deleted. */
-  teamId?: string | null;
-  organizationId: string;
 };
 
-/** Better Auth stores multi-team invitations comma-separated. */
-export function splitInvitationTeamIds(
-  invitationTeamId: string | null | undefined,
-): string[] {
-  return (invitationTeamId ?? "")
-    .split(",")
-    .map((part) => part.trim())
-    .filter(Boolean);
-}
-
 /**
- * Only a front-of-house-only grant depends on teams. Better Auth stores roles comma-separated
- * too, so a grant counts as member-only when `member` is all it carries — anything else (admin,
- * owner) reaches the workspace on its own.
- */
-function isMemberOnly(role: string | null | undefined): boolean {
-  const roles = (role || "member")
-    .split(",")
-    .map((part) => part.trim())
-    .filter(Boolean);
-  return roles.length > 0 && roles.every((name) => name === "member");
-}
-
-/**
- * Whether accepting this grant would leave the invitee with no access at all: a `member` whose
- * invitation names no team that still maps to a repository in the inviting workspace.
+ * Whether accepting this grant would leave the invitee with no access at all: a plain `member`
+ * whose invitation names no repository that still exists. Admins/owners can always create
+ * repos, so their invitations never decay.
  */
 export async function grantsNoAccess(grant: InvitationGrant): Promise<boolean> {
-  if (!isMemberOnly(grant.role)) return false;
-  const teamIds = new Set(splitInvitationTeamIds(grant.teamId));
-  if (teamIds.size === 0) return true;
-  // A team id is only worth something while a live repo points at it: the FK is set-null on
-  // team delete, so a repo whose team is gone no longer matches.
-  const projectList = await listProjects(grant.organizationId);
-  return !projectList.some(
-    (project) => project.teamId && teamIds.has(project.teamId),
-  );
+  if (isWorkspaceAdmin(grant.role || "member")) return false;
+  const grants = await listInvitationGrants([grant.id]);
+  return (grants.get(grant.id) ?? []).length === 0;
 }
 
 /**
@@ -74,11 +40,7 @@ export async function invitationGrantsNoAccess(
 ): Promise<boolean> {
   if (!invitationId) return false;
   const [row] = await db
-    .select({
-      role: invitation.role,
-      teamId: invitation.teamId,
-      organizationId: invitation.organizationId,
-    })
+    .select({ id: invitation.id, role: invitation.role })
     .from(invitation)
     .where(eq(invitation.id, invitationId))
     .limit(1);

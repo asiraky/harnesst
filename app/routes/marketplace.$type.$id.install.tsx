@@ -53,7 +53,7 @@ import {
 } from "~/components/ui/select";
 import {
   ensureWorkspace,
-  requireBackOfHouse,
+  requireWorkspaceAdmin,
   resolveActiveWorkspace,
 } from "~/auth/workspace.server";
 import { selectedCapabilityGroupIds } from "~/capabilities/enablement";
@@ -106,6 +106,7 @@ import {
   type TemplateType,
 } from "~/marketplace/manifest";
 import { listProjects } from "~/db/queries.server";
+import { listAccessibleProjectIds } from "~/auth/project-access.server";
 import { resolveSyncedAgentContext } from "~/project/agent-context.server";
 import { requireProject, requireRepo } from "~/project/guard.server";
 import { getRuntime } from "~/seams/index.server";
@@ -348,8 +349,7 @@ export const loader = (args: LoaderFunctionArgs) =>
       if (!isTemplateSlug(id)) throw data("Unknown template", { status: 404 });
       await ensureWorkspace(args.request, auth);
       const active = await resolveActiveWorkspace(auth);
-      // Back of house is admin/owner-only (D10); front-of-house members live at `/`.
-      if (active) requireBackOfHouse(active, "page");
+      if (active) requireWorkspaceAdmin(active, "page");
       const org = active?.org;
 
       // Resolve composition (includes) up front: the plan, the file preview, the dep/secret
@@ -369,10 +369,24 @@ export const loader = (args: LoaderFunctionArgs) =>
       const selectedMember = url.searchParams.get("member");
       const newMemberName = url.searchParams.get("newMember");
 
-      // Only connected repos can host an install.
+      // Only connected repos the viewer can WRITE to can host an install: installing edits the
+      // repo, and workspace admins hold no implicit repo access.
       const all = org ? await listProjects(org.id) : [];
+      const writable = active
+        ? new Set(
+            await listAccessibleProjectIds(
+              {
+                userId: auth.user.id,
+                workspaceRole: active.member.role,
+                orgId: active.org.id,
+              },
+              "write",
+            ),
+          )
+        : new Set<string>();
       const projects = all
         .filter((p) => p.repoInstallationId && p.repoOwner && p.repoName)
+        .filter((p) => writable.has(p.id))
         .map((p) => ({ id: p.id, name: p.name }));
 
       const base = {

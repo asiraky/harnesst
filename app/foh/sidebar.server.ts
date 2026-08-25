@@ -1,15 +1,19 @@
 /**
  * Front of House sidebar — the viewer-scoped team/agent tree (§3 left pane).
  *
- * Scope rule (§5 invites & roles): admins/owners see every org repo; a `member` sees only the
- * repos whose Better Auth team they belong to (D9). Each agent carries presence (●/○) and a
- * needs-you badge counted from pending question/approval inbox items visible to the viewer
- * (D5: their own + team-wide agent-opened ones).
+ * Scope rule: the viewer sees exactly the repos they hold a grant on (project-access.server);
+ * owners hold every repo implicitly. Each agent carries presence (●/○) and a needs-you badge
+ * counted from pending question/approval inbox items visible to the viewer (D5: their own +
+ * team-wide agent-opened ones).
  *
  * Deps are injectable so unit tests run over the FakeStore without Better Auth or Postgres.
  */
-import { ensureProjectTeam, listMemberProjectIds } from "~/auth/teams.server";
-import type { DataStore, Project } from "~/data/ports";
+import {
+  listAccessibleProjects,
+  type ProjectGrant,
+  type ProjectRole,
+} from "~/auth/project-access.server";
+import type { DataStore } from "~/data/ports";
 import { listAgents } from "~/db/queries.server";
 import { agentPresenceMap, type AgentPresence } from "~/foh/presence.server";
 import { listFohSessionsByIds } from "~/playground/sessions.server";
@@ -18,8 +22,8 @@ import { getRuntime } from "~/seams/index.server";
 export interface FohViewer {
   userId: string;
   orgId: string;
-  /** Admin/owner — sees all repos (and lazily mints missing repo teams, D9). */
-  backOfHouse: boolean;
+  /** The Better Auth member role; owners see every repo, everyone else their grants. */
+  workspaceRole: string;
 }
 
 export interface FohSidebarAgent {
@@ -35,6 +39,8 @@ export interface FohSidebarTeam {
   /** Canonical page URL segment; projectId remains available for API/storage identity. */
   projectSlug?: string;
   name: string;
+  /** The viewer's role on this repo — `write` shows the manage-in-Repositories link. */
+  role: ProjectRole;
   agents: FohSidebarAgent[];
 }
 
@@ -46,8 +52,7 @@ export interface FohSidebar {
 
 export interface FohSidebarDeps {
   store?: DataStore;
-  memberProjectIds?: (userId: string, orgId: string) => Promise<string[]>;
-  ensureTeam?: (orgId: string, project: Project) => Promise<unknown>;
+  accessibleProjects?: (viewer: FohViewer) => Promise<ProjectGrant[]>;
   presence?: (agentIds: string[]) => Promise<Map<string, AgentPresence>>;
   /** #278: resolves pending items' sessions so archived ones can be dropped from the badges. */
   sessionsByIds?: (
@@ -76,18 +81,20 @@ async function withoutArchivedSessions<T extends { sessionId: string }>(
     : items.filter((item) => !archived.has(item.sessionId));
 }
 
-/** The project ids the viewer may see in FOH — the one scope rule every FOH list shares. */
+/** The viewer's repo grants — the one scope rule every FOH list shares. */
+export async function listViewerGrants(
+  viewer: FohViewer,
+  deps: FohSidebarDeps = {},
+): Promise<ProjectGrant[]> {
+  return (deps.accessibleProjects ?? listAccessibleProjects)(viewer);
+}
+
+/** The project ids the viewer may see in FOH. */
 export async function listViewerProjectIds(
   viewer: FohViewer,
   deps: FohSidebarDeps = {},
 ): Promise<string[]> {
-  const store = deps.store ?? getRuntime().data;
-  if (viewer.backOfHouse) {
-    const projects = await store.projects.listByOrg(viewer.orgId);
-    return projects.map((project) => project.id);
-  }
-  const memberIds = deps.memberProjectIds ?? listMemberProjectIds;
-  return memberIds(viewer.userId, viewer.orgId);
+  return (await listViewerGrants(viewer, deps)).map((grant) => grant.projectId);
 }
 
 export async function loadFohSidebar(
@@ -95,29 +102,13 @@ export async function loadFohSidebar(
   deps: FohSidebarDeps = {},
 ): Promise<FohSidebar> {
   const store = deps.store ?? getRuntime().data;
-  const allProjects = await store.projects.listByOrg(viewer.orgId);
-  let projects: Project[];
-  if (viewer.backOfHouse) {
-    projects = allProjects;
-    // Lazy D9 backfill: pre-teams repos get their Better Auth team on first admin FOH load,
-    // so invite-to-repo always has a team to carry. Best-effort — a Better Auth hiccup must
-    // not take down the home surface.
-    const ensureTeam = deps.ensureTeam ?? ensureProjectTeam;
-    for (const project of projects) {
-      if (project.teamId) continue;
-      try {
-        await ensureTeam(viewer.orgId, project);
-      } catch (error) {
-        console.warn(
-          `[foh] could not ensure team for project ${project.id}: ${(error as Error).message}`,
-        );
-      }
-    }
-  } else {
-    const memberIds = deps.memberProjectIds ?? listMemberProjectIds;
-    const scope = new Set(await memberIds(viewer.userId, viewer.orgId));
-    projects = allProjects.filter((project) => scope.has(project.id));
-  }
+  const grants = await listViewerGrants(viewer, deps);
+  const roleByProject = new Map(grants.map((g) => [g.projectId, g.role]));
+  // Filter the org's list rather than trusting grant ids alone: a grant can only name a repo
+  // of this org (the query joins on it), but the store is what says the repo still exists.
+  const projects = (await store.projects.listByOrg(viewer.orgId)).filter(
+    (project) => roleByProject.has(project.id),
+  );
 
   const rosters = await Promise.all(
     projects.map((project) => listAgents(project.id, store)),
@@ -149,6 +140,7 @@ export async function loadFohSidebar(
       projectId: project.id,
       projectSlug: project.slug,
       name: project.name,
+      role: roleByProject.get(project.id) ?? "read",
       agents: rosters[i].map((agent) => ({
         id: agent.id,
         name: agent.name,

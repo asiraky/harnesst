@@ -37,7 +37,6 @@ export const session = pgTable(
       .notNull()
       .references(() => user.id, { onDelete: "cascade" }),
     activeOrganizationId: text("active_organization_id"),
-    activeTeamId: text("active_team_id"),
   },
   (table) => [index("session_userId_idx").on(table.userId)],
 );
@@ -95,40 +94,6 @@ export const organization = pgTable(
   (table) => [uniqueIndex("organization_slug_uidx").on(table.slug)],
 );
 
-export const team = pgTable(
-  "team",
-  {
-    id: text("id").primaryKey(),
-    name: text("name").notNull(),
-    organizationId: text("organization_id")
-      .notNull()
-      .references(() => organization.id, { onDelete: "cascade" }),
-    createdAt: timestamp("created_at").notNull(),
-    updatedAt: timestamp("updated_at").$onUpdate(
-      () => /* @__PURE__ */ new Date(),
-    ),
-  },
-  (table) => [index("team_organizationId_idx").on(table.organizationId)],
-);
-
-export const teamMember = pgTable(
-  "team_member",
-  {
-    id: text("id").primaryKey(),
-    teamId: text("team_id")
-      .notNull()
-      .references(() => team.id, { onDelete: "cascade" }),
-    userId: text("user_id")
-      .notNull()
-      .references(() => user.id, { onDelete: "cascade" }),
-    createdAt: timestamp("created_at"),
-  },
-  (table) => [
-    index("teamMember_teamId_idx").on(table.teamId),
-    index("teamMember_userId_idx").on(table.userId),
-  ],
-);
-
 export const member = pgTable(
   "member",
   {
@@ -174,7 +139,6 @@ export const invitation = pgTable(
 export const userRelations = relations(user, ({ many }) => ({
   sessions: many(session),
   accounts: many(account),
-  teamMembers: many(teamMember),
   members: many(member),
   invitations: many(invitation),
 }));
@@ -194,28 +158,8 @@ export const accountRelations = relations(account, ({ one }) => ({
 }));
 
 export const organizationRelations = relations(organization, ({ many }) => ({
-  teams: many(team),
   members: many(member),
   invitations: many(invitation),
-}));
-
-export const teamRelations = relations(team, ({ one, many }) => ({
-  organization: one(organization, {
-    fields: [team.organizationId],
-    references: [organization.id],
-  }),
-  teamMembers: many(teamMember),
-}));
-
-export const teamMemberRelations = relations(teamMember, ({ one }) => ({
-  team: one(team, {
-    fields: [teamMember.teamId],
-    references: [team.id],
-  }),
-  user: one(user, {
-    fields: [teamMember.userId],
-    references: [user.id],
-  }),
 }));
 
 export const memberRelations = relations(member, ({ one }) => ({

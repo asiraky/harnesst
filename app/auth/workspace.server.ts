@@ -5,6 +5,7 @@ import { db } from "~/db/client.server";
 import { userWorkspaceMemory } from "~/db/schema";
 import { newId } from "~/lib/id";
 import { auth } from "~/lib/auth.server";
+import { isWorkspaceAdmin, isWorkspaceOwner } from "./roles";
 import { returnToFromRequest } from "./return-to";
 import type { SessionAuth } from "./session.server";
 
@@ -24,31 +25,21 @@ export type ActiveWorkspace = {
   };
 };
 
-/**
- * House gating (FOH invites & roles): `owner`/`admin` get back of house (the /repos build
- * surface) on top of front of house; a plain `member` is front-of-house only. Better Auth
- * stores multi-role grants comma-separated, so any owner/admin grant counts.
- */
-export function isBackOfHouse(role: string): boolean {
-  return role
-    .split(",")
-    .some((part) => part.trim() === "owner" || part.trim() === "admin");
-}
+export { isWorkspaceAdmin, isWorkspaceOwner };
 
 /**
- * Enforce D10 on a back-of-house surface: a front-of-house `member` is redirected home from
- * page GET loaders (`"page"` — friendly for humans) and receives a hard 403 JSON Response
- * from API/resource routes AND mutations (`"api"` — correct for fetchers; a denied POST must
- * never silently navigate). No-op for owners/admins.
+ * Enforce a workspace-admin-only surface: a plain `member` is redirected home from page GET
+ * loaders (`"page"` — friendly for humans) and receives a hard 403 JSON Response from
+ * API/resource routes AND mutations (`"api"` — a denied POST must never silently navigate).
  */
-export function requireBackOfHouse(
+export function requireWorkspaceAdmin(
   active: ActiveWorkspace,
   mode: "page" | "api",
 ): void {
-  if (isBackOfHouse(active.member.role)) return;
+  if (isWorkspaceAdmin(active.member.role)) return;
   if (mode === "page") throw redirect("/");
   throw Response.json(
-    { error: "Back of house is restricted to workspace admins." },
+    { error: "This action is restricted to workspace admins." },
     { status: 403 },
   );
 }
@@ -135,7 +126,11 @@ function personalWorkspaceName(session: SessionAuth): string {
 }
 
 function personalWorkspaceSlug(session: SessionAuth): string {
-  const stem = session.user.name
+  return workspaceSlug(session.user.name);
+}
+
+function workspaceSlug(name: string): string {
+  const stem = name
     .trim()
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")
@@ -154,6 +149,24 @@ async function createPersonalWorkspace(session: SessionAuth): Promise<string> {
   });
   if (!organization)
     throw new Error("Better Auth did not create an organization.");
+  return organization.id;
+}
+
+/**
+ * Create an additional workspace owned by the caller and make it the active one. Better Auth
+ * seeds the creator as `owner`; no repo grants are needed because owners hold every repo.
+ */
+export async function createWorkspace(
+  session: SessionAuth,
+  name: string,
+): Promise<string> {
+  const organization = await auth.api.createOrganization({
+    body: { name, slug: workspaceSlug(name) },
+    headers: session.requestHeaders,
+  });
+  if (!organization)
+    throw new Error("Better Auth did not create an organization.");
+  await setActiveWorkspace(session, organization.id);
   return organization.id;
 }
 

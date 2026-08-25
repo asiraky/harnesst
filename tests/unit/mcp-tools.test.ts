@@ -51,8 +51,32 @@ describe("MCP deployment tools", () => {
     });
     deps = {
       store,
+      projectRole: vi.fn(async () => "write" as const),
       getBranchHead: vi.fn(async () => ({ sha: "head-sha", branch: "main" })),
     };
+  });
+
+  it("hides repos the key owner holds no write grant on", async () => {
+    store.seedProject({ id: "project_ungranted", orgId: "org_1", name: "Books" });
+    deps.projectRole = vi.fn(async (projectId: string) =>
+      projectId === "project_1" ? ("write" as const) : null,
+    );
+    const tools = createMcpToolService(identity, deps);
+
+    await expect(tools.listProjects()).resolves.toMatchObject({
+      projects: [{ id: "project_1" }],
+    });
+    await expect(
+      tools.listAgents({ projectId: "project_ungranted" }),
+    ).rejects.toMatchObject({ code: "not_found" });
+  });
+
+  it("a read-only grant is not enough for the build surface", async () => {
+    deps.projectRole = vi.fn(async () => "read" as const);
+    const tools = createMcpToolService(identity, deps);
+    await expect(
+      tools.listAgents({ projectId: "project_1" }),
+    ).rejects.toMatchObject({ code: "not_found" });
   });
 
   async function release(gitSha: string, version: string) {
@@ -388,7 +412,7 @@ describe("MCP authoring tools", () => {
       defaultBranch: "trunk",
     });
     store.seedAgent({ id: "agent_1", projectId: "project_1", name: "alpha" });
-    deps = { store };
+    deps = { store, projectRole: vi.fn(async () => "write" as const) };
   });
 
   it("stages normalized edits sequentially with the caller identity and audits no content", async () => {
