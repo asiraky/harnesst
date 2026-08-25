@@ -14,9 +14,9 @@ import {
   type ProjectRole,
 } from "~/auth/project-access.server";
 import { requireSession, sessionLoader } from "~/auth/session.server";
+import { isWorkspaceOwner } from "~/auth/roles";
 import {
   ensureWorkspace,
-  isWorkspaceOwner,
   requireWorkspaceAdmin,
   resolveActiveWorkspace,
 } from "~/auth/workspace.server";
