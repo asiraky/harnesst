@@ -26,6 +26,17 @@ describe("canonicalProjectUrl", () => {
     )).toBe("/t/support-agents/agent-1");
   });
 
+  it("strips single-fetch details so client navigations land on the page, not the .data url", () => {
+    expect(canonicalProjectUrl(
+      new Request("https://example.test/repos/abcdefghijkl/deployment.data?_routes=a"),
+      "abcdefghijkl", "support-agents",
+    )).toBe("/repos/support-agents/deployment");
+    expect(canonicalProjectUrl(
+      new Request("https://example.test/repos/abcdefghijkl/_.data"),
+      "abcdefghijkl", "support-agents",
+    )).toBe("/repos/support-agents/");
+  });
+
   it("does not redirect actions, canonical pages, or API routes", () => {
     expect(canonicalProjectUrl(
       new Request("https://example.test/repos/abcdefghijkl/settings", { method: "POST" }),

@@ -4,7 +4,10 @@
  * same tenant-isolation + connected-repo invariants.
  */
 import { data, redirect } from "react-router";
-import { returnToFromRequest } from "~/auth/return-to";
+import {
+  returnToFromRequest,
+  stripSingleFetchDetails,
+} from "~/auth/return-to";
 
 import type { SessionAuth } from "~/auth/session.server";
 import {
@@ -62,6 +65,7 @@ export function canonicalProjectUrl(
 ): string | null {
   if (request.method !== "GET" || projectParam === slug) return null;
   const url = new URL(request.url);
+  stripSingleFetchDetails(url);
   const segments = url.pathname.split("/");
   const scope = segments.findIndex(
     (segment, index) =>
