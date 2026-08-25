@@ -154,6 +154,8 @@ beforeEach(() => {
   mocks.createInvitation.mockResolvedValue({ id: "inv_1" });
   mocks.listInvitations.mockResolvedValue([]);
   mocks.setProjectAccess.mockResolvedValue({ ok: true });
+  mocks.setInvitationGrants.mockResolvedValue(undefined);
+  mocks.cancelInvitation.mockResolvedValue({});
   mocks.grantsNoAccess.mockResolvedValue(false);
 });
 
@@ -188,6 +190,24 @@ describe("workspace invite — access is explicit", () => {
     expect(mocks.recordAudit).toHaveBeenCalledWith(
       expect.objectContaining({ action: "member_invited", target: EMAIL }),
     );
+  });
+
+  it("cancels the just-sent invitation when its grants cannot be stored", async () => {
+    mocks.setInvitationGrants.mockRejectedValue(new Error("db down"));
+    const result = await action(
+      actionArgs([
+        ["intent", "invite"],
+        ["email", EMAIL],
+        ["role", "member"],
+        ["access:proj_a", "read"],
+      ]),
+    );
+    expect(result).toMatchObject({ error: expect.stringContaining("access") });
+    expect(mocks.cancelInvitation).toHaveBeenCalledWith({
+      body: { invitationId: "inv_1" },
+      headers: SESSION.requestHeaders,
+    });
+    expect(mocks.recordAudit).not.toHaveBeenCalled();
   });
 
   it("refuses a member invitation with no repositories", async () => {
@@ -512,8 +532,15 @@ describe("workspace roles and removal", () => {
     );
   });
 
-  it("keeps the grants when Better Auth refuses the removal", async () => {
-    mocks.removeMember.mockRejectedValue(new Error("nope"));
+  it("revokes grants BEFORE the membership so a failed removal never leaves stale access", async () => {
+    const order: string[] = [];
+    mocks.revokeAllProjectAccess.mockImplementation(async () => {
+      order.push("revoke");
+    });
+    mocks.removeMember.mockImplementation(async () => {
+      order.push("remove");
+      throw new Error("nope");
+    });
     const result = await action(
       actionArgs([
         ["intent", "remove-member"],
@@ -521,7 +548,8 @@ describe("workspace roles and removal", () => {
       ]),
     );
     expect(result).toMatchObject({ error: expect.any(String) });
-    expect(mocks.revokeAllProjectAccess).not.toHaveBeenCalled();
+    expect(order).toEqual(["revoke", "remove"]);
+    expect(mocks.recordAudit).not.toHaveBeenCalled();
   });
 
   it("refuses to remove yourself", async () => {

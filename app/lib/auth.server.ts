@@ -7,6 +7,10 @@ import { db } from "~/db/client.server";
 import * as schema from "~/db/auth-schema";
 import { sendOrganizationInvitation } from "~/email/send-organization-invitation.server";
 import { sendEmailVerification } from "~/email/send-email-verification.server";
+import {
+  grantsNoAccess,
+  NO_ACCESS_INVITATION_MESSAGE,
+} from "~/auth/invitation-grant.server";
 import { applyInvitationGrants } from "~/auth/project-access.server";
 import { sendPasswordResetEmail } from "~/email/send-password-reset.server";
 import { authCookieConfig } from "~/lib/auth-cookies";
@@ -120,12 +124,31 @@ export const auth = betterAuth({
       // and become real access the moment the invitation is accepted — via this hook, so a
       // direct /api/auth/organization/accept-invitation call is covered as well as the page.
       organizationHooks: {
+        // The "no member without access" invariant is enforced HERE, not only in the accept
+        // page, so a direct API acceptance of a decayed member invitation is refused too.
+        beforeAcceptInvitation: async ({ invitation }) => {
+          if (await grantsNoAccess({ id: invitation.id, role: invitation.role })) {
+            throw new APIError("FORBIDDEN", {
+              message: NO_ACCESS_INVITATION_MESSAGE,
+            });
+          }
+        },
         afterAcceptInvitation: async ({ invitation, member, user }) => {
-          await applyInvitationGrants({
-            invitationId: invitation.id,
-            organizationId: member.organizationId,
-            userId: user.id,
-          });
+          try {
+            await applyInvitationGrants({
+              invitationId: invitation.id,
+              organizationId: member.organizationId,
+              userId: user.id,
+            });
+          } catch (error) {
+            // Better Auth has already committed the membership; failing the request here
+            // would leave an accepted invitation the user can never retry. Surface it and let
+            // an admin repair the grants from /org/members.
+            console.error(
+              `[auth] failed to apply invitation grants for ${invitation.id}`,
+              error,
+            );
+          }
         },
       },
       sendInvitationEmail: async (invitation) => {

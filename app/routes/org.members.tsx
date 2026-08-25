@@ -247,11 +247,22 @@ export async function action(args: Route.ActionArgs) {
         error: publicAuthErrorMessage(error, "Could not send the invitation."),
       };
     }
-    await setInvitationGrants({
-      orgId: active.org.id,
-      invitationId,
-      grants: read.grants,
-    });
+    try {
+      await setInvitationGrants({
+        orgId: active.org.id,
+        invitationId,
+        grants: read.grants,
+      });
+    } catch {
+      // The invitation is already live; never leave it sent with less access than chosen.
+      await betterAuth.api
+        .cancelInvitation({
+          body: { invitationId },
+          headers: session.requestHeaders,
+        })
+        .catch(() => {});
+      return { error: "Could not store the repository access. Try again." };
+    }
     await recordAudit({
       orgId: active.org.id,
       actorUserId: session.user.id,
@@ -326,6 +337,10 @@ export async function action(args: Route.ActionArgs) {
     if (member.userId === session.user.id) {
       return { error: "You cannot remove yourself. Leave from the workspace menu instead." };
     }
+    // Revoke first: if the membership removal then fails the member is left with NO repo
+    // access (visible on this page, easy to re-grant) rather than a departed user whose
+    // grants silently come back the moment they are re-invited.
+    await revokeAllProjectAccess(active.org.id, member.userId);
     try {
       // Better Auth refuses to remove an owner unless the caller is one, and never the last.
       await betterAuth.api.removeMember({
@@ -337,7 +352,6 @@ export async function action(args: Route.ActionArgs) {
         error: publicAuthErrorMessage(error, "Could not remove that member."),
       };
     }
-    await revokeAllProjectAccess(active.org.id, member.userId);
     await recordAudit({
       orgId: active.org.id,
       actorUserId: session.user.id,
