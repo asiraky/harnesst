@@ -5,6 +5,7 @@
  * `active` is simply the only member, and no `/agents/...` path ever appears.
  */
 import { data, redirect } from "react-router";
+import { stripSingleFetchDetails } from "~/auth/return-to";
 
 import type { Agent, DataStore } from "~/data/ports";
 import {
@@ -100,6 +101,7 @@ export function agentParamRedirect(
   const url = new URL(request.url);
   const agent = url.searchParams.get("agent");
   if (!agent) return null;
+  stripSingleFetchDetails(url);
   url.searchParams.delete("agent");
   const tab = url.pathname.replace(/^\/repos\/[^/]+\/?/, "");
   return redirect(

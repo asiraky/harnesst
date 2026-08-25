@@ -1,6 +1,11 @@
 const RETURN_TO_ORIGIN = "http://harnesst.local";
 
-function stripSingleFetchDetails(url: URL): void {
+/**
+ * Client navigations reach loaders as single-fetch requests (`/repos/x/settings.data`,
+ * `/_root.data`, `?_routes=`). Any redirect that replays the request path must strip those
+ * details first or the browser lands on the raw data URL.
+ */
+export function stripSingleFetchDetails(url: URL): void {
   if (url.pathname === "/_root.data" || url.pathname === "/_.data") {
     url.pathname = "/";
   } else if (url.pathname.endsWith("/_.data")) {
