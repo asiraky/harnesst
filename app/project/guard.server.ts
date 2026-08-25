@@ -8,12 +8,12 @@ import { data, redirect } from "react-router";
 import type { SessionAuth } from "~/auth/session.server";
 import {
   resolveProjectRole,
+  resolveProjectRoleForUser,
   roleSatisfies,
   type ProjectRole,
 } from "~/auth/project-access.server";
 import {
   ensureWorkspace,
-  listUserWorkspaces,
   resolveActiveWorkspace,
   setActiveWorkspace,
   type ActiveWorkspace,
@@ -37,8 +37,9 @@ export type ConnectedProject = Project & {
  * workspace the viewer belongs to (issue #56). Pure over its injected lookups so the branching
  * is unit-testable without a DB or auth provider:
  *  - project unknown, or already in the current org → null (the normal 404 / no-op).
- *  - project in another org where the viewer IS a member → that org id (auto-switch target).
- *  - project in another org where the viewer is NOT a member → null (stays a 404).
+ *  - project in another org where the viewer holds a grant → that org id (auto-switch target).
+ *  - otherwise → null (stays a 404). `isMember` must check the viewer's access to THIS repo,
+ *    not mere workspace membership, or an ungranted member could probe which ids exist.
  */
 export async function resolveCrossWorkspaceRedirect(input: {
   projectId: string;
@@ -116,10 +117,14 @@ export async function requireProjectAccess(
         projectId,
         currentOrgId: active.org.id,
         findById: (id) => findProjectAnyOrg(id),
+        // Only a repo the viewer can actually reach may pull them into another workspace;
+        // an ungranted member gets the same 404 as for a nonexistent id.
         isMember: async (orgId) =>
-          (await listUserWorkspaces(auth)).some(
-            (workspace) => workspace.id === orgId,
-          ),
+          (await resolveProjectRoleForUser({
+            userId: auth.user.id,
+            orgId,
+            projectId,
+          })) !== null,
       });
       if (target) {
         const url = new URL(opts.request.url);

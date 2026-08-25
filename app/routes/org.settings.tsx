@@ -88,6 +88,7 @@ import {
   type SpendLimit,
 } from "~/managed/billing.server";
 import { listProjects } from "~/db/queries.server";
+import { listAccessibleProjectIds } from "~/auth/project-access.server";
 import { getRuntime } from "~/seams/index.server";
 import type { auditLog } from "~/db/schema";
 import type { HarnesstMode } from "~/seams/types";
@@ -176,7 +177,20 @@ export const loader = (args: LoaderFunctionArgs) =>
         canManageWorkspace(org.id, auth.requestHeaders),
         listProjects(org.id).catch(() => []),
       ]);
-      const repoNames = new Map(orgProjects.map((p) => [p.id, p.name]));
+      // Repo-derived settings are scoped to the repos this admin can actually reach; an
+      // override on an ungranted repo would otherwise reveal that repo's name and agents.
+      const accessible = new Set(
+        await listAccessibleProjectIds({
+          userId: auth.user.id,
+          workspaceRole: active.member.role,
+          orgId: org.id,
+        }),
+      );
+      const repoNames = new Map(
+        orgProjects
+          .filter((p) => accessible.has(p.id))
+          .map((p) => [p.id, p.name]),
+      );
       return {
         org,
         mode: getRuntime().mode,
@@ -185,10 +199,12 @@ export const loader = (args: LoaderFunctionArgs) =>
         audit,
         assistantModel: assistantSelection.model,
         assistantEffort: assistantSelection.effort,
-        agentOverrides: agentOverrides.map((o) => ({
-          ...o,
-          repoName: repoNames.get(o.projectId) ?? null,
-        })),
+        agentOverrides: agentOverrides
+          .filter((o) => accessible.has(o.projectId))
+          .map((o) => ({
+            ...o,
+            repoName: repoNames.get(o.projectId) ?? null,
+          })),
         connections,
         canManage,
       };

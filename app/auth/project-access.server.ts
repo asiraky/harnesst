@@ -340,6 +340,33 @@ export async function applyInvitationGrants(input: {
     });
 }
 
+/** The user's workspace role in an org (Better Auth member row), or null if not a member. */
+export async function findMembershipRole(
+  userId: string,
+  orgId: string,
+): Promise<string | null> {
+  const [row] = await db
+    .select({ role: member.role })
+    .from(member)
+    .where(and(eq(member.userId, userId), eq(member.organizationId, orgId)))
+    .limit(1);
+  return row?.role ?? null;
+}
+
+/**
+ * `resolveProjectRole` for a caller that knows only the user id — API keys, cross-workspace
+ * deep links. Looks the workspace role up first; a non-member has no role on anything.
+ */
+export async function resolveProjectRoleForUser(input: {
+  userId: string;
+  orgId: string;
+  projectId: string;
+}): Promise<ProjectRole | null> {
+  const workspaceRole = await findMembershipRole(input.userId, input.orgId);
+  if (!workspaceRole) return null;
+  return resolveProjectRole({ ...input, workspaceRole });
+}
+
 /** The org member whose account email matches (case-insensitive), or null. */
 export async function findOrgMemberIdByEmail(
   orgId: string,
