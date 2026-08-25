@@ -4,6 +4,7 @@
  * same tenant-isolation + connected-repo invariants.
  */
 import { data, redirect } from "react-router";
+import { returnToFromRequest } from "~/auth/return-to";
 
 import type { SessionAuth } from "~/auth/session.server";
 import {
@@ -127,9 +128,10 @@ export async function requireProjectAccess(
           })) !== null,
       });
       if (target) {
-        const url = new URL(opts.request.url);
         await setActiveWorkspace(auth, target);
-        throw redirect(url.pathname + url.search);
+        // Client navigations arrive as single-fetch `/…/settings.data` requests; replay the
+        // page URL, never the data URL.
+        throw redirect(returnToFromRequest(opts.request));
       }
     }
     throw data("Project not found", { status: 404 });
