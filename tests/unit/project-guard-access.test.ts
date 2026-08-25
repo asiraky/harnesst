@@ -14,6 +14,7 @@ const mocks = vi.hoisted(() => ({
   getProject: vi.fn(),
   findProjectAnyOrg: vi.fn(),
   resolveProjectRole: vi.fn(),
+  resolveProjectRoleForUser: vi.fn(),
 }));
 
 vi.mock("~/auth/workspace.server", () => ({
@@ -33,6 +34,7 @@ vi.mock("~/auth/project-access.server", async () => {
   return {
     roleSatisfies: actual.roleSatisfies,
     resolveProjectRole: mocks.resolveProjectRole,
+    resolveProjectRoleForUser: mocks.resolveProjectRoleForUser,
   };
 });
 vi.mock("~/db/client.server", () => ({ db: {} }));
@@ -140,6 +142,33 @@ describe("requireProjectAccess", () => {
     mocks.listUserWorkspaces.mockResolvedValue([{ id: "org_2", name: "Other" }]);
     const response = await thrown(() =>
       requireProjectAccess(AUTH, "proj_1", "write"),
+    );
+    expect(response.status).toBe(404);
+    expect(mocks.setActiveWorkspace).not.toHaveBeenCalled();
+  });
+
+  it("switches workspace for a granted repo and replays the PAGE url, not the .data url", async () => {
+    mocks.getProject.mockResolvedValue(undefined);
+    mocks.findProjectAnyOrg.mockResolvedValue({ ...PROJECT, orgId: "org_2" });
+    mocks.resolveProjectRoleForUser.mockResolvedValue("write");
+    const response = await thrown(() =>
+      requireProjectAccess(AUTH, "proj_1", "write", {
+        request: new Request("http://localhost/repos/proj_1/settings.data?tab=x"),
+      }),
+    );
+    expect(response.status).toBe(302);
+    expect(response.headers.get("location")).toBe("/repos/proj_1/settings?tab=x");
+    expect(mocks.setActiveWorkspace).toHaveBeenCalledWith(AUTH, "org_2");
+  });
+
+  it("404s a repo in another workspace the viewer holds no grant on, even with a request", async () => {
+    mocks.getProject.mockResolvedValue(undefined);
+    mocks.findProjectAnyOrg.mockResolvedValue({ ...PROJECT, orgId: "org_2" });
+    mocks.resolveProjectRoleForUser.mockResolvedValue(null);
+    const response = await thrown(() =>
+      requireProjectAccess(AUTH, "proj_1", "write", {
+        request: new Request("http://localhost/repos/proj_1/settings"),
+      }),
     );
     expect(response.status).toBe(404);
     expect(mocks.setActiveWorkspace).not.toHaveBeenCalled();

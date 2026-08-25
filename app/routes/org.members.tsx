@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { Building2, MailPlus, Users } from "lucide-react";
 import { Form, redirect } from "react-router";
 
@@ -33,6 +33,13 @@ import {
   CardTitle,
 } from "~/components/ui/card";
 import { Input } from "~/components/ui/input";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "~/components/ui/select";
 import { Label } from "~/components/ui/label";
 import { noindexMeta } from "~/lib/seo";
 import { auth as betterAuth } from "~/lib/auth.server";
@@ -496,8 +503,58 @@ const ACCESS_OPTIONS: { value: "none" | ProjectRole; label: string }[] = [
   { value: "write", label: "Write" },
 ];
 
-const selectClass =
-  "h-8 rounded-md border bg-background px-2 text-xs shadow-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50";
+/**
+ * A form-driven Radix select: `name` makes Radix render a hidden input so the plain `<Form>`
+ * submission still carries the value; `submitOnChange` re-submits the enclosing form the way
+ * a native select's onChange did.
+ */
+function FormSelect({
+  name,
+  defaultValue,
+  options,
+  disabled,
+  submitOnChange,
+  "aria-label": ariaLabel,
+}: {
+  name: string;
+  defaultValue: string;
+  options: { value: string; label: string }[];
+  disabled?: boolean;
+  submitOnChange?: boolean;
+  "aria-label"?: string;
+}) {
+  const formRef = useRef<HTMLFormElement | null>(null);
+  return (
+    <Select
+      name={name}
+      defaultValue={defaultValue}
+      disabled={disabled}
+      onValueChange={() => {
+        if (!submitOnChange) return;
+        // Radix updates its hidden input synchronously; submit after React flushes the value.
+        queueMicrotask(() => formRef.current?.requestSubmit());
+      }}
+    >
+      <SelectTrigger
+        size="sm"
+        className="min-w-24 text-xs"
+        aria-label={ariaLabel}
+        ref={(node) => {
+          formRef.current = node?.closest("form") ?? null;
+        }}
+      >
+        <SelectValue />
+      </SelectTrigger>
+      <SelectContent>
+        {options.map((option) => (
+          <SelectItem key={option.value} value={option.value}>
+            {option.label}
+          </SelectItem>
+        ))}
+      </SelectContent>
+    </Select>
+  );
+}
 
 /** One repo's access picker for one member: a self-submitting form. */
 function AccessSelect({
@@ -516,19 +573,13 @@ function AccessSelect({
       <input type="hidden" name="intent" value="set-access" />
       <input type="hidden" name="memberId" value={memberId} />
       <input type="hidden" name="projectId" value={projectId} />
-      <select
+      <FormSelect
         name="role"
         defaultValue={value ?? "none"}
         disabled={disabled}
-        className={selectClass}
-        onChange={(event) => event.currentTarget.form?.requestSubmit()}
-      >
-        {ACCESS_OPTIONS.map((option) => (
-          <option key={option.value} value={option.value}>
-            {option.label}
-          </option>
-        ))}
-      </select>
+        options={ACCESS_OPTIONS}
+        submitOnChange
+      />
     </Form>
   );
 }
@@ -547,17 +598,11 @@ function RepoAccessPicker({
           className="flex items-center justify-between gap-3 px-4 py-2 text-sm"
         >
           <span className="min-w-0 truncate">{repo.name}</span>
-          <select
+          <FormSelect
             name={`access:${repo.id}`}
             defaultValue="none"
-            className={selectClass}
-          >
-            {ACCESS_OPTIONS.map((option) => (
-              <option key={option.value} value={option.value}>
-                {option.label}
-              </option>
-            ))}
-          </select>
+            options={ACCESS_OPTIONS}
+          />
         </li>
       ))}
     </ul>
@@ -767,25 +812,17 @@ export default function Members({
                               name="memberId"
                               value={membership.id}
                             />
-                            <select
+                            <FormSelect
                               name="role"
                               defaultValue={roleValue}
-                              className={selectClass}
                               aria-label={`Workspace role for ${membership.email}`}
                               // Only an owner may grant or revoke ownership.
                               disabled={!isOwner && owner}
-                              onChange={(event) =>
-                                event.currentTarget.form?.requestSubmit()
-                              }
-                            >
-                              {MEMBER_ROLES.filter(
+                              options={MEMBER_ROLES.filter(
                                 (role) => isOwner || role !== "owner",
-                              ).map((role) => (
-                                <option key={role} value={role}>
-                                  {role}
-                                </option>
-                              ))}
-                            </select>
+                              ).map((role) => ({ value: role, label: role }))}
+                              submitOnChange
+                            />
                           </Form>
                         )}
                         {!self && (isOwner || !owner) && (
