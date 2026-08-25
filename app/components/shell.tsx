@@ -13,6 +13,7 @@ import {
   ChevronsUpDown,
   LogOut,
   Menu,
+  Plus,
   User,
   Users,
   type LucideIcon,
@@ -28,7 +29,6 @@ import {
   useNavigation,
 } from "react-router";
 
-import { InviteMember } from "~/components/invite-member";
 import { PublishControl } from "~/components/publish";
 import { WorkspaceTasksIndicator } from "~/components/workspace-tasks";
 import { BrandWordmark } from "~/components/marketing/logo";
@@ -294,8 +294,8 @@ function AccountMenu({ userEmail }: { userEmail?: string | null }) {
 /**
  * Workspace switcher in the header (issue #56). Self-fetches the user's workspaces from
  * `/api/workspaces` (same pattern as the Publish control) so it appears on every authed page
- * without threading data through each loader. Hard requirement: a user in ≤1 workspace sees
- * NOTHING — the switcher only exists for people who actually belong to several. Each item is a
+ * without threading data through each loader. Always visible once loaded so the current
+ * workspace is never ambiguous; it also links to `/workspaces` to create another. Each item is a
  * real `<Form>` POST to `/workspaces` (not a fetcher) so switching does a full document
  * navigation: the org changes underneath, and every loader's data would otherwise be stale.
  */
@@ -315,8 +315,8 @@ function WorkspaceMenu() {
   }, [load]);
 
   const data = fetcher.data;
-  // While loading, or for single-workspace users, render nothing at all.
-  if (!data || data.workspaces.length <= 1) return null;
+  // While loading render nothing (avoids a layout flash).
+  if (!data) return null;
 
   const currentName =
     data.currentName ??
@@ -360,6 +360,13 @@ function WorkspaceMenu() {
             </Form>
           );
         })}
+        <DropdownMenuSeparator />
+        <DropdownMenuItem asChild>
+          <Link to="/workspaces" className="cursor-pointer">
+            <Plus className="mr-2 h-4 w-4" aria-hidden />
+            Create workspace
+          </Link>
+        </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>
   );
@@ -627,10 +634,6 @@ export function AgentNav({
           <div className="pointer-events-none absolute inset-y-0 right-0 w-8 bg-gradient-to-l from-background to-transparent sm:hidden" />
         </div>
         <div className="order-1 flex shrink-0 flex-wrap items-center gap-3 sm:order-2">
-          {/* Invite-to-repo (FOH): repo-scoped, so it sits at the repo/single level only. */}
-          {(level === "single" || level === "repo") && (
-            <InviteMember base={base} />
-          )}
           {(level === "member" || level === "subagent") &&
             roster &&
             activeAgent && (

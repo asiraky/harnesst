@@ -7,6 +7,7 @@ import { db } from "~/db/client.server";
 import * as schema from "~/db/auth-schema";
 import { sendOrganizationInvitation } from "~/email/send-organization-invitation.server";
 import { sendEmailVerification } from "~/email/send-email-verification.server";
+import { applyInvitationGrants } from "~/auth/project-access.server";
 import { sendPasswordResetEmail } from "~/email/send-password-reset.server";
 import { authCookieConfig } from "~/lib/auth-cookies";
 import { assertProductionAuthEnvironment } from "~/lib/auth-env.server";
@@ -114,17 +115,18 @@ export const auth = betterAuth({
       // CVE-2026-53514: invitation IDs can be listed by organization members. Require the
       // recipient to prove mailbox ownership before get/accept/reject invitation operations.
       requireEmailVerificationOnInvitation: true,
-      // FOH repo scoping (PRD-FRONT-OF-HOUSE §5): one Better Auth team per connected repo,
-      // mapped via projects.team_id (see app/auth/teams.server.ts). Invitations carry the
-      // repo's teamId; accepting one auto-adds the invitee to that team.
-      teams: {
-        enabled: true,
-        // harnesst mints teams 1:1 with repos (ensureProjectTeam); an auto-created default team
-        // per organization would be an unmapped orphan in that model.
-        defaultTeam: { enabled: false },
-        // Deleting the last repo must delete its team; without this Better Auth refuses to
-        // remove an organization's final team.
-        allowRemovingAllTeams: true,
+      // Repo access is harnesst's own `project_access` table (app/auth/project-access.server.ts),
+      // not Better Auth teams. An invitation's repo grants live in `invitation_project_grants`
+      // and become real access the moment the invitation is accepted — via this hook, so a
+      // direct /api/auth/organization/accept-invitation call is covered as well as the page.
+      organizationHooks: {
+        afterAcceptInvitation: async ({ invitation, member, user }) => {
+          await applyInvitationGrants({
+            invitationId: invitation.id,
+            organizationId: member.organizationId,
+            userId: user.id,
+          });
+        },
       },
       sendInvitationEmail: async (invitation) => {
         // Better Auth awaits this but swallows a rejection into logger.error, so log a sanitized

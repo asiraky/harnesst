@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest";
 import { AgentNav, activeNavLabel, switchAgentHref } from "~/components/shell";
 import { TooltipProvider } from "~/components/ui/tooltip";
 
-// AgentNav's controls (InviteMember) self-fetch via useFetcher, which needs a data router in
+// AgentNav's controls self-fetch via useFetcher, which needs a data router in
 // context — render inside a routes stub so SSR can resolve the fetcher hooks.
 function renderInRouter(ui: React.ReactElement): string {
   const Stub = createRoutesStub([{ path: "*", Component: () => ui }]);

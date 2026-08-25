@@ -20,10 +20,7 @@ import {
   type LoaderFunctionArgs,
 } from "react-router";
 
-import {
-  isBackOfHouse,
-  resolveActiveWorkspace,
-} from "~/auth/workspace.server";
+import { resolveActiveWorkspace } from "~/auth/workspace.server";
 import { listInboxForViewer } from "~/foh/inbox.server";
 import { listViewerProjectIds } from "~/foh/sidebar.server";
 import { getRuntime } from "~/seams/index.server";
@@ -37,7 +34,7 @@ export const loader = (args: LoaderFunctionArgs) =>
       const projectIds = await listViewerProjectIds({
         userId: auth.user.id,
         orgId: active.org.id,
-        backOfHouse: isBackOfHouse(active.member.role),
+        workspaceRole: active.member.role,
       });
       const items = await listInboxForViewer({
         userId: auth.user.id,
@@ -61,7 +58,7 @@ export async function action(args: ActionFunctionArgs) {
   const projectIds = await listViewerProjectIds({
     userId: auth.user.id,
     orgId: active.org.id,
-    backOfHouse: isBackOfHouse(active.member.role),
+    workspaceRole: active.member.role,
   });
   // Scope + ownership in one query: the D5 visibility rule only ever returns the viewer's
   // own items and team-wide (NULL-recipient) ones, within their scoped projects.

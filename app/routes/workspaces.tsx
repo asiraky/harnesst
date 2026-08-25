@@ -21,9 +21,12 @@ import {
 import { safeReturnTo } from "~/auth/return-to";
 import { requireSession, sessionLoader } from "~/auth/session.server";
 import {
+  createWorkspace,
   listUserWorkspaces,
   setActiveWorkspace,
 } from "~/auth/workspace.server";
+import { Input } from "~/components/ui/input";
+import { Label } from "~/components/ui/label";
 import { AppShell } from "~/components/shell";
 import { Button } from "~/components/ui/button";
 import {
@@ -47,8 +50,9 @@ export const loader = (args: LoaderFunctionArgs) =>
       // No workspaces at all → let the dashboard provision one (ensureWorkspace).
       if (workspaces.length === 0) throw redirect("/dashboard");
 
-      // A single-workspace user should never see a picker: if the session isn't scoped yet,
-      // enter that one workspace and continue to where they were headed.
+      // A single-workspace user arriving unscoped should never see a picker: enter that one
+      // workspace and continue to where they were headed. (Already-scoped users may still visit
+      // to create a second workspace.)
       if (workspaces.length === 1 && !auth.organizationId) {
         await setActiveWorkspace(auth, workspaces[0].id);
         throw redirect(returnTo);
@@ -62,8 +66,21 @@ export const loader = (args: LoaderFunctionArgs) =>
 export async function action(args: ActionFunctionArgs) {
   const session = await requireSession(args);
   const form = await args.request.formData();
-  const orgId = String(form.get("orgId") ?? "");
   const returnTo = safeReturnTo(String(form.get("returnTo") ?? ""));
+
+  if (form.get("intent") === "create") {
+    const name = String(form.get("name") ?? "").trim();
+    if (name.length < 2 || name.length > 60) {
+      return data(
+        { error: "Workspace name must be between 2 and 60 characters." },
+        { status: 400 },
+      );
+    }
+    await createWorkspace(session, name);
+    throw redirect("/dashboard");
+  }
+
+  const orgId = String(form.get("orgId") ?? "");
   if (!orgId) throw redirect("/workspaces");
 
   const workspaces = await listUserWorkspaces(session);
@@ -96,10 +113,12 @@ export default function Workspaces({
       <div className="mx-auto max-w-md py-10">
         <div className="mb-6 text-center">
           <h1 className="text-2xl font-semibold tracking-tight">
-            Choose a workspace
+            {workspaces.length > 1 ? "Choose a workspace" : "Workspaces"}
           </h1>
           <p className="mt-1 text-sm text-muted-foreground">
-            You belong to more than one workspace. Pick the one to work in.
+            {workspaces.length > 1
+              ? "Pick the workspace to work in, or create a new one."
+              : "Create a second workspace to keep its repositories and members separate."}
           </p>
         </div>
         {actionData?.error && (
@@ -149,6 +168,32 @@ export default function Workspaces({
             );
           })}
         </div>
+        <Card className="mt-8">
+          <CardHeader className="pb-3">
+            <CardTitle className="text-base">Create a workspace</CardTitle>
+            <CardDescription>
+              You become its owner. Members and repositories are separate from
+              your other workspaces.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <Form method="post" className="flex items-end gap-2">
+              <input type="hidden" name="intent" value="create" />
+              <div className="flex-1 space-y-1.5">
+                <Label htmlFor="workspace-name">Name</Label>
+                <Input
+                  id="workspace-name"
+                  name="name"
+                  required
+                  minLength={2}
+                  maxLength={60}
+                  placeholder="Acme Bookkeeping"
+                />
+              </div>
+              <Button type="submit">Create</Button>
+            </Form>
+          </CardContent>
+        </Card>
       </div>
     </AppShell>
   );

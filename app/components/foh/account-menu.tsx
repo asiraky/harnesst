@@ -5,7 +5,14 @@
  * (what /dashboard actually presents as) — "back of house" is internal jargon and must not
  * ship in the UI.
  */
-import { ChevronsUpDown, FolderGit2, LogOut, Plus } from "lucide-react";
+import {
+  Building2,
+  ChevronsUpDown,
+  FolderGit2,
+  LogOut,
+  Plus,
+  Users,
+} from "lucide-react";
 import { Link, useSubmit } from "react-router";
 
 import { ThemeMenuSub } from "~/components/theme-toggle";
@@ -23,11 +30,15 @@ export function AccountMenu({
   email,
   orgName,
   backOfHouse,
+  workspaceAdmin,
 }: {
   name: string | null;
   email: string | null;
   orgName: string;
+  /** Holds `write` on at least one repo (or is a workspace admin): show the build surface. */
   backOfHouse: boolean;
+  /** Workspace owner/admin: may create repos and manage members. */
+  workspaceAdmin: boolean;
 }) {
   const submit = useSubmit();
   const display = name || email || "Account";
@@ -71,25 +82,39 @@ export function AccountMenu({
             )}
           </span>
         </DropdownMenuLabel>
-        {backOfHouse && (
-          <>
-            <DropdownMenuSeparator />
-            <DropdownMenuItem asChild>
-              <Link to="/connect">
-                <Plus className="mr-2 h-4 w-4 text-muted-foreground" />
-                New repository
-              </Link>
-            </DropdownMenuItem>
-            <DropdownMenuItem asChild>
-              {/* D18: the switcher into the build surface (admins/owners only — the BOH
-                  guard bounces members anyway). */}
-              <Link to="/dashboard">
-                <FolderGit2 className="mr-2 h-4 w-4 text-muted-foreground" />
-                Repositories
-              </Link>
-            </DropdownMenuItem>
-          </>
+        {(backOfHouse || workspaceAdmin) && <DropdownMenuSeparator />}
+        {workspaceAdmin && (
+          <DropdownMenuItem asChild>
+            <Link to="/connect">
+              <Plus className="mr-2 h-4 w-4 text-muted-foreground" />
+              New repository
+            </Link>
+          </DropdownMenuItem>
         )}
+        {backOfHouse && (
+          <DropdownMenuItem asChild>
+            {/* D18: the switcher into the build surface. */}
+            <Link to="/dashboard">
+              <FolderGit2 className="mr-2 h-4 w-4 text-muted-foreground" />
+              Repositories
+            </Link>
+          </DropdownMenuItem>
+        )}
+        {workspaceAdmin && (
+          <DropdownMenuItem asChild>
+            <Link to="/org/members">
+              <Users className="mr-2 h-4 w-4 text-muted-foreground" />
+              Members &amp; access
+            </Link>
+          </DropdownMenuItem>
+        )}
+        <DropdownMenuSeparator />
+        <DropdownMenuItem asChild>
+          <Link to="/workspaces">
+            <Building2 className="mr-2 h-4 w-4 text-muted-foreground" />
+            Switch workspace
+          </Link>
+        </DropdownMenuItem>
         <DropdownMenuSeparator />
         <ThemeMenuSub />
         <DropdownMenuSeparator />

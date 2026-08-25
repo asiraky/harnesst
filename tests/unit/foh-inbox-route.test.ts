@@ -12,7 +12,6 @@ import { makeFakeStore, type FakeStore } from "../fakes/store";
 const mocks = vi.hoisted(() => ({
   getSessionAuth: vi.fn(),
   resolveActiveWorkspace: vi.fn(),
-  isBackOfHouse: vi.fn(() => false),
   listViewerProjectIds: vi.fn(),
   listFohSessionsByIds: vi.fn(),
 }));
@@ -31,7 +30,6 @@ vi.mock("~/auth/session.server", () => ({
 }));
 vi.mock("~/auth/workspace.server", () => ({
   resolveActiveWorkspace: mocks.resolveActiveWorkspace,
-  isBackOfHouse: mocks.isBackOfHouse,
 }));
 vi.mock("~/foh/sidebar.server", () => ({
   listViewerProjectIds: mocks.listViewerProjectIds,
@@ -83,7 +81,6 @@ beforeEach(() => {
     org: { id: "org_1", name: "org", slug: "org" },
     member: { id: "m1", organizationId: "org_1", userId: "user_1", role: "member" },
   });
-  mocks.isBackOfHouse.mockReturnValue(false);
   mocks.listViewerProjectIds.mockResolvedValue(["proj_a"]);
   mocks.listFohSessionsByIds.mockImplementation(async (ids: string[]) =>
     ids.map((id) => ({ id, agentId: "agent_ivy", title: `Session ${id}` })),

@@ -8,9 +8,10 @@ import {
 } from "react-router";
 
 import { sessionLoader } from "~/auth/session.server";
+import { listAccessibleProjectIds } from "~/auth/project-access.server";
 import {
   ensureWorkspace,
-  requireBackOfHouse,
+  isWorkspaceAdmin,
   resolveActiveWorkspace,
 } from "~/auth/workspace.server";
 import { AppShell, PageHeader, accentText } from "~/components/shell";
@@ -44,10 +45,25 @@ export const loader = (args: LoaderFunctionArgs) =>
       // First org-less login: provision the user's workspace and replay (redirect).
       await ensureWorkspace(args.request, auth);
       const active = await resolveActiveWorkspace(auth);
-      // Back of house is admin/owner-only (D10); front-of-house members live at `/`.
-      if (active) requireBackOfHouse(active, "page");
       const org = active?.org ?? null;
-      const projects = org ? await listProjects(org.id) : [];
+      // The build surface lists the repos the viewer can WRITE to. Owners hold every repo;
+      // everyone else (admins included) only the ones they were granted.
+      const writable = active
+        ? new Set(
+            await listAccessibleProjectIds(
+              {
+                userId: auth.user.id,
+                workspaceRole: active.member.role,
+                orgId: active.org.id,
+              },
+              "write",
+            ),
+          )
+        : new Set<string>();
+      const canCreate = active ? isWorkspaceAdmin(active.member.role) : false;
+      const projects = org
+        ? (await listProjects(org.id)).filter((project) => writable.has(project.id))
+        : [];
       const cards: ProjectCard[] = await Promise.all(
         projects.map(async (project) => {
           const roster = await listAgents(project.id);
@@ -58,7 +74,7 @@ export const loader = (args: LoaderFunctionArgs) =>
           };
         }),
       );
-      return { org, cards };
+      return { org, cards, canCreate };
     },
     { ensureSignedIn: true },
   );
@@ -82,7 +98,7 @@ export function meta() {
 }
 
 export default function Dashboard({ loaderData }: Route.ComponentProps) {
-  const { user, cards } = loaderData;
+  const { user, cards, canCreate } = loaderData;
   const teams = cards.filter((c) => c.isTeam);
   const singles = cards.filter((c) => !c.isTeam);
 
@@ -94,9 +110,11 @@ export default function Dashboard({ loaderData }: Route.ComponentProps) {
         title="Repositories"
         description="A repository holds one agent, or a team of agents that work together."
         actions={
-          <Button asChild>
-            <Link to="/connect">New repository</Link>
-          </Button>
+          canCreate ? (
+            <Button asChild>
+              <Link to="/connect">New repository</Link>
+            </Button>
+          ) : null
         }
       />
 
@@ -108,12 +126,15 @@ export default function Dashboard({ loaderData }: Route.ComponentProps) {
             </div>
             <CardTitle className="text-lg">No repositories yet</CardTitle>
             <CardDescription>
-              Connect an existing eve repository or create a new one to get
-              started.
+              {canCreate
+                ? "Connect an existing eve repository or create a new one to get started."
+                : "Ask a workspace admin to give you write access to a repository."}
             </CardDescription>
-            <Button asChild className="mt-4">
-              <Link to="/connect">Connect a repository</Link>
-            </Button>
+            {canCreate && (
+              <Button asChild className="mt-4">
+                <Link to="/connect">Connect a repository</Link>
+              </Button>
+            )}
           </CardHeader>
         </Card>
       ) : (

@@ -36,7 +36,6 @@ describe.runIf(LIVE)("FOH roles and inbox visibility", () => {
     const { db } = await import("~/db/client.server");
     const { and, eq } = await import("drizzle-orm");
     const { conversationReads, inboxItems } = await import("~/db/schema");
-    const { ensureProjectTeam } = await import("~/auth/teams.server");
     const { openInboxQuestion, recordInboxFinished } =
       await import("~/foh/inbox.server");
     const { createPlaygroundSession } = await import(
@@ -66,11 +65,10 @@ describe.runIf(LIVE)("FOH roles and inbox visibility", () => {
       users.push(owner, memberA, memberB);
       orgId = await createWorkspace(owner, "FOH E2E Roles", `foh-e2e-${suffix}`);
       const { project, agent } = await seedTeamStack({ orgId, suffix });
-      const teamId = await ensureProjectTeam(orgId, project);
-      // Both members belong to the repo's team — visibility differences below are pure D5,
-      // never a team-scoping artifact.
-      await addMember(memberA, orgId, teamId);
-      await addMember(memberB, orgId, teamId);
+      // Both members hold `read` on the repo — visibility differences below are pure D5,
+      // never a repo-scoping artifact.
+      await addMember(memberA, orgId, project.id);
+      await addMember(memberB, orgId, project.id);
 
       // Member A's own conversation with the agent.
       const session = await createPlaygroundSession({

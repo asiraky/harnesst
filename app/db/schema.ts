@@ -20,9 +20,9 @@ import { sql } from "drizzle-orm";
 import type { PipelineStep } from "~/data/ports";
 import { newId, newShareToken } from "~/lib/id";
 import {
+  invitation,
   organization,
   session as authSession,
-  team,
   user,
 } from "./auth-schema";
 import {
@@ -305,13 +305,6 @@ export const projects = pgTable(
     slug: text("slug").notNull(),
     /** Persisted repository shape; unlike the roster, this remains meaningful at zero members. */
     layout: text("layout").notNull().default("single"),
-    /**
-     * FOH repo scoping (D9): the Better Auth team mirroring this repo — a workspace `member`
-     * sees a repo in front of house iff they belong to its team. Created by `ensureProjectTeam`
-     * (on connect, on invite, or lazily from the FOH loader), so pre-teams rows stay null until
-     * first touched.
-     */
-    teamId: text("team_id").references(() => team.id, { onDelete: "set null" }),
     // GitHub coordinates. repoInstallationId is an opaque verified github_installations.id grant.
     repoOwner: text("repo_owner"),
     repoName: text("repo_name"),
@@ -334,6 +327,58 @@ export const projects = pgTable(
       foreignColumns: [githubInstallations.orgId, githubInstallations.id],
     }).onDelete("restrict"),
   ],
+);
+
+/** Per-repo access levels. `write` is full back of house for that repo; `read` is front of house. */
+export const PROJECT_ROLES = ["read", "write"] as const;
+export type ProjectRole = (typeof PROJECT_ROLES)[number];
+
+/**
+ * Per-repo access grants (workspace permissions model). A workspace `owner` implicitly holds
+ * `write` on every repo and never has rows here; everyone else — `admin` included — reaches a
+ * repo only through a row. `read` = front of house for that repo; `write` = front AND back of
+ * house (build, deploy, secrets, settings). Rows cascade with the project and the user; a
+ * removed workspace member has their rows deleted explicitly (see project-access.server).
+ */
+export const projectAccess = pgTable(
+  "project_access",
+  {
+    projectId: varchar("project_id", { length: 12 })
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    userId: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    role: text("role").$type<ProjectRole>().notNull(),
+    grantedBy: text("granted_by").references(() => user.id, {
+      onDelete: "set null",
+    }),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.projectId, t.userId] }),
+    index("project_access_user_idx").on(t.userId),
+  ],
+);
+
+/**
+ * The repo grants a pending workspace invitation carries. Copied into `project_access` when the
+ * invitation is accepted (Better Auth `afterAcceptInvitation` hook); cascades with the invitation
+ * and with the project, so a deleted repo simply drops out of the grant.
+ */
+export const invitationProjectGrants = pgTable(
+  "invitation_project_grants",
+  {
+    invitationId: text("invitation_id")
+      .notNull()
+      .references(() => invitation.id, { onDelete: "cascade" }),
+    projectId: varchar("project_id", { length: 12 })
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    role: text("role").$type<ProjectRole>().notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.invitationId, t.projectId] })],
 );
 
 /**

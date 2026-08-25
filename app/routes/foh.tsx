@@ -25,7 +25,7 @@ import {
 import { sessionLoader } from "~/auth/session.server";
 import {
   ensureWorkspace,
-  isBackOfHouse,
+  isWorkspaceAdmin,
   resolveActiveWorkspace,
 } from "~/auth/workspace.server";
 import { AccountMenu } from "~/components/foh/account-menu";
@@ -55,15 +55,20 @@ export async function loader(args: LoaderFunctionArgs) {
       // ensureWorkspace redirects whenever it changes the session; reaching here without an
       // active workspace means something is genuinely broken.
       if (!active) throw new Response("No organization", { status: 403 });
-      const backOfHouse = isBackOfHouse(active.member.role);
       const sidebar = await loadFohSidebar({
         userId: auth.user.id,
         orgId: active.org.id,
-        backOfHouse,
+        workspaceRole: active.member.role,
       });
+      // The build surface is reachable by anyone who can write to at least one repo; creating
+      // repos (the "New repository" item) stays a workspace-admin power.
+      const workspaceAdmin = isWorkspaceAdmin(active.member.role);
+      const backOfHouse =
+        workspaceAdmin || sidebar.teams.some((team) => team.role === "write");
       return {
         orgName: active.org.name,
         backOfHouse,
+        workspaceAdmin,
         teams: sidebar.teams,
       };
     },
@@ -94,7 +99,7 @@ export default function FohRoot({ loaderData }: Route.ComponentProps) {
 }
 
 function FohShell({ data }: { data: ShellData }) {
-  const { orgName, backOfHouse, teams, user } = data;
+  const { orgName, backOfHouse, workspaceAdmin, teams, user } = data;
   // Presence + badges freshness: baseline 10s loader poll (D12-adjacent; the inbox flyout
   // has its own keyed-fetcher poll).
   useLiveRevalidate({ idleIntervalMs: 10_000 });
@@ -131,9 +136,9 @@ function FohShell({ data }: { data: ShellData }) {
           {teams.length === 0 ? (
             <p className="px-2 py-4 text-xs text-muted-foreground">
               No teams yet.
-              {backOfHouse
-                ? " Connect a repository in back of house to get started."
-                : " Ask a workspace admin to invite you to a repository."}
+              {workspaceAdmin
+                ? " Connect a repository to get started."
+                : " Ask a workspace admin to give you access to a repository."}
             </p>
           ) : (
             <ul className="space-y-4">
@@ -146,7 +151,7 @@ function FohShell({ data }: { data: ShellData }) {
                     <p className="min-w-0 flex-1 truncate text-xs font-medium uppercase tracking-wide text-muted-foreground">
                       {team.name}
                     </p>
-                    {backOfHouse && (
+                    {team.role === "write" && (
                       <Link
                         to={bohTeamHref(team.projectSlug ?? team.projectId)}
                         prefetch="intent"
@@ -219,6 +224,7 @@ function FohShell({ data }: { data: ShellData }) {
             email={user?.email ?? null}
             orgName={orgName}
             backOfHouse={backOfHouse}
+            workspaceAdmin={workspaceAdmin}
           />
         </div>
       </aside>

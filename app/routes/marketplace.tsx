@@ -35,7 +35,7 @@ import { TEMPLATE_TYPES, type TemplateType } from "~/marketplace/manifest";
 import { getRuntime } from "~/seams/index.server";
 import {
   ensureWorkspace,
-  requireBackOfHouse,
+  requireWorkspaceAdmin,
   resolveActiveWorkspace,
 } from "~/auth/workspace.server";
 import { listProjects } from "~/db/queries.server";
@@ -170,8 +170,7 @@ export const loader = (args: LoaderFunctionArgs) =>
     async ({ auth }) => {
       await ensureWorkspace(args.request, auth);
       const active = await resolveActiveWorkspace(auth);
-      // Back of house is admin/owner-only (D10); front-of-house members live at `/`.
-      if (active) requireBackOfHouse(active, "page");
+      if (active) requireWorkspaceAdmin(active, "page");
       const org = active?.org;
       // Installed keys are catalog-independent, so both return branches carry them.
       const installed = await collectInstalledKeys(org);

@@ -13,7 +13,7 @@ const mocks = vi.hoisted(() => ({
   sessionLoader: vi.fn(),
   ensureWorkspace: vi.fn(async () => {}),
   resolveActiveWorkspace: vi.fn(),
-  isBackOfHouse: vi.fn((role: string) => role === "owner" || role === "admin"),
+  isWorkspaceAdmin: vi.fn((role: string) => role === "owner" || role === "admin"),
   loadFohSidebar: vi.fn(),
 }));
 
@@ -23,7 +23,7 @@ vi.mock("~/auth/session.server", () => ({
 vi.mock("~/auth/workspace.server", () => ({
   ensureWorkspace: mocks.ensureWorkspace,
   resolveActiveWorkspace: mocks.resolveActiveWorkspace,
-  isBackOfHouse: mocks.isBackOfHouse,
+  isWorkspaceAdmin: mocks.isWorkspaceAdmin,
 }));
 vi.mock("~/foh/sidebar.server", () => ({
   loadFohSidebar: mocks.loadFohSidebar,
@@ -129,6 +129,7 @@ describe("routes/foh loader (the `/` host branch)", () => {
     )) as Record<string, unknown>;
     expect(result.orgName).toBe("Acme");
     expect(result.backOfHouse).toBe(true);
+    expect(result.workspaceAdmin).toBe(true);
     expect(result.teams).toEqual([
       { projectId: "p1", name: "repo-one", agents: [] },
     ]);

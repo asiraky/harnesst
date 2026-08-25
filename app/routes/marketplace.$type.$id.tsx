@@ -32,7 +32,7 @@ import {
 import { getRuntime } from "~/seams/index.server";
 import {
   ensureWorkspace,
-  requireBackOfHouse,
+  requireWorkspaceAdmin,
   resolveActiveWorkspace,
 } from "~/auth/workspace.server";
 import type { Route } from "./+types/marketplace.$type.$id";
@@ -55,8 +55,7 @@ export const loader = (args: LoaderFunctionArgs) =>
       if (!isTemplateSlug(id)) throw data("Unknown template", { status: 404 });
       await ensureWorkspace(args.request, auth);
       const active = await resolveActiveWorkspace(auth);
-      // Back of house is admin/owner-only (D10); front-of-house members live at `/`.
-      if (active) requireBackOfHouse(active, "page");
+      if (active) requireWorkspaceAdmin(active, "page");
       const org = active?.org;
       try {
         // Detail deliberately shows the UNRESOLVED template (catalog.template, not

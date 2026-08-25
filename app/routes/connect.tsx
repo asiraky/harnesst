@@ -38,11 +38,11 @@ import { Label } from "~/components/ui/label";
 import { createProject } from "~/db/queries.server";
 import {
   ensureWorkspace,
-  requireBackOfHouse,
+  requireWorkspaceAdmin,
   resolveActiveWorkspace,
   type WorkspaceInfo,
 } from "~/auth/workspace.server";
-import { ensureProjectTeam } from "~/auth/teams.server";
+import { grantCreatorAccess } from "~/auth/project-access.server";
 import {
   getGitHubConfig,
   getInstallUrl,
@@ -98,7 +98,8 @@ export const loader = (args: LoaderFunctionArgs) =>
       await ensureWorkspace(args.request, auth);
       const active = await resolveActiveWorkspace(auth);
       // Back of house is admin/owner-only (D10); front-of-house members live at `/`.
-      if (active) requireBackOfHouse(active, "page");
+      // Creating repos (and installing the GitHub App) is a workspace-admin power.
+      if (active) requireWorkspaceAdmin(active, "page");
       const org = active?.org;
       if (!org) return { org: null, github: { state: "no-org" as const } };
 
@@ -194,24 +195,6 @@ export const loader = (args: LoaderFunctionArgs) =>
     { ensureSignedIn: true },
   );
 
-/**
- * Best-effort repo-team creation (FOH D9): `ensureProjectTeam` also runs lazily from the
- * invite action and the FOH loader, so a Better Auth hiccup here must not fail the connect
- * flow the user is mid-way through.
- */
-async function ensureRepoTeam(
-  orgId: string,
-  project: { id: string; name: string; teamId: string | null },
-): Promise<void> {
-  try {
-    await ensureProjectTeam(orgId, project);
-  } catch (error) {
-    console.warn(
-      `[connect] Could not create the repo team for ${project.id} (${(error as Error)?.message ?? "unknown error"}); continuing.`,
-    );
-  }
-}
-
 export async function action(args: ActionFunctionArgs) {
   const auth = await getSessionAuth(args);
   if (!auth.user) throw redirect("/login");
@@ -219,7 +202,7 @@ export async function action(args: ActionFunctionArgs) {
   const active = await resolveActiveWorkspace(auth);
   if (!active)
     return { error: "You must belong to an organization to connect a repo." };
-  requireBackOfHouse(active, "api");
+  requireWorkspaceAdmin(active, "api");
   const org = active.org;
 
   const form = await args.request.formData();
@@ -269,7 +252,7 @@ export async function action(args: ActionFunctionArgs) {
         // The scaffold's roster is known without re-reading the repo (§7.9).
         roster: layout === "team" ? [] : [{ name: agentName, root: "agent" }],
       });
-      await ensureRepoTeam(org.id, project);
+      await grantCreatorAccess(project, auth.user.id);
       throw redirect(`/repos/${project.slug}`);
     } catch (error) {
       if (error instanceof Response) throw error;
@@ -331,7 +314,8 @@ export async function action(args: ActionFunctionArgs) {
     })),
   });
 
-  await ensureRepoTeam(org.id, project);
+  // The creator can work in what they just connected; nobody else can until granted.
+  await grantCreatorAccess(project, auth.user.id);
 
   // We just read the source to validate — warm the cache so the first project load is instant.
   warmAgentSource(installationGrantId, { owner, repo }, source);
