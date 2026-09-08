@@ -25,6 +25,7 @@
  * shouldn't discard the branch ref or its commits.
  */
 
+import { removeWorktree } from "./worktree-remove.mjs";
 import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -212,22 +213,8 @@ async function main() {
 
   const root = getRepoRoot();
   const worktreePath = repoPath(root, WORKTREE_ROOT_DIR, feat.dir);
-  if (!existsSync(worktreePath)) die(`worktree not found at ${worktreePath}`);
-
   const paths = tunnelPaths(root, WORKTREE_ROOT_DIR);
-
-  const removeResult = run([
-    "git",
-    "worktree",
-    "remove",
-    "--force",
-    worktreePath,
-  ]);
-  if (removeResult.code !== 0) {
-    die(
-      `git worktree remove failed: ${removeResult.stderr.trim() || removeResult.stdout.trim()}`,
-    );
-  }
+  await removeWorktree(root, worktreePath);
 
   dropWorktreeDb(root, feat);
 
