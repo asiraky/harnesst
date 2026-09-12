@@ -180,11 +180,11 @@ export default function Dashboard({ loaderData }: Route.ComponentProps) {
 export function TeamCard({ card }: { card: ProjectCard }) {
   const { project, members } = card;
   return (
-    <Link to={`/repos/${project.slug}`} className="group">
+    <Link to={`/repos/${project.slug}`} className="group min-w-0">
       <Card className="h-full border-primary/20 transition-colors group-hover:border-ring/60">
         <CardHeader>
-          <div className="flex items-center justify-between gap-2">
-            <CardTitle className="flex items-center gap-2 truncate text-base">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <CardTitle className="flex min-w-0 items-start gap-2 text-base [overflow-wrap:anywhere]">
               <Users
                 className={`h-4 w-4 shrink-0 ${accentText.emerald}`}
                 aria-hidden
@@ -219,11 +219,11 @@ export function TeamCard({ card }: { card: ProjectCard }) {
 
 function AgentCard({ project }: { project: Project }) {
   return (
-    <Link to={`/repos/${project.slug}`} className="group">
+    <Link to={`/repos/${project.slug}`} className="group min-w-0">
       <Card className="h-full transition-colors group-hover:border-ring/60">
         <CardHeader>
-          <div className="flex items-center justify-between gap-2">
-            <CardTitle className="flex items-center gap-2 truncate text-base">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <CardTitle className="flex min-w-0 items-start gap-2 text-base [overflow-wrap:anywhere]">
               <Bot
                 className={`h-4 w-4 shrink-0 ${accentText.brand}`}
                 aria-hidden
@@ -231,8 +231,8 @@ function AgentCard({ project }: { project: Project }) {
               {project.name}
             </CardTitle>
             {project.repoOwner ? (
-              <Badge variant="secondary" className="shrink-0 font-mono text-xs">
-                {project.repoOwner}/{project.repoName}
+              <Badge variant="secondary" className="max-w-full font-mono text-xs">
+                <span className="truncate">{project.repoOwner}/{project.repoName}</span>
               </Badge>
             ) : (
               <Badge variant="outline" className="shrink-0">

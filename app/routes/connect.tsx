@@ -433,10 +433,10 @@ export default function Connect({
                   {github.repos.map((r) => (
                     <li
                       key={r.fullName}
-                      className="flex items-center justify-between gap-3 px-4 py-3"
+                      className="flex flex-col items-start justify-between gap-3 px-4 py-3 sm:flex-row sm:items-center"
                     >
-                      <div className="flex items-center gap-2 truncate">
-                        <span className="truncate font-mono text-sm">
+                      <div className="flex min-w-0 max-w-full flex-wrap items-center gap-2">
+                        <span className="[overflow-wrap:anywhere] font-mono text-sm">
                           {r.fullName}
                         </span>
                         {r.private && (

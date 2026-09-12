@@ -574,10 +574,10 @@ function MessageBubble({
   if (role === "user") {
     return (
       <div className="group flex flex-col items-end gap-1">
-        <div className="ml-auto w-fit max-w-[85%] rounded-2xl bg-primary px-4 py-2.5 text-sm text-primary-foreground">
-          <p className="whitespace-pre-wrap">{text}</p>
+        <div className="ml-auto w-fit max-w-[95%] sm:max-w-[85%] rounded-2xl bg-primary px-4 py-2.5 text-sm text-primary-foreground">
+          <p className="whitespace-pre-wrap [overflow-wrap:anywhere]">{text}</p>
         </div>
-        <div className="opacity-0 transition group-hover:opacity-100">
+        <div className="opacity-100 [@media(hover:hover)]:opacity-0 transition group-hover:opacity-100 focus-within:opacity-100">
           <CopyButton value={text} label="Copy input" />
         </div>
       </div>
@@ -587,7 +587,7 @@ function MessageBubble({
   const structured = looksStructured(text);
   return (
     <div
-      className={`w-fit max-w-[85%] rounded-2xl border px-4 py-2.5 text-sm ${
+      className={`w-fit max-w-[95%] sm:max-w-[85%] rounded-2xl border px-4 py-2.5 text-sm ${
         emphasized ? "border-primary/40 bg-primary/5 shadow-sm" : "bg-card"
       }`}
     >
@@ -599,7 +599,7 @@ function MessageBubble({
       {structured ? (
         <Mono>{text}</Mono>
       ) : (
-        <p className="whitespace-pre-wrap">{text}</p>
+        <p className="whitespace-pre-wrap [overflow-wrap:anywhere]">{text}</p>
       )}
       {data.truncated && (
         <p className="mt-1 text-xs text-muted-foreground">Truncated to fit.</p>

@@ -1012,7 +1012,7 @@ function AddSecretForm({
         submit();
       }}
     >
-      <div className="flex flex-wrap items-end gap-3">
+      <div className="flex flex-col items-stretch gap-3 sm:flex-row sm:flex-wrap sm:items-end">
         <div className="grid min-w-0 flex-1 gap-1.5 sm:max-w-52">
           <Label htmlFor="secret-add-name">Name</Label>
           <Input
