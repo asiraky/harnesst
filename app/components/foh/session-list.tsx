@@ -185,7 +185,7 @@ function EditableSessionRow({
       <div
         className={cn(
           "pointer-events-none relative flex items-start gap-2 py-2.5 pl-3",
-          onArchive ? "pr-9" : "pr-3",
+          onArchive ? "pr-12 sm:pr-9" : "pr-3",
         )}
       >
         <span className="mt-1.5">
@@ -254,7 +254,7 @@ function EditableSessionRow({
           title="Archive"
           disabled={archiving}
           className={cn(
-            "absolute right-1 top-2 rounded-sm p-1 text-muted-foreground opacity-0 transition-opacity focus-visible:opacity-100 group-hover/session:opacity-100 hover:text-foreground",
+            "absolute right-1 top-1 flex size-11 items-center justify-center rounded-sm p-1 sm:top-2 sm:size-auto text-muted-foreground opacity-100 [@media(hover:hover)]:opacity-0 transition-opacity focus-visible:opacity-100 group-hover/session:opacity-100 hover:text-foreground",
             archiving && "opacity-100",
           )}
           onClick={(event) => {

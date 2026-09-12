@@ -157,7 +157,7 @@ function FohShell({ data }: { data: ShellData }) {
                         prefetch="intent"
                         aria-label={`Manage ${team.name} in Repositories`}
                         title="Manage in Repositories"
-                        className="rounded-sm p-0.5 text-muted-foreground opacity-0 transition-opacity focus-visible:opacity-100 group-hover/team:opacity-100 hover:text-foreground"
+                        className="flex size-9 items-center justify-center rounded-sm p-0.5 text-muted-foreground opacity-100 sm:size-auto [@media(hover:hover)]:opacity-0 transition-opacity focus-visible:opacity-100 group-hover/team:opacity-100 hover:text-foreground"
                       >
                         <FolderGit2 className="size-3.5" aria-hidden />
                       </Link>

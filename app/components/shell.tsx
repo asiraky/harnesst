@@ -122,8 +122,8 @@ export function AppShell({
     <TooltipProvider>
     <div className={fullHeight ? "flex h-dvh flex-col overflow-hidden" : "min-h-screen"}>
       <NavProgress />
-      <header className="sticky top-0 z-40 border-b bg-background/80 backdrop-blur">
-        <div className="mx-auto flex h-14 max-w-5xl items-center gap-2 px-4 sm:gap-4 sm:px-6">
+      <header className="sticky top-0 z-40 shrink-0 border-b bg-background/80 backdrop-blur">
+        <div className="mx-auto flex min-h-14 max-w-5xl flex-wrap items-center gap-2 px-4 sm:gap-4 sm:px-6">
           <Link
             to="/dashboard"
             className="flex shrink-0 items-center"
@@ -185,9 +185,9 @@ function NavProgress() {
 /** The "up" navigation: each ancestor links to its level; the last crumb is the page. */
 function Breadcrumbs({ crumbs }: { crumbs: Crumb[] }) {
   return (
-    <nav aria-label="Breadcrumb" className="flex min-w-0 items-center gap-1.5 text-sm">
+    <nav aria-label="Breadcrumb" className="order-last flex w-full min-w-0 items-center gap-1.5 overflow-x-auto pb-2 text-sm sm:order-none sm:w-auto sm:pb-0">
       {crumbs.map((crumb) => (
-        <span key={crumbKey(crumb)} className="flex min-w-0 items-center gap-1.5">
+        <span key={crumbKey(crumb)} className="flex shrink-0 items-center gap-1.5">
           <span className="text-muted-foreground">/</span>
           {crumb.to ? (
             <Link
@@ -234,7 +234,7 @@ export function SectionHeader({
   accent?: Accent;
 }) {
   return (
-    <div className="mb-3 flex items-center justify-between gap-3 border-b pb-2">
+    <div className="mb-3 flex flex-wrap items-center justify-between gap-3 border-b pb-2">
       <div className="flex items-center gap-2">
         {Icon && (
           <span
@@ -249,7 +249,7 @@ export function SectionHeader({
         <h2 className="text-base font-semibold tracking-tight">{title}</h2>
         {badges}
       </div>
-      {actions && <div className="flex items-center gap-2">{actions}</div>}
+      {actions && <div className="flex max-w-full flex-wrap items-center gap-2">{actions}</div>}
     </div>
   );
 }
@@ -519,13 +519,13 @@ export function PageHeader({
 }) {
   return (
     <div className="mb-8 flex flex-wrap items-start justify-between gap-4">
-      <div>
-        <h1 className="text-2xl font-semibold tracking-tight">{title}</h1>
+      <div className="min-w-0 max-w-full">
+        <h1 className="[overflow-wrap:anywhere] text-2xl font-semibold tracking-tight">{title}</h1>
         {description && (
           <p className="mt-1 text-sm text-muted-foreground">{description}</p>
         )}
       </div>
-      {actions && <div className="flex items-center gap-2">{actions}</div>}
+      {actions && <div className="flex max-w-full flex-wrap items-center gap-2">{actions}</div>}
     </div>
   );
 }

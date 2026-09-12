@@ -767,13 +767,13 @@ function ChangeRow({
   const badge = ACTION_BADGE[row.action];
   return (
     <li className="min-w-0">
-      <div className="flex min-w-0 items-center gap-2 py-0.5">
+      <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-x-2 gap-y-1 py-2 sm:flex sm:py-0.5">
         <button
           type="button"
           onClick={() => setExpanded((v) => !v)}
           aria-expanded={expanded}
           aria-label={`Show what changed in ${row.path}`}
-          className="flex min-w-0 flex-1 items-center gap-1.5 text-left"
+          className="col-start-1 row-start-1 flex min-w-0 flex-1 items-start gap-1.5 text-left sm:items-center"
         >
           <ChevronRight
             className={cn(
@@ -793,7 +793,7 @@ function ChangeRow({
           </span>
         </button>
         {/* Who saved it: the assistant is visually distinct from a teammate (§2.7). */}
-        <span className="flex shrink-0 items-center gap-1 whitespace-nowrap text-muted-foreground">
+        <span className="col-start-1 row-start-2 flex min-w-0 flex-wrap items-center gap-1 pl-4.5 text-muted-foreground sm:shrink-0 sm:pl-0 sm:whitespace-nowrap">
           {row.savedBy === null ? (
             <span className="flex items-center gap-1 text-violet-600 dark:text-violet-400">
               <Bot className="size-3" aria-hidden />
@@ -815,7 +815,7 @@ function ChangeRow({
             )
           }
           aria-label={`Discard ${row.path}`}
-          className="flex size-5 shrink-0 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:pointer-events-none disabled:opacity-50"
+          className="col-start-2 row-span-2 row-start-1 flex size-11 shrink-0 items-center justify-center rounded text-muted-foreground sm:size-5 transition-colors hover:bg-muted hover:text-foreground disabled:pointer-events-none disabled:opacity-50"
         >
           <X className="size-3" aria-hidden />
         </button>

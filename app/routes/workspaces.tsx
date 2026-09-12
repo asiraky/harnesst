@@ -138,7 +138,7 @@ export default function Workspaces({
                 className="transition-colors hover:border-ring/60"
               >
                 <CardHeader className="pb-3">
-                  <CardTitle className="flex items-center gap-2 truncate text-base">
+                  <CardTitle className="flex flex-wrap items-center gap-2 [overflow-wrap:anywhere] text-base">
                     {ws.name}
                     {isCurrent && (
                       <span className="inline-flex items-center gap-1 rounded-full bg-primary/10 px-2 py-0.5 text-xs font-medium text-primary">
@@ -147,7 +147,7 @@ export default function Workspaces({
                       </span>
                     )}
                   </CardTitle>
-                  <CardDescription className="font-mono text-xs">
+                  <CardDescription className="break-all font-mono text-xs">
                     {ws.id}
                   </CardDescription>
                 </CardHeader>

@@ -147,15 +147,15 @@ export function ChatTranscript({
 
 export function UserBubble({ text }: { text: string }) {
   return (
-    <div className="ml-auto w-fit max-w-[85%] rounded-2xl bg-muted px-4 py-2.5 text-sm text-foreground">
-      <p className="whitespace-pre-wrap">{text}</p>
+    <div className="ml-auto w-fit max-w-[95%] sm:max-w-[85%] rounded-2xl bg-muted px-4 py-2.5 text-sm text-foreground">
+      <p className="whitespace-pre-wrap [overflow-wrap:anywhere]">{text}</p>
     </div>
   );
 }
 
 export function AssistantBubble({ children }: { children: ReactNode }) {
   return (
-    <div className="w-fit max-w-[85%] rounded-2xl border border-l-2 border-primary/20 border-l-primary/50 bg-card px-4 py-2.5 text-sm">
+    <div className="w-fit max-w-[95%] sm:max-w-[85%] rounded-2xl border border-l-2 border-primary/20 border-l-primary/50 bg-card px-4 py-2.5 text-sm">
       {children}
     </div>
   );
@@ -190,7 +190,7 @@ export function TurnMeta({
   const shown = items.filter((item): item is string => Boolean(item));
   if (shown.length === 0) return null;
   return (
-    <p className="font-mono text-[11px] leading-relaxed text-muted-foreground/70">
+    <p className="[overflow-wrap:anywhere] font-mono text-[11px] leading-relaxed text-muted-foreground/70">
       {shown.join(" · ")}
     </p>
   );
@@ -247,7 +247,7 @@ export function MarkdownText({ text }: { text: string }) {
       ),
     [instance, text],
   );
-  return <div className="space-y-2 break-words">{rendered}</div>;
+  return <div className="space-y-2 [overflow-wrap:anywhere]">{rendered}</div>;
 }
 
 /** Every container the parser recurses into — a `>` marker, a list marker, two columns of
@@ -495,7 +495,7 @@ const MARKDOWN_COMPONENTS: Components = {
   ),
   table: ({ children }) => (
     <div className="max-w-full overflow-x-auto">
-      <table className="w-full border-collapse text-left text-xs">
+      <table className="w-full min-w-80 border-collapse text-left text-xs">
         {children}
       </table>
     </div>
@@ -935,7 +935,7 @@ export function ArtifactCard({
 
   if (artifact.kind === "html") {
     return (
-      <figure className="w-fit max-w-[85%] overflow-hidden rounded-xl border border-border bg-card shadow-sm">
+      <figure className="w-fit max-w-[95%] sm:max-w-[85%] overflow-hidden rounded-xl border border-border bg-card shadow-sm">
         <button
           type="button"
           onClick={onOpen ? () => onOpen(artifact) : undefined}
@@ -959,7 +959,7 @@ export function ArtifactCard({
 
   if (artifact.kind === "document") {
     return (
-      <figure className="w-fit max-w-[85%] overflow-hidden rounded-xl border border-border bg-card shadow-sm">
+      <figure className="w-fit max-w-[95%] sm:max-w-[85%] overflow-hidden rounded-xl border border-border bg-card shadow-sm">
         <a
           href={artifact.url ?? undefined}
           target="_blank"
@@ -982,7 +982,7 @@ export function ArtifactCard({
   }
 
   return (
-    <figure className="w-fit max-w-[85%] overflow-hidden rounded-xl border border-border bg-card shadow-sm">
+    <figure className="w-fit max-w-[95%] sm:max-w-[85%] overflow-hidden rounded-xl border border-border bg-card shadow-sm">
       <a href={artifact.url ?? undefined} target="_blank" rel="noreferrer">
         <img
           src={artifact.url ?? undefined}

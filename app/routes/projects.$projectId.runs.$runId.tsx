@@ -260,7 +260,7 @@ export default function RunTranscriptRoute({
       <div className="mt-6">
         {!hasUserStep && metaInput && (
           <div className="mb-3 ml-auto w-fit max-w-[85%] rounded-2xl bg-primary px-4 py-2.5 text-sm text-primary-foreground">
-            <p className="whitespace-pre-wrap">{metaInput}</p>
+            <p className="whitespace-pre-wrap [overflow-wrap:anywhere]">{metaInput}</p>
           </div>
         )}
         <RunTranscript steps={stepViews} />

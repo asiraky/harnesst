@@ -735,7 +735,7 @@ export default function Playground({ loaderData }: Route.ComponentProps) {
   const runSettings = useMemo(
     () => (
       <div className="flex flex-wrap items-center gap-x-2 gap-y-1.5 text-xs text-muted-foreground">
-        <span className="pl-1">Talking to</span>
+        <span className="sr-only sm:not-sr-only sm:pl-1">Talking to</span>
         <Select
           value={deploymentId}
           onValueChange={(nextDeploymentId) => {
@@ -746,7 +746,7 @@ export default function Playground({ loaderData }: Route.ComponentProps) {
           disabled={busy}
         >
           <SelectTrigger
-            className={cn(CONTROL_PILL, "max-w-56 gap-1.5")}
+            className={cn(CONTROL_PILL, "max-w-44 gap-1.5 sm:max-w-56")}
             aria-label="Deployment to talk to"
           >
             <Server
@@ -763,7 +763,7 @@ export default function Playground({ loaderData }: Route.ComponentProps) {
             ))}
           </SelectContent>
         </Select>
-        <span>with</span>
+        <span className="sr-only sm:not-sr-only">with</span>
         <ModelSelection
           compact
           model={selectedModelId ?? defaultModelId}
@@ -771,7 +771,7 @@ export default function Playground({ loaderData }: Route.ComponentProps) {
           busy={false}
           disabled={busy}
           placeholder="Deployed model"
-          triggerClassName={cn(CONTROL_PILL, "h-9 max-w-56 font-normal")}
+          triggerClassName={cn(CONTROL_PILL, "h-9 max-w-44 font-normal sm:max-w-56")}
           effortTriggerClassName={CONTROL_PILL}
           onCommit={changeModel}
         />
@@ -881,7 +881,7 @@ export default function Playground({ loaderData }: Route.ComponentProps) {
         tail: [{ label: "Playground" }],
       })}
     >
-      <div className="mx-auto w-full max-w-5xl px-4 pt-8 sm:px-6">
+      <div className="mx-auto w-full max-w-5xl px-4 pt-3 sm:px-6 sm:pt-8">
         <AgentNav
           base={base}
           level={isTeam ? "member" : "single"}

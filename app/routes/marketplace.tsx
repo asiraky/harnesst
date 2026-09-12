@@ -414,12 +414,12 @@ function TemplateCard({
     <Link
       to={`/marketplace/${tpl.type}/${tpl.id}`}
       prefetch="intent"
-      className="group"
+      className="group min-w-0"
     >
       <Card className="h-full transition-colors group-hover:border-ring/60">
         <CardHeader>
           <div className="flex items-center justify-between gap-2">
-            <CardTitle className="truncate text-base">{tpl.name}</CardTitle>
+            <CardTitle className="min-w-0 [overflow-wrap:anywhere] text-base">{tpl.name}</CardTitle>
             <TypeBadge type={tpl.type} />
           </div>
           <CardDescription className="line-clamp-2">

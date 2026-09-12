@@ -857,7 +857,7 @@ export default function Members({
                         {repos.map((repo) => (
                           <li
                             key={repo.id}
-                            className="flex items-center justify-between gap-2 rounded-md bg-muted/40 px-3 py-1.5"
+                            className="flex min-w-0 items-center justify-between gap-2 rounded-md bg-muted/40 px-3 py-1.5"
                           >
                             <span className="min-w-0 truncate text-xs">
                               {repo.name}
