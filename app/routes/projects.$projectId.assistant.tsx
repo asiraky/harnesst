@@ -778,7 +778,7 @@ export default function Assistant({ loaderData }: Route.ComponentProps) {
         tail: [{ label: "Assistant" }],
       })}
     >
-      <div className="mx-auto w-full max-w-5xl px-4 pt-8 sm:px-6">
+      <div className="mx-auto w-full max-w-5xl px-4 pt-3 sm:px-6 sm:pt-8">
         <AgentNav
           base={base}
           level={isTeam ? "repo" : "single"}

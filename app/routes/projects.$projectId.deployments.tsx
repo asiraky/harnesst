@@ -1657,7 +1657,7 @@ function TeamEnvironmentsCard({
   return (
     <Card className="mb-6">
       <CardHeader className="pb-3">
-        <div className="flex items-center justify-between">
+        <div className="flex flex-wrap items-center justify-between gap-2">
           <span className="flex items-center gap-2">
             <CardGlyph icon={Server} accent="emerald" />
             <CardTitle className="text-base">Environments</CardTitle>
@@ -1901,9 +1901,9 @@ function TeamVersionHistory({
         ) : (
           <ul className="divide-y rounded-lg border text-sm">
             {teamVersions.map((v, i) => (
-              <li key={v.gitSha} className="flex items-center gap-2 px-4 py-2">
-                <span className="w-10 shrink-0 font-semibold">{v.version}</span>
-                <span className="flex shrink-0 items-center gap-1">
+              <li key={v.gitSha} className="flex flex-wrap items-center gap-2 px-4 py-2">
+                <span className="shrink-0 font-semibold">{v.version}</span>
+                <span className="flex min-w-0 max-w-full flex-wrap items-center gap-1 [&>[data-slot=badge]]:max-w-full [&>[data-slot=badge]]:whitespace-normal [&>[data-slot=badge]]:[overflow-wrap:anywhere]">
                   {v.runningEnvNames.map((name) => (
                     <Badge key={name} variant="secondary">
                       {name}
@@ -2096,7 +2096,7 @@ function EnvironmentsCard({
   return (
     <Card className="mb-6">
       <CardHeader className="pb-3">
-        <div className="flex items-center justify-between">
+        <div className="flex flex-wrap items-center justify-between gap-2">
           <span className="flex items-center gap-2">
             <CardGlyph icon={Server} accent="emerald" />
             <CardTitle className="text-base">Environments</CardTitle>
@@ -2693,9 +2693,9 @@ function VersionHistory({
         ) : (
           <ul className="divide-y rounded-lg border text-sm">
             {releases.map((r, i) => (
-              <li key={r.id} className="flex items-center gap-2 px-4 py-2">
-                <span className="w-10 shrink-0 font-semibold">{r.version}</span>
-                <span className="flex shrink-0 items-center gap-1">
+              <li key={r.id} className="flex flex-wrap items-center gap-2 px-4 py-2">
+                <span className="shrink-0 font-semibold">{r.version}</span>
+                <span className="flex min-w-0 max-w-full flex-wrap items-center gap-1 [&>[data-slot=badge]]:max-w-full [&>[data-slot=badge]]:whitespace-normal [&>[data-slot=badge]]:[overflow-wrap:anywhere]">
                   {i === 0 && <Badge variant="success">Latest</Badge>}
                   {(runningEnvNames.get(r.id) ?? []).map((name) => (
                     <Badge key={name} variant="secondary">

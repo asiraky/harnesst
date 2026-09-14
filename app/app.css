@@ -339,3 +339,21 @@
   border-radius: 9999px;
   animation: harnesst-loading-line 1.8s ease-in-out infinite;
 }
+
+/* Native fieldsets otherwise retain their min-content width inside narrow forms. */
+@layer base {
+  fieldset { min-inline-size: 0; }
+}
+
+/* Keep touch controls usable and prevent iOS focus zoom in compact forms. */
+@media (any-pointer: coarse), (hover: none) {
+  [data-slot="button"],
+  [data-slot="input"],
+  [data-slot="select-trigger"],
+  [data-slot="select-item"],
+  [data-slot="dropdown-menu-item"],
+  [data-slot="dropdown-menu-checkbox-item"],
+  [data-slot="dropdown-menu-radio-item"] { min-height: 44px; }
+  [data-slot="button"][data-size^="icon"] { min-width: 44px; }
+  input:not([type="checkbox"]):not([type="radio"]), textarea, select { font-size: 16px; }
+}

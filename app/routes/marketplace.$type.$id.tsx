@@ -115,7 +115,7 @@ export default function TemplateDetail({ loaderData }: Route.ComponentProps) {
         icon={TYPE_META[manifest.type].icon}
         accent={TYPE_META[manifest.type].accent}
         title={
-          <span className="flex items-center gap-3">
+          <span className="flex flex-wrap items-center gap-3">
             {manifest.name}
             <TypeBadge type={manifest.type} />
           </span>

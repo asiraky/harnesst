@@ -1017,7 +1017,7 @@ export default function InstallWizard({
         icon={TYPE_META[manifest.type].icon}
         accent={TYPE_META[manifest.type].accent}
         title={
-          <span className="flex items-center gap-3">
+          <span className="flex flex-wrap items-center gap-3">
             Install {manifest.name}
             <TypeBadge type={manifest.type} />
           </span>
@@ -1256,7 +1256,7 @@ export default function InstallWizard({
                       These target files already exist and can’t be preserved
                       automatically. Resolve them before installing:
                     </p>
-                    <ul className="space-y-1 font-mono text-xs">
+                    <ul className="space-y-1 font-mono text-xs [overflow-wrap:anywhere]">
                       {fileConflicts.map((c) => (
                         <li key={c}>{c}</li>
                       ))}
@@ -1274,7 +1274,7 @@ export default function InstallWizard({
                       keeps them byte-for-byte and leaves them unmanaged (a
                       later uninstall won’t delete them):
                     </p>
-                    <ul className="space-y-1 font-mono text-xs">
+                    <ul className="space-y-1 font-mono text-xs [overflow-wrap:anywhere]">
                       {preview.preservedFiles.map((c) => (
                         <li key={c}>{c}</li>
                       ))}
@@ -1289,7 +1289,7 @@ export default function InstallWizard({
                   {preview.files.map((f) => (
                     <li
                       key={f}
-                      className="flex items-center gap-2 px-3 py-1.5 font-mono text-xs"
+                      className="flex items-start gap-2 px-3 py-1.5 font-mono text-xs [overflow-wrap:anywhere]"
                     >
                       <span
                         className="text-emerald-600 dark:text-emerald-400"
@@ -1312,7 +1312,7 @@ export default function InstallWizard({
                     {preview.deletions.map((f) => (
                       <li
                         key={f}
-                        className="flex items-center gap-2 px-3 py-1.5 font-mono text-xs"
+                        className="flex items-start gap-2 px-3 py-1.5 font-mono text-xs [overflow-wrap:anywhere]"
                       >
                         <span
                           className="text-rose-600 dark:text-rose-400"
@@ -1320,7 +1320,7 @@ export default function InstallWizard({
                         >
                           −
                         </span>
-                        <span className="line-through decoration-destructive/60">
+                        <span className="min-w-0 [overflow-wrap:anywhere] line-through decoration-destructive/60">
                           {f}
                         </span>
                       </li>
@@ -1334,7 +1334,7 @@ export default function InstallWizard({
                   <h3 className="mb-2 text-sm font-medium">npm dependencies</h3>
                   <ul className="space-y-1 text-sm">
                     {preview.deps.map((d) => (
-                      <li key={d.name} className="flex items-center gap-2">
+                      <li key={d.name} className="flex flex-wrap items-center gap-2 [overflow-wrap:anywhere]">
                         <span className="font-mono text-xs">
                           {d.name}
                           <span className="text-muted-foreground">
@@ -1562,7 +1562,7 @@ export default function InstallWizard({
               </p>
             )}
 
-            <div className="flex items-center gap-3">
+            <div className="flex flex-wrap items-center gap-3">
               {preview.canKeepExistingFiles ? (
                 <Button
                   type="submit"
