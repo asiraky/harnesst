@@ -21,16 +21,24 @@ export interface BackTarget {
 /** Where Back goes given the last workspace location (null: nothing visited yet). */
 export function backTarget(lastWorkspacePath: string | null): BackTarget {
   const href = lastWorkspacePath ?? SURFACE_ROOT.build;
-  const surface = surfaceOf(href);
+  // The surface is a property of the path alone — `/?view=all` is still Chat's home.
+  const surface = surfaceOf(href.split(/[?#]/, 1)[0]);
   return { href, surface, label: `Back to ${SURFACE_LABEL[surface]}` };
 }
 
 let lastWorkspacePath: string | null = null;
 
-/** Record a location as the last one outside Settings; settings URLs are ignored. */
-export function rememberWorkspacePath(pathname: string, search: string): void {
+/**
+ * Record a location as the last one outside Settings; settings URLs are ignored. The hash
+ * travels too — a run page's "jump to step" anchor is part of where you were.
+ */
+export function rememberWorkspacePath(
+  pathname: string,
+  search: string,
+  hash = "",
+): void {
   if (isSettingsPath(pathname)) return;
-  lastWorkspacePath = `${pathname}${search}`;
+  lastWorkspacePath = `${pathname}${search}${hash}`;
 }
 
 export function lastWorkspaceLocation(): string | null {

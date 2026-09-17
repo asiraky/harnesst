@@ -24,10 +24,10 @@ describe("isSettingsPath", () => {
 describe("rememberWorkspacePath", () => {
   beforeEach(resetWorkspaceLocation);
 
-  it("keeps the last non-settings location, search included", () => {
-    rememberWorkspacePath("/t/acme/ag_1", "?s=1");
+  it("keeps the last non-settings location, search and hash included", () => {
+    rememberWorkspacePath("/repos/acme/runs", "?run=7", "#step-3");
     rememberWorkspacePath("/settings/members", "");
-    expect(lastWorkspaceLocation()).toBe("/t/acme/ag_1?s=1");
+    expect(lastWorkspaceLocation()).toBe("/repos/acme/runs?run=7#step-3");
   });
 });
 
@@ -41,6 +41,14 @@ describe("backTarget", () => {
     expect(backTarget("/repos/acme/runs")).toMatchObject({
       surface: "build",
       label: "Back to Build",
+    });
+  });
+
+  it("judges the surface by path alone — Chat home with a query is still Chat", () => {
+    expect(backTarget("/?view=all")).toMatchObject({
+      href: "/?view=all",
+      surface: "chat",
+      label: "Back to Chat",
     });
   });
 

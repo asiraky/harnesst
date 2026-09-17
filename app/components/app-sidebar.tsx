@@ -286,7 +286,7 @@ function readLastVisited(surface: Surface, orgId: string): string | null {
 function useRememberSurface(surface: Surface, orgId: string) {
   const location = useLocation();
   useEffect(() => {
-    rememberWorkspacePath(location.pathname, location.search);
+    rememberWorkspacePath(location.pathname, location.search, location.hash);
     if (isSettingsPath(location.pathname)) return;
     try {
       window.sessionStorage.setItem(
@@ -296,7 +296,7 @@ function useRememberSurface(surface: Surface, orgId: string) {
     } catch {
       // Storage can be unavailable (private mode quotas); the toggle then falls back to root.
     }
-  }, [surface, orgId, location.pathname, location.search]);
+  }, [surface, orgId, location.pathname, location.search, location.hash]);
 }
 
 interface WorkspaceInfo {
