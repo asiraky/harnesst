@@ -5,7 +5,7 @@
  */
 import { describe, expect, it } from "vitest";
 
-import { bohAgentHref, bohTeamHref } from "~/foh/boh-links";
+import { bohAgentHref, bohAgentSettingsHref, bohTeamHref } from "~/foh/boh-links";
 
 describe("bohTeamHref", () => {
   it("points at the repo landing", () => {
@@ -29,6 +29,20 @@ describe("bohAgentHref", () => {
   it("single-agent layout → the repo-level page (no member page exists)", () => {
     expect(bohAgentHref({ id: "proj_1", layout: "single" }, "ivy")).toBe(
       "/repos/proj_1",
+    );
+  });
+});
+
+describe("bohAgentSettingsHref", () => {
+  it("appends the settings tab to the agent's Build page", () => {
+    expect(bohAgentSettingsHref({ id: "proj_1", layout: "team" }, "ivy")).toBe(
+      "/repos/proj_1/agents/ivy/settings",
+    );
+  });
+
+  it("single-agent layout → the repo-level settings tab", () => {
+    expect(bohAgentSettingsHref({ id: "proj_1", layout: "single" }, "ivy")).toBe(
+      "/repos/proj_1/settings",
     );
   });
 });

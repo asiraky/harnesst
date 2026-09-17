@@ -40,7 +40,13 @@ export default defineConfig(({ mode }) => {
       // production React Router/Express host has no corresponding dev-server allowlist). `.loca.lt`
       // and `.trycloudflare.com` admit tunnel hostnames so the GitHub App manifest flow
       // (webhook delivery, OAuth-style redirects) can be exercised against a local dev server.
-      allowedHosts: ["host.docker.internal", ".loca.lt", ".trycloudflare.com"],
+      // `.harnesst.test` is the tailnet dev hostname (app.harnesst.test:<port>).
+      allowedHosts: [
+        "host.docker.internal",
+        ".harnesst.test",
+        ".loca.lt",
+        ".trycloudflare.com",
+      ],
       // In production nginx routes /e/<environmentId>/… to the traffic splitter
       // (deploy/vps/nginx-harnesst.conf); mirror that here so the ingress URLs the UI shows —
       // and the webhook URLs baked into GitHub App manifests — work against the dev server.

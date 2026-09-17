@@ -14,7 +14,10 @@ import {
 import { applyInvitationGrants } from "~/auth/project-access.server";
 import { sendPasswordResetEmail } from "~/email/send-password-reset.server";
 import { authCookieConfig } from "~/lib/auth-cookies";
-import { assertProductionAuthEnvironment } from "~/lib/auth-env.server";
+import {
+  assertProductionAuthEnvironment,
+  devTrustedOrigins,
+} from "~/lib/auth-env.server";
 
 assertProductionAuthEnvironment();
 
@@ -39,6 +42,7 @@ export const auth = betterAuth({
   onAPIError:
     process.env.NODE_ENV === "production" ? { throw: true } : undefined,
   database: drizzleAdapter(db, { provider: "pg", schema }),
+  trustedOrigins: devTrustedOrigins(),
   // 30-day rolling sessions for all users.
   session: {
     expiresIn: 60 * 60 * 24 * 30,
@@ -143,7 +147,7 @@ export const auth = betterAuth({
           } catch (error) {
             // Better Auth has already committed the membership; failing the request here
             // would leave an accepted invitation the user can never retry. Surface it and let
-            // an admin repair the grants from /org/members.
+            // an admin repair the grants from /settings/members.
             console.error(
               `[auth] failed to apply invitation grants for ${invitation.id}`,
               error,

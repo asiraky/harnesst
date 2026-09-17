@@ -1,4 +1,9 @@
-import { type RouteConfig, index, layout, route } from "@react-router/dev/routes";
+import {
+  type RouteConfig,
+  index,
+  layout,
+  route,
+} from "@react-router/dev/routes";
 
 /**
  * The repository hierarchy is two-level (M5.8): repo pages at /repos/:projectId/..., a team
@@ -89,157 +94,211 @@ export default [
   // Marketing case studies — index + one page per vertical.
   route("case-studies", "routes/case-studies.tsx"),
   route("case-studies/:slug", "routes/case-studies.$slug.tsx"),
-  route("dashboard", "routes/dashboard.tsx"),
-  // Recruit — the marketplace (PRD §7.8, M6). Browse (index.json) + a template detail page.
-  route("marketplace", "routes/marketplace.tsx"),
-  route("marketplace/:type/:id", "routes/marketplace.$type.$id.tsx"),
-  route(
-    "marketplace/:type/:id/install",
-    "routes/marketplace.$type.$id.install.tsx",
-  ),
-  route("org/settings", "routes/org.settings.tsx"),
-  // Shared workspaces (issue #56): the members/invite page, the multi-workspace chooser +
-  // switch endpoint, and the shell switcher's data route.
-  route("org/members", "routes/org.members.tsx"),
-  route("workspaces", "routes/workspaces.tsx"),
+  // Build — every back-of-house page shares one pathless layout whose loader feeds the sidebar
+  // (routes/build.tsx). Resource routes are registered outside it: they render nothing.
+  layout("routes/build.tsx", [
+    route("dashboard", "routes/dashboard.tsx"),
+    // Recruit — the marketplace (PRD §7.8, M6). Browse (index.json) + a template detail page.
+    route("marketplace", "routes/marketplace.tsx"),
+    route("marketplace/:type/:id", "routes/marketplace.$type.$id.tsx"),
+    route(
+      "marketplace/:type/:id/install",
+      "routes/marketplace.$type.$id.install.tsx",
+    ),
+    // Workspace settings — one page, four tabs. The settings module is registered once per tab
+    // (like `memberRoute`), so each tab's forms post to their own URL.
+    route("settings", "routes/settings.tsx", { id: "settings-general" }),
+    route("settings/connections", "routes/settings.tsx", {
+      id: "settings-connections",
+    }),
+    route("settings/audit", "routes/settings.tsx", { id: "settings-audit" }),
+    // Shared workspaces (issue #56): the members/invite page, the multi-workspace chooser +
+    // switch endpoint, and the shell switcher's data route.
+    route("settings/members", "routes/settings.members.tsx"),
+    route("org/settings", "routes/shims.org.tsx", { id: "shim-org-settings" }),
+    route("org/members", "routes/shims.org.tsx", { id: "shim-org-members" }),
+    route("workspaces", "routes/workspaces.tsx"),
+    route("connect", "routes/connect.tsx"),
+    route(
+      "github/installations/callback",
+      "routes/github.installations.callback.tsx",
+    ),
+    // The product noun is REPOSITORY (one connected GitHub repo = a single agent or a team).
+    // Param stays :projectId — internal identifiers didn't churn with the URL rename.
+    route("repos/:projectId", "routes/projects.$projectId.tsx"),
+    memberRoute("", "routes/projects.$projectId.tsx", "member-overview"),
+    ...subagentRoutes("", "routes/projects.$projectId.tsx", "overview"),
+    route(
+      "repos/:projectId/deployment",
+      "routes/projects.$projectId.deployments.tsx",
+    ),
+    memberRoute(
+      "/deployment",
+      "routes/projects.$projectId.deployments.tsx",
+      "member-deployment",
+    ),
+    route(
+      "repos/:projectId/settings",
+      "routes/projects.$projectId.settings.tsx",
+    ),
+    memberRoute(
+      "/settings",
+      "routes/projects.$projectId.settings.tsx",
+      "member-settings",
+    ),
+    ...subagentRoutes(
+      "/settings",
+      "routes/projects.$projectId.settings.tsx",
+      "settings",
+    ),
+    route(
+      "repos/:projectId/playground",
+      "routes/projects.$projectId.playground.tsx",
+    ),
+    memberRoute(
+      "/playground",
+      "routes/projects.$projectId.playground.tsx",
+      "member-playground",
+    ),
+    // Archived FOH conversations (#278) — repo-scoped, back-of-house only, and deliberately NOT a
+    // section tab: it is reached from the FOH session list's "N archived" link and from one row on
+    // the Settings tab. Single registration; there is no member-level twin.
+    route(
+      "repos/:projectId/sessions/archived",
+      "routes/projects.$projectId.sessions.archived.tsx",
+    ),
+    route("repos/:projectId/runs", "routes/projects.$projectId.runs.tsx"),
+    // Published artifacts + public share-link management (#370). Back of house: the only place a
+    // background (session-less) publish surfaces, and where links are revoked or rotated.
+    route(
+      "repos/:projectId/artifacts",
+      "routes/projects.$projectId.artifacts.tsx",
+    ),
+    memberRoute("/runs", "routes/projects.$projectId.runs.tsx", "member-runs"),
+    route(
+      "repos/:projectId/runs/:runId",
+      "routes/projects.$projectId.runs.$runId.tsx",
+    ),
+    memberRoute(
+      "/runs/:runId",
+      "routes/projects.$projectId.runs.$runId.tsx",
+      "member-run",
+    ),
+    route(
+      "repos/:projectId/assistant",
+      "routes/projects.$projectId.assistant.tsx",
+    ),
+    route(
+      "repos/:projectId/assistant/config",
+      "routes/projects.$projectId.assistant.config.tsx",
+    ),
+    // The assistant is project-level now; the old member-level tab 301s to the repo-level page.
+    memberRoute(
+      "/assistant",
+      "routes/shims.member-assistant.tsx",
+      "member-assistant",
+    ),
+    route(
+      "repos/:projectId/resources/:category",
+      "routes/projects.$projectId.resources.$category.tsx",
+    ),
+    memberRoute(
+      "/resources/:category",
+      "routes/projects.$projectId.resources.$category.tsx",
+      "member-resources",
+    ),
+    ...subagentRoutes(
+      "/resources/:category",
+      "routes/projects.$projectId.resources.$category.tsx",
+      "resources",
+    ),
+    route("repos/:projectId/edit", "routes/projects.$projectId.edit.tsx"),
+    memberRoute("/edit", "routes/projects.$projectId.edit.tsx", "member-edit"),
+    ...subagentRoutes("/edit", "routes/projects.$projectId.edit.tsx", "edit"),
+    route(
+      "repos/:projectId/edit/instructions",
+      "routes/projects.$projectId.edit.instructions.tsx",
+    ),
+    memberRoute(
+      "/edit/instructions",
+      "routes/projects.$projectId.edit.instructions.tsx",
+      "member-edit-instructions",
+    ),
+    ...subagentRoutes(
+      "/edit/instructions",
+      "routes/projects.$projectId.edit.instructions.tsx",
+      "edit-instructions",
+    ),
+    route(
+      "repos/:projectId/edit/schedule",
+      "routes/projects.$projectId.edit.schedule.tsx",
+    ),
+    memberRoute(
+      "/edit/schedule",
+      "routes/projects.$projectId.edit.schedule.tsx",
+      "member-edit-schedule",
+    ),
+    // The model moved inline onto the overview; the old edit-agent page redirects there.
+    route("repos/:projectId/edit/agent", "routes/legacy.edit-agent.tsx"),
+    // Pre-M5.8 tab URLs — 301 into the new hierarchy (Changes/Versions → Deployment,
+    // Secrets → Settings, ?agent= → /agents/:name).
+    route("repos/:projectId/changes", "routes/shims.repo-tabs.tsx", {
+      id: "shim-changes",
+    }),
+    route("repos/:projectId/deployments", "routes/shims.repo-tabs.tsx", {
+      id: "shim-deployments",
+    }),
+    route("repos/:projectId/secrets", "routes/shims.repo-tabs.tsx", {
+      id: "shim-secrets",
+    }),
+    // The Publish control + panel (AppShell header, issue #225): GET returns the project's
+    // publish state (saved changes, live version, running/failed pipeline) — or one file's diff
+    // via `?diff=`. POST intents: publish, publish-head, discard, discard-all.
+    route("repos/:projectId/publish", "routes/api.publish.tsx"),
+    // Workspace task-progress indicator (issue #142): running + recent terminal publish tasks
+    // for this project. GET polls the list; POST intent=dismiss clears a terminal row.
+    route("repos/:projectId/tasks", "routes/api.tasks.tsx"),
+    // Per-agent GitHub App Manifest flow (issue #26): submit the manifest to GitHub, then
+    // GitHub redirects back to the callback with a single-use code to convert.
+    route("github/apps/new", "routes/github.apps.new.tsx"),
+    route("github/apps/callback", "routes/github.apps.callback.tsx"),
+    route("discord/connect", "routes/discord.connect.tsx"),
+    route("discord/callback", "routes/discord.callback.tsx"),
+    // Install-time auth-brokered connections (issue #30): harnesst brokers Google OAuth against the
+    // operator's shared client. connect signs state + redirects to consent; callback exchanges the
+    // code and seals the grant. The grant is injected as env at deploy so eve self-refreshes tokens.
+    route("google/connect", "routes/google.connect.tsx"),
+    route("google/callback", "routes/google.callback.tsx"),
+    // Provider-generic connection broker (issue #163): one connect/callback pair for every
+    // registered provider; /google/* stay as aliases for redirect-URI back-compat.
+    route(
+      "connections/:provider/connect",
+      "routes/connections.$provider.connect.tsx",
+    ),
+    route(
+      "connections/:provider/callback",
+      "routes/connections.$provider.callback.tsx",
+    ),
+    // Post-consent resource picker (issue #166): a capability provider whose account spans several
+    // provider-side resources (Xero organisations) picks the one this connection targets.
+    route(
+      "connections/:provider/resource",
+      "routes/connections.$provider.resource.tsx",
+    ),
+    // Legacy URLs from before the repositories rename — 301 into /repos/.
+    route("projects/:projectId/*", "routes/legacy.projects.tsx", {
+      id: "legacy-projects-splat",
+    }),
+    route("projects/:projectId", "routes/legacy.projects.tsx", {
+      id: "legacy-projects",
+    }),
+    route(
+      "accept-invitation/:invitationId",
+      "routes/accept-invitation.$invitationId.tsx",
+    ),
+  ]),
+  // Build-side resource routes (JSON/streams/webhooks) — outside the layout: nothing to render.
   route("api/workspaces", "routes/api.workspaces.tsx"),
-  route("connect", "routes/connect.tsx"),
-  route(
-    "github/installations/callback",
-    "routes/github.installations.callback.tsx",
-  ),
-  // The product noun is REPOSITORY (one connected GitHub repo = a single agent or a team).
-  // Param stays :projectId — internal identifiers didn't churn with the URL rename.
-  route("repos/:projectId", "routes/projects.$projectId.tsx"),
-  memberRoute("", "routes/projects.$projectId.tsx", "member-overview"),
-  ...subagentRoutes("", "routes/projects.$projectId.tsx", "overview"),
-  route(
-    "repos/:projectId/deployment",
-    "routes/projects.$projectId.deployments.tsx",
-  ),
-  memberRoute(
-    "/deployment",
-    "routes/projects.$projectId.deployments.tsx",
-    "member-deployment",
-  ),
-  route("repos/:projectId/settings", "routes/projects.$projectId.settings.tsx"),
-  memberRoute(
-    "/settings",
-    "routes/projects.$projectId.settings.tsx",
-    "member-settings",
-  ),
-  ...subagentRoutes(
-    "/settings",
-    "routes/projects.$projectId.settings.tsx",
-    "settings",
-  ),
-  route(
-    "repos/:projectId/playground",
-    "routes/projects.$projectId.playground.tsx",
-  ),
-  memberRoute(
-    "/playground",
-    "routes/projects.$projectId.playground.tsx",
-    "member-playground",
-  ),
-  // Archived FOH conversations (#278) — repo-scoped, back-of-house only, and deliberately NOT a
-  // section tab: it is reached from the FOH session list's "N archived" link and from one row on
-  // the Settings tab. Single registration; there is no member-level twin.
-  route(
-    "repos/:projectId/sessions/archived",
-    "routes/projects.$projectId.sessions.archived.tsx",
-  ),
-  route("repos/:projectId/runs", "routes/projects.$projectId.runs.tsx"),
-  // Published artifacts + public share-link management (#370). Back of house: the only place a
-  // background (session-less) publish surfaces, and where links are revoked or rotated.
-  route(
-    "repos/:projectId/artifacts",
-    "routes/projects.$projectId.artifacts.tsx",
-  ),
-  memberRoute("/runs", "routes/projects.$projectId.runs.tsx", "member-runs"),
-  route(
-    "repos/:projectId/runs/:runId",
-    "routes/projects.$projectId.runs.$runId.tsx",
-  ),
-  memberRoute(
-    "/runs/:runId",
-    "routes/projects.$projectId.runs.$runId.tsx",
-    "member-run",
-  ),
-  route(
-    "repos/:projectId/assistant",
-    "routes/projects.$projectId.assistant.tsx",
-  ),
-  route(
-    "repos/:projectId/assistant/config",
-    "routes/projects.$projectId.assistant.config.tsx",
-  ),
-  // The assistant is project-level now; the old member-level tab 301s to the repo-level page.
-  memberRoute(
-    "/assistant",
-    "routes/shims.member-assistant.tsx",
-    "member-assistant",
-  ),
-  route(
-    "repos/:projectId/resources/:category",
-    "routes/projects.$projectId.resources.$category.tsx",
-  ),
-  memberRoute(
-    "/resources/:category",
-    "routes/projects.$projectId.resources.$category.tsx",
-    "member-resources",
-  ),
-  ...subagentRoutes(
-    "/resources/:category",
-    "routes/projects.$projectId.resources.$category.tsx",
-    "resources",
-  ),
-  route("repos/:projectId/edit", "routes/projects.$projectId.edit.tsx"),
-  memberRoute("/edit", "routes/projects.$projectId.edit.tsx", "member-edit"),
-  ...subagentRoutes("/edit", "routes/projects.$projectId.edit.tsx", "edit"),
-  route(
-    "repos/:projectId/edit/instructions",
-    "routes/projects.$projectId.edit.instructions.tsx",
-  ),
-  memberRoute(
-    "/edit/instructions",
-    "routes/projects.$projectId.edit.instructions.tsx",
-    "member-edit-instructions",
-  ),
-  ...subagentRoutes(
-    "/edit/instructions",
-    "routes/projects.$projectId.edit.instructions.tsx",
-    "edit-instructions",
-  ),
-  route(
-    "repos/:projectId/edit/schedule",
-    "routes/projects.$projectId.edit.schedule.tsx",
-  ),
-  memberRoute(
-    "/edit/schedule",
-    "routes/projects.$projectId.edit.schedule.tsx",
-    "member-edit-schedule",
-  ),
-  // The model moved inline onto the overview; the old edit-agent page redirects there.
-  route("repos/:projectId/edit/agent", "routes/legacy.edit-agent.tsx"),
-  // Pre-M5.8 tab URLs — 301 into the new hierarchy (Changes/Versions → Deployment,
-  // Secrets → Settings, ?agent= → /agents/:name).
-  route("repos/:projectId/changes", "routes/shims.repo-tabs.tsx", {
-    id: "shim-changes",
-  }),
-  route("repos/:projectId/deployments", "routes/shims.repo-tabs.tsx", {
-    id: "shim-deployments",
-  }),
-  route("repos/:projectId/secrets", "routes/shims.repo-tabs.tsx", {
-    id: "shim-secrets",
-  }),
-  // The Publish control + panel (AppShell header, issue #225): GET returns the project's
-  // publish state (saved changes, live version, running/failed pipeline) — or one file's diff
-  // via `?diff=`. POST intents: publish, publish-head, discard, discard-all.
-  route("repos/:projectId/publish", "routes/api.publish.tsx"),
-  // Workspace task-progress indicator (issue #142): running + recent terminal publish tasks
-  // for this project. GET polls the list; POST intent=dismiss clears a terminal row.
-  route("repos/:projectId/tasks", "routes/api.tasks.tsx"),
   // Playground streaming turn: the page POSTs here and reads an NDJSON stream of the turn.
   // Single registration — team-member selection travels as a form field, not a URL param.
   route(
@@ -256,26 +315,11 @@ export default [
     "routes/api.projects.$projectId.assistant.stream.ts",
   ),
   route("api/github/webhook", "routes/api.github.webhook.tsx"),
-  // Per-agent GitHub App Manifest flow (issue #26): submit the manifest to GitHub, then
-  // GitHub redirects back to the callback with a single-use code to convert.
-  route("github/apps/new", "routes/github.apps.new.tsx"),
-  route("github/apps/callback", "routes/github.apps.callback.tsx"),
   // One-click Discord channel (issue #32): harnesst's shared app. The relay is the app's single
   // Interactions Endpoint URL; connect/callback run the OAuth authorize + guild-command
   // registration; send is the control-plane proxy the discord-send-message tool calls.
   route("api/discord/interactions", "routes/api.discord.interactions.ts"),
-  route("discord/connect", "routes/discord.connect.tsx"),
-  route("discord/callback", "routes/discord.callback.tsx"),
   route("api/discord/send", "routes/api.discord.send.ts"),
-  // Install-time auth-brokered connections (issue #30): harnesst brokers Google OAuth against the
-  // operator's shared client. connect signs state + redirects to consent; callback exchanges the
-  // code and seals the grant. The grant is injected as env at deploy so eve self-refreshes tokens.
-  route("google/connect", "routes/google.connect.tsx"),
-  route("google/callback", "routes/google.callback.tsx"),
-  // Provider-generic connection broker (issue #163): one connect/callback pair for every
-  // registered provider; /google/* stay as aliases for redirect-URI back-compat.
-  route("connections/:provider/connect", "routes/connections.$provider.connect.tsx"),
-  route("connections/:provider/callback", "routes/connections.$provider.callback.tsx"),
   // Instance token broker (issue #167): instances of access-token-broker providers (rotating
   // refresh grants — mayi) fetch fresh access tokens here with their HARNESST_TEAM_TOKEN.
   route("api/connections/token", "routes/api.connections.token.ts"),
@@ -285,12 +329,6 @@ export default [
   route(
     "api/capabilities/:provider/:operation",
     "routes/api.capabilities.$provider.$operation.ts",
-  ),
-  // Post-consent resource picker (issue #166): a capability provider whose account spans several
-  // provider-side resources (Xero organisations) picks the one this connection targets.
-  route(
-    "connections/:provider/resource",
-    "routes/connections.$provider.resource.tsx",
   ),
   route("api/ingest/runs", "routes/api.ingest.runs.tsx"),
   // Pushed run reporting (WS2): every harnesst-built image's baked `agent/hooks/harnesst-runs.ts`
@@ -322,17 +360,6 @@ export default [
   // Better Auth's documented React Router resource route. The splat forwards every
   // /api/auth/* request to the single server auth instance.
   route("api/auth/*", "routes/api.auth.$.ts"),
-  // Legacy URLs from before the repositories rename — 301 into /repos/.
-  route("projects/:projectId/*", "routes/legacy.projects.tsx", {
-    id: "legacy-projects-splat",
-  }),
-  route("projects/:projectId", "routes/legacy.projects.tsx", {
-    id: "legacy-projects",
-  }),
-  route(
-    "accept-invitation/:invitationId",
-    "routes/accept-invitation.$invitationId.tsx",
-  ),
   route("login", "routes/login.tsx"),
   route("signup", "routes/signup.tsx"),
   route("forgot-password", "routes/forgot-password.tsx"),

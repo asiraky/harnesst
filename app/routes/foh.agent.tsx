@@ -23,7 +23,7 @@ import { getSessionAuth, sessionLoader } from "~/auth/session.server";
 import { FohPaneError } from "~/components/foh/pane-error";
 import { SessionList } from "~/components/foh/session-list";
 import { Button } from "~/components/ui/button";
-import { bohAgentHref } from "~/foh/boh-links";
+import { bohAgentSettingsHref } from "~/foh/boh-links";
 import { requireFohProject } from "~/foh/guard.server";
 import { suppressOpenSessionUnread } from "~/foh/unread";
 import { cn } from "~/lib/utils";
@@ -80,10 +80,11 @@ export const loader = (args: LoaderFunctionArgs) =>
         archivedHref: access.backOfHouse
           ? `/repos/${access.project.id}/sessions/archived`
           : null,
-        // #246: the admin-only cross-link into this member's BOH config. Null (absent, not
+        // #246: the admin-only "configure this agent" jump — straight to its Settings tab in
+        // Build (the sidebar toggle handles the like-for-like flip). Null (absent, not
         // disabled) for plain members.
         bohHref: access.backOfHouse
-          ? bohAgentHref(access.project, agent.name)
+          ? bohAgentSettingsHref(access.project, agent.name)
           : null,
         sessions: sessions.map((session) => ({
           ...summarizePlaygroundSession(session, { unread: session.unread }),
@@ -211,8 +212,8 @@ export default function FohAgent({ loaderData }: Route.ComponentProps) {
             <Link
               to={bohHref}
               prefetch="intent"
-              aria-label={`Manage ${agentName} in Repositories`}
-              title="Manage in Repositories"
+              aria-label={`${agentName} settings`}
+              title="Agent settings"
               className="rounded-sm p-1 text-muted-foreground/50 transition-colors hover:text-foreground"
             >
               <Settings2 className="size-3.5" aria-hidden />

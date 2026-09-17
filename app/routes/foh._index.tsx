@@ -38,7 +38,7 @@ export default function FohIndex() {
             <h1 className="text-lg font-semibold">No teams yet</h1>
             <p className="mt-1 text-sm text-muted-foreground">
               {shell?.backOfHouse
-                ? "Connect a repository in back of house — its agents show up here, ready to work with."
+                ? "Connect a repository in Build — its agents show up here, ready to work with."
                 : "You're not on any team yet. Ask a workspace admin to invite you to a repository."}
             </p>
           </>

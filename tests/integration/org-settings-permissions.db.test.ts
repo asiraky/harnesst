@@ -76,7 +76,7 @@ describe.runIf(LIVE)(
       const { organization, user } = await import("~/db/auth-schema");
       const { modelProviderConnections, workspaceSettings } =
         await import("~/db/schema");
-      const { action } = await import("~/routes/org.settings");
+      const { action } = await import("~/routes/settings");
 
       const suffix = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
       const ownerEmail = `org-owner-${suffix}@smoke.test`;
