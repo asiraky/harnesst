@@ -149,3 +149,25 @@ export function assertProductionAuthEnvironment(
     );
   }
 }
+
+/**
+ * Extra origins Better Auth trusts in development, beyond BETTER_AUTH_URL itself.
+ *
+ * The tailnet dev hostname (`app.harnesst.test:<port>`, resolved to this box) serves the same
+ * dev server as localhost, but Better Auth rejects any POST whose Origin isn't a trusted one —
+ * "Invalid origin" on the sign-in form. Trust every `*.harnesst.test` origin on the dev port.
+ * Production never gets this: its origin is exactly BETTER_AUTH_URL.
+ */
+export function devTrustedOrigins(
+  env: { BETTER_AUTH_URL?: string; NODE_ENV?: string } = process.env,
+): string[] {
+  if (env.NODE_ENV === "production") return [];
+  let port: string;
+  try {
+    const url = new URL(env.BETTER_AUTH_URL?.trim() || "http://localhost:5173");
+    port = url.port || (url.protocol === "https:" ? "443" : "80");
+  } catch {
+    return [];
+  }
+  return [`http://*.harnesst.test:${port}`];
+}

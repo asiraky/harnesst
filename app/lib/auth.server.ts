@@ -14,7 +14,10 @@ import {
 import { applyInvitationGrants } from "~/auth/project-access.server";
 import { sendPasswordResetEmail } from "~/email/send-password-reset.server";
 import { authCookieConfig } from "~/lib/auth-cookies";
-import { assertProductionAuthEnvironment } from "~/lib/auth-env.server";
+import {
+  assertProductionAuthEnvironment,
+  devTrustedOrigins,
+} from "~/lib/auth-env.server";
 
 assertProductionAuthEnvironment();
 
@@ -39,6 +42,7 @@ export const auth = betterAuth({
   onAPIError:
     process.env.NODE_ENV === "production" ? { throw: true } : undefined,
   database: drizzleAdapter(db, { provider: "pg", schema }),
+  trustedOrigins: devTrustedOrigins(),
   // 30-day rolling sessions for all users.
   session: {
     expiresIn: 60 * 60 * 24 * 30,
