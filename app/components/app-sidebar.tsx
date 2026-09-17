@@ -376,6 +376,14 @@ function AccountMenu({
           </span>
         </DropdownMenuLabel>
         <DropdownMenuSeparator />
+        {canSettings && (
+          <DropdownMenuItem asChild>
+            <Link to="/settings" prefetch="intent" className="cursor-pointer">
+              <Settings className="mr-2 h-4 w-4 text-muted-foreground" aria-hidden />
+              Settings
+            </Link>
+          </DropdownMenuItem>
+        )}
         <DropdownMenuSub>
           <DropdownMenuSubTrigger>
             <Building2 className="mr-2 h-4 w-4 text-muted-foreground" />
@@ -424,14 +432,6 @@ function AccountMenu({
             </DropdownMenuSubContent>
           </DropdownMenuPortal>
         </DropdownMenuSub>
-        {canSettings && (
-          <DropdownMenuItem asChild>
-            <Link to="/settings" prefetch="intent" className="cursor-pointer">
-              <Settings className="mr-2 h-4 w-4 text-muted-foreground" aria-hidden />
-              Settings
-            </Link>
-          </DropdownMenuItem>
-        )}
         <ThemeMenuSub />
         <DropdownMenuSeparator />
         <DropdownMenuItem
