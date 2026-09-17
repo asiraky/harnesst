@@ -2,15 +2,20 @@
  * The one sidebar skeleton both surfaces share. Chat and Build show different things in the
  * middle (teams → agents vs. repositories → agents) but the frame never changes:
  *
- *   header — wordmark, then the Chat | Build toggle and the workspace Settings gear
+ *   header — wordmark, then the Chat | Build toggle
  *   body   — whatever the surface lists (passed as children)
- *   footer — the account menu (workspace switcher, theme, sign out)
+ *   footer — the account menu (workspace switcher, settings, theme, sign out)
  *
- * The exits are therefore in the same place on every page. The toggle and the gear are
- * simply absent for people who can't use them (read-only members never see Build; only
- * workspace admins reach Settings) — the frame is otherwise identical for everyone.
+ * The exits are therefore in the same place on every page. The toggle is simply absent for
+ * people who can't use it (read-only members never see Build), and Settings only appears in
+ * the account menu for workspace admins — the frame is otherwise identical for everyone.
+ *
+ * Settings is not a third surface. Under `/settings` the same sidebar stays up, but its body
+ * becomes the settings sections with a Back row (and Escape) that returns you to the exact
+ * Chat or Build page you left — see lib/settings-back.ts.
  */
 import {
+  ArrowLeft,
   Building2,
   Check,
   ChevronsUpDown,
@@ -19,9 +24,18 @@ import {
   Settings,
 } from "lucide-react";
 import { useEffect, useState } from "react";
-import { Form, Link, useFetcher, useLocation, useSubmit } from "react-router";
+import {
+  Form,
+  Link,
+  NavLink,
+  useFetcher,
+  useLocation,
+  useNavigate,
+  useSubmit,
+} from "react-router";
 
 import { BrandWordmark } from "~/components/marketing/logo";
+import { SETTINGS_TABS } from "~/components/settings-tabs";
 import { ThemeMenuSub } from "~/components/theme-toggle";
 import {
   DropdownMenu,
@@ -35,6 +49,12 @@ import {
   DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from "~/components/ui/dropdown-menu";
+import {
+  backTarget,
+  isSettingsPath,
+  lastWorkspaceLocation,
+  rememberWorkspacePath,
+} from "~/lib/settings-back";
 import {
   SURFACE_LABEL,
   SURFACE_ROOT,
@@ -67,7 +87,7 @@ export function AppSidebar({
   repos: SurfaceRepo[];
   /** May enter the other surface (Chat: holds `write` somewhere; Build: always). */
   canToggle: boolean;
-  /** Workspace admin: show the Settings gear. */
+  /** Workspace admin: offer Settings in the account menu. */
   canSettings: boolean;
   account: SidebarAccount;
   /** Surface-specific control on the wordmark row (Chat's inbox bell). */
@@ -75,11 +95,13 @@ export function AppSidebar({
   className?: string;
   children: React.ReactNode;
 }) {
+  const location = useLocation();
+  const inSettings = isSettingsPath(location.pathname);
   useRememberSurface(surface, account.orgId);
   return (
     <aside
       className={cn("flex w-64 shrink-0 flex-col border-r bg-background", className)}
-      aria-label={`${SURFACE_LABEL[surface]} sidebar`}
+      aria-label={inSettings ? "Settings sidebar" : `${SURFACE_LABEL[surface]} sidebar`}
     >
       <div className="flex h-14 shrink-0 items-center border-b px-3">
         <Link
@@ -89,33 +111,108 @@ export function AppSidebar({
         >
           <BrandWordmark className="h-5" />
         </Link>
-        <div className="ml-auto flex items-center gap-0.5">
-          {headerExtra}
-          {canSettings && (
-            <Link
-              to="/settings"
-              prefetch="intent"
-              aria-label="Workspace settings"
-              title="Settings"
-              className="flex size-8 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground"
-            >
-              <Settings className="size-4" aria-hidden />
-            </Link>
-          )}
-        </div>
+        {headerExtra && (
+          <div className="ml-auto flex items-center gap-0.5">{headerExtra}</div>
+        )}
       </div>
-      {canToggle && (
-        <div className="shrink-0 border-b px-3 py-2">
-          <SurfaceToggle surface={surface} repos={repos} orgId={account.orgId} />
+      {inSettings ? (
+        <div className="shrink-0 border-b px-2 py-2">
+          <SettingsBack />
         </div>
+      ) : (
+        canToggle && (
+          <div className="shrink-0 border-b px-3 py-2">
+            <SurfaceToggle surface={surface} repos={repos} orgId={account.orgId} />
+          </div>
+        )
       )}
 
-      <nav className="min-h-0 flex-1 overflow-y-auto px-2 py-3">{children}</nav>
+      <nav className="min-h-0 flex-1 overflow-y-auto px-2 py-3">
+        {inSettings ? <SettingsNav /> : children}
+      </nav>
 
       <div className="shrink-0 border-t p-2">
-        <AccountMenu account={account} surface={surface} />
+        <AccountMenu
+          account={account}
+          surface={surface}
+          canSettings={canSettings}
+        />
       </div>
     </aside>
+  );
+}
+
+/**
+ * The row that replaces the Chat | Build toggle while in Settings. Its target is read after
+ * hydration (module state is empty on the server, so SSR renders the Build-root fallback and
+ * the client corrects it once mounted — same discipline as the toggle's remembered URL).
+ * Escape does the same thing, unless a field or dialog owns the key.
+ */
+function SettingsBack() {
+  const navigate = useNavigate();
+  const [target, setTarget] = useState(() => backTarget(null));
+  useEffect(() => {
+    setTarget(backTarget(lastWorkspaceLocation()));
+  }, []);
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape" || event.defaultPrevented) return;
+      if (isEditingText(document.activeElement) || document.querySelector("[role=dialog]")) {
+        return;
+      }
+      navigate(target.href);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [navigate, target.href]);
+  return (
+    <Link
+      to={target.href}
+      prefetch="intent"
+      className="flex items-center gap-2 rounded-md px-2 py-1.5 text-sm text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground"
+    >
+      <ArrowLeft className="size-4" aria-hidden />
+      <span className="flex-1">{target.label}</span>
+      <kbd className="rounded border px-1 font-mono text-[10px] text-muted-foreground">
+        Esc
+      </kbd>
+    </Link>
+  );
+}
+
+function isEditingText(element: Element | null): boolean {
+  if (!(element instanceof HTMLElement)) return false;
+  return (
+    element instanceof HTMLInputElement ||
+    element instanceof HTMLTextAreaElement ||
+    element instanceof HTMLSelectElement ||
+    element.isContentEditable
+  );
+}
+
+/** The settings sections as sidebar entries — what the body shows under `/settings`. */
+function SettingsNav() {
+  return (
+    <ul className="space-y-0.5" aria-label="Settings sections">
+      {SETTINGS_TABS.map((tab) => (
+        <li key={tab.section}>
+          <NavLink
+            to={tab.path}
+            end={tab.path === "/settings"}
+            prefetch="intent"
+            className={({ isActive, isPending }) =>
+              cn(
+                "flex items-center gap-2 rounded-md px-2 py-1.5 text-sm text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground",
+                (isActive || isPending) && "bg-muted font-medium text-foreground",
+              )
+            }
+          >
+            <tab.icon className="size-4" aria-hidden />
+            {tab.label}
+          </NavLink>
+        </li>
+      ))}
+    </ul>
   );
 }
 
@@ -189,6 +286,8 @@ function readLastVisited(surface: Surface, orgId: string): string | null {
 function useRememberSurface(surface: Surface, orgId: string) {
   const location = useLocation();
   useEffect(() => {
+    rememberWorkspacePath(location.pathname, location.search);
+    if (isSettingsPath(location.pathname)) return;
     try {
       window.sessionStorage.setItem(
         lastVisitedKey(surface, orgId),
@@ -217,9 +316,11 @@ interface WorkspaceInfo {
 function AccountMenu({
   account,
   surface,
+  canSettings,
 }: {
   account: SidebarAccount;
   surface: Surface;
+  canSettings: boolean;
 }) {
   const submit = useSubmit();
   const display = account.name || account.email || "Account";
@@ -323,6 +424,14 @@ function AccountMenu({
             </DropdownMenuSubContent>
           </DropdownMenuPortal>
         </DropdownMenuSub>
+        {canSettings && (
+          <DropdownMenuItem asChild>
+            <Link to="/settings" prefetch="intent" className="cursor-pointer">
+              <Settings className="mr-2 h-4 w-4 text-muted-foreground" aria-hidden />
+              Settings
+            </Link>
+          </DropdownMenuItem>
+        )}
         <ThemeMenuSub />
         <DropdownMenuSeparator />
         <DropdownMenuItem

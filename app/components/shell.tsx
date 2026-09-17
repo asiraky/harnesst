@@ -451,10 +451,13 @@ export const accentText: Record<Accent, string> = {
 };
 
 export function PageHeader({
+  eyebrow,
   title,
   description,
   actions,
 }: {
+  /** Small label above the title naming the area the page belongs to ("Settings"). */
+  eyebrow?: React.ReactNode;
   title: React.ReactNode;
   description?: React.ReactNode;
   actions?: React.ReactNode;
@@ -465,6 +468,11 @@ export function PageHeader({
   return (
     <div className="mb-8 flex flex-wrap items-start justify-between gap-4">
       <div className="min-w-0 max-w-full">
+        {eyebrow && (
+          <p className="mb-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+            {eyebrow}
+          </p>
+        )}
         <h1 className="[overflow-wrap:anywhere] text-2xl font-semibold tracking-tight">{title}</h1>
         {description && (
           <p className="mt-1 text-sm text-muted-foreground">{description}</p>
