@@ -11,7 +11,7 @@ export function bohTeamHref(projectId: string): string {
   return `/repos/${projectId}`;
 }
 
-/** One member's BOH config surface; collapses to the repo level for single-agent repos. */
+/** One member's BOH overview; collapses to the repo level for single-agent repos. */
 export function bohAgentHref(
   project: Pick<Project, "id" | "layout"> & Partial<Pick<Project, "slug">>,
   agentName: string,
@@ -19,4 +19,12 @@ export function bohAgentHref(
   const projectPath = project.slug ?? project.id;
   if (project.layout !== "team") return bohTeamHref(projectPath);
   return `/repos/${projectPath}/agents/${encodeURIComponent(agentName)}`;
+}
+
+/** One member's Settings tab in Build — the "configure this agent" jump from its chat. */
+export function bohAgentSettingsHref(
+  project: Pick<Project, "id" | "layout"> & Partial<Pick<Project, "slug">>,
+  agentName: string,
+): string {
+  return `${bohAgentHref(project, agentName)}/settings`;
 }

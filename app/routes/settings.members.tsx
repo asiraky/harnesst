@@ -1,5 +1,5 @@
 import { useRef, useState } from "react";
-import { Building2, MailPlus, Users } from "lucide-react";
+import { MailPlus, Users } from "lucide-react";
 import { Form, redirect } from "react-router";
 
 import { grantsNoAccess } from "~/auth/invitation-grant.server";
@@ -21,6 +21,7 @@ import {
   resolveActiveWorkspace,
 } from "~/auth/workspace.server";
 import { listProjects } from "~/db/queries.server";
+import { SettingsHeader } from "~/components/settings-tabs";
 import { AppShell, PageHeader, accentText } from "~/components/shell";
 import { LocalizedDate } from "~/components/localized-values";
 import { Badge } from "~/components/ui/badge";
@@ -45,7 +46,7 @@ import { noindexMeta } from "~/lib/seo";
 import { auth as betterAuth } from "~/lib/auth.server";
 import { publicAuthErrorMessage } from "~/lib/auth-error.server";
 import { recordAudit } from "~/managed/audit.server";
-import type { Route } from "./+types/org.members";
+import type { Route } from "./+types/settings.members";
 
 type MemberRow = Awaited<
   ReturnType<typeof betterAuth.api.listMembers>
@@ -277,7 +278,7 @@ export async function action(args: Route.ActionArgs) {
       target: email,
       meta: { role, grants: read.grants },
     });
-    throw redirect("/org/members");
+    throw redirect("/settings/members");
   }
 
   if (intent === "set-access") {
@@ -305,7 +306,7 @@ export async function action(args: Route.ActionArgs) {
       target: member.user.email,
       meta: { projectId, role },
     });
-    throw redirect("/org/members");
+    throw redirect("/settings/members");
   }
 
   if (intent === "set-role") {
@@ -335,7 +336,7 @@ export async function action(args: Route.ActionArgs) {
       target: member.user.email,
       meta: { from: member.role, to: role },
     });
-    throw redirect("/org/members");
+    throw redirect("/settings/members");
   }
 
   if (intent === "remove-member") {
@@ -365,7 +366,7 @@ export async function action(args: Route.ActionArgs) {
       action: "member_removed",
       target: member.user.email,
     });
-    throw redirect("/org/members");
+    throw redirect("/settings/members");
   }
 
   if (intent === "cancel-invite") {
@@ -405,7 +406,7 @@ export async function action(args: Route.ActionArgs) {
       action: "invite_revoked",
       target: cancelled.email,
     });
-    throw redirect("/org/members");
+    throw redirect("/settings/members");
   }
 
   if (intent === "resend-invite") {
@@ -465,29 +466,7 @@ export async function action(args: Route.ActionArgs) {
       action: "invite_resent",
       target: email,
     });
-    throw redirect("/org/members");
-  }
-
-  if (intent === "rename-workspace") {
-    const name = String(form.get("name") ?? "").trim();
-    if (!name) return { error: "Enter a workspace name." };
-    try {
-      await betterAuth.api.updateOrganization({
-        body: { organizationId: active.org.id, data: { name } },
-        headers: session.requestHeaders,
-      });
-    } catch (error) {
-      return {
-        error: publicAuthErrorMessage(error, "Could not rename the workspace."),
-      };
-    }
-    await recordAudit({
-      orgId: active.org.id,
-      actorUserId: session.user.id,
-      action: "workspace_renamed",
-      meta: { name },
-    });
-    throw redirect("/org/members");
+    throw redirect("/settings/members");
   }
 
   return { error: "Unknown action." };
@@ -723,10 +702,7 @@ export default function Members({
 
   return (
     <AppShell userEmail={user.email}>
-      <PageHeader
-        title="Members"
-        description="Owners hold every repository. Admins manage the workspace but only see the repositories they're granted. Members see only what they're granted."
-      />
+      <SettingsHeader description="Owners hold every repository. Admins manage the workspace but only see the repositories they're granted. Members see only what they're granted." />
 
       <div className="space-y-6">
         {error && (
@@ -737,36 +713,6 @@ export default function Members({
             {error}
           </p>
         )}
-
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <Building2
-                className={`size-4 ${accentText.indigo}`}
-                aria-hidden
-              />
-              Workspace
-            </CardTitle>
-            <CardDescription>
-              The workspace name is visible to every member.
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <Form method="post" className="flex max-w-xl items-end gap-2">
-              <input type="hidden" name="intent" value="rename-workspace" />
-              <div className="flex-1 space-y-1.5">
-                <Label htmlFor="name">Workspace name</Label>
-                <Input
-                  id="name"
-                  name="name"
-                  defaultValue={org.name}
-                  autoComplete="off"
-                />
-              </div>
-              <Button type="submit">Save</Button>
-            </Form>
-          </CardContent>
-        </Card>
 
         <InviteTeammate repos={repos} />
 

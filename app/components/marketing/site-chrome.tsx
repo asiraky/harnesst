@@ -19,7 +19,7 @@ export const REPO_URL = "https://github.com/asiraky/harnesst";
  */
 export function SiteHeader({ appOrigin = "" }: { appOrigin?: string }) {
   // The root loader reads the Better Auth session, so identity is available app-wide.
-  // When the visitor is already signed in, offer a Dashboard link instead of Sign in.
+  // When the visitor is already signed in, open the app (Chat is home) instead of Sign in.
   const rootData = useRouteLoaderData<typeof rootLoader>("root");
   const isSignedIn = !appOrigin && Boolean(rootData?.user);
 
@@ -43,10 +43,10 @@ export function SiteHeader({ appOrigin = "" }: { appOrigin?: string }) {
         </a>
         <ThemeToggle />
         <a
-          href={`${appOrigin}${isSignedIn ? "/dashboard" : "/login"}`}
+          href={`${appOrigin}${isSignedIn ? "/" : "/login"}`}
           className="rounded-full border border-harnesst-fg px-4 py-1.5 transition hover:bg-harnesst-fg hover:text-harnesst-bg"
         >
-          {isSignedIn ? "Dashboard" : "Sign in"}
+          {isSignedIn ? "Open app" : "Sign in"}
         </a>
       </nav>
     </header>

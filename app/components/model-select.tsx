@@ -351,7 +351,7 @@ export function ModelSelect({
                 />
                 <p>No model provider is connected to this workspace.</p>
                 <Button asChild size="sm" variant="secondary">
-                  <Link to="/org/settings">Connect a provider</Link>
+                  <Link to="/settings/connections">Connect a provider</Link>
                 </Button>
               </div>
             )}
@@ -359,7 +359,7 @@ export function ModelSelect({
               <div className="space-y-3 px-4 py-7 text-center text-sm">
                 <p>Connected provider catalogs are currently unavailable.</p>
                 <Button asChild size="sm" variant="secondary">
-                  <Link to="/org/settings">Review connections</Link>
+                  <Link to="/settings/connections">Review connections</Link>
                 </Button>
               </div>
             )}

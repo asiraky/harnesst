@@ -2,46 +2,36 @@
  * Shared application chrome, encoding the product hierarchy (D2/D3 + the eve model, M5.8):
  *   workspace (org) → repository → team member (agents/:name URL level) → page.
  *
- * AppShell renders the workspace-level header. AgentNav renders the section tabs — a
- * DIFFERENT set per level, because the scopes differ: repo level (team landing) gets the
- * repo-wide surfaces, member level gets the member-scoped ones, and single-agent repos
- * collapse both levels into one merged row.
+ * AppShell renders the Build surface's frame: the shared sidebar (components/app-sidebar.tsx,
+ * fed by the `routes/build` layout loader) beside the page column with its breadcrumb trail.
+ * AgentNav renders the section tabs — a DIFFERENT set per level, because the scopes differ:
+ * repo level (team landing) gets the repo-wide surfaces, member level gets the member-scoped
+ * ones, and single-agent repos collapse both levels into one merged row.
  */
 import {
-  Building2,
-  Check,
-  ChevronsUpDown,
-  LogOut,
+  Bot,
+  FolderGit2,
   Menu,
   Plus,
-  User,
+  Store,
   Users,
   type LucideIcon,
 } from "lucide-react";
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import {
-  Form,
   Link,
   NavLink,
-  useFetcher,
   useLocation,
   useNavigate,
   useNavigation,
+  useRouteLoaderData,
 } from "react-router";
 
+import { AppSidebar } from "~/components/app-sidebar";
 import { PublishControl } from "~/components/publish";
 import { WorkspaceTasksIndicator } from "~/components/workspace-tasks";
 import { BrandWordmark } from "~/components/marketing/logo";
-import { ThemeToggle } from "~/components/theme-toggle";
 import { Button } from "~/components/ui/button";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "~/components/ui/dropdown-menu";
 import {
   Select,
   SelectContent,
@@ -51,8 +41,9 @@ import {
 } from "~/components/ui/select";
 import { Separator } from "~/components/ui/separator";
 import { TooltipProvider } from "~/components/ui/tooltip";
-import { contextPath, subagentContextPath } from "~/lib/paths";
+import { contextPath, repoPath, subagentContextPath } from "~/lib/paths";
 import { cn } from "~/lib/utils";
+import type { BuildSidebarData, loader as buildLoader } from "~/routes/build";
 
 /** One level of the hierarchy trail. No `to` == the current page (rendered unlinked). */
 export interface Crumb {
@@ -105,11 +96,11 @@ export function repoCrumbs(opts: {
 }
 
 export function AppShell({
-  userEmail,
   breadcrumbs,
   fullHeight,
   children,
 }: {
+  /** Accepted for call-site compatibility; the sidebar's account menu reads the layout's data. */
   userEmail?: string | null;
   /** Hierarchy trail: workspace → repo → member → …; the "up" navigation. */
   breadcrumbs?: Crumb[];
@@ -118,53 +109,212 @@ export function AppShell({
   fullHeight?: boolean;
   children: React.ReactNode;
 }) {
+  const layout = useRouteLoaderData<typeof buildLoader>("routes/build");
+  const location = useLocation();
+  // Mobile drawer state: below md the sidebar is off-canvas behind the menu button and closes
+  // on every committed navigation.
+  const [open, setOpen] = useState(false);
+  useEffect(() => setOpen(false), [location.key]);
+  const hasCrumbs = !!breadcrumbs && breadcrumbs.length > 0;
+
   return (
     <TooltipProvider>
-    <div className={fullHeight ? "flex h-dvh flex-col overflow-hidden" : "min-h-screen"}>
-      <NavProgress />
-      <header className="sticky top-0 z-40 shrink-0 border-b bg-background/80 backdrop-blur">
-        <div className="mx-auto flex min-h-14 max-w-5xl flex-wrap items-center gap-2 px-4 sm:gap-4 sm:px-6">
-          <Link
-            to="/dashboard"
-            className="flex shrink-0 items-center"
-            aria-label="harnesst dashboard"
-          >
-            <BrandWordmark className="h-5" />
-          </Link>
-          {/* The primary nav lives behind one menu at every width. Inline, it was five links
-              (~490px) sharing a max-w-5xl row with the wordmark, a two-level breadcrumb trail
-              and the account controls — the row was over budget by design, and whatever sat
-              between them got crushed. */}
-          <PrimaryNavMenu />
-          {breadcrumbs && breadcrumbs.length > 0 && (
-            <Breadcrumbs crumbs={breadcrumbs} />
-          )}
-          <div className="ml-auto flex shrink-0 items-center gap-1">
-            {userEmail && <WorkspaceMenu />}
-            <ThemeToggle />
-            <AccountMenu userEmail={userEmail} />
-          </div>
-        </div>
-        {/* Strips below the header, both project-scoped and both rendering nothing off a
-            /repos/:id page. Order matters: task progress (issue #142) is what's happening NOW,
-            so it sits above the publish nudge (issue #225 §4.1), which is only ever a
-            dismissible "there's something you haven't shipped". */}
-        <WorkspaceTasksIndicator />
-        <PublishControl />
-      </header>
-      <main
-        className={
-          // Full-height (chat) pages go full-bleed: children center their own columns so
-          // the scroll region can span the whole viewport width.
-          fullHeight
-            ? "flex min-h-0 flex-1 flex-col"
-            : "mx-auto w-full max-w-5xl px-4 py-6 sm:px-6 sm:py-8"
-        }
+      <div
+        className={cn(
+          "flex bg-background",
+          fullHeight ? "h-dvh overflow-hidden" : "min-h-screen",
+        )}
       >
-        {children}
-      </main>
-    </div>
+        <NavProgress />
+        {layout?.sidebar && layout.user && (
+          <>
+            <AppSidebar
+              surface="build"
+              repos={layout.sidebar.repos}
+              canToggle
+              canSettings={layout.sidebar.workspaceAdmin}
+              account={{
+                name: layout.user.name ?? null,
+                email: layout.user.email ?? null,
+                orgName: layout.sidebar.orgName,
+              }}
+              className={cn(
+                // Desktop: pinned to the viewport beside a normally-scrolling document.
+                "top-0 h-dvh md:sticky",
+                open ? "fixed inset-y-0 left-0 z-50 flex" : "hidden md:flex",
+              )}
+            >
+              <BuildNav sidebar={layout.sidebar} />
+            </AppSidebar>
+            {open && (
+              <button
+                type="button"
+                aria-label="Close menu"
+                className="fixed inset-0 z-40 bg-black/40 md:hidden"
+                onClick={() => setOpen(false)}
+              />
+            )}
+          </>
+        )}
+        <div
+          className={cn(
+            "flex min-w-0 flex-1 flex-col",
+            fullHeight && "min-h-0 overflow-hidden",
+          )}
+        >
+          <header className="sticky top-0 z-30 shrink-0 bg-background/80 backdrop-blur">
+            <div
+              className={cn(
+                "flex min-h-12 flex-wrap items-center gap-2 border-b px-4 sm:gap-4 sm:px-6",
+                !hasCrumbs && "md:hidden",
+              )}
+            >
+              <Button
+                variant="ghost"
+                size="icon"
+                className="-ml-2 md:hidden"
+                aria-label="Open menu"
+                onClick={() => setOpen(true)}
+              >
+                <Menu className="h-4 w-4" aria-hidden />
+              </Button>
+              <Link
+                to="/dashboard"
+                className="flex shrink-0 items-center md:hidden"
+                aria-label="harnesst build home"
+              >
+                <BrandWordmark className="h-5" />
+              </Link>
+              {breadcrumbs && breadcrumbs.length > 0 && (
+                <Breadcrumbs crumbs={breadcrumbs} />
+              )}
+            </div>
+            {/* Strips below the header, both project-scoped and both rendering nothing off a
+                /repos/:id page. Order matters: task progress (issue #142) is what's happening NOW,
+                so it sits above the publish nudge (issue #225 §4.1), which is only ever a
+                dismissible "there's something you haven't shipped". */}
+            <WorkspaceTasksIndicator />
+            <PublishControl />
+          </header>
+          <main
+            className={
+              // Full-height (chat) pages go full-bleed: children center their own columns so
+              // the scroll region can span the whole viewport width.
+              fullHeight
+                ? "flex min-h-0 flex-1 flex-col"
+                : "mx-auto w-full max-w-5xl px-4 py-6 sm:px-6 sm:py-8"
+            }
+          >
+            {children}
+          </main>
+        </div>
+      </div>
     </TooltipProvider>
+  );
+}
+
+/**
+ * The Build sidebar body: the repositories you can work on, each with its roster, then the
+ * surface's other destinations. It mirrors Chat's teams → agents list on purpose — the same
+ * shape on both sides is what makes the toggle feel like a flip rather than a teleport.
+ */
+function BuildNav({ sidebar }: { sidebar: BuildSidebarData }) {
+  const { pathname } = useLocation();
+  const item =
+    "flex items-center gap-2 rounded-md px-2 py-1.5 text-sm transition-colors hover:bg-muted/60";
+  return (
+    <div className="space-y-4">
+      <div>
+        <NavLink
+          to="/dashboard"
+          end
+          prefetch="intent"
+          className={({ isActive }) =>
+            cn(
+              "mb-1 flex items-center gap-2 rounded-md px-2 py-1 text-xs font-medium uppercase tracking-wide text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground",
+              isActive && "bg-muted text-foreground",
+            )
+          }
+        >
+          <FolderGit2 className="size-3.5" aria-hidden />
+          Repositories
+        </NavLink>
+        {sidebar.repos.length === 0 ? (
+          <p className="px-2 py-1 text-xs text-muted-foreground/70">
+            {sidebar.workspaceAdmin
+              ? "No repositories yet."
+              : "No repositories you can edit."}
+          </p>
+        ) : (
+          <ul className="space-y-0.5">
+            {sidebar.repos.map((repo) => {
+              const base = repoPath(repo.slug);
+              const inRepo = pathname === base || pathname.startsWith(`${base}/`);
+              const onMember = inRepo && pathname.startsWith(`${base}/agents/`);
+              return (
+                <li key={repo.id}>
+                  <Link
+                    to={base}
+                    prefetch="intent"
+                    aria-current={inRepo && !onMember ? "page" : undefined}
+                    className={cn(item, inRepo && !onMember && "bg-muted font-medium")}
+                  >
+                    {repo.layout === "team" ? (
+                      <Users className="size-3.5 shrink-0 text-muted-foreground" aria-hidden />
+                    ) : (
+                      <Bot className="size-3.5 shrink-0 text-muted-foreground" aria-hidden />
+                    )}
+                    <span className="min-w-0 flex-1 truncate">{repo.name}</span>
+                  </Link>
+                  {repo.layout === "team" && repo.agents.length > 0 && (
+                    <ul className="ml-4 space-y-0.5 border-l pl-1">
+                      {repo.agents.map((agent) => {
+                        const href = contextPath(repo.slug, agent.name);
+                        const active = pathname === href || pathname.startsWith(`${href}/`);
+                        return (
+                          <li key={agent.id}>
+                            <Link
+                              to={href}
+                              prefetch="intent"
+                              aria-current={active ? "page" : undefined}
+                              className={cn(item, "py-1", active && "bg-muted font-medium")}
+                            >
+                              <span className="min-w-0 flex-1 truncate">{agent.name}</span>
+                            </Link>
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  )}
+                </li>
+              );
+            })}
+          </ul>
+        )}
+        {sidebar.workspaceAdmin && (
+          <Link
+            to="/connect"
+            prefetch="intent"
+            className={cn(item, "mt-0.5 text-muted-foreground hover:text-foreground")}
+          >
+            <Plus className="size-3.5" aria-hidden />
+            New repository
+          </Link>
+        )}
+      </div>
+      <div>
+        <NavLink
+          to="/marketplace"
+          prefetch="intent"
+          className={({ isActive }) =>
+            cn(item, "text-muted-foreground hover:text-foreground", isActive && "bg-muted font-medium text-foreground")
+          }
+        >
+          <Store className="size-3.5" aria-hidden />
+          Marketplace
+        </NavLink>
+      </div>
+    </div>
   );
 }
 
@@ -251,212 +401,6 @@ export function SectionHeader({
       </div>
       {actions && <div className="flex max-w-full flex-wrap items-center gap-2">{actions}</div>}
     </div>
-  );
-}
-
-/** Account dropdown behind a user icon: shows who's signed in, and Sign out. */
-function AccountMenu({ userEmail }: { userEmail?: string | null }) {
-  return (
-    <DropdownMenu>
-      <DropdownMenuTrigger asChild>
-        <Button variant="ghost" size="icon" aria-label="Account">
-          <User className="h-4 w-4" />
-        </Button>
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" className="w-56">
-        {userEmail && (
-          <>
-            <DropdownMenuLabel className="font-normal">
-              <span className="block text-xs text-muted-foreground">
-                Signed in as
-              </span>
-              <span className="block truncate text-sm font-medium">
-                {userEmail}
-              </span>
-            </DropdownMenuLabel>
-            <DropdownMenuSeparator />
-          </>
-        )}
-        <Form method="post" action="/dashboard">
-          <input type="hidden" name="intent" value="sign-out" />
-          <DropdownMenuItem asChild>
-            <button type="submit" className="w-full cursor-pointer">
-              <LogOut className="mr-2 h-4 w-4" />
-              Sign out
-            </button>
-          </DropdownMenuItem>
-        </Form>
-      </DropdownMenuContent>
-    </DropdownMenu>
-  );
-}
-
-/**
- * Workspace switcher in the header (issue #56). Self-fetches the user's workspaces from
- * `/api/workspaces` (same pattern as the Publish control) so it appears on every authed page
- * without threading data through each loader. Always visible once loaded so the current
- * workspace is never ambiguous; it also links to `/workspaces` to create another. Each item is a
- * real `<Form>` POST to `/workspaces` (not a fetcher) so switching does a full document
- * navigation: the org changes underneath, and every loader's data would otherwise be stale.
- */
-interface WorkspaceInfo {
-  id: string;
-  name: string;
-}
-function WorkspaceMenu() {
-  const fetcher = useFetcher<{
-    currentOrgId: string | null;
-    currentName: string | null;
-    workspaces: WorkspaceInfo[];
-  }>();
-  const { load } = fetcher;
-  useEffect(() => {
-    load("/api/workspaces");
-  }, [load]);
-
-  const data = fetcher.data;
-  // While loading render nothing (avoids a layout flash).
-  if (!data) return null;
-
-  const currentName =
-    data.currentName ??
-    data.workspaces.find((w) => w.id === data.currentOrgId)?.name ??
-    "Workspace";
-
-  return (
-    <DropdownMenu>
-      <DropdownMenuTrigger asChild>
-        <Button
-          variant="ghost"
-          size="sm"
-          className="hidden max-w-40 items-center gap-1.5 sm:flex"
-          aria-label="Switch workspace"
-        >
-          <Building2 className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
-          <span className="truncate">{currentName}</span>
-          <ChevronsUpDown className="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden />
-        </Button>
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" className="w-56">
-        <DropdownMenuLabel className="text-xs text-muted-foreground">
-          Switch workspace
-        </DropdownMenuLabel>
-        <DropdownMenuSeparator />
-        {data.workspaces.map((ws) => {
-          const isCurrent = ws.id === data.currentOrgId;
-          return (
-            <Form method="post" action="/workspaces" key={ws.id}>
-              <input type="hidden" name="orgId" value={ws.id} />
-              <input type="hidden" name="returnTo" value="/dashboard" />
-              <DropdownMenuItem asChild>
-                <button type="submit" className="w-full cursor-pointer" disabled={isCurrent}>
-                  <Check
-                    className={cn("mr-2 h-4 w-4", isCurrent ? "opacity-100" : "opacity-0")}
-                    aria-hidden
-                  />
-                  <span className="truncate">{ws.name}</span>
-                </button>
-              </DropdownMenuItem>
-            </Form>
-          );
-        })}
-        <DropdownMenuSeparator />
-        <DropdownMenuItem asChild>
-          <Link to="/workspaces" className="cursor-pointer">
-            <Plus className="mr-2 h-4 w-4" aria-hidden />
-            Create workspace
-          </Link>
-        </DropdownMenuItem>
-      </DropdownMenuContent>
-    </DropdownMenu>
-  );
-}
-
-/**
- * The primary nav. `end` marks a route that only matches exactly — "/" is the Front of House
- * root and prefixes every other path, so without it every page would read as Front of house.
- */
-const NAV_ITEMS: { to: string; label: string; end?: boolean }[] = [
-  // House switcher (FOH D18): back into the operate surface at the app root.
-  { to: "/", label: "Front of house", end: true },
-  { to: "/dashboard", label: "Repositories" },
-  { to: "/marketplace", label: "Marketplace" },
-  { to: "/org/members", label: "Members" },
-  { to: "/org/settings", label: "Settings" },
-];
-
-/**
- * Which nav item the current path belongs to, or null outside all of them. Longest match wins, so
- * /org/settings resolves to Settings rather than to whichever /org item was declared first.
- * `/repos/*` is Repositories' territory: the dashboard is the list, a repo page is one entry in
- * it, and a header that went blank the moment you opened a repository would be worse than one
- * that admits where you are.
- *
- * Exported for unit tests.
- */
-export function activeNavLabel(pathname: string): string | null {
-  if (pathname === "/") return "Front of house";
-  if (pathname.startsWith("/repos/") || pathname === "/repos") return "Repositories";
-  const matches = NAV_ITEMS.filter(
-    (item) => !item.end && (pathname === item.to || pathname.startsWith(`${item.to}/`)),
-  );
-  if (matches.length === 0) return null;
-  return matches.reduce((best, item) => (item.to.length > best.to.length ? item : best))
-    .label;
-}
-
-/**
- * Primary nav, behind one menu at every width. The trigger names the section you're in, so the
- * "where am I" signal an inline tab row used to give survives the fold — the difference is that
- * it now costs ~140px instead of ~490px, which is what made room for the breadcrumb trail.
- */
-function PrimaryNavMenu() {
-  const location = useLocation();
-  const active = activeNavLabel(location.pathname);
-  return (
-    <DropdownMenu>
-      <DropdownMenuTrigger asChild>
-        <Button
-          variant="ghost"
-          size="sm"
-          className="shrink-0 gap-1.5 px-2"
-          aria-label={active ? `Menu — ${active}` : "Menu"}
-        >
-          <Menu className="h-4 w-4 shrink-0" aria-hidden />
-          {active && <span className="hidden sm:inline">{active}</span>}
-          <ChevronsUpDown
-            className="hidden h-3.5 w-3.5 shrink-0 text-muted-foreground sm:inline"
-            aria-hidden
-          />
-        </Button>
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align="start" className="w-52">
-        {NAV_ITEMS.map((item) => (
-          <DropdownMenuItem key={item.to} asChild>
-            <NavLink
-              to={item.to}
-              end={item.end}
-              prefetch="intent"
-              className="cursor-pointer"
-            >
-              {({ isActive }) => (
-                <>
-                  <Check
-                    className={cn(
-                      "mr-2 h-4 w-4",
-                      // NavLink's own isActive can't see that /repos/* belongs to Repositories.
-                      isActive || item.label === active ? "opacity-100" : "opacity-0",
-                    )}
-                    aria-hidden
-                  />
-                  {item.label}
-                </>
-              )}
-            </NavLink>
-          </DropdownMenuItem>
-        ))}
-      </DropdownMenuContent>
-    </DropdownMenu>
   );
 }
 
