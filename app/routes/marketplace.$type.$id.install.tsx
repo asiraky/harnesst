@@ -1158,7 +1158,7 @@ export default function InstallWizard({
                   <AlertDescription>
                     Agent templates need a connected, provider-qualified model.
                     Select a default in{" "}
-                    <Link to="/org/settings" className="underline">
+                    <Link to="/settings/connections" className="underline">
                       Org settings
                     </Link>{" "}
                     before installing this agent.

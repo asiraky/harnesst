@@ -77,7 +77,7 @@ vi.mock("~/lib/auth.server", () => ({
 }));
 vi.mock("~/managed/audit.server", () => ({ recordAudit: mocks.recordAudit }));
 
-import { action } from "~/routes/org.members";
+import { action } from "~/routes/settings.members";
 
 const ORG_ID = "org_1";
 const EMAIL = "teammate@company.com";

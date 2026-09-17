@@ -1,6 +1,13 @@
 /**
- * Org governance (managed mode — PRD §7.5, ARCH §3.8). Spend cap + kill-switch, month-to-date
- * token usage, and the operational audit log. Workspace membership is managed by Better Auth's
+ * Workspace settings (managed mode — PRD §7.5, ARCH §3.8), one module behind three tabs:
+ *
+ *   /settings              General     — workspace name, spend cap + kill-switch, usage
+ *   /settings/connections  Connections — model providers, workspace default model, overrides
+ *   /settings/audit        Audit       — the operational audit log
+ *
+ * (Members is its own module, settings.members.tsx.) The module is registered once per tab and
+ * picks the section from the pathname, so every form and fetcher posts to the page it is on and
+ * the loader/action stay in one place. Membership itself is managed by Better Auth's
  * organization plugin.
  */
 import { getSessionAuth, sessionLoader } from "~/auth/session.server";
@@ -18,6 +25,7 @@ import {
   Link,
   redirect,
   useFetcher,
+  useLocation,
   useRevalidator,
   type ActionFunctionArgs,
   type LoaderFunctionArgs,
@@ -28,6 +36,7 @@ import {
   LocalizedNumber,
 } from "~/components/localized-values";
 import { ModelSelection } from "~/components/model-select";
+import { SettingsHeader, settingsSection } from "~/components/settings-tabs";
 import { AppShell, PageHeader, accentText } from "~/components/shell";
 import { Button } from "~/components/ui/button";
 import {
@@ -94,8 +103,9 @@ import type { auditLog } from "~/db/schema";
 import type { HarnesstMode } from "~/seams/types";
 import { noindexMeta } from "~/lib/seo";
 import { auth as betterAuth } from "~/lib/auth.server";
+import { publicAuthErrorMessage } from "~/lib/auth-error.server";
 import { invalidateOrganizationEnvironments } from "~/deploy/env-reconcile.server";
-import type { Route } from "./+types/org.settings";
+import type { Route } from "./+types/settings";
 
 interface OrgSettingsView {
   org: WorkspaceInfo | null;
@@ -226,6 +236,30 @@ export async function action(args: ActionFunctionArgs) {
   const form = await args.request.formData();
 
   const intent = String(form.get("intent") ?? "");
+  // Every tab posts to its own URL; land back on it rather than on a fixed one.
+  const here = new URL(args.request.url).pathname;
+
+  if (intent === "rename-workspace") {
+    const name = String(form.get("name") ?? "").trim();
+    if (!name) return { error: "Enter a workspace name." };
+    try {
+      await betterAuth.api.updateOrganization({
+        body: { organizationId: org.id, data: { name } },
+        headers: auth.requestHeaders,
+      });
+    } catch (error) {
+      return {
+        error: publicAuthErrorMessage(error, "Could not rename the workspace."),
+      };
+    }
+    await recordAudit({
+      orgId: org.id,
+      actorUserId: auth.user.id,
+      action: "workspace_renamed",
+      meta: { name },
+    });
+    throw redirect(here);
+  }
 
   if (intent === "connect-api-key") {
     const provider = String(form.get("provider") ?? "");
@@ -278,7 +312,7 @@ export async function action(args: ActionFunctionArgs) {
       action: "model_provider_renamed",
       target: id,
     });
-    throw redirect("/org/settings");
+    throw redirect(here);
   }
 
   if (intent === "remove-connection") {
@@ -317,7 +351,7 @@ export async function action(args: ActionFunctionArgs) {
       action: "model_provider_removed",
       target: id,
     });
-    throw redirect("/org/settings");
+    throw redirect(here);
   }
 
   if (intent === "set-assistant-model") {
@@ -349,7 +383,7 @@ export async function action(args: ActionFunctionArgs) {
       action: "workspace_assistant_model_set",
       meta: { model: model || "(none)", effort: effort ?? "provider-default" },
     });
-    throw redirect("/org/settings");
+    throw redirect(here);
   }
 
   if (intent === "remove-agent-model-override") {
@@ -387,14 +421,20 @@ export async function action(args: ActionFunctionArgs) {
     action: "spend_limit_change",
     meta: { monthlyTokenCap, killSwitch },
   });
-  throw redirect("/org/settings");
+  throw redirect(here);
 }
 
 export function meta() {
-  return [{ title: "Org settings · harnesst" }, ...noindexMeta];
+  return [{ title: "Settings · harnesst" }, ...noindexMeta];
 }
 
-export default function OrgSettings({ loaderData }: Route.ComponentProps) {
+export default function WorkspaceSettings({
+  loaderData,
+  actionData,
+}: Route.ComponentProps) {
+  const section = settingsSection(useLocation().pathname);
+  const actionError =
+    actionData && "error" in actionData ? actionData.error : null;
   const {
     user,
     org,
@@ -428,20 +468,62 @@ export default function OrgSettings({ loaderData }: Route.ComponentProps) {
 
   return (
     <AppShell userEmail={user?.email}>
-      <PageHeader
-        icon={Building2}
-        accent="indigo"
-        title="Settings"
+      <SettingsHeader
         description={
           <>
-            Mode: <span className="font-mono">{mode}</span>. Authentication and
-            organization roles are managed by Better Auth.
+            {org.name} · mode <span className="font-mono">{mode}</span>
           </>
         }
       />
 
       <div className="space-y-6">
+        {actionError && (
+          <p
+            role="alert"
+            className="rounded-lg border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive"
+          >
+            {actionError}
+          </p>
+        )}
+
+        {section === "general" && (
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Building2
+                  className={`size-4 ${accentText.indigo}`}
+                  aria-hidden
+                />
+                Workspace
+              </CardTitle>
+              <CardDescription>
+                The workspace name is visible to every member.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              {canManage ? (
+                <Form method="post" className="flex max-w-xl items-end gap-2">
+                  <input type="hidden" name="intent" value="rename-workspace" />
+                  <div className="flex-1 space-y-1.5">
+                    <Label htmlFor="name">Workspace name</Label>
+                    <Input
+                      id="name"
+                      name="name"
+                      defaultValue={org.name}
+                      autoComplete="off"
+                    />
+                  </div>
+                  <Button type="submit">Save</Button>
+                </Form>
+              ) : (
+                <p className="text-sm">{org.name}</p>
+              )}
+            </CardContent>
+          </Card>
+        )}
+
         {/* Connected model providers + workspace default */}
+        {section === "connections" && (
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
@@ -563,8 +645,10 @@ export default function OrgSettings({ loaderData }: Route.ComponentProps) {
             />
           </CardContent>
         </Card>
+        )}
 
         {/* Spend controls */}
+        {section === "general" && (
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
@@ -625,8 +709,10 @@ export default function OrgSettings({ loaderData }: Route.ComponentProps) {
             )}
           </CardContent>
         </Card>
+        )}
 
         {/* Audit log */}
+        {section === "audit" && (
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
@@ -663,6 +749,7 @@ export default function OrgSettings({ loaderData }: Route.ComponentProps) {
             )}
           </CardContent>
         </Card>
+        )}
       </div>
     </AppShell>
   );

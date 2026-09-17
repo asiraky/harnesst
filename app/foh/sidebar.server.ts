@@ -39,7 +39,9 @@ export interface FohSidebarTeam {
   /** Canonical page URL segment; projectId remains available for API/storage identity. */
   projectSlug?: string;
   name: string;
-  /** The viewer's role on this repo — `write` shows the manage-in-Repositories link. */
+  /** Single-agent repos have no member pages in Build; the surface toggle needs to know. */
+  layout: "single" | "team";
+  /** The viewer's role on this repo — `write` means they can also enter Build for it. */
   role: ProjectRole;
   agents: FohSidebarAgent[];
 }
@@ -140,6 +142,7 @@ export async function loadFohSidebar(
       projectId: project.id,
       projectSlug: project.slug,
       name: project.name,
+      layout: project.layout === "team" ? "team" : "single",
       role: roleByProject.get(project.id) ?? "read",
       agents: rosters[i].map((agent) => ({
         id: agent.id,

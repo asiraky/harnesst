@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 
-import { assertProductionAuthEnvironment } from "~/lib/auth-env.server";
+import {
+  assertProductionAuthEnvironment,
+  devTrustedOrigins,
+} from "~/lib/auth-env.server";
 
 const validProductionEnvironment: NodeJS.ProcessEnv = {
   NODE_ENV: "production",
@@ -188,5 +191,30 @@ describe("production auth and email environment", () => {
     expect(() =>
       assertProductionAuthEnvironment({ NODE_ENV: "test" }),
     ).not.toThrow();
+  });
+});
+
+describe("devTrustedOrigins", () => {
+  it("trusts the tailnet dev hostnames on the dev server's port", () => {
+    expect(
+      devTrustedOrigins({ BETTER_AUTH_URL: "http://localhost:5274" }),
+    ).toEqual(["http://*.harnesst.test:5274"]);
+  });
+
+  it("falls back to the default dev port when BETTER_AUTH_URL is unset", () => {
+    expect(devTrustedOrigins({})).toEqual(["http://*.harnesst.test:5173"]);
+  });
+
+  it("trusts nothing extra in production", () => {
+    expect(
+      devTrustedOrigins({
+        NODE_ENV: "production",
+        BETTER_AUTH_URL: "https://app.example.com",
+      }),
+    ).toEqual([]);
+  });
+
+  it("trusts nothing extra when BETTER_AUTH_URL is unparsable", () => {
+    expect(devTrustedOrigins({ BETTER_AUTH_URL: "not a url" })).toEqual([]);
   });
 });

@@ -11,7 +11,7 @@
  *    who can edit and deploy an agent can already make it exfiltrate the secrets it holds, so
  *    "write but not secrets" would be theatre.
  *
- * Only workspace owners/admins grant or revoke repo access, from /org/members. The creator of a
+ * Only workspace owners/admins grant or revoke repo access, from /settings/members. The creator of a
  * repo gets `write` on it. Every check here is scoped to the org so a grant can never be read or
  * written across tenants.
  */

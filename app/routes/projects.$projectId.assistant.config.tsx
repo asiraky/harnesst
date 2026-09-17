@@ -712,7 +712,7 @@ function ModelField({
           <>
             No workspace default is configured. Connect a model provider and
             choose a default in{" "}
-            <Link to="/org/settings" className="underline">
+            <Link to="/settings/connections" className="underline">
               Org settings
             </Link>
             .

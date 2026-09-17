@@ -1,6 +1,8 @@
 # harnesst — Front of House PRD
 
-> **Working name:** Front of House (FOH).
+> **Working name:** Front of House (FOH). **In the product it is called "Chat"**, and back of
+> house is **"Build"** — one sidebar with a Chat | Build toggle joins the two (2026-09-17). The
+> internal names below are unchanged.
 > Companion to [`PRD.md`](./PRD.md) (pillars 1–7) — this describes the **operate surface**:
 > the chat-first UI where a human runs their team of agents day-to-day.
 > **Status:** Draft v0.1 · **Owner:** asiraky@gmail.com · **Last updated:** 2026-07-23
