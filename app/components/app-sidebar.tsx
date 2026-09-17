@@ -48,6 +48,7 @@ import { cn } from "~/lib/utils";
 export interface SidebarAccount {
   name: string | null;
   email: string | null;
+  orgId: string;
   orgName: string;
 }
 
@@ -74,7 +75,7 @@ export function AppSidebar({
   className?: string;
   children: React.ReactNode;
 }) {
-  useRememberSurface(surface);
+  useRememberSurface(surface, account.orgId);
   return (
     <aside
       className={cn("flex w-64 shrink-0 flex-col border-r bg-background", className)}
@@ -105,7 +106,7 @@ export function AppSidebar({
       </div>
       {canToggle && (
         <div className="shrink-0 border-b px-3 py-2">
-          <SurfaceToggle surface={surface} repos={repos} />
+          <SurfaceToggle surface={surface} repos={repos} orgId={account.orgId} />
         </div>
       )}
 
@@ -127,17 +128,19 @@ export function AppSidebar({
 export function SurfaceToggle({
   surface,
   repos,
+  orgId,
 }: {
   surface: Surface;
   repos: SurfaceRepo[];
+  orgId: string;
 }) {
   const location = useLocation();
   const other: Surface = surface === "chat" ? "build" : "chat";
   const mapped = counterpartHref(surface, location.pathname, repos);
   const [remembered, setRemembered] = useState<string | null>(null);
   useEffect(() => {
-    setRemembered(readLastVisited(other));
-  }, [other, location.key]);
+    setRemembered(readLastVisited(other, orgId));
+  }, [other, orgId, location.key]);
   const otherHref = mapped ?? remembered ?? SURFACE_ROOT[other];
 
   const segment =
@@ -174,27 +177,27 @@ export function SurfaceToggle({
   );
 }
 
-function readLastVisited(surface: Surface): string | null {
+function readLastVisited(surface: Surface, orgId: string): string | null {
   try {
-    return window.sessionStorage.getItem(lastVisitedKey(surface));
+    return window.sessionStorage.getItem(lastVisitedKey(surface, orgId));
   } catch {
     return null;
   }
 }
 
 /** Remember the current URL as the last one visited on `surface` (the toggle's fallback). */
-function useRememberSurface(surface: Surface) {
+function useRememberSurface(surface: Surface, orgId: string) {
   const location = useLocation();
   useEffect(() => {
     try {
       window.sessionStorage.setItem(
-        lastVisitedKey(surface),
+        lastVisitedKey(surface, orgId),
         `${location.pathname}${location.search}`,
       );
     } catch {
       // Storage can be unavailable (private mode quotas); the toggle then falls back to root.
     }
-  }, [surface, location.pathname, location.search]);
+  }, [surface, orgId, location.pathname, location.search]);
 }
 
 interface WorkspaceInfo {

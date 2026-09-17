@@ -24,6 +24,7 @@ export interface BuildSidebarRepo extends SurfaceRepo {
 }
 
 export interface BuildSidebarData {
+  orgId: string;
   orgName: string;
   workspaceAdmin: boolean;
   repos: BuildSidebarRepo[];
@@ -51,6 +52,7 @@ export async function loader(args: LoaderFunctionArgs) {
   const rosters = await Promise.all(visible.map((project) => listAgents(project.id)));
 
   const sidebar: BuildSidebarData = {
+    orgId: active.org.id,
     orgName: active.org.name,
     workspaceAdmin: isWorkspaceAdmin(active.member.role),
     repos: visible.map((project, i) => ({
@@ -65,17 +67,27 @@ export async function loader(args: LoaderFunctionArgs) {
 }
 
 /**
- * The repo list only changes through an action (connect, create member, uninstall...), so a
- * plain page-to-page navigation needn't re-run two queries. Landing on the dashboard is the
- * one GET that refreshes anyway: it is where you arrive after every out-of-band creation flow.
+ * Rosters change out of band — a publish lands, a webhook fires, the overview loader reconciles
+ * agents — so the sidebar must follow. The one navigation that can safely skip the queries is a
+ * plain GET between tabs of the SAME repository (overview → runs → settings...): nothing about
+ * the roster changes on the way. Everything else — actions, cross-repo moves, the dashboard,
+ * an explicit `revalidator.revalidate()` (same URL) — takes the default.
  */
 export function shouldRevalidate({
   formMethod,
+  currentUrl,
   nextUrl,
   defaultShouldRevalidate,
 }: ShouldRevalidateFunctionArgs) {
-  if (formMethod || nextUrl.pathname === "/dashboard") return defaultShouldRevalidate;
-  return false;
+  if (formMethod) return defaultShouldRevalidate;
+  const from = repoOf(currentUrl.pathname);
+  const to = repoOf(nextUrl.pathname);
+  if (from && from === to && currentUrl.pathname !== nextUrl.pathname) return false;
+  return defaultShouldRevalidate;
+}
+
+function repoOf(pathname: string): string | null {
+  return pathname.match(/^\/repos\/([^/]+)/)?.[1] ?? null;
 }
 
 export default function BuildLayout() {

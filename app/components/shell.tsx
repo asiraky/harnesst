@@ -136,6 +136,7 @@ export function AppShell({
               account={{
                 name: layout.user.name ?? null,
                 email: layout.user.email ?? null,
+                orgId: layout.sidebar.orgId,
                 orgName: layout.sidebar.orgName,
               }}
               className={cn(

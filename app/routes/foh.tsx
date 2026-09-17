@@ -65,6 +65,7 @@ export async function loader(args: LoaderFunctionArgs) {
       const backOfHouse =
         workspaceAdmin || sidebar.teams.some((team) => team.role === "write");
       return {
+        orgId: active.org.id,
         orgName: active.org.name,
         backOfHouse,
         workspaceAdmin,
@@ -98,7 +99,7 @@ export default function FohRoot({ loaderData }: Route.ComponentProps) {
 }
 
 function FohShell({ data }: { data: ShellData }) {
-  const { orgName, backOfHouse, workspaceAdmin, teams, user } = data;
+  const { orgId, orgName, backOfHouse, workspaceAdmin, teams, user } = data;
   // Presence + badges freshness: baseline 10s loader poll (D12-adjacent; the inbox flyout
   // has its own keyed-fetcher poll).
   useLiveRevalidate({ idleIntervalMs: 10_000 });
@@ -129,6 +130,7 @@ function FohShell({ data }: { data: ShellData }) {
         account={{
           name: user?.name ?? null,
           email: user?.email ?? null,
+          orgId,
           orgName,
         }}
         headerExtra={<InboxIndicator />}

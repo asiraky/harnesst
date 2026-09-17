@@ -103,7 +103,10 @@ export function counterpartHref(
     : buildToChatHref(pathname, repos);
 }
 
-/** sessionStorage key remembering the last URL visited on a surface (the toggle's fallback). */
-export function lastVisitedKey(surface: Surface): string {
-  return `harnesst:last-visited:${surface}`;
+/**
+ * sessionStorage key remembering the last URL visited on a surface (the toggle's fallback).
+ * Scoped by workspace: a URL remembered in one workspace names repos the next one doesn't have.
+ */
+export function lastVisitedKey(surface: Surface, orgId: string): string {
+  return `harnesst:last-visited:${orgId}:${surface}`;
 }
