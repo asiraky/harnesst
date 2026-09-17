@@ -469,6 +469,7 @@ export default function WorkspaceSettings({
   return (
     <AppShell userEmail={user?.email}>
       <SettingsHeader
+        section={section}
         description={
           <>
             {org.name} · mode <span className="font-mono">{mode}</span>

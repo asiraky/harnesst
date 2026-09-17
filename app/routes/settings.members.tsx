@@ -702,7 +702,7 @@ export default function Members({
 
   return (
     <AppShell userEmail={user.email}>
-      <SettingsHeader description="Owners hold every repository. Admins manage the workspace but only see the repositories they're granted. Members see only what they're granted." />
+      <SettingsHeader section="members" description="Owners hold every repository. Admins manage the workspace but only see the repositories they're granted. Members see only what they're granted." />
 
       <div className="space-y-6">
         {error && (
