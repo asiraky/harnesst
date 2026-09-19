@@ -441,3 +441,73 @@ describe("resumeTurnStream", () => {
     });
   });
 });
+
+describe("structured connection recovery from runtime failures", () => {
+  it.each(["connection_unavailable", "policy_refusal"])(
+    "retains recovery context only for gateway connection failures (%s)",
+    async (code) => {
+      const model = "codex/abcdefghijkl/pinned";
+      const at = new Date().toISOString();
+      vi.stubGlobal(
+        "fetch",
+        vi
+          .fn()
+          .mockResolvedValueOnce(
+            new Response(JSON.stringify({ continuationToken: "tok_1" }), {
+              status: 202,
+              headers: {
+                "content-type": "application/json",
+                "x-eve-session-id": "sess_1",
+              },
+            }),
+          )
+          .mockResolvedValueOnce(
+            streamResponse([
+              {
+                type: "message.received",
+                data: { message: "hello", turnId: "turn_1" },
+                meta: { at },
+              },
+              {
+                type: "step.failed",
+                data: {
+                  turnId: "turn_1",
+                  code: "MODEL_CALL_FAILED",
+                  message: "Provider supplied failure",
+                  details: {
+                    cause: {
+                      responseBodySnippet: JSON.stringify({
+                        error: {
+                          code,
+                          model,
+                          recoveryUrl: "https://untrusted.invalid",
+                        },
+                      }),
+                    },
+                  },
+                },
+                meta: { at },
+              },
+              {
+                type: "turn.failed",
+                data: {
+                  turnId: "turn_1",
+                  message: "Provider supplied failure",
+                },
+                meta: { at },
+              },
+            ]),
+          ),
+      );
+      const result = await sendTurn({
+        baseUrl: "https://agent.example.test",
+        message: "hello",
+      });
+      expect(result.ok).toBe(false);
+      expect(result.errorModelId).toBe(
+        code === "connection_unavailable" ? model : null,
+      );
+      expect(result.modelId).toBeNull();
+    },
+  );
+});

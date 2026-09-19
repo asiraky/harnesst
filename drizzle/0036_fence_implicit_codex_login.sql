@@ -1,0 +1,1 @@
+ALTER TABLE "model_connection_logins" ADD COLUMN "connection_versions" jsonb DEFAULT '{}'::jsonb NOT NULL;

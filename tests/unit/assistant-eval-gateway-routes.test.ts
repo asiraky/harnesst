@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   verifyGatewayToken: vi.fn(),
@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => ({
   findWorkspaceModel: vi.fn(),
   getConnectionForGateway: vi.fn(),
   getFreshAccessToken: vi.fn(),
+  markConnectionStatus: vi.fn(),
 }));
 
 vi.mock("~/gateway/token.server", () => ({
@@ -38,8 +39,10 @@ vi.mock("~/models/union.server", () => ({
 }));
 
 vi.mock("~/models/provider-connections.server", () => ({
+  resolveModelConnectionId: async (_org: string, id: string) => id,
   getConnectionForGateway: mocks.getConnectionForGateway,
   getFreshAccessToken: mocks.getFreshAccessToken,
+  markConnectionStatus: mocks.markConnectionStatus,
 }));
 
 vi.mock("~/connections/codex.server", () => ({
@@ -164,4 +167,73 @@ describe("eval-scoped chat gateway", () => {
     expect(mocks.getConnectionForGateway).not.toHaveBeenCalled();
     expect(mocks.getFreshAccessToken).not.toHaveBeenCalled();
   });
+});
+
+afterEach(() => vi.unstubAllGlobals());
+
+describe("upstream authentication mapping", () => {
+  it.each([401, 403])(
+    "preserves upstream HTTP %s detail and expires only unauthorized credentials",
+    async (status) => {
+      mocks.verifyGatewayToken.mockReturnValue("org_1");
+      mocks.getConnectionForGateway.mockResolvedValue({
+        id: "abcdefghijkl",
+        orgId: "org_1",
+        provider: "codex",
+      });
+      mocks.getFreshAccessToken.mockResolvedValue({
+        accessToken: "grant",
+        accountId: "account_1",
+        credentialVersion: 7,
+      });
+      mocks.markConnectionStatus.mockResolvedValue(true);
+      const upstream = JSON.stringify({
+        error: {
+          code: status === 403 ? "unsupported_model" : "invalid_api_key",
+          message: "Provider supplied diagnostic",
+        },
+      });
+      vi.stubGlobal(
+        "fetch",
+        vi.fn().mockResolvedValue(new Response(upstream, { status })),
+      );
+      const response = await chat({
+        request: new Request(
+          "http://localhost/api/gateway/v1/chat/completions",
+          {
+            method: "POST",
+            headers: {
+              authorization: "Bearer gateway",
+              "content-type": "application/json",
+            },
+            body: JSON.stringify({
+              model: MODEL,
+              messages: [{ role: "user", content: "hello" }],
+            }),
+          },
+        ),
+        params: {},
+        context: {},
+      } as never);
+      const body = await response.json();
+      expect(response.status).toBe(status);
+      expect(body.error.message).toContain(upstream);
+      if (status === 401) {
+        expect(body.error).toMatchObject({
+          code: "connection_unavailable",
+          model: MODEL,
+          recoveryUrl: expect.stringContaining("#connection-abcdefghijkl"),
+        });
+        expect(mocks.markConnectionStatus).toHaveBeenCalledWith(
+          "abcdefghijkl",
+          "expired",
+          7,
+        );
+      } else {
+        expect(body.error.code).toBeUndefined();
+        expect(body.error.recoveryUrl).toBeUndefined();
+        expect(mocks.markConnectionStatus).not.toHaveBeenCalled();
+      }
+    },
+  );
 });
