@@ -10,20 +10,22 @@ import { Button } from "~/components/ui/button";
 export function TurnError({
   message,
   detail,
-  modelId,
+  recoveryModelId,
   retryable,
   onRetry,
   busy,
 }: {
   message: string;
   detail?: string | null;
-  modelId?: string | null;
+  recoveryModelId?: string | null;
   retryable?: boolean;
   onRetry?: () => void;
   busy?: boolean;
 }) {
   const [showDetail, setShowDetail] = useState(false);
-  const reference = modelId ? parseProviderModelReference(modelId) : null;
+  const reference = recoveryModelId
+    ? parseProviderModelReference(recoveryModelId)
+    : null;
   const provider = reference
     ? MODEL_PROVIDERS[reference.provider].displayName
     : null;
@@ -31,9 +33,12 @@ export function TurnError({
   return (
     <div className="space-y-2">
       <p className="whitespace-pre-wrap text-destructive">{message}</p>
-      {reference && modelId && (
+      {reference && recoveryModelId && (
         <div className="space-y-1 text-sm">
-          <Link className="underline" to={modelConnectionSettingsUrl(modelId)}>
+          <Link
+            className="underline"
+            to={modelConnectionSettingsUrl(recoveryModelId)}
+          >
             Review {provider} connection
           </Link>
           <p className="text-muted-foreground">

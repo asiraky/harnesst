@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { RouterContextProvider } from "react-router";
 
 const mocks = vi.hoisted(() => ({
+  toast: vi.fn(),
   create: vi.fn(),
   disconnect: vi.fn(),
   remove: vi.fn(),
@@ -11,6 +12,7 @@ const mocks = vi.hoisted(() => ({
   invalidate: vi.fn(),
   permission: vi.fn(),
 }));
+vi.mock("sonner", () => ({ toast: { success: mocks.toast } }));
 vi.mock("~/auth/session.server", () => ({
   getSessionAuth: async () => ({
     user: { id: "admin" },
@@ -51,7 +53,7 @@ vi.mock("~/db/queries.server", () => ({}));
 vi.mock("~/auth/project-access.server", () => ({}));
 vi.mock("~/seams/index.server", () => ({}));
 
-import { action } from "~/routes/settings";
+import { action, clientAction } from "~/routes/settings";
 function submit(fields: Record<string, string>) {
   const request = new Request("http://localhost/settings/connections.data", {
     method: "POST",
@@ -142,7 +144,7 @@ describe("Settings connection mutations", () => {
         connectionId: "existing",
         confirmed: "yes",
       }),
-    ).toEqual({ ok: true });
+    ).toEqual({ ok: true, deletedConnection: "existing" });
     expect(mocks.remove).toHaveBeenCalledWith("workspace", "existing");
     expect(mocks.audit).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -182,5 +184,28 @@ describe("Settings connection mutations", () => {
       }),
     ).rejects.toMatchObject({ status: 403 });
     expect(mocks.create).not.toHaveBeenCalled();
+  });
+});
+
+describe("Settings mutation feedback", () => {
+  it("announces successful deletion before returning to revalidation", async () => {
+    const result = { ok: true as const, deletedConnection: "existing" };
+    const serverAction = vi.fn(async () => result);
+    expect(
+      await clientAction({ serverAction } as unknown as Parameters<
+        typeof clientAction
+      >[0]),
+    ).toBe(result);
+    expect(mocks.toast).toHaveBeenCalledOnce();
+  });
+  it("does not announce success for a failed deletion", async () => {
+    const result = { error: "Unable to delete" };
+    const serverAction = vi.fn(async () => result);
+    expect(
+      await clientAction({ serverAction } as unknown as Parameters<
+        typeof clientAction
+      >[0]),
+    ).toBe(result);
+    expect(mocks.toast).not.toHaveBeenCalled();
   });
 });

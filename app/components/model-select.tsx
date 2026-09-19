@@ -165,6 +165,13 @@ export interface ModelsApiResponse {
   unavailable: UnavailableModelConnection[];
   requestedModel: string | null;
   selectedModel: ModelCatalogEntry | null;
+  canManageConnections?: boolean;
+  selectedConnection?: {
+    connectionId: string | null;
+    status: "active" | "expired" | "revoked" | "missing";
+    settingsUrl: string;
+  } | null;
+  inactiveConnections?: { id: string; label: string; status: string }[];
 }
 
 function modelsApiUrl(model: string | null): string {
@@ -198,7 +205,27 @@ function formatPricing(model: ModelCatalogEntry): string | null {
 }
 
 function groupLabel(model: ModelCatalogEntry): string {
-  return `${model.providerName} · ${model.connectionLabel}`;
+  return `${model.providerName} · ${model.connectionLabel} · ${model.connectionId}`;
+}
+
+/** Group by identity, never a potentially duplicated human label. */
+export function groupPickerModels(
+  models: ModelCatalogEntry[],
+): { key: string; label: string; models: ModelCatalogEntry[] }[] {
+  const groups = new Map<
+    string,
+    { key: string; label: string; models: ModelCatalogEntry[] }
+  >();
+  for (const model of models) {
+    const key = `${model.provider}/${model.connectionId}`;
+    let group = groups.get(key);
+    if (!group) {
+      group = { key, label: groupLabel(model), models: [] };
+      groups.set(key, group);
+    }
+    group.models.push(model);
+  }
+  return [...groups.values()];
 }
 
 export function ModelSelect({
@@ -232,6 +259,11 @@ export function ModelSelect({
   const models = fetcher.data?.models;
   const unavailable = fetcher.data?.unavailable ?? [];
   const loading = fetcher.state === "loading";
+  const connection = fetcher.data?.selectedConnection;
+  const canManage = fetcher.data?.canManageConnections;
+  const inactive = fetcher.data?.inactiveConnections ?? [];
+  const needsAuthentication =
+    connection?.status === "revoked" || connection?.status === "expired";
   const selected = selectedCatalogModel(fetcher.data, value);
 
   const commit = (id: string) => {
@@ -265,19 +297,12 @@ export function ModelSelect({
       MAX_ROWS_PER_CONNECTION,
     );
     const targets: string[] = [];
-    let previousGroup: string | null = null;
-    for (const model of filtered) {
-      const group = groupLabel(model);
-      if (group !== previousGroup) {
-        rows.push({
-          type: "label",
-          key: `${model.provider}/${model.connectionId}`,
-          text: group,
-        });
-        previousGroup = group;
+    for (const group of groupPickerModels(filtered)) {
+      rows.push({ type: "label", key: group.key, text: group.label });
+      for (const model of group.models) {
+        rows.push({ type: "model", model, index: targets.length });
+        targets.push(model.id);
       }
-      rows.push({ type: "model", model, index: targets.length });
-      targets.push(model.id);
     }
     return { display: rows, targets };
   }, [models, query]);
@@ -303,8 +328,9 @@ export function ModelSelect({
   const removed =
     Boolean(value) &&
     !loading &&
+    fetcher.data?.requestedModel === value &&
     Array.isArray(models) &&
-    !models.some((m) => m.id === value);
+    !selected;
 
   return (
     <div>
@@ -314,6 +340,11 @@ export function ModelSelect({
             variant="outline"
             disabled={busy || disabled}
             aria-label="Model"
+            title={
+              selected
+                ? `${selected.name} · ${selected.connectionLabel} · ${selected.connectionId}`
+                : undefined
+            }
             className={cn(
               "w-full justify-between font-mono text-sm sm:w-72",
               triggerClassName,
@@ -377,9 +408,17 @@ export function ModelSelect({
                   className="mx-auto size-5 text-muted-foreground"
                   aria-hidden
                 />
-                <p>No model provider is connected to this workspace.</p>
+                <p>
+                  {inactive.length
+                    ? "Your model connections are disconnected or need authentication."
+                    : "No model provider is connected to this workspace."}
+                </p>
                 <Button asChild size="sm" variant="secondary">
-                  <Link to="/settings/connections">Connect a provider</Link>
+                  <Link to="/settings/connections">
+                    {inactive.length
+                      ? "Review connections"
+                      : "Connect a provider"}
+                  </Link>
                 </Button>
               </div>
             )}
@@ -417,6 +456,7 @@ export function ModelSelect({
                 return (
                   <Option
                     key={model.id}
+                    label={`${model.name} · ${model.connectionLabel} · ${model.connectionId}`}
                     highlighted={highlight === row.index}
                     selected={model.id === value}
                     onHighlight={() => setHighlight(row.index)}
@@ -461,14 +501,30 @@ export function ModelSelect({
             <span className="font-mono">{value}</span> is unavailable. Your
             selection is preserved.{" "}
             <Link
-              to={modelConnectionSettingsUrl(value ?? "")}
+              to={
+                connection?.settingsUrl ??
+                modelConnectionSettingsUrl(value ?? "")
+              }
               className="underline"
             >
-              Review its provider connection
+              {canManage && needsAuthentication
+                ? "Reauthenticate this connection"
+                : canManage && connection?.status === "missing"
+                  ? "Recover this connection"
+                  : "Review its provider connection"}
             </Link>
-            . The catalog may be unavailable or the model may no longer be
-            offered. If authentication or recovery is needed, ask a workspace
-            owner or admin.
+            .{" "}
+            {connection?.status === "revoked"
+              ? "This connection is disconnected."
+              : connection?.status === "expired"
+                ? "This connection needs authentication."
+                : connection?.status === "missing"
+                  ? "This connection was deleted or is no longer available in this workspace."
+                  : "The catalog may be unavailable or the model may no longer be offered."}
+            {!canManage &&
+            (needsAuthentication || connection?.status === "missing")
+              ? " Ask a workspace owner or admin to restore it."
+              : ""}
           </span>
         </p>
       )}
@@ -477,12 +533,14 @@ export function ModelSelect({
 }
 
 function Option({
+  label,
   highlighted,
   selected,
   onHighlight,
   onSelect,
   children,
 }: {
+  label: string;
   highlighted: boolean;
   selected: boolean;
   onHighlight: () => void;
@@ -492,6 +550,7 @@ function Option({
   return (
     <div
       role="option"
+      aria-label={label}
       aria-selected={selected}
       tabIndex={highlighted ? 0 : -1}
       onMouseMove={onHighlight}

@@ -4,7 +4,7 @@
  * semantics (403/404 = still authorizing), device-login-disabled surfacing, refresh-token rotation,
  * and invalid_grant → InvalidGrantError.
  */
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import {
   DeviceLoginDisabledError,
@@ -235,4 +235,36 @@ describe("extractAccountIdentity", () => {
       accountId: null,
     });
   });
+});
+
+describe("OAuth request deadlines", () => {
+  it.each(["poll", "exchange"])(
+    "aborts a hung %s before its processing lease can expire",
+    async (step) => {
+      vi.useFakeTimers();
+      try {
+        let signal: AbortSignal | undefined;
+        const hungFetch = ((_url: unknown, init?: RequestInit) => {
+          signal = init?.signal ?? undefined;
+          return new Promise<Response>(() => {});
+        }) as typeof fetch;
+        const pending =
+          step === "poll"
+            ? pollDeviceToken(
+                { deviceAuthId: "device", userCode: "code" },
+                hungFetch,
+              )
+            : exchangeDeviceCode(
+                { authorizationCode: "code", codeVerifier: "verifier" },
+                hungFetch,
+              );
+        const result = expect(pending).rejects.toThrow("timed out");
+        await vi.advanceTimersByTimeAsync(45_000);
+        await result;
+        expect(signal?.aborted).toBe(true);
+      } finally {
+        vi.useRealTimers();
+      }
+    },
+  );
 });

@@ -89,6 +89,7 @@ import {
 import {
   MODEL_PROVIDERS,
   isApiKeyProviderId,
+  parseProviderModelReference,
   type ApiKeyProviderId,
 } from "~/models/provider-reference";
 import { findWorkspaceModel } from "~/models/union.server";
@@ -375,7 +376,7 @@ export async function action(args: ActionFunctionArgs) {
       action: "model_provider_deleted",
       target: id,
     });
-    return { ok: true as const };
+    return { ok: true as const, deletedConnection: id };
   }
 
   if (intent === "delete-connection-alias") {
@@ -488,6 +489,15 @@ export async function action(args: ActionFunctionArgs) {
 
 export function meta() {
   return [{ title: "Settings · harnesst" }, ...noindexMeta];
+}
+
+/** Announce successful deletion before loader revalidation removes its dialog. */
+export async function clientAction({ serverAction }: Route.ClientActionArgs) {
+  const result = await serverAction();
+  if (result && "deletedConnection" in result) {
+    toast.success(`Connection ${result.deletedConnection} permanently deleted`);
+  }
+  return result;
 }
 
 export default function WorkspaceSettings({
@@ -627,6 +637,7 @@ export default function WorkspaceSettings({
                     <ConnectionRow
                       key={conn.id}
                       conn={conn}
+                      defaultConnectionId={parseProviderModelReference(assistantModel ?? "")?.connectionId}
                       aliases={connectionAliases.filter((alias) => alias.connectionId === conn.id)}
                       canManage={canManage}
                     />
@@ -929,13 +940,16 @@ function AgentOverrideRow({
 function ConnectionRow({
   conn,
   aliases,
+  defaultConnectionId,
   canManage,
 }: {
   conn: ModelConnection;
   aliases: { oldConnectionId: string; connectionId: string }[];
+  defaultConnectionId?: string;
   canManage: boolean;
 }) {
   const rename = useFetcher();
+  const disconnect = useFetcher<typeof action>();
   const [editing, setEditing] = useState(false);
   const active = conn.status === "active";
   const [recoverOpen, setRecoverOpen] = useState(false);
@@ -944,8 +958,9 @@ function ConnectionRow({
   return (
     <li
       id={`connection-${conn.id}`}
-      className="flex flex-wrap items-center justify-between gap-2 px-4 py-3"
+      className="relative flex flex-wrap items-center justify-between gap-2 px-4 py-3"
     >
+      {aliases.map((alias) => <span key={alias.oldConnectionId} id={`connection-${alias.oldConnectionId}`} className="absolute top-0" aria-hidden />)}
       <div className="min-w-0 max-w-full space-y-0.5">
         <div className="flex flex-wrap items-center gap-2">
           <span className="rounded bg-muted px-1.5 py-0.5 text-xs font-medium">
@@ -962,7 +977,7 @@ function ConnectionRow({
               <Input
                 name="label"
                 defaultValue={conn.label}
-                aria-label="Connection name"
+                aria-label={`Connection name for ${conn.label}, ${conn.id}`}
                 className="h-7 w-40"
               />
               <Button type="submit" size="sm">
@@ -976,7 +991,7 @@ function ConnectionRow({
             <button
               type="button"
               className="text-xs text-muted-foreground underline"
-              aria-label={`Rename ${conn.label}`}
+              aria-label={`Rename ${conn.label}, ${conn.id}`}
               onClick={() => setEditing(true)}
             >
               rename
@@ -990,7 +1005,7 @@ function ConnectionRow({
             variant="ghost"
             size="icon"
             className="ml-1 size-7"
-            aria-label={`Copy connection ID for ${conn.label}`}
+            aria-label={`Copy connection ID for ${conn.label}, ${conn.id}`}
             onClick={async () => {
               try {
                 await navigator.clipboard.writeText(conn.id);
@@ -1003,18 +1018,22 @@ function ConnectionRow({
             <Copy className="size-3.5" aria-hidden />
           </Button>
         </p>
+        {conn.accountId && (
+          <p className="break-all text-xs text-muted-foreground">
+            Provider account: <code>{conn.accountId}</code>
+          </p>
+        )}
         {conn.accountEmail && (
           <p className="break-all text-xs text-muted-foreground">
             {conn.accountEmail}
           </p>
         )}
-        {MODEL_PROVIDERS[conn.provider].authKind === "api-key" && (
-          <p className="text-xs text-muted-foreground">
-            {conn.status === "revoked"
-              ? "API key disconnected"
-              : "API key configured (write-only)"}
-          </p>
-        )}
+        {MODEL_PROVIDERS[conn.provider].authKind === "api-key" &&
+          conn.status !== "revoked" && (
+            <p className="text-xs text-muted-foreground">
+              API key configured (write-only)
+            </p>
+          )}
         {!active && (
           <p className="text-xs text-amber-600 dark:text-amber-400">
             {`Reauthenticate to resume — this connection is ${conn.status === "revoked" ? "disconnected" : conn.status}.`}
@@ -1029,18 +1048,24 @@ function ConnectionRow({
             <ConnectApiKeyDialog connection={conn} />
           )}
           {conn.status !== "revoked" && (
-            <Form method="post">
+            <disconnect.Form method="post">
               <input type="hidden" name="intent" value="remove-connection" />
               <input type="hidden" name="connectionId" value={conn.id} />
               <Button
                 type="submit"
                 variant="outline"
                 size="sm"
-                aria-label={`Disconnect ${conn.label}`}
+                aria-label={`Disconnect ${conn.label}, ${conn.id}`}
+                disabled={disconnect.state !== "idle"}
               >
-                Disconnect
+                {disconnect.state === "idle" ? "Disconnect" : "Disconnecting…"}
               </Button>
-            </Form>
+            </disconnect.Form>
+          )}
+          {disconnect.data && "error" in disconnect.data && (
+            <p role="alert" className="text-sm text-destructive">
+              {disconnect.data.error}
+            </p>
           )}
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
@@ -1048,16 +1073,17 @@ function ConnectionRow({
                 type="button"
                 variant="ghost"
                 size="icon"
-                aria-label={`More actions for ${conn.label}`}
+                aria-label={`More actions for ${conn.label}, ${conn.id}`}
+                className="max-sm:min-h-11 max-sm:min-w-11"
               >
-                <MoreHorizontal className="size-4" />
+                <MoreHorizontal className="size-4" aria-hidden />
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
               {conn.provider === "codex" && active && (
                 <DropdownMenuItem
                   onSelect={() => setRecoverOpen(true)}
-                  aria-label={`Recover deleted ID with ${conn.label}`}
+                  aria-label={`Recover deleted ID with ${conn.label}, ${conn.id}`}
                 >
                   Recover deleted ID
                 </DropdownMenuItem>
@@ -1065,7 +1091,7 @@ function ConnectionRow({
               {aliases.length > 0 && (
                 <DropdownMenuItem
                   onSelect={() => setMappingsOpen(true)}
-                  aria-label={`Manage recovery mappings for ${conn.label}`}
+                  aria-label={`Manage recovery mappings for ${conn.label}, ${conn.id}`}
                 >
                   Manage recovery mappings
                 </DropdownMenuItem>
@@ -1073,7 +1099,7 @@ function ConnectionRow({
               <DropdownMenuItem
                 variant="destructive"
                 onSelect={() => setDeleteOpen(true)}
-                aria-label={`Permanently delete ${conn.label}`}
+                aria-label={`Permanently delete ${conn.label}, ${conn.id}`}
               >
                 Permanently delete
               </DropdownMenuItem>
@@ -1099,6 +1125,9 @@ function ConnectionRow({
                     <RecoveryMappingRow
                       key={alias.oldConnectionId}
                       oldId={alias.oldConnectionId}
+                      isWorkspaceDefault={
+                        defaultConnectionId === alias.oldConnectionId
+                      }
                     />
                   ))}
                 </ul>
@@ -1123,6 +1152,54 @@ function ConnectionRow({
 /** Add a validated write-only OpenRouter, Anthropic, or OpenAI Platform key connection. */
 function ConnectApiKeyDialog({ connection }: { connection?: ModelConnection }) {
   const [open, setOpen] = useState(false);
+
+  return (
+    <Dialog open={open} onOpenChange={setOpen}>
+      <DialogTrigger asChild>
+        <Button
+          type="button"
+          size="sm"
+          aria-label={
+            connection
+              ? `Reauthenticate ${connection.label}, ${connection.id}`
+              : undefined
+          }
+          className="max-sm:min-h-11 max-sm:min-w-11"
+        >
+          {connection ? "Reauthenticate" : "Connect API key"}
+        </Button>
+      </DialogTrigger>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>
+            {connection
+              ? `Reauthenticate ${connection.label}, ${connection.id}`
+              : "Connect an API-key provider"}
+          </DialogTitle>
+          <DialogDescription>
+            {connection
+              ? "Your connection ID, models, effort, and sessions stay unchanged. harnesst validates the new key, but cannot verify it belongs to the same account. Replacing it may switch the account used by existing agents."
+              : "harnesst validates the key before sealing it. Keys are write-only and are sent directly to agent instances for this exact connection."}
+          </DialogDescription>
+        </DialogHeader>
+        {open && (
+          <ApiKeyConnectionForm
+            connection={connection}
+            onDone={() => setOpen(false)}
+          />
+        )}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function ApiKeyConnectionForm({
+  connection,
+  onDone,
+}: {
+  connection?: ModelConnection;
+  onDone: () => void;
+}) {
   const [provider, setProvider] = useState<ApiKeyProviderId>(
     (connection?.provider as ApiKeyProviderId) ?? "openrouter",
   );
@@ -1135,111 +1212,81 @@ function ConnectApiKeyDialog({ connection }: { connection?: ModelConnection }) {
       "ok" in fetcher.data &&
       fetcher.data.ok
     ) {
-      setOpen(false);
+      onDone();
     }
-  }, [fetcher.data, fetcher.state]);
+  }, [fetcher.data, fetcher.state, onDone]);
 
   return (
-    <Dialog open={open} onOpenChange={setOpen}>
-      <DialogTrigger asChild>
-        <Button
-          type="button"
-          size="sm"
-          aria-label={
-            connection ? `Reauthenticate ${connection.label}` : undefined
+    <fetcher.Form method="post" className="space-y-4">
+      <input type="hidden" name="intent" value="connect-api-key" />
+      <input type="hidden" name="connectionId" value={connection?.id ?? ""} />
+      {connection && (
+        <input type="hidden" name="provider" value={connection.provider} />
+      )}
+      {connection ? (
+        <p className="text-sm">
+          Provider: {MODEL_PROVIDERS[connection.provider].displayName}
+        </p>
+      ) : (
+        <div className="space-y-1.5">
+          <Label htmlFor="provider">Provider</Label>
+          <select
+            id="provider"
+            name="provider"
+            aria-label="Provider"
+            value={provider}
+            onChange={(event) =>
+              setProvider(event.target.value as ApiKeyProviderId)
+            }
+            className="border-input bg-background h-9 w-full rounded-md border px-3 text-sm"
+          >
+            <option value="openrouter">OpenRouter</option>
+            <option value="anthropic">Anthropic</option>
+            <option value="openai">OpenAI Platform</option>
+          </select>
+        </div>
+      )}
+      <div className="space-y-1.5">
+        <Label htmlFor="connectionLabel">Connection name</Label>
+        <Input
+          id="connectionLabel"
+          defaultValue={connection?.label}
+          name="label"
+          required
+          maxLength={80}
+          placeholder={`e.g. ${MODEL_PROVIDERS[provider].displayName} production`}
+        />
+      </div>
+      <div className="space-y-1.5">
+        <Label htmlFor="providerApiKey">
+          {MODEL_PROVIDERS[provider].displayName} API key
+        </Label>
+        <SecretInput
+          id="providerApiKey"
+          autoFocus={!!connection}
+          name="apiKey"
+          required
+          revealLabel="API key"
+          wrapperClassName="w-full"
+          className="w-full"
+          placeholder={
+            provider === "openrouter" ? "sk-or-v1-…" : "Paste API key"
           }
-        >
-          {connection ? "Reauthenticate" : "Connect API key"}
-        </Button>
-      </DialogTrigger>
-      <DialogContent>
-        <DialogHeader>
-          <DialogTitle>
-            {connection
-              ? `Reauthenticate ${connection.label}`
-              : "Connect an API-key provider"}
-          </DialogTitle>
-          <DialogDescription>
-            {connection
-              ? "Your connection ID, models, effort, and sessions stay unchanged. harnesst validates the new key, but cannot verify it belongs to the same account. Replacing it may switch the account used by existing agents."
-              : "harnesst validates the key before sealing it. Keys are write-only and are sent directly to agent instances for this exact connection."}
-          </DialogDescription>
-        </DialogHeader>
-        <fetcher.Form method="post" className="space-y-4">
-          <input type="hidden" name="intent" value="connect-api-key" />
-          <input
-            type="hidden"
-            name="connectionId"
-            value={connection?.id ?? ""}
-          />
-          {connection && (
-            <input type="hidden" name="provider" value={connection.provider} />
-          )}
-          {connection ? (
-            <p className="text-sm">
-              Provider: {MODEL_PROVIDERS[connection.provider].displayName}
-            </p>
-          ) : (
-            <div className="space-y-1.5">
-              <Label htmlFor="provider">Provider</Label>
-              <select
-                id="provider"
-                name="provider"
-                aria-label="Provider"
-                value={provider}
-                onChange={(event) =>
-                  setProvider(event.target.value as ApiKeyProviderId)
-                }
-                className="border-input bg-background h-9 w-full rounded-md border px-3 text-sm"
-              >
-                <option value="openrouter">OpenRouter</option>
-                <option value="anthropic">Anthropic</option>
-                <option value="openai">OpenAI Platform</option>
-              </select>
-            </div>
-          )}
-          <div className="space-y-1.5">
-            <Label htmlFor="connectionLabel">Connection name</Label>
-            <Input
-              id="connectionLabel"
-              defaultValue={connection?.label}
-              name="label"
-              required
-              maxLength={80}
-              placeholder={`e.g. ${MODEL_PROVIDERS[provider].displayName} production`}
-            />
-          </div>
-          <div className="space-y-1.5">
-            <Label htmlFor="providerApiKey">
-              {MODEL_PROVIDERS[provider].displayName} API key
-            </Label>
-            <SecretInput
-              id="providerApiKey"
-              name="apiKey"
-              required
-              revealLabel="API key"
-              wrapperClassName="w-full"
-              className="w-full"
-              placeholder={
-                provider === "openrouter" ? "sk-or-v1-…" : "Paste API key"
-              }
-            />
-          </div>
-          {fetcher.data && "error" in fetcher.data && fetcher.data.error && (
-            <p role="alert" className="text-sm text-destructive">
-              {fetcher.data.error}
-            </p>
-          )}
-          <Button type="submit" disabled={fetcher.state !== "idle"}>
-            {fetcher.state === "idle"
-              ? connection
-                ? "Update credentials"
-                : "Connect provider"
-              : "Validating…"}
-          </Button>
-        </fetcher.Form>
-      </DialogContent>
-    </Dialog>
+        />
+      </div>
+      {fetcher.data && "error" in fetcher.data && fetcher.data.error && (
+        <p role="alert" className="text-sm text-destructive">
+          {fetcher.data.error}
+        </p>
+      )}
+      <Button type="submit" disabled={fetcher.state !== "idle"}>
+        {fetcher.state === "idle"
+          ? connection
+            ? "Update credentials"
+            : "Connect provider"
+          : "Validating…"}
+      </Button>
+    </fetcher.Form>
   );
 }
 
@@ -1383,8 +1430,11 @@ function ConnectCodexDialog({ connection }: { connection?: ModelConnection }) {
           type="button"
           size="sm"
           aria-label={
-            connection ? `Reauthenticate ${connection.label}` : undefined
+            connection
+              ? `Reauthenticate ${connection.label}, ${connection.id}`
+              : undefined
           }
+          className="max-sm:min-h-11 max-sm:min-w-11"
         >
           {connection ? "Reauthenticate" : "Connect OpenAI Codex"}
         </Button>
@@ -1393,7 +1443,7 @@ function ConnectCodexDialog({ connection }: { connection?: ModelConnection }) {
         <DialogHeader>
           <DialogTitle>
             {connection
-              ? `Reauthenticate ${connection.label}`
+              ? `Reauthenticate ${connection.label}, ${connection.id}`
               : "Connect OpenAI Codex"}
           </DialogTitle>
           <DialogDescription>
@@ -1538,9 +1588,10 @@ function RecoverConnectionDialog({
         <DialogHeader>
           <DialogTitle>Recover a deleted Codex connection</DialogTitle>
           <DialogDescription>
-            Restore old agent and session references using {connection.label}.
-            The deleted account identity cannot be inferred. Verify the original
-            account from your records before linking it.
+            Restore old agent and session references using {connection.label}{" "}
+            (connection {connection.id}). The deleted account identity cannot be
+            inferred. Verify the original account from your records before
+            linking it.
           </DialogDescription>
         </DialogHeader>
         {open && (
@@ -1594,7 +1645,8 @@ function RecoveryForm({
         />
         <span>
           I verified that the deleted connection used the same OpenAI account as{" "}
-          {connection.label} ({connection.accountEmail ?? connection.id}).
+          {connection.label} (provider account{" "}
+          {connection.accountId ?? "unknown"}, connection {connection.id}).
         </span>
       </label>
       <p className="text-sm text-muted-foreground">
@@ -1623,59 +1675,87 @@ function DeleteConnectionDialog({
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }) {
-  const fetcher = useFetcher<typeof action>();
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>Permanently delete {connection.label}?</DialogTitle>
+          <DialogTitle>
+            Permanently delete {connection.label} ({connection.id})?
+          </DialogTitle>
           <DialogDescription>
+            {connection.accountId
+              ? `Provider account: ${connection.accountId}. `
+              : ""}
+            {connection.accountEmail &&
+            connection.accountEmail !== connection.label
+              ? `Email: ${connection.accountEmail}. `
+              : ""}
             This removes the connection, its credentials, and recovery mappings.
             Existing agent and session references will stop working. Disconnect
             instead if you plan to reconnect this account.
           </DialogDescription>
         </DialogHeader>
-        <fetcher.Form method="post" className="space-y-4">
-          <input type="hidden" name="intent" value="delete-connection" />
-          <input type="hidden" name="connectionId" value={connection.id} />
-          <label className="flex items-start gap-2 text-sm">
-            <input
-              type="checkbox"
-              className="mt-1 shrink-0"
-              name="confirmed"
-              value="yes"
-              required
-            />
-            <span>I understand this permanently deletes this connection.</span>
-          </label>
-          {fetcher.data && "error" in fetcher.data && (
-            <p role="alert" className="text-sm text-destructive">
-              {fetcher.data.error}
-            </p>
-          )}
-          <div className="flex flex-wrap gap-2">
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => onOpenChange(false)}
-            >
-              Cancel
-            </Button>
-            <Button
-              type="submit"
-              variant="destructive"
-              disabled={fetcher.state !== "idle"}
-            >
-              Permanently delete
-            </Button>
-          </div>
-        </fetcher.Form>
+        {open && (
+          <DeleteConnectionForm
+            connection={connection}
+            onCancel={() => onOpenChange(false)}
+          />
+        )}
       </DialogContent>
     </Dialog>
   );
 }
 
-function RecoveryMappingRow({ oldId }: { oldId: string }) {
+function DeleteConnectionForm({
+  connection,
+  onCancel,
+}: {
+  connection: ModelConnection;
+  onCancel: () => void;
+}) {
+  const fetcher = useFetcher<typeof action>();
+  return (
+    <fetcher.Form method="post" className="space-y-4">
+      <input type="hidden" name="intent" value="delete-connection" />
+      <input type="hidden" name="connectionId" value={connection.id} />
+      <label className="flex items-start gap-2 text-sm">
+        <input
+          type="checkbox"
+          className="mt-1 shrink-0"
+          name="confirmed"
+          value="yes"
+          required
+        />
+        <span>I understand this permanently deletes this connection.</span>
+      </label>
+      {fetcher.data && "error" in fetcher.data && (
+        <p role="alert" className="text-sm text-destructive">
+          {fetcher.data.error}
+        </p>
+      )}
+      <div className="flex flex-wrap gap-2">
+        <Button type="button" variant="outline" onClick={onCancel}>
+          Cancel
+        </Button>
+        <Button
+          type="submit"
+          variant="destructive"
+          disabled={fetcher.state !== "idle"}
+        >
+          Permanently delete
+        </Button>
+      </div>
+    </fetcher.Form>
+  );
+}
+
+function RecoveryMappingRow({
+  oldId,
+  isWorkspaceDefault,
+}: {
+  oldId: string;
+  isWorkspaceDefault: boolean;
+}) {
   const fetcher = useFetcher<typeof action>();
   return (
     <li>
@@ -1683,10 +1763,18 @@ function RecoveryMappingRow({ oldId }: { oldId: string }) {
         <input type="hidden" name="intent" value="delete-connection-alias" />
         <input type="hidden" name="oldId" value={oldId} />
         <code className="text-sm">{oldId}</code>
+        {isWorkspaceDefault && (
+          <p role="alert" className="text-sm text-destructive">
+            The workspace default model uses this mapping. Removing it stops
+            agents that inherit the workspace default until a working default is
+            selected.
+          </p>
+        )}
         <label className="flex items-start gap-2 text-sm">
           <input
             type="checkbox"
             name="confirmed"
+            aria-label={`Confirm removing recovery mapping ${oldId}`}
             value="yes"
             required
             className="mt-1 shrink-0"

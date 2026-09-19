@@ -58,6 +58,7 @@ describe("API-key credential boundary", () => {
       provider: "openai",
       label: "Platform",
       accountEmail: null,
+      accountId: null,
       status: "active",
       createdAt: new Date(0),
     });

@@ -1,3 +1,4 @@
+import { modelConnectionFailureReference } from "~/models/provider-reference";
 /**
  * Talk to a deployed eve instance over its HTTP session API (contract verified live 2026-07-03
  * against a running instance):
@@ -94,6 +95,7 @@ export interface TurnResult {
    */
   messages: { afterStepIndex: number; text: string }[];
   error: string | null;
+  errorModelId?: string | null;
   /**
    * WS1: the turn failed because the CHANNEL-HOMED eve session this row resumes into no longer
    * exists. The drain reads this to clear the row's handles so the next message starts a fresh
@@ -700,6 +702,7 @@ async function* drainTurnStream(input: {
   let reply: string | null = null;
   let error: string | null = null;
   let lastStepFailure: string | null = null;
+  let errorModelId: string | null = null;
   let modelId: string | null = null;
   let ourTurnId: string | null = input.initialTurnId;
   let turnAnnounced = false;
@@ -934,7 +937,10 @@ async function* drainTurnStream(input: {
               type === "step.failed"
                 ? failureOf(data, "The agent step failed.")
                 : null;
-            if (failure) lastStepFailure = failure.text;
+            if (failure) {
+              lastStepFailure = failure.text;
+              errorModelId = modelConnectionFailureReference(data);
+            }
             const actions = actionsBySeq.get(sequence);
             const primary = actions?.[0];
             const step: TurnStep = {
@@ -999,6 +1005,7 @@ async function* drainTurnStream(input: {
                 data,
                 "The turn failed (no detail in the event).",
               );
+              errorModelId = modelConnectionFailureReference(data) ?? errorModelId;
               error =
                 failure.code || failure.details || lastStepFailure === null
                   ? failure.text
@@ -1075,6 +1082,7 @@ async function* drainTurnStream(input: {
   yield {
     kind: "done",
     result: {
+      errorModelId,
       ok: error === null,
       sessionId,
       continuationToken,
