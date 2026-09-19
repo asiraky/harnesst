@@ -305,18 +305,26 @@ export interface WorkspaceTaskRepo {
   listRunningByKind(kind: string): Promise<WorkspaceTask[]>;
 }
 
+export interface DraftWrite {
+  projectId: string;
+  /** Owning roster member; null for project-shared files (root package.json). */
+  agentId: string | null;
+  path: string;
+  /** Full file contents; null stages a DELETION of the path. */
+  content: string | null;
+  baseSha?: string | null;
+  createdBy?: string | null;
+}
+
 export interface DraftRepo {
   /** Stage (upsert) a draft: latest content per (project, path) wins. */
-  upsert(input: {
-    projectId: string;
-    /** Owning roster member; null for project-shared files (root package.json). */
-    agentId: string | null;
-    path: string;
-    /** Full file contents; null stages a DELETION of the path. */
-    content: string | null;
-    baseSha?: string | null;
-    createdBy?: string | null;
-  }): Promise<DraftChange>;
+  upsert(input: DraftWrite): Promise<DraftChange>;
+  /** Atomically replace a known project draft snapshot with these writes; null means concurrent edits. */
+  compareAndStage(
+    projectId: string,
+    expected: DraftChange[],
+    writes: DraftWrite[],
+  ): Promise<DraftChange[] | null>;
   get(projectId: string, path: string): Promise<DraftChange | null>;
   /** A project's saved drafts, oldest first (stable order in the publish panel). */
   listByProject(projectId: string): Promise<DraftChange[]>;

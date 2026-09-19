@@ -204,4 +204,65 @@ describe("explicit model reset", () => {
     expect(await run()).toMatchObject({ ok: true, mode: "publishing" });
     expect(deps.publish).toHaveBeenCalledOnce();
   });
+  it("requires legacy ancestors outside the reset scope to be reset first", async () => {
+    const { run, deps, store } = setup();
+    const child = {
+      ...target,
+      root: `${target.root}/subagents/qa`,
+      subagentPath: "qa",
+    };
+    expect(await run([child])).toMatchObject({
+      ok: false,
+      error: expect.stringContaining("Reset ledger first"),
+    });
+    expect(await store.drafts.listByProject("p")).toEqual([]);
+    expect(deps.removeOverrides).not.toHaveBeenCalled();
+  });
+
+  it("checks intermediate ancestors as well as the member", async () => {
+    const { run, files, deps } = setup(true);
+    const child = {
+      ...target,
+      root: `${target.root}/subagents/qa`,
+      subagentPath: "qa",
+    };
+    files[`${child.root}/agent.ts`] = legacy;
+    const nested = {
+      ...target,
+      root: `${child.root}/subagents/review`,
+      subagentPath: "qa/review",
+    };
+    expect(await run([nested])).toMatchObject({
+      ok: false,
+      error: expect.stringContaining("Reset ledger / qa first"),
+    });
+    expect(deps.removeOverrides).not.toHaveBeenCalled();
+    expect(await run([child, nested])).toMatchObject({
+      ok: true,
+      mode: "publishing",
+    });
+  });
+
+  it("atomically rejects a racing saved edit instead of overwriting it", async () => {
+    const { run, deps, store } = setup();
+    const compare = store.drafts.compareAndStage;
+    store.drafts.compareAndStage = async (projectId, expected, writes) => {
+      await store.drafts.upsert({
+        projectId,
+        agentId: "a",
+        path: `${target.root}/agent.ts`,
+        content: "A new user edit",
+      });
+      return compare(projectId, expected, writes);
+    };
+    expect(await run()).toMatchObject({
+      ok: false,
+      error: expect.stringContaining("changed while preparing"),
+    });
+    expect(
+      (await store.drafts.get("p", `${target.root}/agent.ts`))?.content,
+    ).toBe("A new user edit");
+    expect(deps.removeOverrides).not.toHaveBeenCalled();
+    expect(deps.publish).not.toHaveBeenCalled();
+  });
 });

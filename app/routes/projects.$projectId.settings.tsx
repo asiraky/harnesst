@@ -86,7 +86,6 @@ import {
 } from "~/observability/store.server";
 import {
   listDrafts,
-  resolveFileView,
   stageDeletions,
   stageDraft,
 } from "~/drafts/drafts.server";

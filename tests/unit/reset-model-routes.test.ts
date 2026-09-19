@@ -2,7 +2,10 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { makeFakeStore, type FakeStore } from "../fakes/store";
 import { ensureModelProviderDependencies } from "~/eve/agentModule";
-import { orgModelModuleSource } from "~/eve/org-model-module";
+import {
+  orgModelModuleSource,
+  scaffoldOrgModelAgentModule,
+} from "~/eve/org-model-module";
 
 const mocks = vi.hoisted(() => ({
   store: null as FakeStore | null,
@@ -34,6 +37,10 @@ vi.mock("~/github/repo.server", async (importOriginal) => ({
     files: mocks.files,
   }),
   readAgentFile: async (_id: unknown, _repo: unknown, path: string) =>
+    mocks.files[path] ?? null,
+}));
+vi.mock("~/github/read-model-reset-file.server", () => ({
+  readModelResetFile: async (_id: unknown, _repo: unknown, path: string) =>
     mocks.files[path] ?? null,
 }));
 vi.mock("~/github/cached.server", async (importOriginal) => ({
@@ -205,6 +212,7 @@ describe("reset model settings actions", () => {
   });
 
   it("a nested reset addresses exactly the URL subagent", async () => {
+    mocks.files[`${root}/agent.ts`] = scaffoldOrgModelAgentModule("ledger");
     expect(
       await post(
         { agentName: "ledger", subPath: "qa" },
@@ -214,5 +222,18 @@ describe("reset model settings actions", () => {
     expect(clearedTargets()).toEqual([
       { projectId: "p", agentName: "ledger", subagentPath: "qa" },
     ]);
+  });
+  it("does not silently inherit workspace default beneath a legacy parent", async () => {
+    expect(
+      await post(
+        { agentName: "ledger", subPath: "qa" },
+        { intent: "reset-model-default" },
+      ),
+    ).toMatchObject({
+      ok: false,
+      error: expect.stringContaining("Reset ledger first"),
+    });
+    expect(await mocks.store!.drafts.listByProject("p")).toEqual([]);
+    expect(mocks.removeOverrides).not.toHaveBeenCalled();
   });
 });

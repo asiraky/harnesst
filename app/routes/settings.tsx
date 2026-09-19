@@ -385,6 +385,12 @@ export async function action(args: ActionFunctionArgs) {
   }
 
   if (intent === "remove-agent-model-override") {
+    if (!(await getWorkspaceAssistantSelection(org.id)).model) {
+      return {
+        error:
+          "Configure a workspace default model before removing an override.",
+      };
+    }
     const agentName = String(form.get("agentName") ?? "").trim();
     if (!agentName) return { error: "No agent specified." };
     // The full row key: a declared subagent's row lives under the same agent name, and two repos
@@ -849,7 +855,7 @@ function AgentOverrideRow({
             )
           }
         >
-          Use default
+          Remove saved override
         </Button>
       )}
       {fetcher.data && "error" in fetcher.data && fetcher.data.error && (

@@ -1,9 +1,10 @@
 /** Explicit opt-in to live workspace/parent inheritance. No migration runs on reads. */
 import type { DataStore } from "~/data/ports";
-import { stageDraft } from "~/drafts/drafts.server";
+import { agentForPath } from "~/db/queries.server";
 import {
   ensureModelProviderDependencies,
   orgResolverAgentName,
+  usesOrgModelResolver,
 } from "~/eve/agentModule";
 import {
   orgModelModulePath,
@@ -11,8 +12,9 @@ import {
   scaffoldOrgModelAgentModule,
   subagentStarterDescription,
 } from "~/eve/org-model-module";
+import { subagentRootFor } from "~/eve/parse";
 import { resetAgentModelSource } from "~/eve/reset-model";
-import { readAgentFile } from "~/github/repo.server";
+import { readModelResetFile } from "~/github/read-model-reset-file.server";
 import { ensureWorkerStarted } from "~/jobs/worker.server";
 import { packageJsonPathForRoot } from "~/marketplace/install.server";
 import {
@@ -21,6 +23,7 @@ import {
 } from "~/models/agent-model-config.server";
 import { getWorkspaceAssistantSelection } from "~/org/workspace.server";
 import { startPublish } from "~/publish/pipeline.server";
+import { draftSnapshotFingerprint } from "~/publish/draft-snapshot";
 import { getRuntime } from "~/seams/index.server";
 import type { StageModelInput } from "~/models/stage-model.server";
 
@@ -45,7 +48,7 @@ export type ResetModelsResult =
   | { ok: false; error: string };
 
 export interface ResetModelsDeps {
-  readFile: typeof readAgentFile;
+  readFile: typeof readModelResetFile;
   getWorkspaceSelection: typeof getWorkspaceAssistantSelection;
   removeOverrides: typeof removeAgentModelOverrides;
   publish: typeof startPublish;
@@ -64,7 +67,7 @@ export async function resetModelsToWorkspaceDefault(
   overrides: Partial<ResetModelsDeps> = {},
 ): Promise<ResetModelsResult> {
   const deps: ResetModelsDeps = {
-    readFile: readAgentFile,
+    readFile: readModelResetFile,
     getWorkspaceSelection: getWorkspaceAssistantSelection,
     removeOverrides: removeAgentModelOverrides,
     publish: startPublish,
@@ -111,6 +114,27 @@ export async function resetModelsToWorkspaceDefault(
         );
       return cache.get(key)!;
     };
+    const resetRoots = new Set(input.targets.map((target) => target.root));
+    for (const target of input.targets) {
+      const segments = (target.subagentPath ?? "").split("/").filter(Boolean);
+      for (let depth = 0; depth < segments.length; depth++) {
+        const ancestor = subagentRootFor(
+          target.deploymentRoot,
+          segments.slice(0, depth),
+        );
+        if (resetRoots.has(ancestor)) continue;
+        const source = await read(`${ancestor}/agent.ts`);
+        if (source !== null && !usesOrgModelResolver(source)) {
+          const label = [target.memberName, ...segments.slice(0, depth)].join(
+            " / ",
+          );
+          return {
+            ok: false,
+            error: `Reset ${label} first, or use the team reset. This parent still selects its model in code, so this subagent cannot inherit its selection through workspace configuration yet.`,
+          };
+        }
+      }
+    }
     const planned = new Map<string, string>();
     const changes = new Map<string, string>();
     const keys: ModelTargetKey[] = [];
@@ -208,16 +232,23 @@ export async function resetModelsToWorkspaceDefault(
     // Identical drafts from a failed reset remain publishable even when GitHub already has some
     // of the files. No second invocation can report applied while these drafts await deployment.
     for (const draft of drafts) changes.set(draft.path, draft.content!);
-    for (const [path, content] of changes) {
-      await stageDraft(
-        {
-          projectId: input.project.id,
-          path,
-          content,
-          createdBy: input.createdBy,
-        },
-        store,
-      );
+    const stagedSnapshot = await store.drafts.compareAndStage(
+      input.project.id,
+      drafts,
+      [...changes].map(([path, content]) => ({
+        projectId: input.project.id,
+        agentId: agentForPath(agents, path)?.id ?? null,
+        path,
+        content,
+        createdBy: input.createdBy,
+      })),
+    );
+    if (stagedSnapshot === null) {
+      return {
+        ok: false,
+        error:
+          "Saved changes changed while preparing the reset. Review them, then retry; no reset changes were staged.",
+      };
     }
     await deps.removeOverrides(input.project.orgId, keys);
     if (!changes.size) return { ok: true, mode: "applied", cacheSeconds: 30 };
@@ -228,6 +259,7 @@ export async function resetModelsToWorkspaceDefault(
         originUrl: input.originUrl,
         createdBy: input.createdBy,
         envName: input.project.liveEnvironmentName,
+        resetDraftFingerprint: draftSnapshotFingerprint(stagedSnapshot),
       },
       store,
     );
