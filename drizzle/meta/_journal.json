@@ -260,6 +260,13 @@
       "when": 1789782471749,
       "tag": "0036_fence_implicit_codex_login",
       "breakpoints": true
+    },
+    {
+      "idx": 37,
+      "version": "7",
+      "when": 1789783597869,
+      "tag": "0037_reauth_authorization_generation",
+      "breakpoints": true
     }
   ]
 }

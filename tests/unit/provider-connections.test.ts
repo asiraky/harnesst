@@ -51,6 +51,7 @@ describe("API-key credential boundary", () => {
       createdAt: new Date(0),
       updatedAt: new Date(0),
       credentialVersion: 0,
+      authorizationVersion: 0,
     });
     expect(display).toEqual({
       id: "abcdefghijkl",
@@ -136,6 +137,7 @@ describe("getFreshAccessToken", () => {
       now: () => NOW,
     });
     expect(result).toEqual({
+      credentialVersion: 0,
       accessToken: "fresh-access",
       accountId: "acct_1",
     });

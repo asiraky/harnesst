@@ -10,7 +10,7 @@
  * promise map collapses concurrent gateway requests onto one refresh) and always persists a rotated
  * refresh token. A dead grant marks the connection `expired` and throws `InvalidGrantError`.
  */
-import { and, asc, desc, eq, sql } from "drizzle-orm";
+import { and, asc, desc, eq, ne, sql } from "drizzle-orm";
 
 import { db } from "~/db/client.server";
 import {
@@ -169,6 +169,8 @@ export async function createApiKeyConnection(
       .update(modelProviderConnections)
       .set({
         ...sealed,
+        label: input.label,
+        authorizationVersion: existing.authorizationVersion + 1,
         status: "active",
         credentialVersion: existing.credentialVersion + 1,
         updatedAt: new Date(),
@@ -221,7 +223,9 @@ export async function createCodexConnection(
     expiresAt: Date | null;
     createdBy?: string | null;
     connectionId?: string;
-    credentialVersion?: number;
+    authorizationVersion?: number;
+    verifiedAccount?: boolean;
+    accountIdAliases?: string[];
     connectionVersions?: Record<string, number>;
   },
   transaction?: ConnectionTransaction,
@@ -260,7 +264,15 @@ export async function createCodexConnection(
       throw new Error(
         "This Codex connection is unavailable in this workspace.",
       );
-    if (target && target.accountId !== input.accountId) {
+    if (
+      target &&
+      target.accountId !== input.accountId &&
+      !(
+        input.verifiedAccount &&
+        (target.accountId === null ||
+          input.accountIdAliases?.includes(target.accountId))
+      )
+    ) {
       throw new Error(
         "Sign in to the same OpenAI account as this connection. No credentials or selections were changed.",
       );
@@ -271,7 +283,7 @@ export async function createCodexConnection(
       );
     }
     const expectedVersion = input.connectionId
-      ? input.credentialVersion
+      ? input.authorizationVersion
       : target && input.connectionVersions
         ? input.connectionVersions[target.id]
         : undefined;
@@ -280,7 +292,7 @@ export async function createCodexConnection(
       ((input.connectionVersions !== undefined &&
         expectedVersion === undefined) ||
         (expectedVersion !== undefined &&
-          target.credentialVersion !== expectedVersion))
+          target.authorizationVersion !== expectedVersion))
     ) {
       throw new Error(
         "This connection changed during sign-in. Close this dialog and try again.",
@@ -290,6 +302,7 @@ export async function createCodexConnection(
     const refresh = seal(secretsKey(), input.refreshToken);
     const credentials = {
       accountEmail: input.accountEmail,
+      accountId: input.accountId,
       accessTokenCiphertext: access.ciphertext,
       accessTokenIv: access.iv,
       accessTokenAuthTag: access.authTag,
@@ -306,6 +319,7 @@ export async function createCodexConnection(
           .set({
             ...credentials,
             credentialVersion: target.credentialVersion + 1,
+            authorizationVersion: target.authorizationVersion + 1,
           })
           .where(eq(modelProviderConnections.id, target.id))
           .returning()
@@ -362,7 +376,12 @@ export async function recoverDeletedCodexConnection(input: {
     const [existing] = await tx
       .select()
       .from(modelProviderConnections)
-      .where(eq(modelProviderConnections.id, input.oldId));
+      .where(
+        and(
+          eq(modelProviderConnections.orgId, input.orgId),
+          eq(modelProviderConnections.id, input.oldId),
+        ),
+      );
     if (existing)
       throw new Error(
         "That connection still exists. Reauthenticate it directly.",
@@ -405,6 +424,35 @@ export async function recoverDeletedCodexConnection(input: {
   });
 }
 
+/** Recovery mappings are managed separately from selectable connections. */
+export async function listModelConnectionAliases(
+  orgId: string,
+): Promise<{ oldConnectionId: string; connectionId: string }[]> {
+  return db
+    .select({
+      oldConnectionId: modelConnectionAliases.oldId,
+      connectionId: modelConnectionAliases.connectionId,
+    })
+    .from(modelConnectionAliases)
+    .where(eq(modelConnectionAliases.orgId, orgId));
+}
+
+export async function deleteModelConnectionAlias(
+  orgId: string,
+  oldConnectionId: string,
+): Promise<boolean> {
+  const rows = await db
+    .delete(modelConnectionAliases)
+    .where(
+      and(
+        eq(modelConnectionAliases.orgId, orgId),
+        eq(modelConnectionAliases.oldId, oldConnectionId),
+      ),
+    )
+    .returning({ id: modelConnectionAliases.oldId });
+  return rows.length === 1;
+}
+
 /** Every connection for an org, newest first — display metadata only. */
 export async function listModelConnections(
   orgId: string,
@@ -434,29 +482,7 @@ export async function listActiveModelConnections(
       asc(modelProviderConnections.createdAt),
       asc(modelProviderConnections.id),
     );
-  const canonical = rows.map(toDisplayModelConnection);
-  const aliases = await db
-    .select()
-    .from(modelConnectionAliases)
-    .where(eq(modelConnectionAliases.orgId, orgId));
-  const byId = new Map(
-    canonical.map((connection) => [connection.id, connection]),
-  );
-  return [
-    ...canonical,
-    ...aliases.flatMap((alias) => {
-      const connection = byId.get(alias.connectionId);
-      return connection?.provider === "codex"
-        ? [
-            {
-              ...connection,
-              id: alias.oldId,
-              label: `${connection.label} (recovered ${alias.oldId})`,
-            },
-          ]
-        : [];
-    }),
-  ];
+  return rows.map(toDisplayModelConnection);
 }
 
 /** Resolve one exact active connection, scoped to its owning org. */
@@ -526,11 +552,12 @@ export async function renameModelConnection(
 export async function disconnectModelConnection(
   orgId: string,
   id: string,
-): Promise<void> {
-  await db
+): Promise<boolean> {
+  const rows = await db
     .update(modelProviderConnections)
     .set({
       status: "revoked",
+      authorizationVersion: sql`${modelProviderConnections.authorizationVersion} + 1`,
       credentialVersion: sql`${modelProviderConnections.credentialVersion} + 1`,
       apiKeyCiphertext: null,
       apiKeyIv: null,
@@ -548,8 +575,28 @@ export async function disconnectModelConnection(
       and(
         eq(modelProviderConnections.orgId, orgId),
         eq(modelProviderConnections.id, id),
+        ne(modelProviderConnections.status, "revoked"),
       ),
-    );
+    )
+    .returning({ id: modelProviderConnections.id });
+  return rows.length === 1;
+}
+
+/** Permanent deletion is explicit; retained references become unavailable instead of switching accounts. */
+export async function deleteModelConnection(
+  orgId: string,
+  id: string,
+): Promise<boolean> {
+  const rows = await db
+    .delete(modelProviderConnections)
+    .where(
+      and(
+        eq(modelProviderConnections.orgId, orgId),
+        eq(modelProviderConnections.id, id),
+      ),
+    )
+    .returning({ id: modelProviderConnections.id });
+  return rows.length === 1;
 }
 
 /** Compare-and-swap prevents a stale refresh failure from expiring a renewed grant. */
@@ -749,6 +796,7 @@ export const REFRESH_MARGIN_MS = 5 * 60 * 1000;
 
 /** A fresh access token + the account-id header value the gateway needs for a connection. */
 export interface FreshAccess {
+  credentialVersion: number;
   accessToken: string;
   accountId: string | null;
 }
@@ -794,7 +842,11 @@ export async function getFreshAccessToken(
   const fresh =
     conn.accessToken != null && expiresAt - now() > REFRESH_MARGIN_MS;
   if (fresh && conn.accessToken) {
-    return { accessToken: conn.accessToken, accountId: conn.accountId };
+    return {
+      accessToken: conn.accessToken,
+      accountId: conn.accountId,
+      credentialVersion: conn.credentialVersion,
+    };
   }
 
   const refreshKey = `${connectionId}:${conn.credentialVersion}`;
@@ -808,7 +860,11 @@ export async function getFreshAccessToken(
         "Reauthenticate OpenAI Codex in workspace connections.",
       );
     }
-    return { accessToken: current.accessToken, accountId: current.accountId };
+    return {
+      accessToken: current.accessToken,
+      accountId: current.accountId,
+      credentialVersion: current.credentialVersion,
+    };
   };
   const run = (async (): Promise<FreshAccess> => {
     try {
@@ -829,7 +885,11 @@ export async function getFreshAccessToken(
         conn.credentialVersion,
       );
       if (saved === false) return currentAccess();
-      return { accessToken: tokens.accessToken, accountId: conn.accountId };
+      return {
+        accessToken: tokens.accessToken,
+        accountId: conn.accountId,
+        credentialVersion: conn.credentialVersion + 1,
+      };
     } catch (error) {
       if (error instanceof InvalidGrantError) {
         if (

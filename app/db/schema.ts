@@ -1229,6 +1229,8 @@ export const modelProviderConnections = pgTable(
       withTimezone: true,
     }),
     credentialVersion: integer("credential_version").notNull().default(0),
+    /** Only disconnect and user authorization invalidate pending sign-ins. */
+    authorizationVersion: integer("authorization_version").notNull().default(0),
     /** "active" | "expired" | "revoked" — display + gateway-guard state, not a secret. */
     status: varchar("status", { length: 16 }).notNull().default("active"),
     createdBy: text("created_by").references(() => user.id, {
@@ -1270,6 +1272,7 @@ export const modelConnectionLogins = pgTable("model_connection_logins", {
     .references(() => user.id, { onDelete: "cascade" }),
   connectionId: varchar("connection_id", { length: 12 }),
   credentialVersion: integer("credential_version"),
+  authorizationVersion: integer("authorization_version"),
   connectionVersions: jsonb("connection_versions")
     .$type<Record<string, number>>()
     .notNull()
@@ -1277,6 +1280,15 @@ export const modelConnectionLogins = pgTable("model_connection_logins", {
   deviceAuthId: text("device_auth_id").notNull(),
   userCode: text("user_code").notNull(),
   processing: boolean("processing").notNull().default(false),
+  processingId: text("processing_id"),
+  processingStartedAt: timestamp("processing_started_at", {
+    withTimezone: true,
+  }),
+  pendingGrant: jsonb("pending_grant").$type<{
+    ciphertext: string;
+    iv: string;
+    authTag: string;
+  }>(),
   expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
 });
 
