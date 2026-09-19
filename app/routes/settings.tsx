@@ -928,6 +928,7 @@ function ConnectionRow({
   canManage: boolean;
 }) {
   const rename = useFetcher();
+  const disconnect = useFetcher<typeof action>();
   const [editing, setEditing] = useState(false);
   const active = conn.status === "active";
   const [recoverOpen, setRecoverOpen] = useState(false);
@@ -1000,13 +1001,12 @@ function ConnectionRow({
             {conn.accountEmail}
           </p>
         )}
-        {MODEL_PROVIDERS[conn.provider].authKind === "api-key" && (
-          <p className="text-xs text-muted-foreground">
-            {conn.status === "revoked"
-              ? "API key disconnected"
-              : "API key configured (write-only)"}
-          </p>
-        )}
+        {MODEL_PROVIDERS[conn.provider].authKind === "api-key" &&
+          conn.status !== "revoked" && (
+            <p className="text-xs text-muted-foreground">
+              API key configured (write-only)
+            </p>
+          )}
         {!active && (
           <p className="text-xs text-amber-600 dark:text-amber-400">
             {`Reauthenticate to resume — this connection is ${conn.status === "revoked" ? "disconnected" : conn.status}.`}
@@ -1021,7 +1021,7 @@ function ConnectionRow({
             <ConnectApiKeyDialog connection={conn} />
           )}
           {conn.status !== "revoked" && (
-            <Form method="post">
+            <disconnect.Form method="post">
               <input type="hidden" name="intent" value="remove-connection" />
               <input type="hidden" name="connectionId" value={conn.id} />
               <Button
@@ -1029,10 +1029,16 @@ function ConnectionRow({
                 variant="outline"
                 size="sm"
                 aria-label={`Disconnect ${conn.label}`}
+                disabled={disconnect.state !== "idle"}
               >
-                Disconnect
+                {disconnect.state === "idle" ? "Disconnect" : "Disconnecting…"}
               </Button>
-            </Form>
+            </disconnect.Form>
+          )}
+          {disconnect.data && "error" in disconnect.data && (
+            <p role="alert" className="text-sm text-destructive">
+              {disconnect.data.error}
+            </p>
           )}
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
@@ -1042,7 +1048,7 @@ function ConnectionRow({
                 size="icon"
                 aria-label={`More actions for ${conn.label}`}
               >
-                <MoreHorizontal className="size-4" />
+                <MoreHorizontal className="size-4" aria-hidden />
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
@@ -1115,21 +1121,6 @@ function ConnectionRow({
 /** Add a validated write-only OpenRouter, Anthropic, or OpenAI Platform key connection. */
 function ConnectApiKeyDialog({ connection }: { connection?: ModelConnection }) {
   const [open, setOpen] = useState(false);
-  const [provider, setProvider] = useState<ApiKeyProviderId>(
-    (connection?.provider as ApiKeyProviderId) ?? "openrouter",
-  );
-  const fetcher = useFetcher<typeof action>();
-
-  useEffect(() => {
-    if (
-      fetcher.state === "idle" &&
-      fetcher.data &&
-      "ok" in fetcher.data &&
-      fetcher.data.ok
-    ) {
-      setOpen(false);
-    }
-  }, [fetcher.data, fetcher.state]);
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
@@ -1157,81 +1148,110 @@ function ConnectApiKeyDialog({ connection }: { connection?: ModelConnection }) {
               : "harnesst validates the key before sealing it. Keys are write-only and are sent directly to agent instances for this exact connection."}
           </DialogDescription>
         </DialogHeader>
-        <fetcher.Form method="post" className="space-y-4">
-          <input type="hidden" name="intent" value="connect-api-key" />
-          <input
-            type="hidden"
-            name="connectionId"
-            value={connection?.id ?? ""}
+        {open && (
+          <ApiKeyConnectionForm
+            connection={connection}
+            onDone={() => setOpen(false)}
           />
-          {connection && (
-            <input type="hidden" name="provider" value={connection.provider} />
-          )}
-          {connection ? (
-            <p className="text-sm">
-              Provider: {MODEL_PROVIDERS[connection.provider].displayName}
-            </p>
-          ) : (
-            <div className="space-y-1.5">
-              <Label htmlFor="provider">Provider</Label>
-              <select
-                id="provider"
-                name="provider"
-                aria-label="Provider"
-                value={provider}
-                onChange={(event) =>
-                  setProvider(event.target.value as ApiKeyProviderId)
-                }
-                className="border-input bg-background h-9 w-full rounded-md border px-3 text-sm"
-              >
-                <option value="openrouter">OpenRouter</option>
-                <option value="anthropic">Anthropic</option>
-                <option value="openai">OpenAI Platform</option>
-              </select>
-            </div>
-          )}
-          <div className="space-y-1.5">
-            <Label htmlFor="connectionLabel">Connection name</Label>
-            <Input
-              id="connectionLabel"
-              defaultValue={connection?.label}
-              name="label"
-              required
-              maxLength={80}
-              placeholder={`e.g. ${MODEL_PROVIDERS[provider].displayName} production`}
-            />
-          </div>
-          <div className="space-y-1.5">
-            <Label htmlFor="providerApiKey">
-              {MODEL_PROVIDERS[provider].displayName} API key
-            </Label>
-            <SecretInput
-              id="providerApiKey"
-              name="apiKey"
-              required
-              revealLabel="API key"
-              wrapperClassName="w-full"
-              className="w-full"
-              placeholder={
-                provider === "openrouter" ? "sk-or-v1-…" : "Paste API key"
-              }
-            />
-          </div>
-          {fetcher.data && "error" in fetcher.data && fetcher.data.error && (
-            <p role="alert" className="text-sm text-destructive">
-              {fetcher.data.error}
-            </p>
-          )}
-          <Button type="submit" disabled={fetcher.state !== "idle"}>
-            {fetcher.state === "idle"
-              ? connection
-                ? "Update credentials"
-                : "Connect provider"
-              : "Validating…"}
-          </Button>
-        </fetcher.Form>
+        )}
       </DialogContent>
     </Dialog>
+  );
+}
+
+function ApiKeyConnectionForm({
+  connection,
+  onDone,
+}: {
+  connection?: ModelConnection;
+  onDone: () => void;
+}) {
+  const [provider, setProvider] = useState<ApiKeyProviderId>(
+    (connection?.provider as ApiKeyProviderId) ?? "openrouter",
+  );
+  const fetcher = useFetcher<typeof action>();
+
+  useEffect(() => {
+    if (
+      fetcher.state === "idle" &&
+      fetcher.data &&
+      "ok" in fetcher.data &&
+      fetcher.data.ok
+    ) {
+      onDone();
+    }
+  }, [fetcher.data, fetcher.state, onDone]);
+
+  return (
+    <fetcher.Form method="post" className="space-y-4">
+      <input type="hidden" name="intent" value="connect-api-key" />
+      <input type="hidden" name="connectionId" value={connection?.id ?? ""} />
+      {connection && (
+        <input type="hidden" name="provider" value={connection.provider} />
+      )}
+      {connection ? (
+        <p className="text-sm">
+          Provider: {MODEL_PROVIDERS[connection.provider].displayName}
+        </p>
+      ) : (
+        <div className="space-y-1.5">
+          <Label htmlFor="provider">Provider</Label>
+          <select
+            id="provider"
+            name="provider"
+            aria-label="Provider"
+            value={provider}
+            onChange={(event) =>
+              setProvider(event.target.value as ApiKeyProviderId)
+            }
+            className="border-input bg-background h-9 w-full rounded-md border px-3 text-sm"
+          >
+            <option value="openrouter">OpenRouter</option>
+            <option value="anthropic">Anthropic</option>
+            <option value="openai">OpenAI Platform</option>
+          </select>
+        </div>
+      )}
+      <div className="space-y-1.5">
+        <Label htmlFor="connectionLabel">Connection name</Label>
+        <Input
+          id="connectionLabel"
+          defaultValue={connection?.label}
+          name="label"
+          required
+          maxLength={80}
+          placeholder={`e.g. ${MODEL_PROVIDERS[provider].displayName} production`}
+        />
+      </div>
+      <div className="space-y-1.5">
+        <Label htmlFor="providerApiKey">
+          {MODEL_PROVIDERS[provider].displayName} API key
+        </Label>
+        <SecretInput
+          id="providerApiKey"
+          name="apiKey"
+          required
+          revealLabel="API key"
+          wrapperClassName="w-full"
+          className="w-full"
+          placeholder={
+            provider === "openrouter" ? "sk-or-v1-…" : "Paste API key"
+          }
+        />
+      </div>
+      {fetcher.data && "error" in fetcher.data && fetcher.data.error && (
+        <p role="alert" className="text-sm text-destructive">
+          {fetcher.data.error}
+        </p>
+      )}
+      <Button type="submit" disabled={fetcher.state !== "idle"}>
+        {fetcher.state === "idle"
+          ? connection
+            ? "Update credentials"
+            : "Connect provider"
+          : "Validating…"}
+      </Button>
+    </fetcher.Form>
   );
 }
 
@@ -1615,7 +1635,6 @@ function DeleteConnectionDialog({
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }) {
-  const fetcher = useFetcher<typeof action>();
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent>
@@ -1627,43 +1646,57 @@ function DeleteConnectionDialog({
             instead if you plan to reconnect this account.
           </DialogDescription>
         </DialogHeader>
-        <fetcher.Form method="post" className="space-y-4">
-          <input type="hidden" name="intent" value="delete-connection" />
-          <input type="hidden" name="connectionId" value={connection.id} />
-          <label className="flex items-start gap-2 text-sm">
-            <input
-              type="checkbox"
-              className="mt-1 shrink-0"
-              name="confirmed"
-              value="yes"
-              required
-            />
-            <span>I understand this permanently deletes this connection.</span>
-          </label>
-          {fetcher.data && "error" in fetcher.data && (
-            <p role="alert" className="text-sm text-destructive">
-              {fetcher.data.error}
-            </p>
-          )}
-          <div className="flex flex-wrap gap-2">
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => onOpenChange(false)}
-            >
-              Cancel
-            </Button>
-            <Button
-              type="submit"
-              variant="destructive"
-              disabled={fetcher.state !== "idle"}
-            >
-              Permanently delete
-            </Button>
-          </div>
-        </fetcher.Form>
+        {open && (
+          <DeleteConnectionForm
+            connection={connection}
+            onCancel={() => onOpenChange(false)}
+          />
+        )}
       </DialogContent>
     </Dialog>
+  );
+}
+
+function DeleteConnectionForm({
+  connection,
+  onCancel,
+}: {
+  connection: ModelConnection;
+  onCancel: () => void;
+}) {
+  const fetcher = useFetcher<typeof action>();
+  return (
+    <fetcher.Form method="post" className="space-y-4">
+      <input type="hidden" name="intent" value="delete-connection" />
+      <input type="hidden" name="connectionId" value={connection.id} />
+      <label className="flex items-start gap-2 text-sm">
+        <input
+          type="checkbox"
+          className="mt-1 shrink-0"
+          name="confirmed"
+          value="yes"
+          required
+        />
+        <span>I understand this permanently deletes this connection.</span>
+      </label>
+      {fetcher.data && "error" in fetcher.data && (
+        <p role="alert" className="text-sm text-destructive">
+          {fetcher.data.error}
+        </p>
+      )}
+      <div className="flex flex-wrap gap-2">
+        <Button type="button" variant="outline" onClick={onCancel}>
+          Cancel
+        </Button>
+        <Button
+          type="submit"
+          variant="destructive"
+          disabled={fetcher.state !== "idle"}
+        >
+          Permanently delete
+        </Button>
+      </div>
+    </fetcher.Form>
   );
 }
 

@@ -257,6 +257,21 @@ export async function createCodexConnection(
       )
       .for("update");
     const matching = rows.filter((row) => row.accountId === input.accountId);
+    // A historical null/organization identity cannot safely match a new grant automatically.
+    // Resolve it through explicit reauthentication before inserting another logical connection.
+    if (
+      !input.connectionId &&
+      matching.length === 0 &&
+      rows.some(
+        (row) =>
+          row.accountId === null ||
+          input.accountIdAliases?.includes(row.accountId),
+      )
+    ) {
+      throw new Error(
+        "This Codex connection may already exist under a legacy account identity. Choose Reauthenticate on the existing connection and verify its account before connecting another account.",
+      );
+    }
     const target = input.connectionId
       ? rows.find((row) => row.id === input.connectionId)
       : matching[0];

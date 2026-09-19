@@ -1,11 +1,27 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ModelCatalogEntry } from "~/models/catalog.server";
-import { selectedCatalogModel } from "~/components/model-select";
+import { createElement } from "react";
+import { renderToString } from "react-dom/server";
+import { MemoryRouter } from "react-router";
+import {
+  ModelSelect,
+  selectedCatalogModel,
+  type ModelsApiResponse,
+} from "~/components/model-select";
 
 const mocks = vi.hoisted(() => ({
   resolveActiveWorkspace: vi.fn(),
   listWorkspaceModelCatalog: vi.fn(),
   findWorkspaceModel: vi.fn(),
+  modelResponse: null as ModelsApiResponse | null,
+}));
+vi.mock("react-router", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("react-router")>()),
+  useFetcher: () => ({
+    data: mocks.modelResponse,
+    state: "idle",
+    load: vi.fn(),
+  }),
 }));
 vi.mock("~/auth/session.server", () => ({
   sessionLoader: (_args: unknown, run: (context: unknown) => unknown) =>
@@ -75,5 +91,57 @@ describe("saved model selection metadata", () => {
     const result = await request(recovered.id);
     expect(selectedCatalogModel(result as never, recovered.id)).toBeUndefined();
     expect(result).toMatchObject({ models: [canonical], selectedModel: null });
+  });
+});
+
+describe("selected model warning", () => {
+  function render() {
+    return renderToString(
+      createElement(
+        MemoryRouter,
+        null,
+        createElement(ModelSelect, {
+          value: recovered.id,
+          busy: false,
+          onCommit: vi.fn(),
+        }),
+      ),
+    );
+  }
+
+  it("does not warn when an existing recovery alias resolved outside the picker union", () => {
+    mocks.modelResponse = {
+      models: [canonical],
+      unavailable: [],
+      requestedModel: recovered.id,
+      selectedModel: recovered,
+    };
+    expect(render()).not.toContain(
+      `href="/settings/connections#connection-mnopqrstuvwx"`,
+    );
+  });
+
+  it("offers connection recovery when the current selected reference failed to resolve", () => {
+    mocks.modelResponse = {
+      models: [canonical],
+      unavailable: [],
+      requestedModel: recovered.id,
+      selectedModel: null,
+    };
+    expect(render()).toContain(
+      `href="/settings/connections#connection-mnopqrstuvwx"`,
+    );
+  });
+
+  it("waits for metadata for a newly selected reference before warning", () => {
+    mocks.modelResponse = {
+      models: [canonical],
+      unavailable: [],
+      requestedModel: canonical.id,
+      selectedModel: canonical,
+    };
+    expect(render()).not.toContain(
+      `href="/settings/connections#connection-mnopqrstuvwx"`,
+    );
   });
 });

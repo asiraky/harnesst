@@ -26,7 +26,7 @@ describe("TurnError recovery context", () => {
     "links the explicit model's connection without parsing its error text: %s",
     (modelId) => {
       const message = "Upstream supplied diagnostic";
-      const html = render({ message, modelId });
+      const html = render({ message, recoveryModelId: modelId });
       expect(html).toContain(message);
       expect(html).toContain(
         `href="/settings/connections#connection-${modelId.split("/")[1]}"`,

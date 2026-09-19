@@ -173,3 +173,40 @@ export function modelSelectionFailure(
     recoveryUrl: modelConnectionSettingsUrl(model),
   };
 }
+
+/** Read gateway recovery metadata before Eve's structured failure is formatted as prose. */
+export function modelConnectionFailureReference(
+  value: unknown,
+  depth = 0,
+): string | null {
+  if (depth > 10 || value == null) return null;
+  if (typeof value === "string") {
+    if (value.length > 100_000) return null;
+    try {
+      return modelConnectionFailureReference(JSON.parse(value), depth + 1);
+    } catch {
+      return null;
+    }
+  }
+  if (typeof value !== "object" || Array.isArray(value)) return null;
+  const record = value as Record<string, unknown>;
+  if (
+    record.code === "connection_unavailable" &&
+    typeof record.model === "string" &&
+    parseProviderModelReference(record.model)
+  )
+    return record.model;
+  for (const key of [
+    "error",
+    "details",
+    "detail",
+    "cause",
+    "data",
+    "responseBody",
+    "responseBodySnippet",
+  ]) {
+    const model = modelConnectionFailureReference(record[key], depth + 1);
+    if (model) return model;
+  }
+  return null;
+}

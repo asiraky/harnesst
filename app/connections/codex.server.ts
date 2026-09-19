@@ -20,6 +20,25 @@
  * `chatmock/utils.py`) — the same client id and endpoints the Codex CLI uses.
  */
 
+/** Finish before the route's 60-second processing lease can be reclaimed. */
+async function withOAuthDeadline<T>(
+  run: (signal: AbortSignal) => Promise<T>,
+): Promise<T> {
+  const controller = new AbortController();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<never>((_resolve, reject) => {
+    timer = setTimeout(() => {
+      controller.abort();
+      reject(new Error("Codex authentication request timed out."));
+    }, 30_000);
+  });
+  try {
+    return await Promise.race([run(controller.signal), deadline]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 /** The public Codex CLI OAuth client id (no secret). Same value the Codex CLI ships. */
 export const CODEX_CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann";
 
@@ -125,38 +144,43 @@ export async function pollDeviceToken(
   input: { deviceAuthId: string; userCode: string },
   fetchImpl: typeof fetch = fetch,
 ): Promise<"pending" | DevicePollSuccess> {
-  const res = await fetchImpl(
-    `${codexAuthBase()}/api/accounts/deviceauth/token`,
-    {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        device_auth_id: input.deviceAuthId,
-        user_code: input.userCode,
-      }),
-    },
-  );
-  if (res.status === 403 || res.status === 404) return "pending";
-  if (!res.ok) {
-    const body = await res.text().catch(() => "");
-    throw new Error(
-      `Codex device login failed (HTTP ${res.status})${body ? `: ${body}` : "."}`,
+  return withOAuthDeadline(async (signal) => {
+    const res = await fetchImpl(
+      `${codexAuthBase()}/api/accounts/deviceauth/token`,
+      {
+        method: "POST",
+        signal,
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          device_auth_id: input.deviceAuthId,
+          user_code: input.userCode,
+        }),
+      },
     );
-  }
-  const data = (await res.json()) as {
-    authorization_code?: string;
-    code_verifier?: string;
-  };
-  if (
-    typeof data.authorization_code !== "string" ||
-    typeof data.code_verifier !== "string"
-  ) {
-    throw new Error("Codex device-token response is missing expected fields.");
-  }
-  return {
-    authorizationCode: data.authorization_code,
-    codeVerifier: data.code_verifier,
-  };
+    if (res.status === 403 || res.status === 404) return "pending";
+    if (!res.ok) {
+      const body = await res.text().catch(() => "");
+      throw new Error(
+        `Codex device login failed (HTTP ${res.status})${body ? `: ${body}` : "."}`,
+      );
+    }
+    const data = (await res.json()) as {
+      authorization_code?: string;
+      code_verifier?: string;
+    };
+    if (
+      typeof data.authorization_code !== "string" ||
+      typeof data.code_verifier !== "string"
+    ) {
+      throw new Error(
+        "Codex device-token response is missing expected fields.",
+      );
+    }
+    return {
+      authorizationCode: data.authorization_code,
+      codeVerifier: data.code_verifier,
+    };
+  });
 }
 
 export interface CodexTokens {
@@ -172,25 +196,28 @@ export async function exchangeDeviceCode(
   input: { authorizationCode: string; codeVerifier: string },
   fetchImpl: typeof fetch = fetch,
 ): Promise<CodexTokens> {
-  const base = codexAuthBase();
-  const res = await fetchImpl(`${base}/oauth/token`, {
-    method: "POST",
-    headers: { "content-type": "application/x-www-form-urlencoded" },
-    body: new URLSearchParams({
-      grant_type: "authorization_code",
-      client_id: CODEX_CLIENT_ID,
-      code: input.authorizationCode,
-      code_verifier: input.codeVerifier,
-      redirect_uri: `${base}/deviceauth/callback`,
-    }).toString(),
+  return withOAuthDeadline(async (signal) => {
+    const base = codexAuthBase();
+    const res = await fetchImpl(`${base}/oauth/token`, {
+      method: "POST",
+      signal,
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        grant_type: "authorization_code",
+        client_id: CODEX_CLIENT_ID,
+        code: input.authorizationCode,
+        code_verifier: input.codeVerifier,
+        redirect_uri: `${base}/deviceauth/callback`,
+      }).toString(),
+    });
+    if (!res.ok) {
+      const body = await res.text().catch(() => "");
+      throw new Error(
+        `Codex rejected the token exchange (HTTP ${res.status})${body ? `: ${body}` : "."}`,
+      );
+    }
+    return readTokenResponse(await res.json());
   });
-  if (!res.ok) {
-    const body = await res.text().catch(() => "");
-    throw new Error(
-      `Codex rejected the token exchange (HTTP ${res.status})${body ? `: ${body}` : "."}`,
-    );
-  }
-  return readTokenResponse(await res.json());
 }
 
 /**

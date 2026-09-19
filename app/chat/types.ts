@@ -153,6 +153,8 @@ export interface ChatEntry {
   error?: string | null;
   /** Raw error text for operators (rendered behind a details toggle). Additive. */
   errorDetail?: string | null;
+  /** Explicit gateway connection recovery context; never inferred from model attribution. */
+  errorModelId?: string | null;
   /** The error is a transient provider hiccup — offer a retry affordance. Additive. */
   errorRetryable?: boolean;
 }

@@ -384,6 +384,7 @@ interface LiveTurn {
   inputRequests: ChatInputRequest[];
   error: string | null;
   errorDetail: string | null;
+  errorModelId?: string | null;
   errorRetryable: boolean;
   done: boolean;
 }
@@ -628,10 +629,11 @@ export default function FohSession({ loaderData }: Route.ComponentProps) {
           const detail = (await res.json().catch(() => null)) as {
             error?: unknown;
             model?: unknown;
+            code?: unknown;
           } | null;
           if (isCurrent())
             setSendErrorModel(
-              typeof detail?.model === "string" ? detail.model : null,
+              typeof detail?.model === "string" && (detail.code === "connection_unavailable" || detail.code === "model_unavailable") ? detail.model : null,
             );
           const errorMessage =
             typeof detail?.error === "string" ? detail.error : null;
@@ -875,7 +877,7 @@ export default function FohSession({ loaderData }: Route.ComponentProps) {
               )}
               {sendError && (
                 <div className="mb-4 rounded-md border border-destructive/40 bg-destructive/5 px-3 py-2 text-sm">
-                  <TurnError message={sendError} modelId={sendErrorModel} />
+                  <TurnError message={sendError} recoveryModelId={sendErrorModel} />
                 </div>
               )}
             </>
@@ -1090,6 +1092,7 @@ type StreamEvent =
       inputRequests?: ChatInputRequest[];
       error: string | null;
       errorDetail?: string | null;
+      errorModelId?: string | null;
       errorRetryable?: boolean;
       modelId: string | null;
       version: string;
@@ -1135,6 +1138,7 @@ function reduceLive(prev: LiveTurn, evt: StreamEvent): LiveTurn {
             : prev.inputRequests,
         error: evt.error,
         errorDetail: evt.errorDetail ?? null,
+        errorModelId: evt.errorModelId ?? null,
         errorRetryable: evt.errorRetryable ?? false,
         modelId: evt.modelId ?? prev.modelId,
         activity: null,
@@ -1161,7 +1165,7 @@ function LiveBubble({
           {live.error ? (
             <TurnError
               message={live.error}
-              modelId={live.modelId}
+              recoveryModelId={live.errorModelId}
               detail={live.errorDetail}
               retryable={live.errorRetryable}
               onRetry={onRetry}
@@ -1220,7 +1224,7 @@ export function AgentEntry({
           {entry.error ? (
             <TurnError
               message={entry.error}
-              modelId={entry.modelId}
+              recoveryModelId={entry.errorModelId}
               detail={entry.errorDetail}
               retryable={entry.errorRetryable}
               onRetry={onRetry}

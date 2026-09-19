@@ -303,8 +303,9 @@ export function ModelSelect({
   const removed =
     Boolean(value) &&
     !loading &&
+    fetcher.data?.requestedModel === value &&
     Array.isArray(models) &&
-    !models.some((m) => m.id === value);
+    !selected;
 
   return (
     <div>
