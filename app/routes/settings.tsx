@@ -89,6 +89,7 @@ import {
 import {
   MODEL_PROVIDERS,
   isApiKeyProviderId,
+  parseProviderModelReference,
   type ApiKeyProviderId,
 } from "~/models/provider-reference";
 import { findWorkspaceModel } from "~/models/union.server";
@@ -375,7 +376,7 @@ export async function action(args: ActionFunctionArgs) {
       action: "model_provider_deleted",
       target: id,
     });
-    return { ok: true as const };
+    return { ok: true as const, deletedConnection: id };
   }
 
   if (intent === "delete-connection-alias") {
@@ -482,6 +483,15 @@ export async function action(args: ActionFunctionArgs) {
 
 export function meta() {
   return [{ title: "Settings · harnesst" }, ...noindexMeta];
+}
+
+/** Announce successful deletion before loader revalidation removes its dialog. */
+export async function clientAction({ serverAction }: Route.ClientActionArgs) {
+  const result = await serverAction();
+  if (result && "deletedConnection" in result) {
+    toast.success(`Connection ${result.deletedConnection} permanently deleted`);
+  }
+  return result;
 }
 
 export default function WorkspaceSettings({
@@ -621,6 +631,7 @@ export default function WorkspaceSettings({
                     <ConnectionRow
                       key={conn.id}
                       conn={conn}
+                      defaultConnectionId={parseProviderModelReference(assistantModel ?? "")?.connectionId}
                       aliases={connectionAliases.filter((alias) => alias.connectionId === conn.id)}
                       canManage={canManage}
                     />
@@ -921,10 +932,12 @@ function AgentOverrideRow({
 function ConnectionRow({
   conn,
   aliases,
+  defaultConnectionId,
   canManage,
 }: {
   conn: ModelConnection;
   aliases: { oldConnectionId: string; connectionId: string }[];
+  defaultConnectionId?: string;
   canManage: boolean;
 }) {
   const rename = useFetcher();
@@ -937,8 +950,9 @@ function ConnectionRow({
   return (
     <li
       id={`connection-${conn.id}`}
-      className="flex flex-wrap items-center justify-between gap-2 px-4 py-3"
+      className="relative flex flex-wrap items-center justify-between gap-2 px-4 py-3"
     >
+      {aliases.map((alias) => <span key={alias.oldConnectionId} id={`connection-${alias.oldConnectionId}`} className="absolute top-0" aria-hidden />)}
       <div className="min-w-0 max-w-full space-y-0.5">
         <div className="flex flex-wrap items-center gap-2">
           <span className="rounded bg-muted px-1.5 py-0.5 text-xs font-medium">
@@ -955,7 +969,7 @@ function ConnectionRow({
               <Input
                 name="label"
                 defaultValue={conn.label}
-                aria-label="Connection name"
+                aria-label={`Connection name for ${conn.label}, ${conn.id}`}
                 className="h-7 w-40"
               />
               <Button type="submit" size="sm">
@@ -969,7 +983,7 @@ function ConnectionRow({
             <button
               type="button"
               className="text-xs text-muted-foreground underline"
-              aria-label={`Rename ${conn.label}`}
+              aria-label={`Rename ${conn.label}, ${conn.id}`}
               onClick={() => setEditing(true)}
             >
               rename
@@ -983,7 +997,7 @@ function ConnectionRow({
             variant="ghost"
             size="icon"
             className="ml-1 size-7"
-            aria-label={`Copy connection ID for ${conn.label}`}
+            aria-label={`Copy connection ID for ${conn.label}, ${conn.id}`}
             onClick={async () => {
               try {
                 await navigator.clipboard.writeText(conn.id);
@@ -996,6 +1010,11 @@ function ConnectionRow({
             <Copy className="size-3.5" aria-hidden />
           </Button>
         </p>
+        {conn.accountId && (
+          <p className="break-all text-xs text-muted-foreground">
+            Provider account: <code>{conn.accountId}</code>
+          </p>
+        )}
         {conn.accountEmail && (
           <p className="break-all text-xs text-muted-foreground">
             {conn.accountEmail}
@@ -1028,7 +1047,7 @@ function ConnectionRow({
                 type="submit"
                 variant="outline"
                 size="sm"
-                aria-label={`Disconnect ${conn.label}`}
+                aria-label={`Disconnect ${conn.label}, ${conn.id}`}
                 disabled={disconnect.state !== "idle"}
               >
                 {disconnect.state === "idle" ? "Disconnect" : "Disconnecting…"}
@@ -1046,7 +1065,8 @@ function ConnectionRow({
                 type="button"
                 variant="ghost"
                 size="icon"
-                aria-label={`More actions for ${conn.label}`}
+                aria-label={`More actions for ${conn.label}, ${conn.id}`}
+                className="max-sm:min-h-11 max-sm:min-w-11"
               >
                 <MoreHorizontal className="size-4" aria-hidden />
               </Button>
@@ -1055,7 +1075,7 @@ function ConnectionRow({
               {conn.provider === "codex" && active && (
                 <DropdownMenuItem
                   onSelect={() => setRecoverOpen(true)}
-                  aria-label={`Recover deleted ID with ${conn.label}`}
+                  aria-label={`Recover deleted ID with ${conn.label}, ${conn.id}`}
                 >
                   Recover deleted ID
                 </DropdownMenuItem>
@@ -1063,7 +1083,7 @@ function ConnectionRow({
               {aliases.length > 0 && (
                 <DropdownMenuItem
                   onSelect={() => setMappingsOpen(true)}
-                  aria-label={`Manage recovery mappings for ${conn.label}`}
+                  aria-label={`Manage recovery mappings for ${conn.label}, ${conn.id}`}
                 >
                   Manage recovery mappings
                 </DropdownMenuItem>
@@ -1071,7 +1091,7 @@ function ConnectionRow({
               <DropdownMenuItem
                 variant="destructive"
                 onSelect={() => setDeleteOpen(true)}
-                aria-label={`Permanently delete ${conn.label}`}
+                aria-label={`Permanently delete ${conn.label}, ${conn.id}`}
               >
                 Permanently delete
               </DropdownMenuItem>
@@ -1097,6 +1117,9 @@ function ConnectionRow({
                     <RecoveryMappingRow
                       key={alias.oldConnectionId}
                       oldId={alias.oldConnectionId}
+                      isWorkspaceDefault={
+                        defaultConnectionId === alias.oldConnectionId
+                      }
                     />
                   ))}
                 </ul>
@@ -1129,8 +1152,11 @@ function ConnectApiKeyDialog({ connection }: { connection?: ModelConnection }) {
           type="button"
           size="sm"
           aria-label={
-            connection ? `Reauthenticate ${connection.label}` : undefined
+            connection
+              ? `Reauthenticate ${connection.label}, ${connection.id}`
+              : undefined
           }
+          className="max-sm:min-h-11 max-sm:min-w-11"
         >
           {connection ? "Reauthenticate" : "Connect API key"}
         </Button>
@@ -1139,7 +1165,7 @@ function ConnectApiKeyDialog({ connection }: { connection?: ModelConnection }) {
         <DialogHeader>
           <DialogTitle>
             {connection
-              ? `Reauthenticate ${connection.label}`
+              ? `Reauthenticate ${connection.label}, ${connection.id}`
               : "Connect an API-key provider"}
           </DialogTitle>
           <DialogDescription>
@@ -1229,6 +1255,7 @@ function ApiKeyConnectionForm({
         </Label>
         <SecretInput
           id="providerApiKey"
+          autoFocus={!!connection}
           name="apiKey"
           required
           revealLabel="API key"
@@ -1395,8 +1422,11 @@ function ConnectCodexDialog({ connection }: { connection?: ModelConnection }) {
           type="button"
           size="sm"
           aria-label={
-            connection ? `Reauthenticate ${connection.label}` : undefined
+            connection
+              ? `Reauthenticate ${connection.label}, ${connection.id}`
+              : undefined
           }
+          className="max-sm:min-h-11 max-sm:min-w-11"
         >
           {connection ? "Reauthenticate" : "Connect OpenAI Codex"}
         </Button>
@@ -1405,7 +1435,7 @@ function ConnectCodexDialog({ connection }: { connection?: ModelConnection }) {
         <DialogHeader>
           <DialogTitle>
             {connection
-              ? `Reauthenticate ${connection.label}`
+              ? `Reauthenticate ${connection.label}, ${connection.id}`
               : "Connect OpenAI Codex"}
           </DialogTitle>
           <DialogDescription>
@@ -1550,9 +1580,10 @@ function RecoverConnectionDialog({
         <DialogHeader>
           <DialogTitle>Recover a deleted Codex connection</DialogTitle>
           <DialogDescription>
-            Restore old agent and session references using {connection.label}.
-            The deleted account identity cannot be inferred. Verify the original
-            account from your records before linking it.
+            Restore old agent and session references using {connection.label}{" "}
+            (connection {connection.id}). The deleted account identity cannot be
+            inferred. Verify the original account from your records before
+            linking it.
           </DialogDescription>
         </DialogHeader>
         {open && (
@@ -1606,7 +1637,8 @@ function RecoveryForm({
         />
         <span>
           I verified that the deleted connection used the same OpenAI account as{" "}
-          {connection.label} ({connection.accountEmail ?? connection.id}).
+          {connection.label} (provider account{" "}
+          {connection.accountId ?? "unknown"}, connection {connection.id}).
         </span>
       </label>
       <p className="text-sm text-muted-foreground">
@@ -1639,8 +1671,17 @@ function DeleteConnectionDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>Permanently delete {connection.label}?</DialogTitle>
+          <DialogTitle>
+            Permanently delete {connection.label} ({connection.id})?
+          </DialogTitle>
           <DialogDescription>
+            {connection.accountId
+              ? `Provider account: ${connection.accountId}. `
+              : ""}
+            {connection.accountEmail &&
+            connection.accountEmail !== connection.label
+              ? `Email: ${connection.accountEmail}. `
+              : ""}
             This removes the connection, its credentials, and recovery mappings.
             Existing agent and session references will stop working. Disconnect
             instead if you plan to reconnect this account.
@@ -1700,7 +1741,13 @@ function DeleteConnectionForm({
   );
 }
 
-function RecoveryMappingRow({ oldId }: { oldId: string }) {
+function RecoveryMappingRow({
+  oldId,
+  isWorkspaceDefault,
+}: {
+  oldId: string;
+  isWorkspaceDefault: boolean;
+}) {
   const fetcher = useFetcher<typeof action>();
   return (
     <li>
@@ -1708,10 +1755,18 @@ function RecoveryMappingRow({ oldId }: { oldId: string }) {
         <input type="hidden" name="intent" value="delete-connection-alias" />
         <input type="hidden" name="oldId" value={oldId} />
         <code className="text-sm">{oldId}</code>
+        {isWorkspaceDefault && (
+          <p role="alert" className="text-sm text-destructive">
+            The workspace default model uses this mapping. Removing it stops
+            agents that inherit the workspace default until a working default is
+            selected.
+          </p>
+        )}
         <label className="flex items-start gap-2 text-sm">
           <input
             type="checkbox"
             name="confirmed"
+            aria-label={`Confirm removing recovery mapping ${oldId}`}
             value="yes"
             required
             className="mt-1 shrink-0"

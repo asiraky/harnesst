@@ -42,6 +42,7 @@ export interface ModelConnection {
   provider: ModelProviderId;
   label: string;
   accountEmail: string | null;
+  accountId?: string | null;
   status: ConnectionStatus;
   createdAt: Date;
 }
@@ -74,6 +75,7 @@ export function toDisplayModelConnection(
     provider: row.provider,
     label: row.label,
     accountEmail: row.accountEmail,
+    accountId: row.accountId,
     status: row.status as ConnectionStatus,
     createdAt: row.createdAt,
   };

@@ -3,6 +3,12 @@ import { sessionLoader } from "~/auth/session.server";
 import type { LoaderFunctionArgs } from "react-router";
 
 import { resolveActiveWorkspace } from "~/auth/workspace.server";
+import {
+  listModelConnections,
+  resolveModelConnectionId,
+} from "~/models/provider-connections.server";
+import { parseProviderModelReference } from "~/models/provider-reference";
+import { auth as betterAuth } from "~/lib/auth.server";
 import type { ModelsApiResponse } from "~/components/model-select";
 import {
   findWorkspaceModel,
@@ -24,6 +30,47 @@ export const loader = (args: LoaderFunctionArgs) =>
           selectedModel: null,
         };
 
+      const reference = parseProviderModelReference(requestedModel ?? "");
+      const [connections, resolvedId, permission] = await Promise.all([
+        listModelConnections(active.org.id),
+        reference
+          ? resolveModelConnectionId(active.org.id, reference.connectionId)
+          : Promise.resolve(null),
+        betterAuth.api.hasPermission({
+          headers: auth.requestHeaders,
+          body: {
+            organizationId: active.org.id,
+            permissions: { organization: ["update"] },
+          },
+        }),
+      ]);
+      const selectedConnection = reference
+        ? connections.find(
+            (connection) =>
+              connection.id === resolvedId &&
+              connection.provider === reference.provider,
+          )
+        : undefined;
+      const connectionMetadata = {
+        canManageConnections: permission.success,
+        inactiveConnections: connections
+          .filter((connection) => connection.status !== "active")
+          .map((connection) => ({
+            id: connection.id,
+            label: connection.label,
+            status: connection.status,
+          })),
+        selectedConnection: reference
+          ? {
+              connectionId: selectedConnection?.id ?? null,
+              status: selectedConnection?.status ?? ("missing" as const),
+              settingsUrl: selectedConnection
+                ? `/settings/connections#connection-${selectedConnection.id}`
+                : "/settings/connections",
+            }
+          : null,
+      };
+
       try {
         const catalog = await listWorkspaceModelCatalog(active.org.id);
         // Recovered IDs resolve existing selections without becoming new picker options.
@@ -31,10 +78,16 @@ export const loader = (args: LoaderFunctionArgs) =>
           ? (catalog.models.find((model) => model.id === requestedModel) ??
             (await findWorkspaceModel(active.org.id, requestedModel)))
           : null;
-        return { ...catalog, requestedModel, selectedModel };
+        return {
+          ...catalog,
+          requestedModel,
+          selectedModel,
+          ...connectionMetadata,
+        };
       } catch (error) {
         console.warn("[api.models] model catalog unavailable:", error);
         return {
+          ...connectionMetadata,
           models: [],
           requestedModel,
           selectedModel: null,
