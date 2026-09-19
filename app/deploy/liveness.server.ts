@@ -24,10 +24,15 @@ function failedHealth(error: unknown): InstanceHealth {
 }
 
 /** Revalidate the historical artifact on restart, even if its Release has since been rebuilt. */
-function startWithProvenance(deployment: DeploymentWithRelease, target: DeployTarget) {
-  return deployment.artifactProvenance
-    ? target.start(deployment.id, deployment.artifactProvenance)
-    : target.start(deployment.id); // Legacy instances and the built-in assistant have no manifest.
+async function startWithProvenance(deployment: DeploymentWithRelease, deps: LivenessDeps) {
+  // Listing rows carry compact evidence only; load the full historical manifest once per wake.
+  const snapshot = (await deps.store.deployments.findById(deployment.id))?.artifactProvenance;
+  if (deployment.artifactProvenance && !snapshot) {
+    throw new Error("Artifact verification failed: deployment source manifest is unavailable. Redeploy to rebuild and verify this release.");
+  }
+  return snapshot
+    ? deps.deployTarget.start(deployment.id, snapshot)
+    : deps.deployTarget.start(deployment.id); // Legacy instances and assistant have no manifest.
 }
 
 /** Wake a row already persisted as stopped, promoting it only when the target returns a URL. */
@@ -35,7 +40,7 @@ export async function wakeStoppedDeployment(
   stopped: DeploymentWithRelease,
   deps: LivenessDeps,
 ): Promise<DeploymentWithRelease | null> {
-  const health = await startWithProvenance(stopped, deps.deployTarget).catch(failedHealth);
+  const health = await startWithProvenance(stopped, deps).catch(failedHealth);
   if (health.status !== "live" || !health.url) {
     await deps.store.deployments.updateIfStatus(stopped.id, "stopped", {
       errorDetail: health.detail ?? null,
@@ -92,7 +97,7 @@ export async function recoverLiveDeployment(
   });
   if (!claimed) return null;
 
-  const woke = await startWithProvenance(live, deps.deployTarget).catch(failedHealth);
+  const woke = await startWithProvenance(live, deps).catch(failedHealth);
   if (woke.status === "live" && woke.url) {
     const refreshed = await deps.store.deployments.updateIfStatus(
       live.id,

@@ -10,6 +10,7 @@ import {
   desc,
   eq,
   gt,
+  getTableColumns,
   gte,
   inArray,
   isNull,
@@ -38,7 +39,7 @@ import {
   workspaceTasks,
 } from "~/db/schema";
 import { recordAudit } from "~/managed/audit.server";
-import type { DataStore, DraftChange, DraftWrite } from "./ports";
+import type { ArtifactProvenanceSummary, DataStore, DraftChange, DraftWrite } from "./ports";
 
 type DraftTransaction = Parameters<Parameters<typeof db.transaction>[0]>[0];
 
@@ -207,7 +208,10 @@ export const drizzleDataStore: DataStore = {
     },
     async listByProject(projectId) {
       return db
-        .select()
+        .select({
+          ...getTableColumns(releases),
+          artifactProvenance: sql<ArtifactProvenanceSummary | null>`${releases.artifactProvenance} - 'files'`,
+        })
         .from(releases)
         .where(eq(releases.projectId, projectId))
         .orderBy(desc(releases.createdAt));
@@ -266,7 +270,7 @@ export const drizzleDataStore: DataStore = {
           releaseId: deployments.releaseId,
           version: releases.version,
           gitSha: releases.gitSha,
-          artifactProvenance: deployments.artifactProvenance,
+          artifactProvenance: sql<ArtifactProvenanceSummary | null>`${deployments.artifactProvenance} - 'files'`,
         })
         .from(deployments)
         .innerJoin(releases, eq(deployments.releaseId, releases.id))

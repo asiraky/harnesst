@@ -1009,9 +1009,12 @@ export async function runPublish(
             gitSha: sha,
             agentRoot: member.root,
           });
+          if (!built.provenance) {
+            throw new Error("Artifact verification failed: promotion did not record verified provenance.");
+          }
           await store.releases.setImageRef(release.id, built.imageRef, built.provenance);
         } catch (error) {
-          throw new Error(`Artifact verification failed for ${member.name}: ${error instanceof Error ? error.message : String(error)}`);
+          throw new Error(`Could not verify and promote the build for ${member.name}: ${error instanceof Error ? error.message : String(error)}`);
         }
       }
     } catch (error) {

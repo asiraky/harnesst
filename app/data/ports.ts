@@ -27,6 +27,11 @@ import type {
 export type Agent = typeof agents.$inferSelect;
 export type DraftChange = typeof draftChanges.$inferSelect;
 export type Release = typeof releases.$inferSelect;
+/** History/UI evidence excludes the potentially large per-file source manifest. */
+export type ArtifactProvenanceSummary = Omit<ArtifactProvenance, "files">;
+export type ReleaseSummary = Omit<Release, "artifactProvenance"> & {
+  artifactProvenance: ArtifactProvenanceSummary | null;
+};
 export type Deployment = typeof deployments.$inferSelect;
 export type Environment = typeof environments.$inferSelect;
 export type Project = typeof projects.$inferSelect;
@@ -50,7 +55,7 @@ export interface DeploymentWithRelease {
   releaseId: string;
   version: string;
   gitSha: string;
-  artifactProvenance: ArtifactProvenance | null;
+  artifactProvenance: ArtifactProvenanceSummary | null;
 }
 
 export interface AgentRepo {
@@ -94,7 +99,7 @@ export interface ReleaseRepo {
   /** Existing releases for one agent (version numbering is per agent). */
   countByAgent(agentId: string): Promise<number>;
   /** A project's releases, newest first (version history). */
-  listByProject(projectId: string): Promise<Release[]>;
+  listByProject(projectId: string): Promise<ReleaseSummary[]>;
   /** Insert a release; throws an (agent, version) unique-violation like Postgres would. */
   insert(input: {
     projectId: string;

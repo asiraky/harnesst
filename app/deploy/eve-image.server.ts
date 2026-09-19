@@ -82,6 +82,7 @@ import {
 import {
   type ArtifactProvenance,
   sourceManifest,
+  runtimeSourceManifest,
   manifestDigest,
   inspectImageDigest,
   verifyArtifactImage,
@@ -432,11 +433,7 @@ async function prepareSource(input: EveImageBuildInput, srcDir: string) {
     agentRoot: input.agentRoot ?? "agent",
     sourceDigest: manifestDigest(original),
     contextDigest: manifestDigest(prepared),
-    files: Object.fromEntries(
-      Object.entries(prepared).filter(
-        ([name]) => name !== "Dockerfile" && name !== ".dockerignore",
-      ),
-    ),
+    files: await runtimeSourceManifest(buildDir, prepared),
     platformFiles: Object.keys(prepared)
       .filter((name) => original[name] !== prepared[name])
       .sort(),

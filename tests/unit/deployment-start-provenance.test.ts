@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ArtifactProvenance } from "~/deploy/artifact-provenance.server";
 
-const mocks = vi.hoisted(() => ({ run: vi.fn(), verify: vi.fn() }));
+const mocks = vi.hoisted(() => ({ run: vi.fn(), verify: vi.fn(), verifyStopped: vi.fn() }));
 vi.mock("node:child_process", () => ({
   execFile: Object.assign(() => {}, {
     [Symbol.for("nodejs.util.promisify.custom")]: mocks.run,
@@ -10,6 +10,7 @@ vi.mock("node:child_process", () => ({
 vi.mock("~/deploy/artifact-provenance.server", async (original) => ({
   ...(await original<object>()),
   verifyArtifactContainer: mocks.verify,
+  verifyStoppedArtifactContainer: mocks.verifyStopped,
 }));
 
 import { localDockerTarget } from "~/seams/oss/deploy.localdocker.server";
@@ -29,6 +30,7 @@ const provenance: ArtifactProvenance = {
 beforeEach(() => {
   mocks.run.mockReset().mockResolvedValue({ stdout: "3500", stderr: "" });
   mocks.verify.mockReset().mockResolvedValue(undefined);
+  mocks.verifyStopped.mockReset().mockResolvedValue(undefined);
   vi.stubGlobal("fetch", vi.fn(async () => new Response("healthy")));
 });
 afterEach(() => vi.unstubAllGlobals());
@@ -36,6 +38,8 @@ afterEach(() => vi.unstubAllGlobals());
 describe("local Docker deployment restart", () => {
   it("verifies the restarted container against its deployment snapshot before returning live", async () => {
     const result = await localDockerTarget.start("deployment123", provenance);
+    expect(mocks.verifyStopped).toHaveBeenCalledWith(expect.stringContaining("deployment123"), provenance);
+    expect(mocks.verifyStopped.mock.invocationCallOrder[0]).toBeLessThan(mocks.run.mock.invocationCallOrder[0]);
     expect(mocks.verify).toHaveBeenCalledWith(expect.stringContaining("deployment123"), provenance);
     expect(result.status).toBe("live");
   });
@@ -44,6 +48,13 @@ describe("local Docker deployment restart", () => {
     mocks.verify.mockRejectedValue(new Error("Artifact verification failed: changed runtime source"));
     await expect(localDockerTarget.start("deployment123", provenance)).rejects.toThrow("Artifact verification failed");
     expect(mocks.run).toHaveBeenCalledWith("docker", ["stop", expect.stringContaining("deployment123")], expect.any(Object));
+  });
+
+  it("never starts channels when the stopped container source differs", async () => {
+    mocks.verifyStopped.mockRejectedValue(new Error("Artifact verification failed: source changed. Redeploy to rebuild and verify this release."));
+    await expect(localDockerTarget.start("deployment123", provenance)).rejects.toThrow("Redeploy");
+    expect(mocks.run).not.toHaveBeenCalled();
+    expect(mocks.verify).not.toHaveBeenCalled();
   });
 
   it("keeps the separate assistant lifecycle compatible when no source manifest exists", async () => {

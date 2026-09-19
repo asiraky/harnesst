@@ -22,6 +22,13 @@ import type {
   WorkspaceTask,
 } from "~/data/ports";
 
+/** Match history queries: the per-file manifest is fetched only for a concrete artifact. */
+function provenanceSummary(provenance: Release["artifactProvenance"]) {
+  if (!provenance) return null;
+  const { files: _files, ...summary } = provenance;
+  return summary;
+}
+
 /** A collision error shaped like the Postgres one isVersionLabelCollision looks for. */
 function versionCollision(): Error {
   return Object.assign(new Error("duplicate key value violates unique constraint"), {
@@ -362,7 +369,8 @@ export function makeFakeStore(): FakeStore {
       async listByProject(projectId) {
         return [...releases.values()]
           .filter((r) => r.projectId === projectId)
-          .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+          .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())
+          .map((release) => ({ ...release, artifactProvenance: provenanceSummary(release.artifactProvenance) }));
       },
     },
 
@@ -440,7 +448,7 @@ export function makeFakeStore(): FakeStore {
               releaseId: d.releaseId,
               version: rel?.version ?? "?",
               gitSha: rel?.gitSha ?? "?",
-              artifactProvenance: d.artifactProvenance,
+              artifactProvenance: provenanceSummary(d.artifactProvenance),
             };
           });
       },

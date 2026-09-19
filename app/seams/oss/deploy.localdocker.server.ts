@@ -40,6 +40,7 @@ import postgres from "postgres";
 import {
   verifyArtifactImage,
   verifyArtifactContainer,
+  verifyStoppedArtifactContainer,
   type ArtifactProvenance,
 } from "~/deploy/artifact-provenance.server";
 
@@ -788,6 +789,7 @@ export const localDockerTarget: DeployTarget = {
 
   async start(deploymentId: string, provenance?: ArtifactProvenance): Promise<InstanceHealth> {
     const name = containerName(deploymentId);
+    if (provenance) await verifyStoppedArtifactContainer(name, provenance);
     await docker(["start", name]);
     const url = await instanceUrl(name);
     const healthy = await waitForHealth(

@@ -172,7 +172,7 @@ import { requireProject, requireRepo } from "~/project/guard.server";
 import type {
   DeploymentWithRelease,
   Environment,
-  Release,
+  ReleaseSummary,
 } from "~/data/ports";
 import type { ConnectedProject } from "~/project/guard.server";
 import type { Route } from "./+types/projects.$projectId.deployments";
@@ -209,7 +209,7 @@ interface DeploymentData {
   view: "repo" | "member";
   /** True where deploys/CRUD are acted on: the team (repo) view and single-agent repos. */
   canAct: boolean;
-  releases: Release[];
+  releases: ReleaseSummary[];
   envs: { env: Environment; deployments: DeploymentWithRelease[] }[];
   members: {
     name: string;
@@ -1825,7 +1825,9 @@ function TeamEnvMemberRow({
             {failed.version} failed to deploy
             {running ? ` — ${running.version} still running` : ""}
           </span>
-          {failed.errorDetail && (
+          {failed.errorDetail?.startsWith("Artifact verification failed") ? (
+            <p className="w-full break-words text-xs">{failed.errorDetail}</p>
+          ) : failed.errorDetail && (
             <Tooltip>
               <TooltipTrigger asChild>
                 <span className="cursor-help text-xs underline underline-offset-2">
@@ -2256,7 +2258,9 @@ function EnvironmentsCard({
                       {failed.version} failed to deploy
                       {running ? ` — ${running.version} still running` : ""}
                     </span>
-                    {failed.errorDetail && (
+                    {failed.errorDetail?.startsWith("Artifact verification failed") ? (
+                      <p className="w-full break-words text-xs">{failed.errorDetail}</p>
+                    ) : failed.errorDetail && (
                       <Tooltip>
                         <TooltipTrigger asChild>
                           <span className="cursor-help text-xs underline underline-offset-2">

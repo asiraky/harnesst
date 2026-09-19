@@ -70,7 +70,13 @@ describe("deployment liveness recovery", () => {
   it("passes the deployment snapshot on wake and refuses a failed verification", async () => {
     const live = await seedLive("env_member", "member");
     const artifact = await fakeDeployTarget().build({ projectId: "p", repo: { owner: "o", repo: "r" }, ref: live.gitSha });
+    artifact.provenance!.files = { "agent/agent.ts": "sha256:published" };
+    await store.releases.setImageRef(live.releaseId, artifact.imageRef, artifact.provenance);
     await store.deployments.update(live.id, { artifactProvenance: artifact.provenance });
+    const [listed] = await store.deployments.listByEnvironment("env_member");
+    expect(listed.artifactProvenance).not.toHaveProperty("files");
+    const [listedRelease] = await store.releases.listByProject("p");
+    expect(listedRelease.artifactProvenance).not.toHaveProperty("files");
     const start = vi.fn(async () => { throw new Error("Artifact verification failed: source differs"); });
     const recovered = await ensureLiveDeploymentForEnvironment("env_member", {
       store,

@@ -1,4 +1,4 @@
-import type { ArtifactProvenance } from "~/deploy/artifact-provenance.server";
+import type { ArtifactProvenanceSummary } from "~/data/ports";
 import { Badge } from "~/components/ui/badge";
 
 /** Evidence captured from the container before this deployment went live. */
@@ -7,7 +7,7 @@ export function DeploymentProvenance({
   artifactProvenance,
 }: {
   gitSha: string;
-  artifactProvenance: ArtifactProvenance | null;
+  artifactProvenance: ArtifactProvenanceSummary | null;
 }) {
   const verified = artifactProvenance?.gitSha === gitSha;
   const evidence = artifactProvenance;
@@ -16,7 +16,7 @@ export function DeploymentProvenance({
     <details className="mt-2 min-w-0 rounded-md border px-3 py-2 text-xs">
       <summary className="cursor-pointer rounded-sm focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-ring">
         <span className="mr-2">Artifact provenance</span>
-        <Badge variant={verified ? "success" : "warning"}>
+        <Badge variant={verified ? "success" : evidence ? "destructive" : "warning"}>
           {verified ? "Verified" : evidence ? "Verification mismatch" : "Unverified"}
         </Badge>
       </summary>
