@@ -43,6 +43,7 @@ import {
 } from "react-router";
 
 import { ConfirmDialog } from "~/components/confirm-dialog";
+import { DeploymentProvenance } from "~/components/deployment-provenance";
 import { EmptyTeamState } from "~/components/empty-team-state";
 import {
   FreshnessBadge,
@@ -1796,6 +1797,12 @@ function TeamEnvMemberRow({
           <span className="text-muted-foreground">Nothing deployed</span>
         )}
       </div>
+      {running && (
+        <DeploymentProvenance
+          gitSha={running.gitSha}
+          artifactProvenance={running.artifactProvenance}
+        />
+      )}
       {pending && (
         <p className="mt-1 text-sm text-muted-foreground">
           <span className="font-medium text-amber-600 dark:text-amber-400">
@@ -2217,6 +2224,12 @@ function EnvironmentsCard({
                     </span>
                   )}
                 </div>
+                {running && (
+                  <DeploymentProvenance
+                    gitSha={running.gitSha}
+                    artifactProvenance={running.artifactProvenance}
+                  />
+                )}
                 {pending && (
                   <p className="mt-1 text-sm text-muted-foreground">
                     <span className="font-medium text-amber-600 dark:text-amber-400">
