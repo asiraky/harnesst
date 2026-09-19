@@ -218,7 +218,10 @@ export async function getAgentModelOverride(
     .orderBy(...preferenceOrder(key.projectId))
     .limit(1);
   return row
-    ? { model: row.model, effort: (row.effort as ReasoningEffort | null) ?? null }
+    ? {
+        model: row.model,
+        effort: (row.effort as ReasoningEffort | null) ?? null,
+      }
     : null;
 }
 
@@ -290,6 +293,36 @@ export async function removeAgentModelOverride(
     );
 }
 
+/** Clear an explicitly confirmed set of targets atomically, never descendant pins by accident. */
+export async function removeAgentModelOverrides(
+  orgId: string,
+  keys: ModelTargetKey[],
+): Promise<void> {
+  if (keys.length === 0) return;
+  if (keys.some((key) => !key.projectId)) {
+    throw new Error("A model reset requires the repo each target belongs to.");
+  }
+  await db
+    .delete(agentModelOverrides)
+    .where(
+      and(
+        eq(agentModelOverrides.orgId, orgId),
+        or(
+          ...keys.map((key) =>
+            and(
+              eq(agentModelOverrides.agentName, key.agentName),
+              eq(agentModelOverrides.subagentPath, key.subagentPath),
+              inArray(agentModelOverrides.projectId, [
+                key.projectId!,
+                UNSCOPED_PROJECT,
+              ]),
+            ),
+          ),
+        ),
+      ),
+    );
+}
+
 /**
  * Delete exactly ONE stored row, by its full primary key — for org-level surfaces that list rows
  * and remove the one the human pointed at (Org settings, connection removal).
@@ -352,20 +385,22 @@ export async function cleanupSubagentOverrides(
           eq(agentModelOverrides.subagentPath, subagentPathPrefix),
           sql`${agentModelOverrides.subagentPath} like ${`${subagentPathPrefix}/%`}`,
         );
-  await db.delete(agentModelOverrides).where(
-    and(
-      eq(agentModelOverrides.orgId, orgId),
-      eq(agentModelOverrides.agentName, agentName),
-      matchesPrefix,
-      or(
-        eq(agentModelOverrides.projectId, projectId),
-        and(
-          eq(agentModelOverrides.projectId, UNSCOPED_PROJECT),
-          sql`${agentModelOverrides.subagentPath} <> ''`,
+  await db
+    .delete(agentModelOverrides)
+    .where(
+      and(
+        eq(agentModelOverrides.orgId, orgId),
+        eq(agentModelOverrides.agentName, agentName),
+        matchesPrefix,
+        or(
+          eq(agentModelOverrides.projectId, projectId),
+          and(
+            eq(agentModelOverrides.projectId, UNSCOPED_PROJECT),
+            sql`${agentModelOverrides.subagentPath} <> ''`,
+          ),
         ),
       ),
-    ),
-  );
+    );
 }
 
 /** The model the named agent should run right now, per the layering in the module doc. */

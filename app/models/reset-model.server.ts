@@ -1,0 +1,246 @@
+/** Explicit opt-in to live workspace/parent inheritance. No migration runs on reads. */
+import type { DataStore } from "~/data/ports";
+import { stageDraft } from "~/drafts/drafts.server";
+import {
+  ensureModelProviderDependencies,
+  orgResolverAgentName,
+} from "~/eve/agentModule";
+import {
+  orgModelModulePath,
+  orgModelModuleSource,
+  scaffoldOrgModelAgentModule,
+  subagentStarterDescription,
+} from "~/eve/org-model-module";
+import { resetAgentModelSource } from "~/eve/reset-model";
+import { readAgentFile } from "~/github/repo.server";
+import { ensureWorkerStarted } from "~/jobs/worker.server";
+import { packageJsonPathForRoot } from "~/marketplace/install.server";
+import {
+  removeAgentModelOverrides,
+  type ModelTargetKey,
+} from "~/models/agent-model-config.server";
+import { getWorkspaceAssistantSelection } from "~/org/workspace.server";
+import { startPublish } from "~/publish/pipeline.server";
+import { getRuntime } from "~/seams/index.server";
+import type { StageModelInput } from "~/models/stage-model.server";
+
+export interface ModelResetTarget {
+  root: string;
+  deploymentRoot: string;
+  memberName: string;
+  subagentPath?: string;
+}
+
+export interface ResetModelsInput {
+  project: StageModelInput["project"] & { liveEnvironmentName?: string | null };
+  /** Server-resolved scope. A member reset contains only that member, a team reset all declared targets. */
+  targets: ModelResetTarget[];
+  createdBy: string | null;
+  originUrl: string;
+}
+
+export type ResetModelsResult =
+  | { ok: true; mode: "applied"; cacheSeconds: 30 }
+  | { ok: true; mode: "publishing"; taskId: string; cacheSeconds: 30 }
+  | { ok: false; error: string };
+
+export interface ResetModelsDeps {
+  readFile: typeof readAgentFile;
+  getWorkspaceSelection: typeof getWorkspaceAssistantSelection;
+  removeOverrides: typeof removeAgentModelOverrides;
+  publish: typeof startPublish;
+  startWorker: typeof ensureWorkerStarted;
+}
+
+/**
+ * Plan against the committed files, validate every target, then mutate. Existing drafts are
+ * accepted only when they exactly match this reset's plan (a retry); an unrelated change must
+ * never hitch a ride on the automatic publish. Deployment work uses the normal publish task,
+ * whose presentation waits for the actual deployment rows, not merely the source commit.
+ */
+export async function resetModelsToWorkspaceDefault(
+  input: ResetModelsInput,
+  store: DataStore = getRuntime().data,
+  overrides: Partial<ResetModelsDeps> = {},
+): Promise<ResetModelsResult> {
+  const deps: ResetModelsDeps = {
+    readFile: readAgentFile,
+    getWorkspaceSelection: getWorkspaceAssistantSelection,
+    removeOverrides: removeAgentModelOverrides,
+    publish: startPublish,
+    startWorker: ensureWorkerStarted,
+    ...overrides,
+  };
+  try {
+    const workspace = await deps.getWorkspaceSelection(input.project.orgId);
+    if (!workspace.model) {
+      return {
+        ok: false,
+        error:
+          "Configure a workspace default model in Org settings before resetting agents.",
+      };
+    }
+    if (!input.targets.length)
+      return { ok: false, error: "There are no agents to reset." };
+    const running = await store.workspaceTasks.findRunningBySubject(
+      input.project.id,
+      "publish",
+    );
+    if (running)
+      return {
+        ok: false,
+        error:
+          "A publish is already running. Wait for it to finish, then reset again.",
+      };
+
+    const repo = {
+      owner: input.project.repoOwner,
+      repo: input.project.repoName,
+    };
+    const cache = new Map<string, string | null>();
+    const read = async (path: string, ref?: string) => {
+      const key = `${ref ?? "HEAD"}:${path}`;
+      if (!cache.has(key))
+        cache.set(
+          key,
+          await deps.readFile(
+            input.project.repoInstallationId,
+            { ...repo, ref },
+            path,
+          ),
+        );
+      return cache.get(key)!;
+    };
+    const planned = new Map<string, string>();
+    const changes = new Map<string, string>();
+    const keys: ModelTargetKey[] = [];
+    const roots = new Set<string>();
+    const agents = await store.agents.listByProject(input.project.id);
+    const environments = await store.environments.listByProject(
+      input.project.id,
+    );
+    for (const target of input.targets) {
+      const member = await read(`${target.deploymentRoot}/agent.ts`);
+      const name =
+        (member && orgResolverAgentName(member)) || target.memberName;
+      const path = `${target.root}/agent.ts`;
+      const before = await read(path);
+      const subagentPath = target.subagentPath ?? "";
+      const after =
+        before === null
+          ? scaffoldOrgModelAgentModule(name, {
+              subagentPath,
+              ...(subagentPath
+                ? { description: subagentStarterDescription(subagentPath) }
+                : {}),
+            })
+          : resetAgentModelSource(before, name, subagentPath);
+      planned.set(path, after);
+      if (after !== before) changes.set(path, after);
+      roots.add(target.deploymentRoot);
+      keys.push({ projectId: input.project.id, agentName: name, subagentPath });
+
+      // A prior publish may have committed successfully but failed to replace a legacy runtime.
+      // Inspect the serving releases too; retry must rebuild them instead of declaring completion.
+      const agent = agents.find(
+        (a) => a.root === target.deploymentRoot && a.kind === "member",
+      );
+      if (agent) {
+        for (const env of environments.filter(
+          (e) =>
+            e.agentId === agent.id &&
+            (!input.project.liveEnvironmentName ||
+              e.name === input.project.liveEnvironmentName),
+        )) {
+          const deployments = await store.deployments.listByEnvironment(env.id);
+          if (
+            deployments.some(
+              (d) => d.status === "pending" || d.status === "building",
+            )
+          ) {
+            return {
+              ok: false,
+              error:
+                "An agent deployment is still starting. Wait for it to finish, then reset again.",
+            };
+          }
+          for (const deployment of deployments.filter(
+            (d) => d.status === "live" && d.trafficWeight > 0,
+          )) {
+            const live = await read(path, deployment.gitSha);
+            if (
+              live === null ||
+              resetAgentModelSource(live, name, subagentPath) !== live
+            )
+              changes.set(path, after);
+          }
+        }
+      }
+    }
+    for (const root of roots) {
+      const modulePath = orgModelModulePath(root);
+      const module = orgModelModuleSource();
+      const currentModule = await read(modulePath);
+      planned.set(modulePath, module);
+      if (currentModule !== module) changes.set(modulePath, module);
+      const packagePath = packageJsonPathForRoot(root);
+      const currentPackage = await read(packagePath);
+      let nextPackage: string;
+      try {
+        nextPackage = ensureModelProviderDependencies(currentPackage);
+      } catch {
+        return {
+          ok: false,
+          error: `${packagePath} is not valid JSON. Fix it before resetting models.`,
+        };
+      }
+      planned.set(packagePath, nextPackage);
+      if (nextPackage !== currentPackage) changes.set(packagePath, nextPackage);
+    }
+    const drafts = await store.drafts.listByProject(input.project.id);
+    if (drafts.some((draft) => planned.get(draft.path) !== draft.content)) {
+      return {
+        ok: false,
+        error:
+          "Publish or discard existing saved changes before resetting models. Reset automatically publishes its own changes.",
+      };
+    }
+    // Identical drafts from a failed reset remain publishable even when GitHub already has some
+    // of the files. No second invocation can report applied while these drafts await deployment.
+    for (const draft of drafts) changes.set(draft.path, draft.content!);
+    for (const [path, content] of changes) {
+      await stageDraft(
+        {
+          projectId: input.project.id,
+          path,
+          content,
+          createdBy: input.createdBy,
+        },
+        store,
+      );
+    }
+    await deps.removeOverrides(input.project.orgId, keys);
+    if (!changes.size) return { ok: true, mode: "applied", cacheSeconds: 30 };
+    deps.startWorker();
+    const task = await deps.publish(
+      {
+        projectId: input.project.id,
+        originUrl: input.originUrl,
+        createdBy: input.createdBy,
+        envName: input.project.liveEnvironmentName,
+      },
+      store,
+    );
+    return {
+      ok: true,
+      mode: "publishing",
+      taskId: task.taskId,
+      cacheSeconds: 30,
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      error: `Reset did not finish: ${error instanceof Error ? error.message : String(error)}. Any saved reset changes are retained; retry the reset or open publish progress.`,
+    };
+  }
+}
