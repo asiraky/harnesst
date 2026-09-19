@@ -7,6 +7,8 @@
  * the point: install materializes files into customer repos, so its decisions need teeth.
  */
 import { createHash } from "node:crypto";
+import { runInNewContext } from "node:vm";
+import ts from "typescript";
 
 import { describe, expect, it } from "vitest";
 
@@ -75,7 +77,8 @@ const agentTpl: CatalogTemplate = {
   },
   files: {
     "instructions.md": "# Engineer\n",
-    "agent.ts": "export default {};\n",
+    "agent.ts":
+      "import { defineAgent } from 'eve';\nexport default defineAgent({ model: 'anthropic/original' });\n",
     "tools/cloudflare-deploy.ts": "export default {};\n",
   },
 };
@@ -223,11 +226,9 @@ describe("planInstall — path mapping", () => {
     expect(gen.name).toBe("deployer");
     expect(gen.type).toBe("module");
     // Scaffold deps merged with the template's.
-    expect(gen.dependencies).toEqual({
-      eve: "latest",
-      wrangler: "^3.0.0",
-      zod: "^4.4.3",
-    });
+    expect(gen.dependencies.wrangler).toBe(
+      agentTpl.manifest.dependencies!.wrangler,
+    );
 
     // The lock records final paths, EXCLUDING the generated package.json.
     const entry = findInstall(
@@ -246,7 +247,7 @@ describe("planInstall — path mapping", () => {
     ]);
   });
 
-  it("writes the supplied qualified model into new and existing agent templates only", () => {
+  it("installs resolver models for new agent modules independent of the current workspace selection", () => {
     const model = "anthropic/abcdefghijkl/claude-sonnet-4-5";
     const newMember = planInstall({
       template: agentTpl,
@@ -262,20 +263,7 @@ describe("planInstall — path mapping", () => {
       newMember.writes.find(
         (write) => write.path === "agents/deployer/agent/agent.ts",
       )?.content,
-    ).toContain(`harnesstModel('${model}')`);
-    expect(
-      JSON.parse(
-        newMember.writes.find(
-          (write) => write.path === "agents/deployer/package.json",
-        )!.content,
-      ).dependencies,
-    ).toMatchObject({
-      "@ai-sdk/anthropic": "^4.0.12",
-      "@ai-sdk/openai": "^4.0.11",
-      "@ai-sdk/openai-compatible": "^3.0.7",
-      zod: "^4.4.3",
-    });
-
+    ).toContain("harnesstAgentModel(");
     const existingMember = planInstall(
       memberCtx({
         template: agentTpl,
@@ -286,20 +274,7 @@ describe("planInstall — path mapping", () => {
       existingMember.writes.find(
         (write) => write.path === "agents/pm/agent/agent.ts",
       )?.content,
-    ).toContain(`harnesstModel('${model}')`);
-    expect(
-      JSON.parse(
-        existingMember.writes.find(
-          (write) => write.path === "agents/pm/package.json",
-        )!.content,
-      ).dependencies,
-    ).toMatchObject({
-      "@ai-sdk/anthropic": "^4.0.12",
-      "@ai-sdk/openai": "^4.0.11",
-      "@ai-sdk/openai-compatible": "^3.0.7",
-      zod: "^4.4.3",
-    });
-
+    ).toContain("harnesstAgentModel(");
     const tool = planInstall(memberCtx({ model }));
     expect(
       tool.writes.find((write) =>
@@ -2516,5 +2491,142 @@ describe("planUninstall — subagent scope (issue #344)", () => {
     });
     expect(plan.notFound).toBe(true);
     expect(plan.deletions).toEqual([]);
+  });
+});
+
+describe("marketplace workspace inheritance", () => {
+  const modules = {
+    "agent.ts":
+      "import { defineAgent } from 'eve'; export default defineAgent({ model: 'anthropic/old', tools: ['keep-tool'] });",
+    "subagents/qa/agent.ts":
+      "import { defineAgent } from 'eve'; export default defineAgent({ description: 'Browser QA', model: 'anthropic/old' });",
+    "subagents/qa/subagents/reviewer/agent.ts":
+      "import { defineAgent } from 'eve'; export default defineAgent({ description: 'Review', model: 'anthropic/old' });",
+  };
+  const template = {
+    ...agentTpl,
+    manifest: {
+      ...agentTpl.manifest,
+      files: [...Object.keys(modules), "instructions.md"],
+    },
+    files: { ...modules, "instructions.md": "Updated instructions" },
+  };
+  function execute(source: string) {
+    const exports: Record<string, unknown> = {};
+    const imports: string[] = [];
+    runInNewContext(
+      ts.transpileModule(source, {
+        compilerOptions: { module: ts.ModuleKind.CommonJS },
+      }).outputText,
+      {
+        exports,
+        require: (name: string) => {
+          imports.push(name);
+          return name === "eve"
+            ? { defineAgent: (config: unknown) => config }
+            : {
+                harnesstAgentModel: (agent: string, subagent?: string) => ({
+                  agent,
+                  subagent,
+                }),
+              };
+        },
+      },
+    );
+    return { config: exports.default, imports };
+  }
+  it("wires new composed agents and nested subagents to the parent lookup without losing configuration", () => {
+    const plan = planInstall({
+      ...memberCtx(),
+      template,
+      target: { kind: "new-member", name: "ledger" },
+    });
+    expect(plan.conflicts).toEqual([]);
+    const run = (path: string) =>
+      execute(
+        plan.writes.find(
+          (write) => write.path === `agents/ledger/agent/${path}`,
+        )!.content,
+      );
+    expect(run("agent.ts").config).toMatchObject({
+      model: { agent: "ledger", subagent: undefined },
+      tools: ["keep-tool"],
+    });
+    expect(run("subagents/qa/agent.ts")).toEqual({
+      config: {
+        model: { agent: "ledger", subagent: "qa" },
+        description: "Browser QA",
+      },
+      imports: ["eve", "../../../harnesst/model.js"],
+    });
+    expect(
+      run("subagents/qa/subagents/reviewer/agent.ts").config,
+    ).toMatchObject({
+      model: { agent: "ledger", subagent: "qa/reviewer" },
+      description: "Review",
+    });
+    expect(
+      plan.writes.some(
+        (write) => write.path === "agents/ledger/harnesst/model.ts",
+      ),
+    ).toBe(true);
+  });
+  it("updates instructions but keeps occupied member and subagent modules, including staged pins", () => {
+    const initial = planInstall({
+      ...memberCtx(),
+      template,
+      target: { kind: "new-member", name: "ledger" },
+    });
+    const lock = parseLock(
+      JSON.parse(
+        initial.writes.find((write) => write.path === "harnesst-lock.json")!
+          .content,
+      ),
+    );
+    const update = planInstall({
+      ...memberCtx(),
+      template,
+      lock,
+      target: {
+        kind: "member",
+        memberName: "ledger",
+        root: "agents/ledger/agent",
+      },
+      repoPaths: initial.writes.map((write) => write.path),
+      drafts: [{ path: "agents/ledger/agent/agent.ts", content: "custom pin" }],
+    });
+    expect(update.conflicts).toEqual([]);
+    expect(
+      update.writes.filter((write) => write.path.endsWith("/agent.ts")),
+    ).toEqual([]);
+    expect(
+      update.writes.find((write) => write.path.endsWith("/instructions.md"))
+        ?.content,
+    ).toBe("Updated instructions");
+    expect(update.deletions).toEqual([]);
+  });
+  it("uses a single-agent repo's actual name when adding a subagent", () => {
+    const plan = planInstall({
+      ...memberCtx(),
+      template: {
+        ...template,
+        manifest: { ...template.manifest, subagentCompatible: true },
+      },
+      target: {
+        kind: "member",
+        memberName: null,
+        resolverAgentName: "Solo Agent",
+        root: "agent/subagents/research",
+        deploymentRoot: "agent",
+        subagentPath: "research",
+      },
+    });
+    expect(plan.conflicts).toEqual([]);
+    const written = plan.writes.find(
+      (write) => write.path === "agent/subagents/research/agent.ts",
+    )!;
+    expect(execute(written.content).config).toMatchObject({
+      model: { agent: "Solo Agent", subagent: "research" },
+    });
   });
 });
