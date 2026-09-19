@@ -1,4 +1,4 @@
-import { modelConnectionRecoveryMessage } from "~/models/provider-reference";
+import { modelSelectionFailure } from "~/models/provider-reference";
 /**
  * FOH streaming turn (resource route, action only) — the front-of-house sibling of the
  * playground stream route (D20 copy, not a shared refactor). Differences from the playground:
@@ -137,12 +137,9 @@ export async function action(args: ActionFunctionArgs) {
     ? await findWorkspaceModel(project.orgId, requestedModelId)
     : null;
   if (requestedModelId && !requestedModel) {
-    throw data(
-      {
-        error: modelConnectionRecoveryMessage(requestedModelId),
-      },
-      { status: 400 },
-    );
+    throw data(modelSelectionFailure(requestedModelId, "model_unavailable"), {
+      status: 400,
+    });
   }
   if (
     requestedEffort &&
@@ -237,9 +234,7 @@ export async function action(args: ActionFunctionArgs) {
     : false;
   if (effectiveModel && !effectiveModelOwned) {
     throw data(
-      {
-        error: modelConnectionRecoveryMessage(effectiveModel),
-      },
+      modelSelectionFailure(effectiveModel, "connection_unavailable"),
       { status: 400 },
     );
   }

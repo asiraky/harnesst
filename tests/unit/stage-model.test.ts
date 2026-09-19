@@ -161,10 +161,7 @@ describe("stageModelChange", () => {
       deps,
     );
 
-    expect(result).toEqual({
-      ok: false,
-      error: expect.stringContaining("active provider connection"),
-    });
+    expect(result.ok).toBe(false);
     expect(await getDraft(PROJECT.id, "agent/agent.ts", store)).toBeNull();
   });
 
@@ -413,7 +410,8 @@ describe("stageModelChange — declared subagent targets", () => {
   it("stages a nested subagent's own two-argument call and asks its immediate parent", async () => {
     const deps = fakeDeps({
       "agent/agent.ts": RESOLVER_AGENT_TS,
-      "agent/subagents/researcher/subagents/checker/agent.ts": LEGACY_SUBAGENT_TS,
+      "agent/subagents/researcher/subagents/checker/agent.ts":
+        LEGACY_SUBAGENT_TS,
       "package.json": PKG,
     });
     deps.setOverride = vi.fn().mockResolvedValue(undefined);

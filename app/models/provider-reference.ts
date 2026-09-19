@@ -134,12 +134,42 @@ export function providerConnectionEnvName(
 /** Explicit alias retained for call sites where the credential kind is useful context. */
 export const providerConnectionApiKeyEnvName = providerConnectionEnvName;
 
-/** Shared preflight/gateway guidance, preserving the chosen reference instead of proposing a fallback. */
+/** A connection-specific settings destination derived from a validated reference. */
+export function modelConnectionSettingsUrl(model: string): string {
+  const reference = parseProviderModelReference(model);
+  return `/settings/connections${reference ? `#connection-${reference.connectionId}` : ""}`;
+}
+
+/** Catalog lookup failure does not prove credentials have expired. */
+export function modelUnavailableMessage(model: string): string {
+  const reference = parseProviderModelReference(model);
+  const provider = reference
+    ? MODEL_PROVIDERS[reference.provider].displayName
+    : "Model provider";
+  return `${provider}'s selected model is unavailable. The model catalog may be unavailable or the model may no longer be offered. Review the connection at ${modelConnectionSettingsUrl(model)}, or ask a workspace owner or admin for help. Your selection is preserved.`;
+}
+
+/** Only use after checking connection ownership/status, never for a catalog miss. */
 export function modelConnectionRecoveryMessage(model: string): string {
   const reference = parseProviderModelReference(model);
   const provider = reference
     ? MODEL_PROVIDERS[reference.provider].displayName
     : "Model provider";
-  const link = `/settings/connections${reference ? `#connection-${reference.connectionId}` : ""}`;
-  return `${provider} needs authentication. Reauthenticate: ${link}. Your model and effort selections are preserved.`;
+  return `${provider}'s selected connection is unavailable. A workspace owner or admin can reauthenticate it or recover a deleted ID at ${modelConnectionSettingsUrl(model)}. Your model and effort selections are preserved.`;
+}
+
+/** Machine-readable context lets callers offer recovery without inspecting prose. */
+export function modelSelectionFailure(
+  model: string,
+  reason: "connection_unavailable" | "model_unavailable",
+) {
+  return {
+    error:
+      reason === "connection_unavailable"
+        ? modelConnectionRecoveryMessage(model)
+        : modelUnavailableMessage(model),
+    code: reason,
+    model,
+    recoveryUrl: modelConnectionSettingsUrl(model),
+  };
 }

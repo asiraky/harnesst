@@ -1181,6 +1181,7 @@ function LiveBubble({
       {live.error ? (
         <TurnError
           message={live.error}
+          modelId={live.modelId}
           detail={live.errorDetail}
           retryable={live.errorRetryable}
           onRetry={onRetry}
@@ -1277,6 +1278,7 @@ export function AgentEntry({
           {entry.error ? (
             <TurnError
               message={entry.error}
+              modelId={entry.modelId}
               detail={entry.errorDetail}
               retryable={entry.errorRetryable}
               onRetry={onRetry}

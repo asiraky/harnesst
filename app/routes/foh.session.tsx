@@ -421,6 +421,7 @@ export default function FohSession({ loaderData }: Route.ComponentProps) {
 
   const [live, setLive] = useState<LiveTurn | null>(null);
   const [sendError, setSendError] = useState<string | null>(null);
+  const [sendErrorModel, setSendErrorModel] = useState<string | null>(null);
   const [answerQueue, setAnswerQueue] = useState<{
     batchKey: string;
     items: Array<{ answer: ChatInputAnswer; label: string }>;
@@ -447,6 +448,7 @@ export default function FohSession({ loaderData }: Route.ComponentProps) {
       prev && prev.playgroundSessionId !== sessionId ? null : prev,
     );
     setSendError(null);
+    setSendErrorModel(null);
   }, [sessionId]);
 
   const liveSessionMismatch = live
@@ -535,7 +537,8 @@ export default function FohSession({ loaderData }: Route.ComponentProps) {
   const pendingRequestIds = pendingRequests.map((request) => request.requestId);
   const pendingBatchKey = `${sessionId}:${pendingRequestIds.join("\u0000")}`;
   const queuedAnswers = useMemo(
-    () => (answerQueue.batchKey === pendingBatchKey ? answerQueue.items : []),
+    () =>
+      answerQueue.batchKey === pendingBatchKey ? answerQueue.items : [],
     [answerQueue, pendingBatchKey],
   );
   const queuedRequestIds = useMemo(
@@ -543,9 +546,8 @@ export default function FohSession({ loaderData }: Route.ComponentProps) {
     [queuedAnswers],
   );
   const pendingRequest =
-    pendingRequests.find(
-      (request) => !queuedRequestIds.has(request.requestId),
-    ) ?? null;
+    pendingRequests.find((request) => !queuedRequestIds.has(request.requestId)) ??
+    null;
   // Only a request that ACCEPTS typed input turns the composer into the answer box — an
   // options-only approval is answered by its buttons, never by free text.
   const typedAnswerRequest =
@@ -570,6 +572,7 @@ export default function FohSession({ loaderData }: Route.ComponentProps) {
         );
 
       setSendError(null);
+      setSendErrorModel(null);
       stopRequestedRef.current = false;
       applyIfCurrent(() => ({
         playgroundSessionId: forSession,
@@ -624,7 +627,12 @@ export default function FohSession({ loaderData }: Route.ComponentProps) {
         if (!res.ok) {
           const detail = (await res.json().catch(() => null)) as {
             error?: unknown;
+            model?: unknown;
           } | null;
+          if (isCurrent())
+            setSendErrorModel(
+              typeof detail?.model === "string" ? detail.model : null,
+            );
           const errorMessage =
             typeof detail?.error === "string" ? detail.error : null;
           throw new Error(errorMessage ?? `Stream failed (${res.status}).`);
@@ -761,6 +769,7 @@ export default function FohSession({ loaderData }: Route.ComponentProps) {
 
   const stopTurn = useCallback(async () => {
     setSendError(null);
+    setSendErrorModel(null);
     const form = new FormData();
     form.set("playgroundSessionId", sessionId);
     stopRequestedRef.current = true;
@@ -866,7 +875,7 @@ export default function FohSession({ loaderData }: Route.ComponentProps) {
               )}
               {sendError && (
                 <div className="mb-4 rounded-md border border-destructive/40 bg-destructive/5 px-3 py-2 text-sm">
-                  <TurnError message={sendError} />
+                  <TurnError message={sendError} modelId={sendErrorModel} />
                 </div>
               )}
             </>
@@ -975,10 +984,7 @@ export default function FohSession({ loaderData }: Route.ComponentProps) {
           {typedAnswerRequest && !busy && (
             <p className="mb-2 pl-1 text-xs text-muted-foreground">
               Your reply answers the current request above
-              {channelLabel
-                ? ` and goes back to the ${channelLabel} thread`
-                : ""}
-              .
+              {channelLabel ? ` and goes back to the ${channelLabel} thread` : ""}.
             </p>
           )}
           <ChatComposer
@@ -989,7 +995,7 @@ export default function FohSession({ loaderData }: Route.ComponentProps) {
                 ? `Answer ${agentName}’s question…`
                 : pendingRequest
                   ? `Use the approval controls above…`
-                  : `Message ${agentName}…`
+                : `Message ${agentName}…`
             }
             busy={busy}
             disabled={Boolean(pendingRequest && !typedAnswerRequest)}
@@ -1155,6 +1161,7 @@ function LiveBubble({
           {live.error ? (
             <TurnError
               message={live.error}
+              modelId={live.modelId}
               detail={live.errorDetail}
               retryable={live.errorRetryable}
               onRetry={onRetry}
@@ -1213,6 +1220,7 @@ export function AgentEntry({
           {entry.error ? (
             <TurnError
               message={entry.error}
+              modelId={entry.modelId}
               detail={entry.errorDetail}
               retryable={entry.errorRetryable}
               onRetry={onRetry}

@@ -1,37 +1,46 @@
 import { Link } from "react-router";
 import { useState } from "react";
+import {
+  modelConnectionSettingsUrl,
+  parseProviderModelReference,
+  MODEL_PROVIDERS,
+} from "~/models/provider-reference";
 import { Button } from "~/components/ui/button";
 
 export function TurnError({
   message,
   detail,
+  modelId,
   retryable,
   onRetry,
   busy,
 }: {
   message: string;
   detail?: string | null;
+  modelId?: string | null;
   retryable?: boolean;
   onRetry?: () => void;
   busy?: boolean;
 }) {
   const [showDetail, setShowDetail] = useState(false);
-  const authProvider =
-    /(OpenAI Codex|OpenAI Platform|OpenRouter|Anthropic|Model provider) needs authentication/.exec(
-      `${message} ${detail ?? ""}`,
-    )?.[1];
-  const errorDetail = detail || (authProvider ? message : null);
+  const reference = modelId ? parseProviderModelReference(modelId) : null;
+  const provider = reference
+    ? MODEL_PROVIDERS[reference.provider].displayName
+    : null;
+  const errorDetail = detail;
   return (
     <div className="space-y-2">
-      <p className="whitespace-pre-wrap text-destructive">
-        {authProvider
-          ? `${authProvider} needs authentication. Reauthenticate the connection to resume this conversation with your existing model and effort selections.`
-          : message}
-      </p>
-      {authProvider && (
-        <Link className="text-sm underline" to="/settings/connections">
-          Reauthenticate {authProvider}
-        </Link>
+      <p className="whitespace-pre-wrap text-destructive">{message}</p>
+      {reference && modelId && (
+        <div className="space-y-1 text-sm">
+          <Link className="underline" to={modelConnectionSettingsUrl(modelId)}>
+            Review {provider} connection
+          </Link>
+          <p className="text-muted-foreground">
+            If authentication is needed, ask a workspace owner or admin to
+            reauthenticate this connection.
+          </p>
+        </div>
       )}
       {(errorDetail || (retryable && onRetry)) && (
         <div className="flex flex-wrap items-center gap-3">

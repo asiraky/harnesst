@@ -1,3 +1,4 @@
+import { modelUnavailableMessage } from "~/models/provider-reference";
 /**
  * Playground — persistent Eve sessions with a live deployment of this agent.
  *
@@ -275,7 +276,7 @@ export async function action(args: ActionFunctionArgs) {
       if (!model) {
         return {
           error:
-            "That model is not available from an active provider connection in this workspace.",
+            modelUnavailableMessage(modelId),
         };
       }
       if (effort && !model.supportedEfforts?.includes(effort)) {
@@ -392,6 +393,7 @@ export default function Playground({ loaderData }: Route.ComponentProps) {
       ? currentSessionEffort
       : defaultEffort;
   const [sendError, setSendError] = useState<string | null>(null);
+  const [sendErrorModel, setSendErrorModel] = useState<string | null>(null);
   const streamAbortRef = useRef<AbortController | null>(null);
   const stopRequestedRef = useRef(false);
   const remoteBusy = currentSessionStatus === "running";
@@ -484,6 +486,7 @@ export default function Playground({ loaderData }: Route.ComponentProps) {
   const send = useCallback(
     async (message: string) => {
       setSendError(null);
+      setSendErrorModel(null);
       stopRequestedRef.current = false;
       setLive({
         playgroundSessionId: currentSessionId,
@@ -529,7 +532,11 @@ export default function Playground({ loaderData }: Route.ComponentProps) {
         if (!res.ok) {
           const detail = (await res.json().catch(() => null)) as {
             error?: unknown;
+            model?: unknown;
           } | null;
+          setSendErrorModel(
+            typeof detail?.model === "string" ? detail.model : null,
+          );
           const errorMessage =
             typeof detail?.error === "string" ? detail.error : null;
           if (res.status === 409) {
@@ -675,6 +682,7 @@ export default function Playground({ loaderData }: Route.ComponentProps) {
       visibleLive?.playgroundSessionId ?? currentSessionId;
     if (!playgroundSessionId || !deploymentId) return;
     setSendError(null);
+    setSendErrorModel(null);
 
     const form = new FormData();
     form.set("playgroundSessionId", playgroundSessionId);
@@ -771,10 +779,7 @@ export default function Playground({ loaderData }: Route.ComponentProps) {
           busy={false}
           disabled={busy}
           placeholder="Deployed model"
-          triggerClassName={cn(
-            CONTROL_PILL,
-            "h-9 max-w-44 font-normal sm:max-w-56",
-          )}
+          triggerClassName={cn(CONTROL_PILL, "h-9 max-w-44 font-normal sm:max-w-56")}
           effortTriggerClassName={CONTROL_PILL}
           onCommit={changeModel}
         />
@@ -859,7 +864,7 @@ export default function Playground({ loaderData }: Route.ComponentProps) {
         {sendError && (
           <Alert variant="destructive" className="mb-4">
             <AlertDescription>
-              <TurnError message={sendError} />
+              <TurnError message={sendError} modelId={sendErrorModel} />
             </AlertDescription>
           </Alert>
         )}
@@ -871,6 +876,7 @@ export default function Playground({ loaderData }: Route.ComponentProps) {
       historyError,
       isTeam,
       sendError,
+      sendErrorModel,
       targets.length,
     ],
   );
@@ -1114,6 +1120,7 @@ function LiveBubble({
           {live.error ? (
             <TurnError
               message={live.error}
+              modelId={live.modelId}
               detail={live.errorDetail}
               retryable={live.errorRetryable}
               onRetry={onRetry}
@@ -1180,6 +1187,7 @@ export function AgentEntry({
           {entry.error ? (
             <TurnError
               message={entry.error}
+              modelId={entry.modelId}
               detail={entry.errorDetail}
               retryable={entry.errorRetryable}
               onRetry={onRetry}
