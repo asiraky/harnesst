@@ -17,6 +17,7 @@
 import { sql } from "drizzle-orm";
 
 // Type-only (erased at runtime, so no import cycle): the publish pipeline's step shape.
+import type { ArtifactProvenance } from "~/deploy/artifact-provenance.server";
 import type { PipelineStep } from "~/data/ports";
 import { newId, newShareToken } from "~/lib/id";
 import {
@@ -497,6 +498,9 @@ export const releases = pgTable(
     version: text("version").notNull(),
     gitSha: text("git_sha").notNull(),
     imageRef: text("image_ref"),
+    artifactProvenance: jsonb(
+      "artifact_provenance",
+    ).$type<ArtifactProvenance>(),
     changelog: text("changelog"),
     createdBy: text("created_by").references(() => user.id),
     createdAt: createdAt(),
@@ -525,6 +529,10 @@ export const deployments = pgTable(
     releaseId: varchar("release_id", { length: 12 })
       .notNull()
       .references(() => releases.id, { onDelete: "restrict" }),
+    /** Immutable snapshot of the artifact verified for this deployment. */
+    artifactProvenance: jsonb(
+      "artifact_provenance",
+    ).$type<ArtifactProvenance>(),
     // pending | building | live | draining | stopped | failed
     status: text("status").notNull().default("pending"),
     trafficWeight: integer("traffic_weight").notNull().default(100),

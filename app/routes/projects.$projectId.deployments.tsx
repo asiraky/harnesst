@@ -43,6 +43,7 @@ import {
 } from "react-router";
 
 import { ConfirmDialog } from "~/components/confirm-dialog";
+import { DeploymentProvenance } from "~/components/deployment-provenance";
 import { EmptyTeamState } from "~/components/empty-team-state";
 import {
   FreshnessBadge,
@@ -171,7 +172,7 @@ import { requireProject, requireRepo } from "~/project/guard.server";
 import type {
   DeploymentWithRelease,
   Environment,
-  Release,
+  ReleaseSummary,
 } from "~/data/ports";
 import type { ConnectedProject } from "~/project/guard.server";
 import type { Route } from "./+types/projects.$projectId.deployments";
@@ -208,7 +209,7 @@ interface DeploymentData {
   view: "repo" | "member";
   /** True where deploys/CRUD are acted on: the team (repo) view and single-agent repos. */
   canAct: boolean;
-  releases: Release[];
+  releases: ReleaseSummary[];
   envs: { env: Environment; deployments: DeploymentWithRelease[] }[];
   members: {
     name: string;
@@ -1796,6 +1797,12 @@ function TeamEnvMemberRow({
           <span className="text-muted-foreground">Nothing deployed</span>
         )}
       </div>
+      {running && (
+        <DeploymentProvenance
+          gitSha={running.gitSha}
+          artifactProvenance={running.artifactProvenance}
+        />
+      )}
       {pending && (
         <p className="mt-1 text-sm text-muted-foreground">
           <span className="font-medium text-amber-600 dark:text-amber-400">
@@ -1818,7 +1825,9 @@ function TeamEnvMemberRow({
             {failed.version} failed to deploy
             {running ? ` — ${running.version} still running` : ""}
           </span>
-          {failed.errorDetail && (
+          {failed.errorDetail?.startsWith("Artifact verification failed") ? (
+            <p className="w-full break-words text-xs">{failed.errorDetail}</p>
+          ) : failed.errorDetail && (
             <Tooltip>
               <TooltipTrigger asChild>
                 <span className="cursor-help text-xs underline underline-offset-2">
@@ -2217,6 +2226,12 @@ function EnvironmentsCard({
                     </span>
                   )}
                 </div>
+                {running && (
+                  <DeploymentProvenance
+                    gitSha={running.gitSha}
+                    artifactProvenance={running.artifactProvenance}
+                  />
+                )}
                 {pending && (
                   <p className="mt-1 text-sm text-muted-foreground">
                     <span className="font-medium text-amber-600 dark:text-amber-400">
@@ -2243,7 +2258,9 @@ function EnvironmentsCard({
                       {failed.version} failed to deploy
                       {running ? ` — ${running.version} still running` : ""}
                     </span>
-                    {failed.errorDetail && (
+                    {failed.errorDetail?.startsWith("Artifact verification failed") ? (
+                      <p className="w-full break-words text-xs">{failed.errorDetail}</p>
+                    ) : failed.errorDetail && (
                       <Tooltip>
                         <TooltipTrigger asChild>
                           <span className="cursor-help text-xs underline underline-offset-2">

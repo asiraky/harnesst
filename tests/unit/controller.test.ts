@@ -541,6 +541,80 @@ describe("deployRelease", () => {
     );
   });
 
+  it("rebuilds a legacy cached artifact even when its platform capability is current", async () => {
+    const release = await createRelease(
+      { projectId: PROJECT, agentId: AGENT, gitSha: "a".repeat(40) },
+      store,
+    );
+    await store.releases.setImageRef(release.id, "img:unverified");
+    const target = fakeDeployTarget();
+    const build = vi.spyOn(target, "build");
+    const deploy = vi.spyOn(target, "deploy");
+    const result = await deployRelease(
+      { environmentId: ENV, releaseId: release.id },
+      { store, deployTarget: target, secrets: fakeSecrets() },
+    );
+    expect(result.status).toBe("live");
+    expect(build).toHaveBeenCalledOnce();
+    expect(deploy.mock.calls[0][0].imageRef).toBe("sha256:fake");
+    expect(result.artifactProvenance?.gitSha).toBe(release.gitSha);
+    expect(result.artifactProvenance?.runtimeDigest).toBe("sha256:fake");
+    const snapshot = result.artifactProvenance;
+    await store.releases.setImageRef(release.id, "img:later-rebuild");
+    expect(
+      (await store.deployments.findById(result.id))?.artifactProvenance,
+    ).toEqual(snapshot);
+  });
+
+  it.each(["gitSha", "agentRoot"] as const)(
+    "rejects a cached artifact with a different %s before deployment",
+    async (field) => {
+      const release = await createRelease(
+        { projectId: PROJECT, agentId: AGENT, gitSha: "a".repeat(40) },
+        store,
+      );
+      const target = fakeDeployTarget();
+      const artifact = await target.build({
+        projectId: PROJECT,
+        repo: { owner: "acme", repo: "agent" },
+        ref: release.gitSha,
+        agentRoot: "agent",
+      });
+      artifact.provenance![field] = "wrong";
+      await store.releases.setImageRef(
+        release.id,
+        artifact.imageRef,
+        artifact.provenance,
+      );
+      const deploy = vi.spyOn(target, "deploy");
+      const result = await deployRelease(
+        { environmentId: ENV, releaseId: release.id },
+        { store, deployTarget: target, secrets: fakeSecrets() },
+      );
+      expect(result.status).toBe("failed");
+      expect(result.errorDetail).toContain("artifact commit or agent root");
+      expect(result.artifactProvenance).toBeNull();
+      expect(deploy).not.toHaveBeenCalled();
+    },
+  );
+
+  it("does not mark a deployment verified when the running container verification fails", async () => {
+    const release = await createRelease(
+      { projectId: PROJECT, agentId: AGENT, gitSha: "a".repeat(40) },
+      store,
+    );
+    const target = fakeDeployTarget({
+      deployError: "Artifact verification failed: runtime bytes differ",
+    });
+    const result = await deployRelease(
+      { environmentId: ENV, releaseId: release.id },
+      { store, deployTarget: target, secrets: fakeSecrets() },
+    );
+    expect(result.status).toBe("failed");
+    expect(result.errorDetail).toContain("runtime bytes differ");
+    expect(result.artifactProvenance).toBeNull();
+  });
+
   it("records failed status WITH the reason when the target throws", async () => {
     const release = await createRelease(
       { projectId: PROJECT, agentId: AGENT, gitSha: "f".repeat(40) },
@@ -1163,7 +1237,7 @@ describe("team delegation env injection (D3)", () => {
       name: "cap",
       async build(req) {
         builtReqs.push(req);
-        return { imageRef: "img:fake", digest: "sha256:fake" };
+        return fakeDeployTarget().build(req);
       },
       async deploy(req) {
         deployedEnvs.push(req.env);

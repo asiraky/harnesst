@@ -40,10 +40,24 @@ export function fakeDeployTarget(
   const stopped = new Set<string>();
   return {
     name: "fake",
-    async build() {
+    async build(req) {
       const imageRef = opts.buildImageRef ?? "img:fake";
       opts.builtRefs?.push(imageRef);
-      return { imageRef, digest: "sha256:fake" };
+      return {
+        imageRef,
+        digest: "sha256:fake",
+        provenance: {
+          version: 1,
+          gitSha: req.ref,
+          agentRoot: req.agentRoot ?? "agent",
+          sourceDigest: "sha256:source",
+          contextDigest: "sha256:context",
+          files: {},
+          platformFiles: [],
+          runtimeDigest: "sha256:fake",
+          buildDigest: "sha256:build",
+        },
+      };
     },
     async imageSupports() {
       return opts.imageSupports ?? true;

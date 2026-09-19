@@ -6,10 +6,11 @@
  * use the same path. The system prompt is reconstructed from the Run's Release commit (link,
  * not snapshot); user input, tool I/O, tokens, and timing are runtime data and are stored.
  */
-import { and, desc, eq, gte, sql, type SQL } from "drizzle-orm";
+import { and, desc, eq, getTableColumns, gte, sql, type SQL } from "drizzle-orm";
 
 import { hashEdnToken, mintEdnToken } from "~/auth/edn-token.server";
 import { db } from "~/db/client.server";
+import type { ArtifactProvenanceSummary } from "~/data/ports";
 import {
   agents,
   deployments,
@@ -417,7 +418,10 @@ export async function getRunWithSteps(projectId: string, runId: string) {
     .where(eq(runSteps.runId, run.id))
     .orderBy(runSteps.seq);
   const release = run.releaseId
-    ? (await db.select().from(releases).where(eq(releases.id, run.releaseId)).limit(1))[0]
+    ? (await db.select({
+        ...getTableColumns(releases),
+        artifactProvenance: sql<ArtifactProvenanceSummary | null>`${releases.artifactProvenance} - 'files'`,
+      }).from(releases).where(eq(releases.id, run.releaseId)).limit(1))[0]
     : undefined;
   return { run, steps, release };
 }

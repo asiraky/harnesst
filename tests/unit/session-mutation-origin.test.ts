@@ -1,5 +1,5 @@
 import { RouterContextProvider } from "react-router";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // The browser-CSRF origin guard in betterAuthSessionMiddleware runs BEFORE any route action, so
 // exercising it through `action(...)` (as the capability-route unit tests do) can't catch a
@@ -111,5 +111,93 @@ describe("mutation-origin guard: bearer machine endpoints bypass the browser CSR
     expect(result).toBeInstanceOf(Response);
     if (!(result instanceof Response)) throw new Error("no response");
     expect(result.status).toBe(403);
+  });
+});
+
+describe("mutation-origin guard: tailnet development UI", () => {
+  beforeEach(() => {
+    vi.stubEnv("NODE_ENV", "development");
+    vi.stubEnv("BETTER_AUTH_URL", "http://localhost:5277");
+    getSession.mockReset();
+    getSession.mockResolvedValue({ response: null, headers: new Headers() });
+  });
+
+  afterEach(() => vi.unstubAllEnvs());
+
+  async function post(path: string, origin: string, host = origin) {
+    const { betterAuthSessionMiddleware } = await import("~/auth/session.server");
+    const next = vi.fn(async () => new Response("action reached"));
+    const result = await betterAuthSessionMiddleware(
+      middlewareArgs(
+        new Request(`${host}${path}`, { method: "POST", headers: { origin } }),
+        new RouterContextProvider(),
+      ),
+      next,
+    );
+    if (!(result instanceof Response)) throw new Error("no response");
+    return { result, next };
+  }
+
+  it.each([
+    "/api/connections/codex.data",
+    "/settings/connections.data",
+    "/projects/fixture/settings.data",
+  ])("routes a same-origin tailnet POST to %s through session auth", async (path) => {
+    const { result, next } = await post(path, "http://app.harnesst.test:5277");
+    expect(next).toHaveBeenCalledOnce();
+    expect(getSession).toHaveBeenCalledOnce();
+    expect(result.status).toBe(200);
+    expect(await result.text()).toBe("action reached");
+  });
+
+  it.each([
+    "http://app.harnesst.test:5278",
+    "https://app.harnesst.test:5277",
+    "http://evil.test:5277",
+    "http://harnesst.test:5277",
+    "http://evilharnesst.test:5277",
+    "http://app.harnesst.test.evil.test:5277",
+    "null",
+  ])("rejects an untrusted Origin %s before session lookup", async (origin) => {
+    const { result, next } = await post(
+      "/api/connections/codex.data",
+      origin,
+      origin === "null" ? "http://app.harnesst.test:5277" : origin,
+    );
+    expect(result.status).toBe(403);
+    expect(next).not.toHaveBeenCalled();
+    expect(getSession).not.toHaveBeenCalled();
+  });
+
+  it("rejects cross-origin POSTs even between development hosts", async () => {
+    const { result, next } = await post(
+      "/settings/connections.data",
+      "http://other.harnesst.test:5277",
+      "http://app.harnesst.test:5277",
+    );
+    expect(result.status).toBe(403);
+    expect(next).not.toHaveBeenCalled();
+  });
+
+  it("does not trust tailnet origins in production", async () => {
+    vi.stubEnv("NODE_ENV", "production");
+    const { result, next } = await post(
+      "/api/connections/codex.data",
+      "http://app.harnesst.test:5277",
+    );
+    expect(result.status).toBe(403);
+    expect(next).not.toHaveBeenCalled();
+  });
+
+  it("still accepts the configured production origin behind a proxy", async () => {
+    vi.stubEnv("NODE_ENV", "production");
+    vi.stubEnv("BETTER_AUTH_URL", "https://app.example.com");
+    const { result, next } = await post(
+      "/settings/connections.data",
+      "https://app.example.com",
+      "http://internal:3000",
+    );
+    expect(result.status).toBe(200);
+    expect(next).toHaveBeenCalledOnce();
   });
 });

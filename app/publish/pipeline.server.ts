@@ -32,6 +32,7 @@
  *
  * GitHub/docker/runtime dependencies are injectable so unit tests run with zero I/O.
  */
+import type { ArtifactProvenance } from "~/deploy/artifact-provenance.server";
 import { discardConversationCheckoutsForProject } from "~/assistant/checkout-sync.server";
 import type { DataStore, PipelineStep, Project, WorkspaceTask } from "~/data/ports";
 import { ensureReleasesForCommit, queueDeploy } from "~/deploy/controller.server";
@@ -594,7 +595,7 @@ export async function runPublish(
   // Provisional tags from the LAST build pass, keyed by root — what promotion reads. Every tag
   // ever created lands in cleanupTags for the finally (a CAS retry rebuilds, superseding the
   // first pass's tags; promotion must never see those).
-  let provisional = new Map<string | undefined, string>();
+  let provisional = new Map<string | undefined, { tag: string; provenance?: ArtifactProvenance }>();
   const cleanupTags: string[] = [];
 
   // The head the current build pass was based on — the commit's CAS anchor (§3.1). Captured at
@@ -676,7 +677,7 @@ export async function runPublish(
       }
       sub.status = "succeeded";
       if (result.provisionalTag) {
-        provisional.set(agentRoot, result.provisionalTag);
+        provisional.set(agentRoot, { tag: result.provisionalTag, provenance: result.provenance });
         cleanupTags.push(result.provisionalTag);
       }
       await save();
@@ -984,25 +985,36 @@ export async function runPublish(
       );
 
       // Promote the publish build's images (§3.2) so the deploys below skip their own build.
-      // Warn-only: a failed promotion just means that member rebuilds at deploy time.
+      // Verification failures stop publication: a replacement build must never conceal a
+      // mismatch between the tree we checked, the commit, and the artifact we promoted.
       roster = (await store.agents.listByProject(connected.id)).filter(
         (a) => a.kind === "member",
       );
-      for (const [root, tag] of provisional) {
+      for (const [root, artifact] of provisional) {
         const member = roster.find((a) => a.root === (root ?? "agent"));
         const release =
           member && releases.find((r) => r.release.agentId === member.id)?.release;
         if (!release) continue;
         try {
+          if (!artifact.provenance) {
+            throw new Error("Artifact verification failed: the build did not record source provenance.");
+          }
           const built = await deps.promoteImage({
-            provisionalTag: tag,
+            provisionalTag: artifact.tag,
+            provenance: artifact.provenance,
+            repo,
+            installationId,
+            injectTeammateTool: member.root !== "agent",
             projectId: connected.id,
             gitSha: sha,
             agentRoot: member.root,
           });
-          await store.releases.setImageRef(release.id, built.imageRef);
+          if (!built.provenance) {
+            throw new Error("Artifact verification failed: promotion did not record verified provenance.");
+          }
+          await store.releases.setImageRef(release.id, built.imageRef, built.provenance);
         } catch (error) {
-          console.warn(`[publish] couldn't promote the build image for ${member.name}:`, error);
+          throw new Error(`Could not verify and promote the build for ${member.name}: ${error instanceof Error ? error.message : String(error)}`);
         }
       }
     } catch (error) {

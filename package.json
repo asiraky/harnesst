@@ -26,6 +26,7 @@
     "email:dev": "email dev --dir app/email/templates --port 8092"
   },
   "dependencies": {
+    "@balena/dockerignore": "^1.0.2",
     "@codemirror/lang-javascript": "^6.2.5",
     "@codemirror/lang-json": "^6.0.2",
     "@codemirror/lang-markdown": "^6.5.0",

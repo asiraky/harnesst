@@ -60,6 +60,15 @@ vi.mock("~/github/client.server", () => ({
   })),
 }));
 
+vi.mock("~/deploy/artifact-provenance.server", async (importOriginal) => ({
+  ...(await importOriginal<
+    typeof import("~/deploy/artifact-provenance.server")
+  >()),
+  inspectImageDigest: vi.fn(async () => "sha256:" + "a".repeat(64)),
+  verifyArtifactImage: vi.fn(async () => {}),
+  verifyBuildImage: vi.fn(async () => {}),
+}));
+
 // Wrap writeFile and lutimes so build-context injection and mtime normalization are
 // observable — both still hit the real temp dir.
 vi.mock("node:fs/promises", async (importOriginal) => {
@@ -234,7 +243,8 @@ describe("buildStagedTree", () => {
   it("surfaces typecheck/lint failures, which tsc and eslint print on stdout", async () => {
     const { buildStagedTree } = await import("~/deploy/eve-image.server");
 
-    const tscOutput = "agent/agent.ts(4,10): error TS2305: Module 'eve' has no exported member 'defineDynamic'.";
+    const tscOutput =
+      "agent/agent.ts(4,10): error TS2305: Module 'eve' has no exported member 'defineDynamic'.";
     execFile.mockImplementation(
       (
         cmd: string,
@@ -335,9 +345,12 @@ describe("buildStagedTree", () => {
           },
         ],
       }),
-    ).resolves.toEqual({
+    ).resolves.toMatchObject({
       ok: true,
-      provisionalTag: "harnesst/publish-check:proj-proj_1-cloudflare-dev",
+      provisionalTag: expect.stringMatching(
+        /^harnesst\/publish-check:proj-proj_1-cloudflare-dev-/,
+      ),
+      provenance: { agentRoot: "agents/cloudflare-dev/agent" },
     });
 
     expect(execFile).toHaveBeenCalledWith(
@@ -359,10 +372,8 @@ describe("build-context mtime normalization (issue #375)", () => {
     execFile.mockImplementation(defaultExecFile);
   });
 
-  it("re-pins the whole staged tree to the epoch after the last context write", async () => {
-    const { buildStagedTree, BUILD_CONTEXT_EPOCH } = await import(
-      "~/deploy/eve-image.server"
-    );
+  it("normalizes the staged tree after its last context write", async () => {
+    const { buildStagedTree } = await import("~/deploy/eve-image.server");
     const fsp = await import("node:fs/promises");
     const writeFile = fsp.writeFile as unknown as ReturnType<typeof vi.fn>;
     const lutimes = fsp.lutimes as unknown as ReturnType<typeof vi.fn>;
@@ -378,10 +389,6 @@ describe("build-context mtime normalization (issue #375)", () => {
     });
 
     expect(lutimes).toHaveBeenCalled();
-    for (const call of lutimes.mock.calls) {
-      expect(call[1]).toBe(BUILD_CONTEXT_EPOCH);
-      expect(call[2]).toBe(BUILD_CONTEXT_EPOCH);
-    }
     // Every injection write lands BEFORE the final normalization pass — a write after it would
     // re-dirty the tree and silently bust the cache again.
     const lastWrite = Math.max(...writeFile.mock.invocationCallOrder);
@@ -389,16 +396,17 @@ describe("build-context mtime normalization (issue #375)", () => {
     expect(lastNormalize).toBeGreaterThan(lastWrite);
   });
 
-  it("normalizeContextMtimes pins nested files, dirs, and dangling symlinks without throwing", async () => {
-    const { normalizeContextMtimes, BUILD_CONTEXT_EPOCH } = await import(
-      "~/deploy/eve-image.server"
-    );
-    const { mkdtemp, lstat, symlink } = await vi.importActual<
-      typeof import("node:fs/promises")
-    >("node:fs/promises");
-    const { writeFile: realWriteFile } = await vi.importActual<
-      typeof import("node:fs/promises")
-    >("node:fs/promises");
+  it("normalizes unchanged bytes deterministically and changes timestamps for same-length edits, including dangling symlinks", async () => {
+    const { normalizeContextMtimes } =
+      await import("~/deploy/eve-image.server");
+    const { mkdtemp, lstat, symlink } =
+      await vi.importActual<typeof import("node:fs/promises")>(
+        "node:fs/promises",
+      );
+    const { writeFile: realWriteFile } =
+      await vi.importActual<typeof import("node:fs/promises")>(
+        "node:fs/promises",
+      );
     const os = await import("node:os");
     const path = await import("node:path");
 
@@ -414,11 +422,20 @@ describe("build-context mtime normalization (issue #375)", () => {
     const targets = [dir, "a", "a/b", "a/b/file.ts", "a/dangling"].map((s) =>
       s === dir ? dir : path.join(dir, s),
     );
-    for (const target of targets) {
-      expect((await lstat(target)).mtime.getTime()).toBe(
-        BUILD_CONTEXT_EPOCH.getTime(),
-      );
-    }
+    const before = await Promise.all(
+      targets.map(async (target) => (await lstat(target)).mtime.getTime()),
+    );
+    await normalizeContextMtimes(dir);
+    expect(
+      await Promise.all(
+        targets.map(async (target) => (await lstat(target)).mtime.getTime()),
+      ),
+    ).toEqual(before);
+    await realWriteFile(path.join(dir, "a/b/file.ts"), "y");
+    await normalizeContextMtimes(dir);
+    expect(
+      (await lstat(path.join(dir, "a/b/file.ts"))).mtime.getTime(),
+    ).not.toBe(before[3]);
   });
 });
 
@@ -439,10 +456,8 @@ describe("ask-teammate tool injection (D2)", () => {
 
   async function writeCalls() {
     const fsp = await import("node:fs/promises");
-    return (fsp.writeFile as unknown as ReturnType<typeof vi.fn>).mock.calls as [
-      string,
-      string,
-    ][];
+    return (fsp.writeFile as unknown as ReturnType<typeof vi.fn>).mock
+      .calls as [string, string][];
   }
 
   it("bakes the generated tool into a team member's build context", async () => {
@@ -516,8 +531,8 @@ describe("notify-user tool injection", () => {
         agentRoot,
       }).catch(() => {});
 
-      const writes = (fsp.writeFile as unknown as ReturnType<typeof vi.fn>)
-        .mock.calls as [string, string][];
+      const writes = (fsp.writeFile as unknown as ReturnType<typeof vi.fn>).mock
+        .calls as [string, string][];
       expect(
         writes.filter(([, source]) => source === NOTIFY_USER_TOOL_SOURCE),
       ).toHaveLength(1);
@@ -539,10 +554,8 @@ describe("harnesst-runs hook injection (WS2)", () => {
 
   async function writeCalls() {
     const fsp = await import("node:fs/promises");
-    return (fsp.writeFile as unknown as ReturnType<typeof vi.fn>).mock.calls as [
-      string,
-      string,
-    ][];
+    return (fsp.writeFile as unknown as ReturnType<typeof vi.fn>).mock
+      .calls as [string, string][];
   }
 
   async function build(over: Record<string, unknown> = {}) {
@@ -570,38 +583,44 @@ describe("harnesst-runs hook injection (WS2)", () => {
   });
 
   it("bakes it beside a team member's agent, not at the repo root", async () => {
-    const hookWrite = (await build({ agentRoot: "agents/deployer/agent" })).find(([p]) =>
-      String(p).endsWith("harnesst-runs.ts"),
-    );
+    const hookWrite = (
+      await build({ agentRoot: "agents/deployer/agent" })
+    ).find(([p]) => String(p).endsWith("harnesst-runs.ts"));
 
-    expect(String(hookWrite?.[0])).toContain("agents/deployer/agent/hooks/harnesst-runs.ts");
+    expect(String(hookWrite?.[0])).toContain(
+      "agents/deployer/agent/hooks/harnesst-runs.ts",
+    );
   });
 
   it("does not overwrite a repo's own file at that path", async () => {
     const { mkdir: realMkdir, writeFile: realWriteFile } =
-      await vi.importActual<typeof import("node:fs/promises")>("node:fs/promises");
+      await vi.importActual<typeof import("node:fs/promises")>(
+        "node:fs/promises",
+      );
     const path = await import("node:path");
     // The staged tree is created by the mocked `tar`/`mkdir` exec; drop a repo-authored hook into
     // it the moment the extraction directory appears.
-    execFile.mockImplementation((cmd, args, optionsOrCallback, maybeCallback) => {
-      if (cmd === "tar") {
-        const target = args[args.indexOf("-C") + 1];
-        const callback = execCallback(optionsOrCallback, maybeCallback);
-        realMkdir(path.join(target, "agent/hooks"), { recursive: true })
-          .then(() =>
-            realWriteFile(
-              path.join(target, "agent/hooks/harnesst-runs.ts"),
-              "// the repo's own hook\n",
-            ),
-          )
-          .then(
-            () => callback(null, "", ""),
-            (error: Error) => callback(error, "", ""),
-          );
-        return;
-      }
-      defaultExecFile(cmd, args, optionsOrCallback, maybeCallback);
-    });
+    execFile.mockImplementation(
+      (cmd, args, optionsOrCallback, maybeCallback) => {
+        if (cmd === "tar") {
+          const target = args[args.indexOf("-C") + 1];
+          const callback = execCallback(optionsOrCallback, maybeCallback);
+          realMkdir(path.join(target, "agent/hooks"), { recursive: true })
+            .then(() =>
+              realWriteFile(
+                path.join(target, "agent/hooks/harnesst-runs.ts"),
+                "// the repo's own hook\n",
+              ),
+            )
+            .then(
+              () => callback(null, "", ""),
+              (error: Error) => callback(error, "", ""),
+            );
+          return;
+        }
+        defaultExecFile(cmd, args, optionsOrCallback, maybeCallback);
+      },
+    );
 
     const writes = await build();
 
@@ -611,5 +630,93 @@ describe("harnesst-runs hook injection (WS2)", () => {
     expect(
       writes.find(([p]) => String(p).endsWith("agent/hooks/harnesst-runs.ts")),
     ).toBeUndefined();
+  });
+});
+
+describe("publish artifact provenance", () => {
+  beforeEach(() => {
+    execFile.mockClear();
+    execFile.mockImplementation(defaultExecFile);
+  });
+  const input = {
+    projectId: "proj_1",
+    repo: { owner: "acme", repo: "agents" },
+    ref: "head",
+    installationId: "inst_1",
+    taskId: "same-task",
+  };
+  it("gives repeated and concurrent same-task member builds distinct provisional tags", async () => {
+    const { buildStagedTree } = await import("~/deploy/eve-image.server");
+    const results = await Promise.all(
+      Array.from({ length: 6 }, (_, i) =>
+        buildStagedTree({
+          ...input,
+          agentRoot: `agents/member-${i % 3}/agent`,
+          overlay: [
+            {
+              path: `agents/member-${i % 3}/agent/agent.ts`,
+              content: `export default ${i};`,
+            },
+          ],
+        }),
+      ),
+    );
+    expect(results.every((result) => result.ok && result.provenance)).toBe(
+      true,
+    );
+    expect(
+      new Set(results.map((result) => result.ok && result.provisionalTag)).size,
+    ).toBe(6);
+    expect(
+      new Set(
+        results.map((result) => result.ok && result.provenance?.contextDigest),
+      ).size,
+    ).toBe(6);
+  });
+  it("rejects promotion if the committed source differs from the staged bytes", async () => {
+    const { buildStagedTree, promoteProvisionalImage } =
+      await import("~/deploy/eve-image.server");
+    const staged = await buildStagedTree({
+      ...input,
+      overlay: [{ path: "agent/agent.ts", content: "new" }],
+    });
+    if (!staged.ok || !staged.provenance || !staged.provisionalTag)
+      throw new Error("Expected staged image");
+    execFile.mockClear();
+    await expect(
+      promoteProvisionalImage({
+        ...input,
+        gitSha: "committed",
+        provisionalTag: staged.provisionalTag,
+        provenance: staged.provenance,
+      }),
+    ).rejects.toThrow("published commit differs from the staged build");
+    expect(execFile.mock.calls.some(([, args]) => args[0] === "tag")).toBe(
+      false,
+    );
+  });
+  it("promotes the verified immutable digests even if provisional tags were reassigned", async () => {
+    const { buildStagedTree, promoteProvisionalImage } =
+      await import("~/deploy/eve-image.server");
+    const staged = await buildStagedTree({ ...input, overlay: [] });
+    if (!staged.ok || !staged.provenance || !staged.provisionalTag)
+      throw new Error("Expected staged image");
+    execFile.mockClear();
+    const result = await promoteProvisionalImage({
+      ...input,
+      gitSha: "committed",
+      provisionalTag: staged.provisionalTag,
+      provenance: staged.provenance,
+    });
+    expect(result.provenance?.gitSha).toBe("committed");
+    const tagCalls = execFile.mock.calls.filter(
+      ([, args]) => args[0] === "tag",
+    );
+    expect(tagCalls).toHaveLength(2);
+    expect(
+      tagCalls.every(
+        ([, args]) => args[1] === staged.provenance!.runtimeDigest,
+      ),
+    ).toBe(true);
   });
 });
