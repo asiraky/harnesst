@@ -14,12 +14,15 @@ import { getSessionAuth, sessionLoader } from "~/auth/session.server";
 import {
   Building2,
   Cpu,
+  Copy,
+  MoreHorizontal,
   Gauge,
   Plug,
   ScrollText,
   ShieldAlert,
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
+import { toast } from "sonner";
 import {
   Form,
   Link,
@@ -47,6 +50,12 @@ import {
   CardTitle,
 } from "~/components/ui/card";
 import { Input } from "~/components/ui/input";
+import {
+  DropdownMenu,
+  DropdownMenuTrigger,
+  DropdownMenuContent,
+  DropdownMenuItem,
+} from "~/components/ui/dropdown-menu";
 import { SecretInput } from "~/components/ui/secret-input";
 import { Label } from "~/components/ui/label";
 import {
@@ -69,6 +78,9 @@ import {
 import {
   createApiKeyConnection,
   disconnectModelConnection,
+  deleteModelConnection,
+  listModelConnectionAliases,
+  deleteModelConnectionAlias,
   recoverDeletedCodexConnection,
   listModelConnections,
   renameModelConnection,
@@ -118,6 +130,7 @@ interface OrgSettingsView {
   agentOverrides: AgentOverrideView[];
   /** Connected model providers (issue #28) — display metadata only, never a token. */
   connections: ModelConnection[];
+  connectionAliases: { oldConnectionId: string; connectionId: string }[];
   /** Better Auth organization:update permission for the active workspace. */
   canManage: boolean;
 }
@@ -163,6 +176,7 @@ export const loader = (args: LoaderFunctionArgs) =>
           assistantEffort: null,
           agentOverrides: [],
           connections: [],
+          connectionAliases: [],
           canManage: false,
         };
       }
@@ -173,6 +187,7 @@ export const loader = (args: LoaderFunctionArgs) =>
         assistantSelection,
         agentOverrides,
         connections,
+        connectionAliases,
         canManage,
         orgProjects,
       ] = await Promise.all([
@@ -182,6 +197,7 @@ export const loader = (args: LoaderFunctionArgs) =>
         getWorkspaceAssistantSelection(org.id),
         listAgentModelOverrides(org.id),
         listModelConnections(org.id),
+        listModelConnectionAliases(org.id),
         canManageWorkspace(org.id, auth.requestHeaders),
         listProjects(org.id).catch(() => []),
       ]);
@@ -214,6 +230,7 @@ export const loader = (args: LoaderFunctionArgs) =>
             repoName: repoNames.get(o.projectId) ?? null,
           })),
         connections,
+        connectionAliases,
         canManage,
       };
     },
@@ -284,7 +301,9 @@ export async function action(args: ActionFunctionArgs) {
       await recordAudit({
         orgId: org.id,
         actorUserId: auth.user.id,
-        action: "model_provider_connected",
+        action: form.get("connectionId")
+          ? "model_provider_reauthenticated"
+          : "model_provider_connected",
         target: connection.id,
         meta: { provider },
       });
@@ -320,7 +339,12 @@ export async function action(args: ActionFunctionArgs) {
     const connection = (await listModelConnections(org.id)).find(
       (row) => row.id === id,
     );
-    await disconnectModelConnection(org.id, id);
+    if (!connection)
+      return {
+        error:
+          "This connection no longer exists. Refresh Settings to see current connections.",
+      };
+    if (!(await disconnectModelConnection(org.id, id))) throw redirect(here);
     if (connection && connection.provider !== "codex")
       await invalidateOrganizationEnvironments({
         orgId: org.id,
@@ -333,6 +357,40 @@ export async function action(args: ActionFunctionArgs) {
       target: id,
     });
     throw redirect(here);
+  }
+
+  if (intent === "delete-connection") {
+    const id = String(form.get("connectionId") ?? "");
+    if (form.get("confirmed") !== "yes")
+      return { error: "Confirm permanent deletion." };
+    if (!(await deleteModelConnection(org.id, id)))
+      return { error: "This connection no longer exists." };
+    await invalidateOrganizationEnvironments({
+      orgId: org.id,
+      createdBy: auth.user.id,
+    });
+    await recordAudit({
+      orgId: org.id,
+      actorUserId: auth.user.id,
+      action: "model_provider_deleted",
+      target: id,
+    });
+    return { ok: true as const };
+  }
+
+  if (intent === "delete-connection-alias") {
+    const oldId = String(form.get("oldId") ?? "");
+    if (form.get("confirmed") !== "yes")
+      return { error: "Confirm removal of the recovery mapping." };
+    if (!(await deleteModelConnectionAlias(org.id, oldId)))
+      return { error: "This recovery mapping no longer exists." };
+    await recordAudit({
+      orgId: org.id,
+      actorUserId: auth.user.id,
+      action: "model_provider_recovery_removed",
+      target: oldId,
+    });
+    return { ok: true as const };
   }
 
   if (intent === "recover-connection") {
@@ -363,7 +421,7 @@ export async function action(args: ActionFunctionArgs) {
     if (model && !modelInfo) {
       return {
         error:
-          "That model is not available from an active provider connection in this workspace.",
+          "That model is unavailable. Check the provider connection and choose a model offered by its current catalogue.",
       };
     }
     if (effort && !modelInfo?.supportedEfforts?.includes(effort)) {
@@ -444,6 +502,7 @@ export default function WorkspaceSettings({
     assistantEffort,
     agentOverrides,
     connections,
+    connectionAliases,
     canManage,
   } = loaderData;
   const modelFetcher = useFetcher<typeof action>();
@@ -523,231 +582,232 @@ export default function WorkspaceSettings({
 
         {/* Connected model providers + workspace default */}
         {section === "connections" && (
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <Cpu className={`size-4 ${accentText.blue}`} aria-hidden />
-                Model providers
-              </CardTitle>
-              <CardDescription>
-                Connect one or more provider accounts. API keys are injected
-                directly into agent instances for their matching connection;
-                Codex subscription traffic uses harnesst's OAuth gateway. Model
-                pickers show only models from active connections.
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-6">
-              <div className="space-y-3">
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <Label className="flex items-center gap-2">
-                    <Plug className="size-4" aria-hidden />
-                    Connected providers
-                  </Label>
-                  {canManage && (
-                    <div className="flex flex-wrap gap-2">
-                      <ConnectApiKeyDialog />
-                      <ConnectCodexDialog />
-                    </div>
-                  )}
-                </div>
-                {connections.length === 0 ? (
-                  <div className="rounded-lg border border-dashed p-4 text-sm text-muted-foreground">
-                    No model providers are connected. Connect OpenRouter,
-                    Anthropic, OpenAI Platform, or an OpenAI Codex subscription
-                    to make models available.
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Cpu className={`size-4 ${accentText.blue}`} aria-hidden />
+              Model providers
+            </CardTitle>
+            <CardDescription>
+              Connect one or more provider accounts. API keys are injected
+              directly into agent instances for their matching connection; Codex
+              subscription traffic uses harnesst's OAuth gateway. Model pickers show
+              only models from active connections.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-6">
+            <div className="space-y-3">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <Label className="flex items-center gap-2">
+                  <Plug className="size-4" aria-hidden />
+                  Connected providers
+                </Label>
+                {canManage && (
+                  <div className="flex flex-wrap gap-2">
+                    <ConnectApiKeyDialog />
+                    <ConnectCodexDialog />
                   </div>
-                ) : (
-                  <ul className="divide-y rounded-lg border text-sm">
-                    {connections.map((conn) => (
-                      <ConnectionRow
-                        key={conn.id}
-                        conn={conn}
-                        canManage={canManage}
-                      />
-                    ))}
-                  </ul>
-                )}
-                {!canManage && (
-                  <p className="text-xs text-muted-foreground">
-                    Only workspace owners and admins can change provider
-                    connections.
-                  </p>
                 )}
               </div>
-
-              <div className="max-w-xl space-y-2 border-t pt-4">
-                <div className="flex min-h-8 items-center justify-between gap-3">
-                  <Label>Default model</Label>
-                  {canManage && assistantModel && (
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="sm"
-                      disabled={modelFetcher.state !== "idle"}
-                      onClick={() =>
-                        modelFetcher.submit(
-                          {
-                            intent: "set-assistant-model",
-                            assistantModel: "",
-                            assistantEffort: "",
-                          },
-                          { method: "post" },
-                        )
-                      }
-                    >
-                      Clear default
-                    </Button>
-                  )}
+              {connections.length === 0 ? (
+                <div className="rounded-lg border border-dashed p-4 text-sm text-muted-foreground">
+                  No model providers are connected. Connect OpenRouter,
+                  Anthropic, OpenAI Platform, or an OpenAI Codex subscription to
+                  make models available.
                 </div>
-                {canManage ? (
-                  <ModelSelection
-                    model={assistantModel}
-                    effort={assistantEffort}
-                    busy={modelFetcher.state !== "idle"}
-                    onCommit={(model, effort) =>
+              ) : (
+                <ul className="divide-y rounded-lg border text-sm">
+                  {connections.map((conn) => (
+                    <ConnectionRow
+                      key={conn.id}
+                      conn={conn}
+                      aliases={connectionAliases.filter((alias) => alias.connectionId === conn.id)}
+                      canManage={canManage}
+                    />
+                  ))}
+                </ul>
+              )}
+              {!canManage && (
+                <p className="text-xs text-muted-foreground">
+                  Only workspace owners and admins can change provider
+                  connections.
+                </p>
+              )}
+            </div>
+
+            <div className="max-w-xl space-y-2 border-t pt-4">
+              <div className="flex min-h-8 items-center justify-between gap-3">
+                <Label>Default model</Label>
+                {canManage && assistantModel && (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    disabled={modelFetcher.state !== "idle"}
+                    onClick={() =>
                       modelFetcher.submit(
                         {
                           intent: "set-assistant-model",
-                          assistantModel: model,
-                          assistantEffort: effort ?? "",
+                          assistantModel: "",
+                          assistantEffort: "",
                         },
                         { method: "post" },
                       )
                     }
-                  />
-                ) : (
-                  <p className="font-mono text-sm">
-                    {assistantModel
-                      ? `${assistantModel} · ${assistantEffort ?? "provider default"}`
-                      : "No default configured"}
+                  >
+                    Clear default
+                  </Button>
+                )}
+              </div>
+              {canManage ? (
+                <ModelSelection
+                  model={assistantModel}
+                  effort={assistantEffort}
+                  busy={modelFetcher.state !== "idle"}
+                  onCommit={(model, effort) =>
+                    modelFetcher.submit(
+                      {
+                        intent: "set-assistant-model",
+                        assistantModel: model,
+                        assistantEffort: effort ?? "",
+                      },
+                      { method: "post" },
+                    )
+                  }
+                />
+              ) : (
+                <p className="font-mono text-sm">
+                  {assistantModel
+                    ? `${assistantModel} · ${assistantEffort ?? "provider default"}`
+                    : "No default configured"}
+                </p>
+              )}
+              <p className="text-xs text-muted-foreground">
+                Used by the authoring assistant and by every agent without an
+                override below. Running agents resolve this at each step, so a
+                change lands within about 30 seconds — no redeploy. A workspace
+                with no default has no implicit fallback: agents error until a
+                model is configured here.
+              </p>
+              {modelFetcher.data &&
+                "error" in modelFetcher.data &&
+                modelFetcher.data.error && (
+                  <p className="text-sm text-destructive">
+                    {modelFetcher.data.error}
                   </p>
                 )}
-                <p className="text-xs text-muted-foreground">
-                  Used by the authoring assistant and by every agent without an
-                  override below. Running agents resolve this at each step, so a
-                  change lands within about 30 seconds — no redeploy. A
-                  workspace with no default has no implicit fallback: agents
-                  error until a model is configured here.
-                </p>
-                {modelFetcher.data &&
-                  "error" in modelFetcher.data &&
-                  modelFetcher.data.error && (
-                    <p className="text-sm text-destructive">
-                      {modelFetcher.data.error}
-                    </p>
-                  )}
-              </div>
+            </div>
 
-              <AgentOverridesSection
-                overrides={agentOverrides}
-                canManage={canManage}
-              />
-            </CardContent>
-          </Card>
+            <AgentOverridesSection
+              overrides={agentOverrides}
+              canManage={canManage}
+            />
+          </CardContent>
+        </Card>
         )}
 
         {/* Spend controls */}
         {section === "general" && (
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <Gauge className={`size-4 ${accentText.amber}`} aria-hidden />
-                Spend controls
-              </CardTitle>
-              <CardDescription>
-                Tokens used (last 30 days):{" "}
-                <span className={`font-medium ${accentText.indigo}`}>
-                  <LocalizedNumber value={used} />
-                </span>
-                {limit?.monthlyTokenCap != null && (
-                  <>
-                    {" / "}
-                    <LocalizedNumber value={limit.monthlyTokenCap} />
-                  </>
-                )}
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              {canManage ? (
-                <Form method="post" className="space-y-4">
-                  <div className="space-y-1.5">
-                    <Label htmlFor="monthlyTokenCap">Monthly token cap</Label>
-                    <Input
-                      id="monthlyTokenCap"
-                      name="monthlyTokenCap"
-                      type="number"
-                      min={0}
-                      defaultValue={limit?.monthlyTokenCap ?? ""}
-                      placeholder="unlimited"
-                      className="w-48"
-                    />
-                  </div>
-                  <Label className="flex items-center gap-2 rounded-lg border border-rose-500/30 bg-rose-500/5 px-3 py-2 font-normal text-rose-700 dark:text-rose-400">
-                    <ShieldAlert className="size-4 shrink-0" aria-hidden />
-                    <input
-                      type="checkbox"
-                      name="killSwitch"
-                      defaultChecked={limit?.killSwitch ?? false}
-                      aria-label="Kill-switch (block all model calls for this tenant)"
-                    />
-                    Kill-switch (block all model calls for this tenant)
-                  </Label>
-                  <Button type="submit">Save</Button>
-                </Form>
-              ) : (
-                <div className="space-y-2 text-sm">
-                  <p>
-                    Monthly token cap:{" "}
-                    {limit?.monthlyTokenCap?.toLocaleString() ?? "unlimited"}
-                  </p>
-                  <p>Kill-switch: {limit?.killSwitch ? "on" : "off"}</p>
-                  <p className="text-muted-foreground">
-                    Only workspace owners and admins can change spend controls.
-                  </p>
-                </div>
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Gauge className={`size-4 ${accentText.amber}`} aria-hidden />
+              Spend controls
+            </CardTitle>
+            <CardDescription>
+              Tokens used (last 30 days):{" "}
+              <span className={`font-medium ${accentText.indigo}`}>
+                <LocalizedNumber value={used} />
+              </span>
+              {limit?.monthlyTokenCap != null && (
+                <>
+                  {" / "}
+                  <LocalizedNumber value={limit.monthlyTokenCap} />
+                </>
               )}
-            </CardContent>
-          </Card>
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            {canManage ? (
+              <Form method="post" className="space-y-4">
+                <div className="space-y-1.5">
+                  <Label htmlFor="monthlyTokenCap">Monthly token cap</Label>
+                  <Input
+                    id="monthlyTokenCap"
+                    name="monthlyTokenCap"
+                    type="number"
+                    min={0}
+                    defaultValue={limit?.monthlyTokenCap ?? ""}
+                    placeholder="unlimited"
+                    className="w-48"
+                  />
+                </div>
+                <Label className="flex items-center gap-2 rounded-lg border border-rose-500/30 bg-rose-500/5 px-3 py-2 font-normal text-rose-700 dark:text-rose-400">
+                  <ShieldAlert className="size-4 shrink-0" aria-hidden />
+                  <input
+                    type="checkbox"
+                    name="killSwitch"
+                    defaultChecked={limit?.killSwitch ?? false}
+                    aria-label="Kill-switch (block all model calls for this tenant)"
+                  />
+                  Kill-switch (block all model calls for this tenant)
+                </Label>
+                <Button type="submit">Save</Button>
+              </Form>
+            ) : (
+              <div className="space-y-2 text-sm">
+                <p>
+                  Monthly token cap:{" "}
+                  {limit?.monthlyTokenCap?.toLocaleString() ?? "unlimited"}
+                </p>
+                <p>Kill-switch: {limit?.killSwitch ? "on" : "off"}</p>
+                <p className="text-muted-foreground">
+                  Only workspace owners and admins can change spend controls.
+                </p>
+              </div>
+            )}
+          </CardContent>
+        </Card>
         )}
 
         {/* Audit log */}
         {section === "audit" && (
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <ScrollText
-                  className={`size-4 ${accentText.indigo}`}
-                  aria-hidden
-                />
-                Audit log
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              {audit.length === 0 ? (
-                <p className="text-sm text-muted-foreground">
-                  No operations recorded yet.
-                </p>
-              ) : (
-                <ul className="divide-y rounded-lg border text-sm">
-                  {audit.map((a) => (
-                    <li key={a.id} className="flex justify-between px-4 py-2">
-                      <span>
-                        <span className="font-medium">{a.action}</span>
-                        {a.target && (
-                          <span className="ml-2 font-mono text-muted-foreground">
-                            {a.target}
-                          </span>
-                        )}
-                      </span>
-                      <span className="text-muted-foreground">
-                        <LocalizedDateTime value={a.createdAt} />
-                      </span>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </CardContent>
-          </Card>
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <ScrollText
+                className={`size-4 ${accentText.indigo}`}
+                aria-hidden
+              />
+              Audit log
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            {audit.length === 0 ? (
+              <p className="text-sm text-muted-foreground">
+                No operations recorded yet.
+              </p>
+            ) : (
+              <ul className="divide-y rounded-lg border text-sm">
+                {audit.map((a) => (
+                  <li key={a.id} className="flex justify-between px-4 py-2">
+                    <span>
+                      <span className="font-medium">{a.action}</span>
+                      {a.target && (
+                        <span className="ml-2 font-mono text-muted-foreground">
+                          {a.target}
+                        </span>
+                      )}
+                    </span>
+                    <span className="text-muted-foreground">
+                      <LocalizedDateTime value={a.createdAt} />
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </CardContent>
+        </Card>
         )}
       </div>
     </AppShell>
@@ -860,21 +920,26 @@ function AgentOverrideRow({
 /** One connected model provider — provider badge, inline rename, status, remove (issue #28). */
 function ConnectionRow({
   conn,
+  aliases,
   canManage,
 }: {
   conn: ModelConnection;
+  aliases: { oldConnectionId: string; connectionId: string }[];
   canManage: boolean;
 }) {
   const rename = useFetcher();
   const [editing, setEditing] = useState(false);
   const active = conn.status === "active";
+  const [recoverOpen, setRecoverOpen] = useState(false);
+  const [mappingsOpen, setMappingsOpen] = useState(false);
+  const [deleteOpen, setDeleteOpen] = useState(false);
   return (
     <li
       id={`connection-${conn.id}`}
       className="flex flex-wrap items-center justify-between gap-2 px-4 py-3"
     >
-      <div className="space-y-0.5">
-        <div className="flex items-center gap-2">
+      <div className="min-w-0 max-w-full space-y-0.5">
+        <div className="flex flex-wrap items-center gap-2">
           <span className="rounded bg-muted px-1.5 py-0.5 text-xs font-medium">
             {MODEL_PROVIDERS[conn.provider].displayName}
           </span>
@@ -897,12 +962,13 @@ function ConnectionRow({
               </Button>
             </rename.Form>
           ) : (
-            <span className="font-medium">{conn.label}</span>
+            <span className="break-all font-medium">{conn.label}</span>
           )}
           {canManage && !editing && (
             <button
               type="button"
               className="text-xs text-muted-foreground underline"
+              aria-label={`Rename ${conn.label}`}
               onClick={() => setEditing(true)}
             >
               rename
@@ -911,39 +977,135 @@ function ConnectionRow({
         </div>
         <p className="text-xs text-muted-foreground">
           Connection ID: <code>{conn.id}</code>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            className="ml-1 size-7"
+            aria-label={`Copy connection ID for ${conn.label}`}
+            onClick={async () => {
+              try {
+                await navigator.clipboard.writeText(conn.id);
+                toast.success("Connection ID copied");
+              } catch {
+                toast.error("Could not copy connection ID");
+              }
+            }}
+          >
+            <Copy className="size-3.5" aria-hidden />
+          </Button>
         </p>
         {conn.accountEmail && (
-          <p className="text-xs text-muted-foreground">{conn.accountEmail}</p>
+          <p className="break-all text-xs text-muted-foreground">
+            {conn.accountEmail}
+          </p>
         )}
         {MODEL_PROVIDERS[conn.provider].authKind === "api-key" && (
           <p className="text-xs text-muted-foreground">
-            API key configured (write-only)
+            {conn.status === "revoked"
+              ? "API key disconnected"
+              : "API key configured (write-only)"}
           </p>
         )}
         {!active && (
           <p className="text-xs text-amber-600 dark:text-amber-400">
-            Reauthenticate to resume — this connection is{" "}
-            {conn.status === "revoked" ? "disconnected" : conn.status}.
+            {`Reauthenticate to resume — this connection is ${conn.status === "revoked" ? "disconnected" : conn.status}.`}
           </p>
         )}
       </div>
       {canManage && (
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           {conn.provider === "codex" ? (
             <ConnectCodexDialog connection={conn} />
           ) : (
             <ConnectApiKeyDialog connection={conn} />
           )}
-          {conn.provider === "codex" && active && (
-            <RecoverConnectionDialog connection={conn} />
+          {conn.status !== "revoked" && (
+            <Form method="post">
+              <input type="hidden" name="intent" value="remove-connection" />
+              <input type="hidden" name="connectionId" value={conn.id} />
+              <Button
+                type="submit"
+                variant="outline"
+                size="sm"
+                aria-label={`Disconnect ${conn.label}`}
+              >
+                Disconnect
+              </Button>
+            </Form>
           )}
-          <Form method="post">
-            <input type="hidden" name="intent" value="remove-connection" />
-            <input type="hidden" name="connectionId" value={conn.id} />
-            <Button type="submit" variant="outline" size="sm">
-              Disconnect
-            </Button>
-          </Form>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                aria-label={`More actions for ${conn.label}`}
+              >
+                <MoreHorizontal className="size-4" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              {conn.provider === "codex" && active && (
+                <DropdownMenuItem
+                  onSelect={() => setRecoverOpen(true)}
+                  aria-label={`Recover deleted ID with ${conn.label}`}
+                >
+                  Recover deleted ID
+                </DropdownMenuItem>
+              )}
+              {aliases.length > 0 && (
+                <DropdownMenuItem
+                  onSelect={() => setMappingsOpen(true)}
+                  aria-label={`Manage recovery mappings for ${conn.label}`}
+                >
+                  Manage recovery mappings
+                </DropdownMenuItem>
+              )}
+              <DropdownMenuItem
+                variant="destructive"
+                onSelect={() => setDeleteOpen(true)}
+                aria-label={`Permanently delete ${conn.label}`}
+              >
+                Permanently delete
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+          <RecoverConnectionDialog
+            connection={conn}
+            open={recoverOpen}
+            onOpenChange={setRecoverOpen}
+          />
+          <Dialog open={mappingsOpen} onOpenChange={setMappingsOpen}>
+            <DialogContent>
+              <DialogHeader>
+                <DialogTitle>Recovery mappings for {conn.label}</DialogTitle>
+                <DialogDescription>
+                  Removing a mapping stops agents and sessions that still
+                  reference the deleted ID. The current connection is preserved.
+                </DialogDescription>
+              </DialogHeader>
+              {aliases.length ? (
+                <ul className="space-y-4">
+                  {aliases.map((alias) => (
+                    <RecoveryMappingRow
+                      key={alias.oldConnectionId}
+                      oldId={alias.oldConnectionId}
+                    />
+                  ))}
+                </ul>
+              ) : (
+                <p role="status" className="text-sm text-muted-foreground">
+                  No recovery mappings remain.
+                </p>
+              )}
+            </DialogContent>
+          </Dialog>
+          <DeleteConnectionDialog
+            connection={conn}
+            open={deleteOpen}
+            onOpenChange={setDeleteOpen}
+          />
         </div>
       )}
     </li>
@@ -972,7 +1134,13 @@ function ConnectApiKeyDialog({ connection }: { connection?: ModelConnection }) {
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>
-        <Button type="button" size="sm">
+        <Button
+          type="button"
+          size="sm"
+          aria-label={
+            connection ? `Reauthenticate ${connection.label}` : undefined
+          }
+        >
           {connection ? "Reauthenticate" : "Connect API key"}
         </Button>
       </DialogTrigger>
@@ -984,8 +1152,9 @@ function ConnectApiKeyDialog({ connection }: { connection?: ModelConnection }) {
               : "Connect an API-key provider"}
           </DialogTitle>
           <DialogDescription>
-            harnesst validates the key before sealing it. Keys are write-only
-            and are sent directly to agent instances for this exact connection.
+            {connection
+              ? "Your connection ID, models, effort, and sessions stay unchanged. harnesst validates the new key, but cannot verify it belongs to the same account. Replacing it may switch the account used by existing agents."
+              : "harnesst validates the key before sealing it. Keys are write-only and are sent directly to agent instances for this exact connection."}
           </DialogDescription>
         </DialogHeader>
         <fetcher.Form method="post" className="space-y-4">
@@ -998,24 +1167,29 @@ function ConnectApiKeyDialog({ connection }: { connection?: ModelConnection }) {
           {connection && (
             <input type="hidden" name="provider" value={connection.provider} />
           )}
-          <div className="space-y-1.5">
-            <Label htmlFor="provider">Provider</Label>
-            <select
-              disabled={!!connection}
-              id="provider"
-              name="provider"
-              aria-label="Provider"
-              value={provider}
-              onChange={(event) =>
-                setProvider(event.target.value as ApiKeyProviderId)
-              }
-              className="border-input bg-background h-9 w-full rounded-md border px-3 text-sm"
-            >
-              <option value="openrouter">OpenRouter</option>
-              <option value="anthropic">Anthropic</option>
-              <option value="openai">OpenAI Platform</option>
-            </select>
-          </div>
+          {connection ? (
+            <p className="text-sm">
+              Provider: {MODEL_PROVIDERS[connection.provider].displayName}
+            </p>
+          ) : (
+            <div className="space-y-1.5">
+              <Label htmlFor="provider">Provider</Label>
+              <select
+                id="provider"
+                name="provider"
+                aria-label="Provider"
+                value={provider}
+                onChange={(event) =>
+                  setProvider(event.target.value as ApiKeyProviderId)
+                }
+                className="border-input bg-background h-9 w-full rounded-md border px-3 text-sm"
+              >
+                <option value="openrouter">OpenRouter</option>
+                <option value="anthropic">Anthropic</option>
+                <option value="openai">OpenAI Platform</option>
+              </select>
+            </div>
+          )}
           <div className="space-y-1.5">
             <Label htmlFor="connectionLabel">Connection name</Label>
             <Input
@@ -1070,7 +1244,12 @@ type CodexConnectResponse =
     }
   | { pending: true }
   | { done: true }
-  | { error: string };
+  | { error: string; retryable?: boolean }
+  | {
+      verificationRequired: true;
+      accountEmail: string | null;
+      accountIds: string[];
+    };
 
 /**
  * The "Connect OpenAI Codex" dialog (issue #28): request a device code, show the user the code +
@@ -1088,6 +1267,13 @@ function ConnectCodexDialog({ connection }: { connection?: ModelConnection }) {
     interval: number;
   } | null>(null);
   const started = useRef(false);
+  const [error, setError] = useState<string | null>(null);
+  const [retryable, setRetryable] = useState(false);
+  const [verification, setVerification] = useState<{
+    accountEmail: string | null;
+    accountIds: string[];
+  } | null>(null);
+  const lastResponse = useRef(fetcher.data);
   const cancel = useFetcher();
   const openRef = useRef(open);
   openRef.current = open;
@@ -1096,6 +1282,9 @@ function ConnectCodexDialog({ connection }: { connection?: ModelConnection }) {
   useEffect(() => {
     if (open && !started.current) {
       started.current = true;
+      lastResponse.current = fetcher.data;
+      setError(null);
+      setVerification(null);
       fetcher.submit(
         { intent: "start", connectionId: connection?.id ?? "" },
         { method: "post", action: "/api/connections/codex" },
@@ -1112,7 +1301,13 @@ function ConnectCodexDialog({ connection }: { connection?: ModelConnection }) {
   // Latch the device code, complete on success — both driven by the fetcher response.
   useEffect(() => {
     const d = fetcher.data;
-    if (!d) return;
+    if (!d || d === lastResponse.current) return;
+    lastResponse.current = d;
+    if ("error" in d) {
+      setError(d.error);
+      setRetryable(d.retryable ?? false);
+    } else setError(null);
+    if ("verificationRequired" in d) setVerification(d);
     if ("attemptId" in d && d.attemptId) {
       if (!openRef.current) {
         cancel.submit(
@@ -1131,18 +1326,16 @@ function ConnectCodexDialog({ connection }: { connection?: ModelConnection }) {
     if ("done" in d && d.done) {
       setOpen(false);
       setDevice(null);
+      toast.success(
+        connection ? `${connection.label} reauthenticated` : "Codex connected",
+      );
       revalidator.revalidate();
     }
   }, [fetcher.data]);
 
   // Poll for authorization at the server-provided interval while the dialog is open.
   useEffect(() => {
-    if (
-      !open ||
-      !device ||
-      fetcher.state !== "idle" ||
-      (fetcher.data && "error" in fetcher.data)
-    )
+    if (!open || !device || fetcher.state !== "idle" || error || verification)
       return;
     const timer = setTimeout(
       () => {
@@ -1158,10 +1351,7 @@ function ConnectCodexDialog({ connection }: { connection?: ModelConnection }) {
     );
     return () => clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, device, fetcher.state, fetcher.data]);
-
-  const error =
-    fetcher.data && "error" in fetcher.data ? fetcher.data.error : null;
+  }, [open, device, fetcher.state, fetcher.data, error, verification]);
 
   return (
     <Dialog
@@ -1172,11 +1362,22 @@ function ConnectCodexDialog({ connection }: { connection?: ModelConnection }) {
             { intent: "cancel", attemptId: device.attemptId },
             { method: "post", action: "/api/connections/codex" },
           );
+        if (next) {
+          setError(null);
+          setVerification(null);
+          lastResponse.current = fetcher.data;
+        }
         setOpen(next);
       }}
     >
       <DialogTrigger asChild>
-        <Button type="button" size="sm">
+        <Button
+          type="button"
+          size="sm"
+          aria-label={
+            connection ? `Reauthenticate ${connection.label}` : undefined
+          }
+        >
           {connection ? "Reauthenticate" : "Connect OpenAI Codex"}
         </Button>
       </DialogTrigger>
@@ -1194,7 +1395,94 @@ function ConnectCodexDialog({ connection }: { connection?: ModelConnection }) {
           </DialogDescription>
         </DialogHeader>
         {error ? (
-          <p className="text-sm text-rose-600 dark:text-rose-400">{error}</p>
+          <div className="space-y-3">
+            <p role="alert" className="text-sm text-destructive">
+              {error}
+            </p>
+            <Button
+              type="button"
+              disabled={fetcher.state !== "idle"}
+              onClick={() => {
+                setError(null);
+                if (retryable && device) {
+                  fetcher.submit(
+                    { intent: "poll", attemptId: device.attemptId },
+                    { method: "post", action: "/api/connections/codex" },
+                  );
+                } else {
+                  if (device)
+                    cancel.submit(
+                      { intent: "cancel", attemptId: device.attemptId },
+                      { method: "post", action: "/api/connections/codex" },
+                    );
+                  setDevice(null);
+                  setVerification(null);
+                  fetcher.submit(
+                    { intent: "start", connectionId: connection?.id ?? "" },
+                    { method: "post", action: "/api/connections/codex" },
+                  );
+                }
+              }}
+            >
+              Try again
+            </Button>
+          </div>
+        ) : verification && device ? (
+          <fetcher.Form
+            method="post"
+            action="/api/connections/codex"
+            className="space-y-4"
+          >
+            <input type="hidden" name="intent" value="confirm" />
+            <input type="hidden" name="attemptId" value={device.attemptId} />
+            <p role="status" className="text-sm">
+              Verify the original account
+            </p>
+            <p className="text-sm text-muted-foreground">
+              This older connection does not have a reliable account identity.
+              Check your records before linking the signed-in account
+              {verification.accountEmail
+                ? ` (${verification.accountEmail})`
+                : ""}
+              . Email alone does not prove it is the same account.
+            </p>
+            <div className="space-y-1.5">
+              <Label htmlFor={`account-${device.attemptId}`}>
+                Provider account
+              </Label>
+              <select
+                id={`account-${device.attemptId}`}
+                name="accountId"
+                required
+                className="border-input bg-background h-9 w-full rounded-md border px-3 text-sm"
+              >
+                {verification.accountIds.length > 1 && (
+                  <option value="">Choose the original account</option>
+                )}
+                {verification.accountIds.map((id) => (
+                  <option key={id} value={id}>
+                    {id}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <label className="flex items-start gap-2 text-sm">
+              <input
+                type="checkbox"
+                className="mt-1 shrink-0"
+                name="verifiedAccount"
+                value="yes"
+                required
+              />
+              <span>
+                I verified this is the same provider account originally used by{" "}
+                {connection?.label ?? "this connection"}.
+              </span>
+            </label>
+            <Button type="submit" disabled={fetcher.state !== "idle"}>
+              Confirm account and reauthenticate
+            </Button>
+          </fetcher.Form>
         ) : device ? (
           <div className="space-y-3">
             <p className="text-sm">Enter this code to authorize harnesst:</p>
@@ -1211,11 +1499,16 @@ function ConnectCodexDialog({ connection }: { connection?: ModelConnection }) {
               >
                 {device.verificationUrl}
               </a>{" "}
-              and enter the code. Waiting for you to authorize…
+              and enter the code.
+            </p>
+            <p role="status" className="text-sm text-muted-foreground">
+              Waiting for you to authorize…
             </p>
           </div>
         ) : (
-          <p className="text-sm text-muted-foreground">Starting…</p>
+          <p role="status" className="text-sm text-muted-foreground">
+            Starting…
+          </p>
         )}
       </DialogContent>
     </Dialog>
@@ -1224,17 +1517,15 @@ function ConnectCodexDialog({ connection }: { connection?: ModelConnection }) {
 
 function RecoverConnectionDialog({
   connection,
+  open,
+  onOpenChange,
 }: {
   connection: ModelConnection;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
 }) {
-  const fetcher = useFetcher<typeof action>();
   return (
-    <Dialog>
-      <DialogTrigger asChild>
-        <Button variant="outline" size="sm">
-          Recover deleted ID
-        </Button>
-      </DialogTrigger>
+    <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent>
         <DialogHeader>
           <DialogTitle>Recover a deleted Codex connection</DialogTitle>
@@ -1244,42 +1535,173 @@ function RecoverConnectionDialog({
             account from your records before linking it.
           </DialogDescription>
         </DialogHeader>
-        <fetcher.Form method="post" className="space-y-4">
-          <input type="hidden" name="intent" value="recover-connection" />
-          <input type="hidden" name="connectionId" value={connection.id} />
-          <Label htmlFor={`old-${connection.id}`}>Deleted connection ID</Label>
-          <Input
-            id={`old-${connection.id}`}
-            name="oldId"
-            required
-            pattern="[a-z]{12}"
-            placeholder="12 lowercase letters"
+        {open && (
+          <RecoveryForm
+            connection={connection}
+            onDone={() => onOpenChange(false)}
           />
-          <label className="flex gap-2 text-sm">
-            <input type="checkbox" name="verified" value="yes" required />I
-            verified that the deleted connection used the same OpenAI account as{" "}
-            {connection.label} ({connection.accountEmail ?? connection.id}).
+        )}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function RecoveryForm({
+  connection,
+  onDone,
+}: {
+  connection: ModelConnection;
+  onDone: () => void;
+}) {
+  const fetcher = useFetcher<typeof action>();
+  const complete = !!(fetcher.data && "ok" in fetcher.data);
+  useEffect(() => {
+    if (fetcher.state === "idle" && complete) {
+      toast.success("Recovery mapping saved. Existing references can resume.");
+      onDone();
+    }
+  }, [fetcher.state, complete, onDone]);
+  return (
+    <fetcher.Form method="post" className="space-y-4">
+      <input type="hidden" name="intent" value="recover-connection" />
+      <input type="hidden" name="connectionId" value={connection.id} />
+      <div className="space-y-1.5">
+        <Label htmlFor={`old-${connection.id}`}>Deleted connection ID</Label>
+        <Input
+          id={`old-${connection.id}`}
+          name="oldId"
+          required
+          pattern="[a-z]{12}"
+          title="Enter exactly 12 lowercase letters"
+          placeholder="12 lowercase letters"
+        />
+      </div>
+      <label className="flex items-start gap-2 text-sm">
+        <input
+          type="checkbox"
+          className="mt-1 shrink-0"
+          name="verified"
+          value="yes"
+          required
+        />
+        <span>
+          I verified that the deleted connection used the same OpenAI account as{" "}
+          {connection.label} ({connection.accountEmail ?? connection.id}).
+        </span>
+      </label>
+      <p className="text-sm text-muted-foreground">
+        This mapping is recorded in the audit log. Previously cleared selections
+        cannot be reconstructed; references that still contain the deleted ID
+        will work again.
+      </p>
+      {fetcher.data && "error" in fetcher.data && (
+        <p role="alert" className="text-sm text-destructive">
+          {fetcher.data.error}
+        </p>
+      )}
+      <Button disabled={fetcher.state !== "idle" || complete} type="submit">
+        {fetcher.state !== "idle" ? "Restoring…" : "Restore references"}
+      </Button>
+    </fetcher.Form>
+  );
+}
+
+function DeleteConnectionDialog({
+  connection,
+  open,
+  onOpenChange,
+}: {
+  connection: ModelConnection;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+}) {
+  const fetcher = useFetcher<typeof action>();
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Permanently delete {connection.label}?</DialogTitle>
+          <DialogDescription>
+            This removes the connection, its credentials, and recovery mappings.
+            Existing agent and session references will stop working. Disconnect
+            instead if you plan to reconnect this account.
+          </DialogDescription>
+        </DialogHeader>
+        <fetcher.Form method="post" className="space-y-4">
+          <input type="hidden" name="intent" value="delete-connection" />
+          <input type="hidden" name="connectionId" value={connection.id} />
+          <label className="flex items-start gap-2 text-sm">
+            <input
+              type="checkbox"
+              className="mt-1 shrink-0"
+              name="confirmed"
+              value="yes"
+              required
+            />
+            <span>I understand this permanently deletes this connection.</span>
           </label>
-          <p className="text-sm text-muted-foreground">
-            This mapping is recorded in the audit log. Previously cleared
-            selections cannot be reconstructed; references that still contain
-            the deleted ID will work again.
-          </p>
           {fetcher.data && "error" in fetcher.data && (
             <p role="alert" className="text-sm text-destructive">
               {fetcher.data.error}
             </p>
           )}
-          {fetcher.data && "ok" in fetcher.data && (
-            <p role="status">
-              Recovery mapping saved. Existing references can resume.
-            </p>
-          )}
-          <Button disabled={fetcher.state !== "idle"} type="submit">
-            Restore references
-          </Button>
+          <div className="flex flex-wrap gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => onOpenChange(false)}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="submit"
+              variant="destructive"
+              disabled={fetcher.state !== "idle"}
+            >
+              Permanently delete
+            </Button>
+          </div>
         </fetcher.Form>
       </DialogContent>
     </Dialog>
+  );
+}
+
+function RecoveryMappingRow({ oldId }: { oldId: string }) {
+  const fetcher = useFetcher<typeof action>();
+  return (
+    <li>
+      <fetcher.Form method="post" className="space-y-2 rounded-md border p-3">
+        <input type="hidden" name="intent" value="delete-connection-alias" />
+        <input type="hidden" name="oldId" value={oldId} />
+        <code className="text-sm">{oldId}</code>
+        <label className="flex items-start gap-2 text-sm">
+          <input
+            type="checkbox"
+            name="confirmed"
+            value="yes"
+            required
+            className="mt-1 shrink-0"
+          />
+          <span>
+            I understand references to this deleted ID will stop working.
+          </span>
+        </label>
+        {fetcher.data && "error" in fetcher.data && (
+          <p role="alert" className="text-sm text-destructive">
+            {fetcher.data.error}
+          </p>
+        )}
+        <Button
+          type="submit"
+          variant="destructive"
+          size="sm"
+          disabled={fetcher.state !== "idle"}
+          aria-label={`Remove recovery mapping ${oldId}`}
+        >
+          Remove mapping
+        </Button>
+      </fetcher.Form>
+    </li>
   );
 }
