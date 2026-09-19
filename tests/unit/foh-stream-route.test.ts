@@ -887,16 +887,32 @@ describe("model connection recovery during session preflight", () => {
         }),
       ).catch((error) => error);
       expect(result.init.status).toBe(400);
-      expect(result.data.error).toContain(
-        provider === "codex"
-          ? "OpenAI Codex needs authentication"
-          : "Anthropic needs authentication",
-      );
-      expect(result.data.error).toContain(
-        "/settings/connections#connection-abcdefghijkl",
-      );
+      expect(result.data).toMatchObject({
+        code: "connection_unavailable",
+        model: `${provider}/abcdefghijkl/model`,
+        recoveryUrl: "/settings/connections#connection-abcdefghijkl",
+      });
       expect(mocks.setPlaygroundSessionModel).not.toHaveBeenCalled();
       expect(mocks.streamTurnResponse).not.toHaveBeenCalled();
     },
   );
+});
+
+describe("catalog lookup failure", () => {
+  it("refuses a missing requested model without classifying it as an authentication failure", async () => {
+    mocks.findWorkspaceModel.mockResolvedValueOnce(null);
+    const result = await action(
+      args({
+        agentId: "agent_1",
+        message: "go",
+        modelId: "codex/abcdefghijkl/removed",
+      }),
+    ).catch((error) => error);
+    expect(result).toMatchObject({
+      init: { status: 400 },
+      data: { code: "model_unavailable", model: "codex/abcdefghijkl/removed" },
+    });
+    expect(mocks.setPlaygroundSessionModel).not.toHaveBeenCalled();
+    expect(mocks.streamTurnResponse).not.toHaveBeenCalled();
+  });
 });

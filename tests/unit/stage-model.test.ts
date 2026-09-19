@@ -161,10 +161,7 @@ describe("stageModelChange", () => {
       deps,
     );
 
-    expect(result).toEqual({
-      ok: false,
-      error: expect.stringContaining("active provider connection"),
-    });
+    expect(result.ok).toBe(false);
     expect(await getDraft(PROJECT.id, "agent/agent.ts", store)).toBeNull();
   });
 

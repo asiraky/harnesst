@@ -280,7 +280,7 @@ export interface AccountIdentity {
  * access token:
  *   top-level `chatgpt_account_id`
  *   → `["https://api.openai.com/auth"].chatgpt_account_id`
- *   → `["https://api.openai.com/auth"].organizations[0].id`
+ *   → the only `["https://api.openai.com/auth"].organizations` entry (multiple entries require explicit selection)
  * The email is read from the id_token's `email` claim.
  */
 export function extractAccountIdentity(input: {
@@ -319,4 +319,33 @@ function accountIdFromClaims(
     }
   }
   return null;
+}
+
+/** Candidate IDs from the trusted OAuth response, for explicit legacy account verification. */
+export function extractAccountIds(input: {
+  idToken: string | null;
+  accessToken: string | null;
+}): string[] {
+  const identity = extractAccountIdentity(input);
+  if (identity.accountId) return [identity.accountId];
+  return extractOrganizationIds(input);
+}
+
+/** Legacy versions used the first organization ID; never silently reinterpret that identity. */
+export function extractOrganizationIds(input: {
+  idToken: string | null;
+  accessToken: string | null;
+}): string[] {
+  const ids: string[] = [];
+  for (const token of [input.idToken, input.accessToken]) {
+    const claims = decodeJwtClaims(token);
+    const auth = claims?.["https://api.openai.com/auth"];
+    if (!auth || typeof auth !== "object") continue;
+    const organizations = (auth as Record<string, unknown>).organizations;
+    if (!Array.isArray(organizations)) continue;
+    for (const org of organizations) {
+      if (org && typeof org.id === "string" && org.id) ids.push(org.id);
+    }
+  }
+  return [...new Set(ids)];
 }

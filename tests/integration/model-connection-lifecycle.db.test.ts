@@ -36,6 +36,7 @@ import {
   agents,
   agentModelOverrides,
   modelProviderConnections,
+  modelConnectionLogins,
   playgroundSessions,
   projects,
   workspaceSettings,
@@ -45,6 +46,9 @@ import {
   createApiKeyConnection,
   getApiKeyConnection,
   disconnectModelConnection,
+  deleteModelConnection,
+  deleteModelConnectionAlias,
+  listModelConnectionAliases,
   getFreshAccessToken,
   getConnectionForGateway,
   persistRefreshedTokens,
@@ -217,7 +221,7 @@ describe.runIf(process.env.HARNESST_DB_SMOKE === "1")(
       const renewed = await createCodexConnection(
         grant({
           connectionId: connection.id,
-          credentialVersion: 0,
+          authorizationVersion: 0,
           accessToken: "renewed",
         }),
       );
@@ -276,10 +280,16 @@ describe.runIf(process.env.HARNESST_DB_SMOKE === "1")(
         await getApiKeyConnection(authState.orgId, connection.id),
       ).toBeNull();
       const renewed = await createApiKeyConnection(
-        { ...input, connectionId: connection.id, apiKey: "new-key" },
+        {
+          ...input,
+          label: "Renamed",
+          connectionId: connection.id,
+          apiKey: "new-key",
+        },
         { validate: async () => {} },
       );
       expect(renewed.id).toBe(connection.id);
+      expect(renewed.label).toBe("Renamed");
       expect(
         (await getApiKeyConnection(authState.orgId, connection.id))?.apiKey,
       ).toBe("new-key");
@@ -331,7 +341,7 @@ describe.runIf(process.env.HARNESST_DB_SMOKE === "1")(
       await createCodexConnection(
         grant({
           connectionId: conn.id,
-          credentialVersion: 0,
+          authorizationVersion: 0,
           accessToken: "new",
         }),
       );
@@ -345,7 +355,7 @@ describe.runIf(process.env.HARNESST_DB_SMOKE === "1")(
       expect(await markConnectionStatus(conn.id, "expired", 0)).toBe(false);
       await expect(
         createCodexConnection(
-          grant({ connectionId: conn.id, credentialVersion: 0 }),
+          grant({ connectionId: conn.id, authorizationVersion: 0 }),
         ),
       ).rejects.toThrow("changed during sign-in");
       expect((await getFreshAccessToken(conn.id)).accessToken).toBe("new");
@@ -398,7 +408,7 @@ describe.runIf(process.env.HARNESST_DB_SMOKE === "1")(
         pickerModels.some(
           (model) => model.id === `codex/${input.oldId}/gpt-5.5`,
         ),
-      ).toBe(true);
+      ).toBe(false);
       const upstream = vi.fn(
         async (_url: string | URL | Request, _options?: RequestInit) =>
           new Response(
@@ -490,6 +500,300 @@ describe.runIf(process.env.HARNESST_DB_SMOKE === "1")(
         expect(await getConnectionForGateway(connection!.id)).toEqual(before);
       },
     );
+
+    it.each(["refresh", "expiry"])(
+      "allows authorization after background %s between start and poll",
+      async (change) => {
+        const connection = await createCodexConnection(grant());
+        const start = await submit({
+          intent: "start",
+          connectionId: connection.id,
+        });
+        if (change === "refresh")
+          await persistRefreshedTokens(
+            connection.id,
+            {
+              accessToken: "background",
+              refreshToken: "rotated",
+              expiresAt: new Date(),
+            },
+            0,
+          );
+        else await markConnectionStatus(connection.id, "expired", 0);
+        expect(
+          await submit({ intent: "poll", attemptId: start.attemptId }),
+        ).toEqual({ done: true });
+        expect(
+          (await getConnectionForGateway(connection.id))?.refreshToken,
+        ).toBe("renewed-refresh");
+      },
+    );
+
+    it("retries transient poll failures without consuming the login or exposing provider text", async () => {
+      const connection = await createCodexConnection(grant());
+      const start = await submit({
+        intent: "start",
+        connectionId: connection.id,
+      });
+      oauth.poll.mockRejectedValueOnce(new Error("503 secret-token"));
+      const failed = await submit({
+        intent: "poll",
+        attemptId: start.attemptId,
+      });
+      expect(failed.retryable).toBe(true);
+      expect(failed.error).not.toContain("secret-token");
+      expect(oauth.exchange).not.toHaveBeenCalled();
+      expect(
+        await submit({ intent: "poll", attemptId: start.attemptId }),
+      ).toEqual({ done: true });
+    });
+
+    it("reclaims a crashed poll lease without allowing a concurrent live poll", async () => {
+      const start = await submit({ intent: "start" });
+      await db
+        .update(modelConnectionLogins)
+        .set({
+          processing: true,
+          processingId: "abandoned",
+          processingStartedAt: new Date(),
+        })
+        .where(eq(modelConnectionLogins.id, start.attemptId));
+      expect(
+        (await submit({ intent: "poll", attemptId: start.attemptId })).error,
+      ).toBeTruthy();
+      expect(oauth.poll).not.toHaveBeenCalled();
+      await db
+        .update(modelConnectionLogins)
+        .set({ processingStartedAt: new Date(Date.now() - 61_000) })
+        .where(eq(modelConnectionLogins.id, start.attemptId));
+      expect(
+        await submit({ intent: "poll", attemptId: start.attemptId }),
+      ).toEqual({ done: true });
+    });
+
+    it("requires explicit verification before adopting an account for a legacy null identity", async () => {
+      const connection = await createCodexConnection(grant());
+      await db
+        .update(modelProviderConnections)
+        .set({ accountId: null })
+        .where(eq(modelProviderConnections.id, connection.id));
+      const start = await submit({
+        intent: "start",
+        connectionId: connection.id,
+      });
+      const pending = await submit({
+        intent: "poll",
+        attemptId: start.attemptId,
+      });
+      expect(pending).toMatchObject({
+        verificationRequired: true,
+        accountIds: ["account-one"],
+      });
+      expect((await getConnectionForGateway(connection.id))?.accessToken).toBe(
+        "access-one",
+      );
+      expect(
+        (
+          await submit({
+            intent: "confirm",
+            attemptId: start.attemptId,
+            accountId: "account-one",
+          })
+        ).verificationRequired,
+      ).toBe(true);
+      expect(
+        await submit({
+          intent: "confirm",
+          attemptId: start.attemptId,
+          accountId: "account-one",
+          verifiedAccount: "yes",
+        }),
+      ).toEqual({ done: true });
+      expect(oauth.exchange).toHaveBeenCalledTimes(1);
+      expect(await getConnectionForGateway(connection.id)).toMatchObject({
+        accountId: "account-one",
+        refreshToken: "renewed-refresh",
+      });
+    });
+
+    it("cancels legacy verification without replacing the old grant", async () => {
+      const connection = await createCodexConnection(grant());
+      await db.update(modelProviderConnections).set({ accountId: null }).where(eq(modelProviderConnections.id, connection.id));
+      const start = await submit({ intent: "start", connectionId: connection.id });
+      expect((await submit({ intent: "poll", attemptId: start.attemptId })).verificationRequired).toBe(true);
+      await submit({ intent: "cancel", attemptId: start.attemptId });
+      expect((await submit({ intent: "confirm", attemptId: start.attemptId, accountId: "account-one", verifiedAccount: "yes" })).error).toBeTruthy();
+      expect(await getConnectionForGateway(connection.id)).toMatchObject({ accountId: null, accessToken: "access-one", refreshToken: "refresh-one" });
+    });
+
+    it("cannot bypass a known account mismatch with the verification checkbox", async () => {
+      const connection = await createCodexConnection(grant({ accountId: "different-known-account" }));
+      const start = await submit({ intent: "start", connectionId: connection.id });
+      expect((await submit({ intent: "confirm", attemptId: start.attemptId, accountId: "account-one", verifiedAccount: "yes" })).error).toBeTruthy();
+      expect(await getConnectionForGateway(connection.id)).toMatchObject({ accountId: "different-known-account", accessToken: "access-one" });
+    });
+
+    it("explicitly migrates legacy organization identity and selects ambiguous organization claims", async () => {
+      const connection = await createCodexConnection(
+        grant({ accountId: "org-old" }),
+      );
+      const claims = {
+        chatgpt_account_id: "account-new",
+        "https://api.openai.com/auth": {
+          organizations: [{ id: "org-old" }, { id: "org-other" }],
+        },
+      };
+      oauth.exchange.mockResolvedValueOnce({
+        accessToken: `e30.${Buffer.from(JSON.stringify(claims)).toString("base64url")}.signature`,
+        refreshToken: "new",
+        expiresIn: 3600,
+        idToken: null,
+      });
+      const start = await submit({
+        intent: "start",
+        connectionId: connection.id,
+      });
+      expect(
+        (await submit({ intent: "poll", attemptId: start.attemptId }))
+          .verificationRequired,
+      ).toBe(true);
+      expect(
+        await submit({
+          intent: "confirm",
+          attemptId: start.attemptId,
+          accountId: "account-new",
+          verifiedAccount: "yes",
+        }),
+      ).toEqual({ done: true });
+      expect((await getConnectionForGateway(connection.id))?.accountId).toBe(
+        "account-new",
+      );
+      const multi = {
+        "https://api.openai.com/auth": {
+          organizations: [{ id: "org-a" }, { id: "org-b" }],
+        },
+      };
+      oauth.exchange.mockResolvedValueOnce({
+        accessToken: `e30.${Buffer.from(JSON.stringify(multi)).toString("base64url")}.signature`,
+        refreshToken: "multi",
+        expiresIn: 3600,
+        idToken: null,
+      });
+      const other = await submit({ intent: "start" });
+      expect(
+        await submit({ intent: "poll", attemptId: other.attemptId }),
+      ).toMatchObject({
+        verificationRequired: true,
+        accountIds: ["org-a", "org-b"],
+      });
+      expect(
+        (
+          await submit({
+            intent: "confirm",
+            attemptId: other.attemptId,
+            accountId: "untrusted",
+            verifiedAccount: "yes",
+          })
+        ).verificationRequired,
+      ).toBe(true);
+      expect(
+        await submit({
+          intent: "confirm",
+          attemptId: other.attemptId,
+          accountId: "org-b",
+          verifiedAccount: "yes",
+        }),
+      ).toEqual({ done: true });
+    });
+
+    it("permanently deletes only the owning workspace connection and cascades its recovery mappings", async () => {
+      const connection = await createCodexConnection(grant());
+      await recoverDeletedCodexConnection({
+        orgId: authState.orgId,
+        oldId: "zzzzzzzzzzzz",
+        connectionId: connection.id,
+        verifiedBy: authState.userId,
+        verified: true,
+      });
+      expect(
+        await deleteModelConnection("other-workspace", connection.id),
+      ).toBe(false);
+      expect(
+        await disconnectModelConnection(authState.orgId, connection.id),
+      ).toBe(true);
+      expect(
+        await disconnectModelConnection(authState.orgId, connection.id),
+      ).toBe(false);
+      expect(await deleteModelConnection(authState.orgId, connection.id)).toBe(
+        true,
+      );
+      expect(await deleteModelConnection(authState.orgId, connection.id)).toBe(
+        false,
+      );
+      expect(await getConnectionForGateway(connection.id)).toBeNull();
+      expect(
+        await resolveModelConnectionId(authState.orgId, "zzzzzzzzzzzz"),
+      ).toBe("zzzzzzzzzzzz");
+    });
+
+    it("removes a recovery mapping only within its owning workspace", async () => {
+      const connection = await createCodexConnection(grant());
+      const input = {
+        orgId: authState.orgId,
+        oldId: "zzzzzzzzzzzz",
+        connectionId: connection.id,
+        verifiedBy: authState.userId,
+        verified: true,
+      };
+      await recoverDeletedCodexConnection(input);
+      expect(await listModelConnectionAliases(authState.orgId)).toEqual([
+        { oldConnectionId: input.oldId, connectionId: connection.id },
+      ]);
+      expect(await deleteModelConnectionAlias("other", input.oldId)).toBe(
+        false,
+      );
+      expect(await resolveModelConnectionId(authState.orgId, input.oldId)).toBe(
+        connection.id,
+      );
+      expect(
+        await deleteModelConnectionAlias(authState.orgId, input.oldId),
+      ).toBe(true);
+      expect(await resolveModelConnectionId(authState.orgId, input.oldId)).toBe(
+        input.oldId,
+      );
+      expect(await getConnectionForGateway(connection.id)).not.toBeNull();
+    });
+
+    it("does not expose whether an old ID exists in another workspace", async () => {
+      const connection = await createCodexConnection(grant());
+      const otherOrg = `lifecycle-${randomUUID()}`;
+      await db
+        .insert(organization)
+        .values({
+          id: otherOrg,
+          name: "Other",
+          slug: otherOrg,
+          createdAt: new Date(),
+        });
+      try {
+        const other = await createCodexConnection(grant({ orgId: otherOrg }));
+        await recoverDeletedCodexConnection({
+          orgId: authState.orgId,
+          oldId: other.id,
+          connectionId: connection.id,
+          verifiedBy: authState.userId,
+          verified: true,
+        });
+        expect(await resolveModelConnectionId(authState.orgId, other.id)).toBe(
+          connection.id,
+        );
+        expect(await resolveModelConnectionId(otherOrg, other.id)).toBe(
+          other.id,
+        );
+      } finally {
+        await db.delete(organization).where(eq(organization.id, otherOrg));
+      }
+    });
 
     it("cancellation during token exchange preserves the usable grant", async () => {
       const conn = await createCodexConnection(grant());

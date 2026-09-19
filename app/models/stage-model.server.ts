@@ -1,3 +1,4 @@
+import { modelUnavailableMessage } from "~/models/provider-reference";
 /**
  * Model staging for Settings' "Model" section. Two module generations exist:
  *
@@ -122,8 +123,7 @@ export async function stageModelChange(
   if (!modelInfo) {
     return {
       ok: false,
-      error:
-        "That model is not available from an active provider connection in this workspace.",
+      error: modelUnavailableMessage(input.model),
     };
   }
   if (input.effort && !modelInfo.supportedEfforts?.includes(input.effort)) {

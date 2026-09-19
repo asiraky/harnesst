@@ -1,4 +1,4 @@
-import { modelConnectionRecoveryMessage } from "~/models/provider-reference";
+import { modelSelectionFailure } from "~/models/provider-reference";
 /**
  * Playground streaming turn (resource route, action only). The page POSTs a message here and
  * reads back an NDJSON stream of the turn as it runs. The disconnect-safe drain + persistence +
@@ -63,12 +63,9 @@ export async function action(args: ActionFunctionArgs) {
     ? await findWorkspaceModel(project.orgId, requestedModelId)
     : null;
   if (requestedModelId && !requestedModel) {
-    throw data(
-      {
-        error: modelConnectionRecoveryMessage(requestedModelId),
-      },
-      { status: 400 },
-    );
+    throw data(modelSelectionFailure(requestedModelId, "model_unavailable"), {
+      status: 400,
+    });
   }
   if (
     requestedEffort &&
@@ -121,9 +118,7 @@ export async function action(args: ActionFunctionArgs) {
     : false;
   if (effectiveModel && !effectiveModelOwned) {
     throw data(
-      {
-        error: modelConnectionRecoveryMessage(effectiveModel),
-      },
+      modelSelectionFailure(effectiveModel, "connection_unavailable"),
       { status: 400 },
     );
   }

@@ -10,7 +10,7 @@
  * is a 200 JSON body with an `error`/`pending` field, not an HTTP error — only auth/permission
  * failures throw. Write-only: tokens are sealed by `createCodexConnection` and never returned.
  */
-import { and, eq, gt, lt } from "drizzle-orm";
+import { and, eq, gt, lt, or, isNull } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import { db } from "~/db/client.server";
 import {
@@ -26,10 +26,14 @@ import {
   DeviceLoginDisabledError,
   exchangeDeviceCode,
   extractAccountIdentity,
+  extractAccountIds,
+  extractOrganizationIds,
+  type CodexTokens,
   pollDeviceToken,
   requestDeviceCode,
 } from "~/connections/codex.server";
 import { auth as betterAuth } from "~/lib/auth.server";
+import { decodeKey, open, seal } from "~/seams/oss/secretbox";
 import { createCodexConnection } from "~/models/provider-connections.server";
 
 async function canManageWorkspace(
@@ -62,7 +66,7 @@ export async function action(args: ActionFunctionArgs) {
       const connections = await db
         .select({
           id: modelProviderConnections.id,
-          credentialVersion: modelProviderConnections.credentialVersion,
+          authorizationVersion: modelProviderConnections.authorizationVersion,
         })
         .from(modelProviderConnections)
         .where(
@@ -78,9 +82,9 @@ export async function action(args: ActionFunctionArgs) {
         return data({
           error: "This Codex connection is unavailable in this workspace.",
         });
-      const credentialVersion = target?.credentialVersion ?? null;
+      const authorizationVersion = target?.authorizationVersion ?? null;
       const connectionVersions = Object.fromEntries(
-        connections.map((row) => [row.id, row.credentialVersion]),
+        connections.map((row) => [row.id, row.authorizationVersion]),
       );
       const device = await requestDeviceCode();
       await db
@@ -92,7 +96,7 @@ export async function action(args: ActionFunctionArgs) {
         orgId: org.id,
         userId: auth.user.id,
         connectionId: connectionId || null,
-        credentialVersion,
+        authorizationVersion,
         connectionVersions,
         deviceAuthId: device.deviceAuthId,
         userCode: device.userCode,
@@ -125,14 +129,22 @@ export async function action(args: ActionFunctionArgs) {
     return data({ cancelled: true });
   }
 
-  if (intent === "poll") {
+  if (intent === "poll" || intent === "confirm") {
+    const processingId = randomUUID();
     const [attempt] = await db
       .update(modelConnectionLogins)
-      .set({ processing: true })
+      .set({ processing: true, processingId, processingStartedAt: new Date() })
       .where(
         and(
           ownedAttempt,
-          eq(modelConnectionLogins.processing, false),
+          or(
+            eq(modelConnectionLogins.processing, false),
+            lt(
+              modelConnectionLogins.processingStartedAt,
+              new Date(Date.now() - 60_000),
+            ),
+            isNull(modelConnectionLogins.processingStartedAt),
+          ),
           gt(modelConnectionLogins.expiresAt, new Date()),
         ),
       )
@@ -140,30 +152,134 @@ export async function action(args: ActionFunctionArgs) {
     if (!attempt)
       return data({
         error:
-          "This sign-in expired, was cancelled, or is already being completed. Close the dialog and try again.",
+          "This sign-in expired, was cancelled, or is already being completed. Try again.",
       });
+    const claimedAttempt = and(
+      ownedAttempt,
+      eq(modelConnectionLogins.processingId, processingId),
+    );
+    const release = () =>
+      db
+        .update(modelConnectionLogins)
+        .set({
+          processing: false,
+          processingId: null,
+          processingStartedAt: null,
+        })
+        .where(claimedAttempt);
+    let exchangeStarted = false;
     try {
-      const result = await pollDeviceToken(attempt);
-      if (result === "pending") {
+      let tokens: CodexTokens & { expiresAt: number };
+      if (attempt.pendingGrant) {
+        tokens = JSON.parse(
+          open(
+            decodeKey(process.env.HARNESST_SECRETS_KEY),
+            attempt.pendingGrant,
+          ),
+        ) as CodexTokens & { expiresAt: number };
+      } else {
+        const result = await pollDeviceToken(attempt);
+        if (result === "pending") {
+          await release();
+          return data({ pending: true });
+        }
+        // Renew the lease before spending the provider code. A reclaimed attempt cannot save later.
+        const claimed = await db
+          .update(modelConnectionLogins)
+          .set({ processingStartedAt: new Date() })
+          .where(claimedAttempt)
+          .returning({ id: modelConnectionLogins.id });
+        if (!claimed.length)
+          throw new Error(
+            "Sign-in was cancelled or expired. Existing credentials were preserved.",
+          );
+        exchangeStarted = true;
+        const exchanged = await exchangeDeviceCode({
+          authorizationCode: result.authorizationCode,
+          codeVerifier: result.codeVerifier,
+        });
+        tokens = {
+          ...exchanged,
+          expiresAt: Date.now() + exchanged.expiresIn * 1000,
+        };
+      }
+      if (!tokens.accessToken || !tokens.refreshToken)
+        throw new Error(
+          "OpenAI did not return a complete grant. Existing credentials were preserved; try signing in again.",
+        );
+      const identity = extractAccountIdentity(tokens);
+      const accountIds = extractAccountIds(tokens);
+      const organizationIds = extractOrganizationIds(tokens);
+      const [target] = attempt.connectionId
+        ? await db
+            .select()
+            .from(modelProviderConnections)
+            .where(
+              and(
+                eq(modelProviderConnections.id, attempt.connectionId),
+                eq(modelProviderConnections.orgId, org.id),
+              ),
+            )
+        : [];
+      if (attempt.connectionId && !target)
+        throw new Error(
+          "This Codex connection is unavailable in this workspace.",
+        );
+      if (!accountIds.length)
+        throw new Error(
+          "OpenAI did not return a provider account ID. Existing credentials were preserved; try signing in again.",
+        );
+      // A known, different identity is never recoverable through the confirmation checkbox.
+      if (
+        target?.accountId &&
+        !accountIds.includes(target.accountId) &&
+        !organizationIds.includes(target.accountId)
+      ) {
+        throw new Error(
+          "Sign in to the same OpenAI account as this connection. No credentials or selections were changed.",
+        );
+      }
+      const verificationRequired =
+        accountIds.length > 1 ||
+        (target && target.accountId !== identity.accountId);
+      const verified =
+        intent === "confirm" && form.get("verifiedAccount") === "yes";
+      const selectedAccountId = String(form.get("accountId") ?? "");
+      if (
+        verificationRequired &&
+        (!verified || !accountIds.includes(selectedAccountId))
+      ) {
         await db
           .update(modelConnectionLogins)
-          .set({ processing: false })
-          .where(ownedAttempt);
-        return data({ pending: true });
+          .set({
+            pendingGrant:
+              attempt.pendingGrant ??
+              seal(
+                decodeKey(process.env.HARNESST_SECRETS_KEY),
+                JSON.stringify(tokens),
+              ),
+            processing: false,
+            processingId: null,
+            processingStartedAt: null,
+          })
+          .where(claimedAttempt);
+        return data({
+          verificationRequired: true,
+          accountEmail: identity.email,
+          accountIds,
+        });
       }
-      const tokens = await exchangeDeviceCode({
-        authorizationCode: result.authorizationCode,
-        codeVerifier: result.codeVerifier,
-      });
-      const identity = extractAccountIdentity({
-        idToken: tokens.idToken,
-        accessToken: tokens.accessToken,
-      });
+      const accountId = verificationRequired
+        ? selectedAccountId
+        : identity.accountId;
       await db.transaction(async (tx) => {
         const [consumed] = await tx
           .delete(modelConnectionLogins)
           .where(
-            and(ownedAttempt, gt(modelConnectionLogins.expiresAt, new Date())),
+            and(
+              claimedAttempt,
+              gt(modelConnectionLogins.expiresAt, new Date()),
+            ),
           )
           .returning();
         if (!consumed)
@@ -175,14 +291,16 @@ export async function action(args: ActionFunctionArgs) {
             orgId: org.id,
             label: identity.email ?? "Codex",
             accountEmail: identity.email,
-            accountId: identity.accountId,
+            accountId,
             accessToken: tokens.accessToken,
             refreshToken: tokens.refreshToken,
-            expiresAt: new Date(Date.now() + tokens.expiresIn * 1000),
+            expiresAt: new Date(tokens.expiresAt),
             createdBy: auth.user!.id,
             connectionId: attempt.connectionId ?? undefined,
-            credentialVersion: attempt.credentialVersion ?? undefined,
+            authorizationVersion: attempt.authorizationVersion ?? undefined,
             connectionVersions: attempt.connectionVersions,
+            verifiedAccount: !!verificationRequired && verified,
+            accountIdAliases: organizationIds,
           },
           tx,
         );
@@ -193,21 +311,29 @@ export async function action(args: ActionFunctionArgs) {
             ? "model_provider_reauthenticated"
             : "model_provider_connected",
           target: connection.id,
+          meta: verificationRequired
+            ? { legacyAccountVerified: true, accountId }
+            : undefined,
         });
       });
       return data({ done: true });
     } catch (error) {
-      await db.delete(modelConnectionLogins).where(ownedAttempt);
-      // Provider responses may contain credentials; only expose our own lifecycle validation errors.
+      const retryable = !exchangeStarted && !attempt.pendingGrant;
+      if (retryable) await release();
+      else await db.delete(modelConnectionLogins).where(claimedAttempt);
+      // Provider responses can contain credentials. Expose only our own lifecycle validation errors.
       const message = error instanceof Error ? error.message : "";
       const safe =
         /^(Sign in to|Several connections|This connection changed|This Codex connection|OpenAI did not return|Sign-in was)/.test(
           message,
         );
       return data({
+        retryable,
         error: safe
           ? message
-          : "Couldn't complete Codex sign-in. Existing credentials and selections were preserved. Try again.",
+          : retryable
+            ? "Couldn't check Codex sign-in. Try again to continue this sign-in."
+            : "Couldn't complete Codex sign-in. Existing credentials and selections were preserved. Try again.",
       });
     }
   }

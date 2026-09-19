@@ -26,6 +26,7 @@ import {
 import { filterModels, limitModelsPerConnection } from "~/models/filter";
 import type { ModelCatalogEntry } from "~/models/catalog.server";
 import type { ReasoningEffort } from "~/models/reasoning";
+import { modelConnectionSettingsUrl } from "~/models/provider-reference";
 import { cn } from "~/lib/utils";
 
 const MAX_ROWS_PER_CONNECTION = 50;
@@ -70,10 +71,15 @@ export function ModelSelection({
   const fetcher = useFetcher<ModelsApiResponse>();
 
   useEffect(() => {
-    if (fetcher.state === "idle" && !fetcher.data) fetcher.load("/api/models");
-  }, [fetcher]);
+    if (
+      fetcher.state === "idle" &&
+      (!fetcher.data || fetcher.data.requestedModel !== model)
+    ) {
+      fetcher.load(modelsApiUrl(model));
+    }
+  }, [fetcher, model]);
 
-  const selected = fetcher.data?.models.find((entry) => entry.id === model);
+  const selected = selectedCatalogModel(fetcher.data, model);
   const supported = selected?.supportedEfforts;
   const effectiveEffort = effort && supported?.includes(effort) ? effort : null;
 
@@ -157,6 +163,26 @@ export function ModelSelection({
 export interface ModelsApiResponse {
   models: ModelCatalogEntry[];
   unavailable: UnavailableModelConnection[];
+  requestedModel: string | null;
+  selectedModel: ModelCatalogEntry | null;
+}
+
+function modelsApiUrl(model: string | null): string {
+  return model
+    ? `/api/models?${new URLSearchParams({ selected: model })}`
+    : "/api/models";
+}
+
+/** Resolve saved aliases for display while leaving the selectable union canonical. */
+export function selectedCatalogModel(
+  data: ModelsApiResponse | undefined,
+  model: string | null,
+): ModelCatalogEntry | undefined {
+  if (!model) return undefined;
+  return (
+    data?.models.find((entry) => entry.id === model) ??
+    (data?.selectedModel?.id === model ? data.selectedModel : undefined)
+  );
 }
 
 function formatContext(tokens: number | null): string | null {
@@ -199,15 +225,14 @@ export function ModelSelect({
   // (openrouter/abc…/slug) into "Name · Provider", which needs the catalog.
   const { load, state, data } = fetcher;
   useEffect(() => {
-    if (state === "idle" && !data) load("/api/models");
-  }, [state, data, load]);
+    if (state === "idle" && (!data || data.requestedModel !== value))
+      load(modelsApiUrl(value));
+  }, [state, data, load, value]);
 
   const models = fetcher.data?.models;
   const unavailable = fetcher.data?.unavailable ?? [];
   const loading = fetcher.state === "loading";
-  const selected = value
-    ? models?.find((entry) => entry.id === value)
-    : undefined;
+  const selected = selectedCatalogModel(fetcher.data, value);
 
   const commit = (id: string) => {
     setOpen(false);
@@ -223,7 +248,7 @@ export function ModelSelect({
       // Connections can be renamed or removed while this component stays mounted after route
       // revalidation, so each open refreshes the authoritative connected union.
       if (fetcher.state === "idle") {
-        fetcher.load("/api/models");
+        fetcher.load(modelsApiUrl(value));
       }
     }
   };
@@ -435,11 +460,15 @@ export function ModelSelect({
           <span>
             <span className="font-mono">{value}</span> is unavailable. Your
             selection is preserved.{" "}
-            <Link to="/settings/connections" className="underline">
-              Reauthenticate its provider connection
-            </Link>{" "}
-            to resume. If the connection was deleted, verify and recover its old
-            ID in Connections.
+            <Link
+              to={modelConnectionSettingsUrl(value ?? "")}
+              className="underline"
+            >
+              Review its provider connection
+            </Link>
+            . The catalog may be unavailable or the model may no longer be
+            offered. If authentication or recovery is needed, ask a workspace
+            owner or admin.
           </span>
         </p>
       )}
