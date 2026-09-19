@@ -35,11 +35,14 @@
  * real Docker sandbox backend — no change to customer repos required.
  */
 import { execFile } from "node:child_process";
+import { createHash, randomUUID } from "node:crypto";
 import {
   lutimes,
   mkdir,
   mkdtemp,
   readdir,
+  readFile,
+  readlink,
   rm,
   rmdir,
   writeFile,
@@ -75,6 +78,15 @@ import {
   SESSION_WORKSPACE_CHANNEL_SOURCE,
   SESSION_WORKSPACE_IMAGE_LABEL,
 } from "./session-workspace-channel";
+
+import {
+  type ArtifactProvenance,
+  sourceManifest,
+  manifestDigest,
+  inspectImageDigest,
+  verifyArtifactImage,
+  verifyBuildImage,
+} from "./artifact-provenance.server";
 
 const exec = promisify(execFile);
 
@@ -299,19 +311,9 @@ export interface EveImageBuildInput {
 }
 
 /**
- * Fixed timestamp applied to every entry in a staged build context (issue #375). Tarball
- * extraction restores per-commit mtimes and the platform injections above stamp wall-clock
- * times, so without normalization the `COPY . .` layer's cache key changes on every publish
- * even when the tree is byte-identical — every "unchanged" member pays a full `eve build`.
- */
-export const BUILD_CONTEXT_EPOCH = new Date(0);
-
-/**
- * Recursively pin every file, directory and symlink under `dir` to BUILD_CONTEXT_EPOCH so
- * docker's COPY cache keys depend on content only. Post-order (children before their parent)
- * so touching a child can never re-dirty an already-normalized directory. `lutimes`, not
- * `utimes`: repo tarballs can contain symlinks — including dangling ones, which `utimes`
- * would follow and throw ENOENT on.
+ * BuildKit's local-source transfer can reuse a checksum when size and mtime match, even
+ * after same-length edits. Use a deterministic CONTENT-derived timestamp, rather than a
+ * constant epoch: identical bytes still cache, changed bytes force source transfer.
  */
 export async function normalizeContextMtimes(dir: string): Promise<void> {
   const entries = await readdir(dir, { withFileTypes: true });
@@ -320,19 +322,22 @@ export async function normalizeContextMtimes(dir: string): Promise<void> {
     if (entry.isDirectory()) {
       await normalizeContextMtimes(entryPath);
     } else {
-      await lutimes(entryPath, BUILD_CONTEXT_EPOCH, BUILD_CONTEXT_EPOCH);
+      const bytes = entry.isSymbolicLink()
+        ? await readlink(entryPath)
+        : await readFile(entryPath);
+      const hash = createHash("sha256").update(bytes).digest("hex");
+      const timestamp = new Date(parseInt(hash.slice(0, 10), 16));
+      await lutimes(entryPath, timestamp, timestamp);
     }
   }
-  await lutimes(dir, BUILD_CONTEXT_EPOCH, BUILD_CONTEXT_EPOCH);
+  // Directory mtimes carry no source bytes; keep them stable across scratch directories.
+  await lutimes(dir, new Date(0), new Date(0));
 }
 
 /**
  * Fetch repo@ref into `workDir/src`, ensuring Dockerfile/.dockerignore. Returns srcDir.
  *
- * INVARIANT (issue #375): the returned tree has every mtime pinned to BUILD_CONTEXT_EPOCH so
- * `COPY` layer cache keys depend on content only. Any code that writes into the context after
- * this returns must re-run `normalizeContextMtimes` before `docker build` — see buildStagedTree,
- * which re-normalizes after applying the draft overlay.
+ * Platform additions and timestamp normalization happen after applying any staged overlay.
  */
 async function fetchSource(
   input: EveImageBuildInput,
@@ -352,11 +357,16 @@ async function fetchSource(
   // GitHub tarballs wrap everything in a single "<owner>-<repo>-<sha>/" directory.
   await exec("tar", ["-xzf", tarPath, "-C", srcDir, "--strip-components=1"]);
 
+  return srcDir;
+}
+
+async function prepareSource(input: EveImageBuildInput, srcDir: string) {
   // harnesst's reference Dockerfile in the directory we build (repo root, or the team
   // member's package dir), unless the repo brings its own there.
   const { dir } = projectDirOf(input.agentRoot);
   const buildDir = path.join(srcDir, dir);
   await mkdir(buildDir, { recursive: true });
+  const original = await sourceManifest(buildDir);
   if (!existsSync(path.join(buildDir, "Dockerfile"))) {
     await writeFile(path.join(buildDir, "Dockerfile"), HARNESST_EVE_DOCKERFILE);
   }
@@ -411,11 +421,28 @@ async function fetchSource(
   // path: it is platform machinery, not a customer override surface.
   await writeSessionWorkspaceChannel(buildDir);
 
-  // Deterministic context (issue #375): pin every mtime AFTER the last platform injection, over
+  // Deterministic context: derive mtimes from bytes AFTER the last platform injection, over
   // the whole srcDir (a root-layout build's context IS srcDir), so an unchanged tree cache-hits
   // straight through `COPY . .` and `eve build` at deploy time.
   await normalizeContextMtimes(srcDir);
-  return srcDir;
+  const prepared = await sourceManifest(buildDir);
+  return {
+    version: 1 as const,
+    gitSha: input.ref,
+    agentRoot: input.agentRoot ?? "agent",
+    sourceDigest: manifestDigest(original),
+    contextDigest: manifestDigest(prepared),
+    files: Object.fromEntries(
+      Object.entries(prepared).filter(
+        ([name]) => name !== "Dockerfile" && name !== ".dockerignore",
+      ),
+    ),
+    platformFiles: Object.keys(prepared)
+      .filter((name) => original[name] !== prepared[name])
+      .sort(),
+    runtimeDigest: "",
+    buildDigest: "",
+  };
 }
 
 async function writeSessionWorkspaceChannel(buildDir: string): Promise<void> {
@@ -435,11 +462,12 @@ export async function buildEveImage(
   const workDir = await mkdtemp(path.join(tmpdir(), "harnesst-build-"));
   try {
     const srcDir = await fetchSource(input, workDir);
+    const provenance = await prepareSource(input, srcDir);
     const { dir, member } = projectDirOf(input.agentRoot);
     const buildDir = path.join(srcDir, dir);
 
     // Build both images (the runtime build reuses the build stage from cache).
-    const tags = imageTags(input.projectId, input.ref, member);
+    const tags = provisionalTags({ projectId: input.projectId, member });
     const opts = { maxBuffer: 64 * 1024 * 1024 };
     try {
       await exec(
@@ -453,13 +481,27 @@ export async function buildEveImage(
         opts,
       );
 
-      const { stdout: digest } = await exec("docker", [
-        "inspect",
-        "--format",
-        "{{.Id}}",
-        tags.runtime,
+      provenance.runtimeDigest = await inspectImageDigest(tags.runtime);
+      provenance.buildDigest = await inspectImageDigest(tags.buildStage);
+      await verifyBuildImage(provenance);
+      await verifyArtifactImage(provenance.runtimeDigest, provenance);
+      const finalTags = imageTags(input.projectId, input.ref, member);
+      await exec("docker", [
+        "tag",
+        provenance.runtimeDigest,
+        finalTags.runtime,
       ]);
-      return { imageRef: tags.runtime, digest: digest.trim(), logs: buildLog };
+      await exec("docker", [
+        "tag",
+        provenance.buildDigest,
+        finalTags.buildStage,
+      ]);
+      return {
+        imageRef: finalTags.runtime,
+        digest: provenance.runtimeDigest,
+        logs: buildLog,
+        provenance,
+      };
     } catch (error) {
       if (isDockerUnavailableError(error)) {
         throw normalizeDockerCliError(error, "build this agent image");
@@ -467,6 +509,8 @@ export async function buildEveImage(
       throw new Error(
         `Agent image build failed:\n${extractBuildError(commandErrorText(error))}`,
       );
+    } finally {
+      await untagQuietly([tags.runtime, tags.buildStage]);
     }
   } finally {
     await rm(workDir, { recursive: true, force: true });
@@ -555,12 +599,12 @@ function provisionalTags(input: {
 }): { runtime: string; buildStage: string } {
   const repository = input.taskId
     ? `harnesst/publish-${lowercaseLegacyId(input.taskId)}`
-    : // No task (a direct call outside the pipeline): fall back to one reused per-project tag.
+    : // Direct builds use the shared repository; the per-build UUID still isolates tags.
       "harnesst/publish-check";
   const suffix = input.member
     ? `-${input.member.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`
     : "";
-  const runtime = `${repository}:proj-${lowercaseLegacyId(input.projectId.slice(0, 8))}${suffix}`;
+  const runtime = `${repository}:proj-${lowercaseLegacyId(input.projectId.slice(0, 8))}${suffix}-${randomUUID()}`;
   return { runtime, buildStage: `${runtime}-build` };
 }
 
@@ -591,7 +635,12 @@ export async function buildStagedTree(
     taskId?: string;
   },
 ): Promise<
-  | { ok: true; skipped?: boolean; provisionalTag?: string }
+  | {
+      ok: true;
+      skipped?: boolean;
+      provisionalTag?: string;
+      provenance?: ArtifactProvenance;
+    }
   | { ok: false; output: string }
 > {
   try {
@@ -654,13 +703,8 @@ export async function buildStagedTree(
 
     const { dir, member } = projectDirOf(input.agentRoot);
     const buildDir = path.join(srcDir, dir);
-    // The overlay is customer-authored and runs after the initial platform injection. Restore the
-    // reserved channel last so a draft at the same path cannot replace the workspace boundary.
-    await writeSessionWorkspaceChannel(buildDir);
-    // The overlay + channel rewrite re-dirtied mtimes after fetchSource's normalization pass —
-    // re-pin the whole tree (idempotent, one lstat+lutimes per entry) so the publish build's
-    // layers are cache-identical to the deploy-time build of the same commit (issue #375).
-    await normalizeContextMtimes(srcDir);
+    // Assemble additions after applying drafts, identically to the committed-source build.
+    const provenance = await prepareSource(input, srcDir);
     const tags = provisionalTags({
       taskId: input.taskId,
       projectId: input.projectId,
@@ -698,7 +742,11 @@ export async function buildStagedTree(
       }
       // The runtime stage inherits the build stage, so this is cheap (cache hits + tiny layers).
       await exec("docker", ["build", "-t", tags.runtime, buildDir], opts);
-      return { ok: true, provisionalTag: tags.runtime };
+      provenance.runtimeDigest = await inspectImageDigest(tags.runtime);
+      provenance.buildDigest = await inspectImageDigest(tags.buildStage);
+      await verifyBuildImage(provenance);
+      await verifyArtifactImage(provenance.runtimeDigest, provenance);
+      return { ok: true, provisionalTag: tags.runtime, provenance };
     } catch (error) {
       // commandErrorText again: a docker CLI without buildx falls back to the legacy builder,
       // which streams build-step output (the compiler's own lines) to STDOUT — error.message
@@ -729,24 +777,45 @@ export async function promoteProvisionalImage(input: {
   provisionalTag: string;
   projectId: string;
   gitSha: string;
-  /** The built root ("agent" | "agents/<member>/agent") — selects the member tag suffix. */
   agentRoot?: string;
+  provenance: ArtifactProvenance;
+  repo: { owner: string; repo: string };
+  installationId: string | number;
+  injectTeammateTool?: boolean;
 }): Promise<BuiltArtifact> {
-  const { member } = projectDirOf(input.agentRoot);
-  const tags = imageTags(input.projectId, input.gitSha, member);
-  await exec("docker", ["tag", input.provisionalTag, tags.runtime]);
-  await exec("docker", [
-    "tag",
-    buildStageTagFor(input.provisionalTag),
-    tags.buildStage,
-  ]);
-  const { stdout: digest } = await exec("docker", [
-    "inspect",
-    "--format",
-    "{{.Id}}",
-    tags.runtime,
-  ]);
-  return { imageRef: tags.runtime, digest: digest.trim() };
+  const workDir = await mkdtemp(path.join(tmpdir(), "harnesst-promote-"));
+  try {
+    const sourceInput = { ...input, ref: input.gitSha };
+    const srcDir = await fetchSource(sourceInput, workDir);
+    const committed = await prepareSource(sourceInput, srcDir);
+    if (
+      committed.sourceDigest !== input.provenance.sourceDigest ||
+      committed.contextDigest !== input.provenance.contextDigest ||
+      committed.agentRoot !== input.provenance.agentRoot
+    ) {
+      throw new Error(
+        "Artifact verification failed: published commit differs from the staged build",
+      );
+    }
+    await verifyBuildImage(input.provenance);
+    await verifyArtifactImage(input.provenance.runtimeDigest, input.provenance);
+    const { member } = projectDirOf(input.agentRoot);
+    const tags = imageTags(input.projectId, input.gitSha, member);
+    // Tags are mutable pointers. Promotion must use the immutable IDs verified at build time.
+    await exec("docker", ["tag", input.provenance.runtimeDigest, tags.runtime]);
+    await exec("docker", [
+      "tag",
+      input.provenance.buildDigest,
+      tags.buildStage,
+    ]);
+    return {
+      imageRef: tags.runtime,
+      digest: input.provenance.runtimeDigest,
+      provenance: { ...input.provenance, gitSha: input.gitSha },
+    };
+  } finally {
+    await rm(workDir, { recursive: true, force: true });
+  }
 }
 
 /**
