@@ -1,8 +1,8 @@
 /** Workspace-level default-model settings. Provider credentials live on provider connections. */
-import { and, eq, isNull } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 
 import { db } from "~/db/client.server";
-import { agentModelOverrides, workspaceSettings } from "~/db/schema";
+import { workspaceSettings } from "~/db/schema";
 import type { ReasoningEffort } from "~/models/reasoning";
 
 export interface WorkspaceAssistantSelection {
@@ -33,25 +33,7 @@ export async function setWorkspaceAssistantSelection(
         },
       });
 
-    if (selection.model) {
-      // A pin identical to the new default is redundant and would prevent the agent from
-      // inheriting the next default change. Keep the override table to genuine exceptions.
-      // TOP-LEVEL rows only (issue #344): a declared subagent inherits its PARENT, not the
-      // workspace default, so a subagent row that merely happens to equal the new default is
-      // still a deliberate exception to the parent's selection.
-      await tx
-        .delete(agentModelOverrides)
-        .where(
-          and(
-            eq(agentModelOverrides.orgId, orgId),
-            eq(agentModelOverrides.subagentPath, ""),
-            eq(agentModelOverrides.model, selection.model),
-            effort === null
-              ? isNull(agentModelOverrides.effort)
-              : eq(agentModelOverrides.effort, effort),
-          ),
-        );
-    }
+    // Explicit pins remain pins even when they happen to equal the new default.
   });
 }
 

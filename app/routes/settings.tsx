@@ -623,11 +623,12 @@ export default function WorkspaceSettings({
                   </p>
                 )}
                 <p className="text-xs text-muted-foreground">
-                  Used by the authoring assistant and by every agent without an
-                  override below. Running agents resolve this at each step, so a
-                  change lands within about 30 seconds — no redeploy. A
-                  workspace with no default has no implicit fallback: agents
-                  error until a model is configured here.
+                  Used by the authoring assistant and agents configured to
+                  inherit. Legacy agents keep their existing configuration until
+                  reset in Agent Settings. Running inheriting agents resolve
+                  this at each step, so a change lands within about 30 seconds —
+                  no redeploy. A workspace with no default has no implicit
+                  fallback: agents error until a model is configured here.
                 </p>
                 {modelFetcher.data &&
                   "error" in modelFetcher.data &&
@@ -778,7 +779,8 @@ function AgentOverridesSection({
       </p>
       {overrides.length === 0 ? (
         <div className="rounded-lg border border-dashed p-3 text-sm text-muted-foreground">
-          No overrides — every agent uses the default model.
+          No saved overrides. Legacy agents may still have a model configured in
+          their source.
         </div>
       ) : (
         <ul className="divide-y rounded-lg border">

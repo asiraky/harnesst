@@ -90,7 +90,11 @@ import {
   stageDeletions,
   stageDraft,
 } from "~/drafts/drafts.server";
-import { EMPTY_TEAM_MARKER, subagentRootFor } from "~/eve/parse";
+import {
+  EMPTY_TEAM_MARKER,
+  subagentRootFor,
+  subagentDirNames,
+} from "~/eve/parse";
 import { selectedCapabilityGroupIds } from "~/capabilities/enablement";
 import {
   orgResolverAgentName,
@@ -128,10 +132,14 @@ import {
 } from "~/marketplace/compose.server";
 import type { TemplateType } from "~/marketplace/manifest";
 import {
-  removeAgentModelOverride,
   resolveAgentModel,
   resolveTargetModel,
 } from "~/models/agent-model-config.server";
+import { ModelResetControl } from "~/components/model-reset-control";
+import {
+  resetModelsToWorkspaceDefault,
+  type ModelResetTarget,
+} from "~/models/reset-model.server";
 import { stageModelChange } from "~/models/stage-model.server";
 import { ownsWorkspaceModelReference } from "~/models/union.server";
 import { getWorkspaceAssistantSelection } from "~/org/workspace.server";
@@ -194,6 +202,7 @@ const SECRET_INTENTS = new Set<string>([
 const SUBAGENT_INTENTS = new Set<string>([
   "set-model",
   "clear-model-override",
+  "reset-model-default",
   "update-install",
   "uninstall",
 ]);
@@ -229,6 +238,9 @@ interface SettingsView {
   modelInheritedFrom: string | null;
   hasAgentModule: boolean;
   modelStaged: boolean;
+  modelLegacy: boolean;
+  workspaceDefaultModel: string | null;
+  resetScope: string[];
   /** Member: secrets scope state. */
   envs: Environment[];
   scope: { environmentId: string | null; label: string };
@@ -452,6 +464,29 @@ function buildInstalls(
   return rows;
 }
 
+/** Every declared target, including nested directories without an agent.ts yet. */
+function teamResetTargets(
+  roster: { name: string; root: string }[],
+  paths: string[],
+): ModelResetTarget[] {
+  const targets: ModelResetTarget[] = [];
+  for (const member of roster) {
+    const visit = (root: string, segments: string[]) => {
+      targets.push({
+        root,
+        deploymentRoot: member.root,
+        memberName: member.name,
+        subagentPath: segments.join("/"),
+      });
+      for (const name of subagentDirNames(paths, root)) {
+        visit(`${root}/subagents/${name}`, [...segments, name]);
+      }
+    };
+    visit(member.root, []);
+  }
+  return targets;
+}
+
 export const loader = (args: LoaderFunctionArgs) =>
   sessionLoader(
     args,
@@ -562,6 +597,9 @@ export const loader = (args: LoaderFunctionArgs) =>
         }
       }
 
+      const workspaceSelection = await getWorkspaceAssistantSelection(
+        project.orgId,
+      );
       const base: SettingsView = {
         project,
         roster: roster.map((a) => ({ name: a.name })),
@@ -583,6 +621,13 @@ export const loader = (args: LoaderFunctionArgs) =>
         modelInheritedFrom: null,
         hasAgentModule: false,
         modelStaged: false,
+        modelLegacy: false,
+        workspaceDefaultModel: workspaceSelection.model,
+        resetScope: teamResetTargets(roster, [...present]).map((target) =>
+          target.subagentPath
+            ? `${target.memberName} / ${target.subagentPath}`
+            : target.memberName,
+        ),
         envs: [],
         scope: { environmentId: null, label: "All environments" },
         secrets: [],
@@ -647,6 +692,7 @@ export const loader = (args: LoaderFunctionArgs) =>
         } else if (agentTs) {
           // Legacy agents still carry their model in repo content. A staged draft wins over the
           // branch copy so Settings reflects a successful save immediately.
+          base.modelLegacy = true;
           base.model = readModel(agentTs);
           base.effort = readReasoningEffort(agentTs);
         }
@@ -707,9 +753,11 @@ export const loader = (args: LoaderFunctionArgs) =>
             : (source.files[path] ?? null);
         };
         const memberModule = fileAt(`${target.deploymentRoot}/agent.ts`);
-        const resolverName = memberModule
-          ? orgResolverAgentName(memberModule)
-          : null;
+        const ownPath = `${target.root}/agent.ts`;
+        const ownModule = fileAt(ownPath);
+        const resolverName =
+          (memberModule ? orgResolverAgentName(memberModule) : null) ??
+          (ownModule ? orgResolverAgentName(ownModule) : null);
         const subagentPath =
           target.kind === "subagent" ? target.subagentPath.join("/") : "";
         const resolved = resolverName
@@ -719,14 +767,13 @@ export const loader = (args: LoaderFunctionArgs) =>
               projectId: project.id,
             }).catch(() => null)
           : null;
-        const ownPath = `${target.root}/agent.ts`;
-        const ownModule = fileAt(ownPath);
         base.hasAgentModule = ownModule !== null;
         base.modelStaged = drafts.some(
           (d) => d.path === ownPath && d.content !== null,
         );
         if (ownModule && !usesOrgModelResolver(ownModule)) {
           // A subagent carrying its own baked model is legacy repo content, like a legacy member.
+          base.modelLegacy = true;
           base.model = readModel(ownModule);
           base.effort = readReasoningEffort(ownModule);
         } else {
@@ -844,7 +891,9 @@ export async function action(args: ActionFunctionArgs) {
         slug: String(form.get("slug") ?? ""),
       });
       if (!result.ok) return { renameErrors: { [result.field]: result.error } };
-      throw redirect(`/repos/${result.project.slug}/settings?repository-renamed=1`);
+      throw redirect(
+        `/repos/${result.project.slug}/settings?repository-renamed=1`,
+      );
     }
 
     // ── Model: stage agent.ts for the active member (same rails as every edit) ──
@@ -878,27 +927,42 @@ export async function action(args: ActionFunctionArgs) {
       };
     }
 
-    if (intent === "clear-model-override") {
-      const { target } = await resolveRouteTarget(project, args.params);
-      // The row is keyed by the MEMBER's resolver identity — a subagent inherits that name.
-      const view = await resolveFileView(
-        project,
-        `${target.deploymentRoot}/agent.ts`,
-        getRuntime().data,
-      );
-      const resolverName = view.content
-        ? orgResolverAgentName(view.content)
-        : null;
-      if (!resolverName) {
-        return { error: "This agent does not use workspace model overrides." };
+    if (intent === "reset-all-model-defaults") {
+      if (agentFromParams(args.params)) {
+        return { error: "Reset the whole team from team settings." };
       }
-      await removeAgentModelOverride(project.orgId, {
-        agentName: resolverName,
-        subagentPath:
-          target.kind === "subagent" ? target.subagentPath.join("/") : "",
-        projectId: project.id,
+      const source = await fetchAgentSource(project.repoInstallationId, repo);
+      const { roster, isTeam } = await resolveSyncedAgentContext(
+        project.id,
+        null,
+        source.paths,
+      );
+      if (!isTeam)
+        return { error: "This action is only available in team settings." };
+      return resetModelsToWorkspaceDefault({
+        project,
+        targets: teamResetTargets(roster, source.paths),
+        createdBy: auth.user.id,
+        originUrl: back,
       });
-      return { ok: true as const, mode: "applied" as const };
+    }
+
+    if (intent === "reset-model-default" || intent === "clear-model-override") {
+      const { active, target } = await resolveRouteTarget(project, args.params);
+      return resetModelsToWorkspaceDefault({
+        project,
+        targets: [
+          {
+            root: target.root,
+            deploymentRoot: target.deploymentRoot,
+            memberName: active.name,
+            subagentPath:
+              target.kind === "subagent" ? target.subagentPath.join("/") : "",
+          },
+        ],
+        createdBy: auth.user.id,
+        originUrl: back,
+      });
     }
 
     // ── Marketplace installs: update / uninstall stage reviewable repo changes ──
@@ -1004,6 +1068,7 @@ export async function action(args: ActionFunctionArgs) {
       const installTarget = {
         kind: "member" as const,
         memberName: member,
+        resolverAgentName: active.name,
         root: configRoot,
         deploymentRoot,
         subagentPath,
@@ -1515,7 +1580,8 @@ export default function Settings({
         <Alert className="mb-6">
           <AlertTitle>Repository details updated</AlertTitle>
           <AlertDescription>
-            The harnesst name and canonical URL are now up to date. The GitHub repository was not changed.
+            The harnesst name and canonical URL are now up to date. The GitHub
+            repository was not changed.
           </AlertDescription>
         </Alert>
       )}
@@ -1587,6 +1653,21 @@ export default function Settings({
 
       <div className="space-y-10">
         {(showMember || nested) && <ModelSection loaderData={loaderData} />}
+        {showRepo && isTeam && roster.length > 0 && (
+          <section>
+            <SectionHeader icon={Cpu} accent="blue" title="Team models" />
+            <p className="mb-3 text-sm text-muted-foreground">
+              Reset every team member and declared subagent to live workspace
+              inheritance. This clears their model and reasoning overrides.
+            </p>
+            <ModelResetControl
+              projectId={project.slug}
+              workspaceDefaultModel={loaderData.workspaceDefaultModel}
+              scope={loaderData.resetScope}
+              team
+            />
+          </section>
+        )}
         {nested && (
           <SubagentBoundarySection
             projectId={project.id}
@@ -1645,7 +1726,9 @@ export default function Settings({
             key={project.slug}
             project={project}
             errors={
-              actionData && "renameErrors" in actionData ? actionData.renameErrors : undefined
+              actionData && "renameErrors" in actionData
+                ? actionData.renameErrors
+                : undefined
             }
           />
         )}
@@ -1725,6 +1808,7 @@ function ModelSection({
     effort,
     modelInherited,
     modelOverridden,
+    modelLegacy,
     modelSource,
     modelInheritedFrom,
     subagentPath,
@@ -1764,7 +1848,19 @@ function ModelSection({
         )}
         {modelInherited && (
           <Badge variant="outline" className="text-xs">
-            inherited default
+            {modelSource === "parent-override"
+              ? "Inherits parent"
+              : "Workspace default"}
+          </Badge>
+        )}
+        {modelOverridden && (
+          <Badge variant="outline" className="text-xs">
+            Explicit override
+          </Badge>
+        )}
+        {modelLegacy && (
+          <Badge variant="outline" className="text-xs">
+            Legacy configuration
           </Badge>
         )}
         {!hasAgentModule && (
@@ -1774,7 +1870,14 @@ function ModelSection({
         )}
       </>
     ),
-    [modelStaged, modelInherited, hasAgentModule],
+    [
+      modelStaged,
+      modelInherited,
+      hasAgentModule,
+      modelOverridden,
+      modelLegacy,
+      modelSource,
+    ],
   );
   return (
     <section>
@@ -1802,23 +1905,15 @@ function ModelSection({
           )
         }
       />
-      {modelOverridden && (
-        <Button
-          type="button"
-          variant="ghost"
-          size="sm"
-          className="mt-2"
+      <div className="mt-3">
+        <ModelResetControl
+          projectId={loaderData.project.slug}
+          workspaceDefaultModel={loaderData.workspaceDefaultModel}
+          scope={[nested ? `${member} / ${subagentPath.join("/")}` : member]}
+          nested={nested}
           disabled={fetcher.state !== "idle"}
-          onClick={() =>
-            fetcher.submit(
-              { intent: "clear-model-override" },
-              { method: "post" },
-            )
-          }
-        >
-          {nested ? `Inherit from ${member}` : "Use workspace default"}
-        </Button>
-      )}
+        />
+      </div>
       {fetcher.data?.error && (
         <p className="mt-2 text-sm text-destructive">{fetcher.data.error}</p>
       )}
@@ -1827,7 +1922,7 @@ function ModelSection({
           {fetcher.data.upgraded
             ? "Saved — this selection is live, and agent.ts was updated to name this subagent's own target. Publish it so the running deployment asks for it."
             : fetcher.data.mode === "applied"
-              ? "Saved — the agent picks this up on its next step, no redeploy needed."
+              ? "Saved as an explicit override — running agents pick this up within 30 seconds, no redeploy needed."
               : "Saved — publish it from the Deployment tab."}
         </p>
       )}
@@ -2040,11 +2135,17 @@ function RepositoryIdentitySection({
   const [slugCustomized, setSlugCustomized] = useState(
     project.slug !== slugifyProjectName(project.name),
   );
-  const busy = navigation.state !== "idle" && navigation.formData?.get("intent") === "rename-repo";
+  const busy =
+    navigation.state !== "idle" &&
+    navigation.formData?.get("intent") === "rename-repo";
 
   return (
     <section>
-      <SectionHeader icon={Pencil} accent="indigo" title="Repository identity" />
+      <SectionHeader
+        icon={Pencil}
+        accent="indigo"
+        title="Repository identity"
+      />
       <Card>
         <CardContent className="py-4">
           <Form method="post" className="space-y-4">
@@ -2063,7 +2164,9 @@ function RepositoryIdentitySection({
                     if (!slugCustomized) setSlug(slugifyProjectName(next));
                   }}
                 />
-                {errors?.name && <p className="text-sm text-destructive">{errors.name}</p>}
+                {errors?.name && (
+                  <p className="text-sm text-destructive">{errors.name}</p>
+                )}
               </div>
               <div className="space-y-2">
                 <Label htmlFor="repository-slug">URL slug</Label>
@@ -2077,13 +2180,15 @@ function RepositoryIdentitySection({
                     setSlugCustomized(true);
                   }}
                 />
-                {errors?.slug && <p className="text-sm text-destructive">{errors.slug}</p>}
+                {errors?.slug && (
+                  <p className="text-sm text-destructive">{errors.slug}</p>
+                )}
               </div>
             </div>
             <div className="flex flex-wrap items-center justify-between gap-3">
               <p className="text-sm text-muted-foreground">
-                This changes harnesst only. Existing id-based links keep working; the GitHub
-                repository is untouched.
+                This changes harnesst only. Existing id-based links keep
+                working; the GitHub repository is untouched.
               </p>
               <Button type="submit" disabled={busy}>
                 {busy ? "Saving…" : "Save name and URL"}

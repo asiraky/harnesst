@@ -4,7 +4,7 @@ import { runInNewContext } from "node:vm";
 import ts from "typescript";
 import { describe, expect, it } from "vitest";
 
-import { scaffoldAgentModule } from "~/eve/agentModule";
+import { scaffoldAgentModule, setModel } from "~/eve/agentModule";
 import { scaffoldOrgModelAgentModule } from "~/eve/org-model-module";
 import { resetAgentModelSource } from "~/eve/reset-model";
 
@@ -42,6 +42,46 @@ function evaluate(
 }
 
 describe("resetAgentModelSource", () => {
+  // Frozen from the ledger prototype catalog, including its two declared subagents. Execute
+  // both generations and compare unrelated runtime options, rather than asserting shipped text.
+  it.each([
+    ["ledger-infra", ""],
+    ["ledger-intake", ""],
+    ["ledger-implementer", ""],
+    ["ledger-implementer", "reviewer"],
+    ["ledger-implementer", "qa"],
+  ])(
+    "converts ledger module %s/%s without losing behavior",
+    (agentName, subagentPath) => {
+      const filename = `${agentName}${subagentPath ? `-subagents-${subagentPath}` : ""}.ts.txt`;
+      const source = readFileSync(
+        new URL(`../fixtures/ledger-reset/${filename}`, import.meta.url),
+        "utf8",
+      );
+      const original = evaluate(source).config;
+      for (const input of [
+        source,
+        setModel(source, "codex/abcdefghijkl/pinned", { effort: "high" }),
+      ]) {
+        const result = resetAgentModelSource(input, agentName, subagentPath);
+        const reset = evaluate(result).config;
+        expect(reset.model).toEqual({
+          target: [agentName, ...(subagentPath ? [subagentPath] : [])],
+        });
+        const {
+          model: _model,
+          modelContextWindowTokens: _context,
+          ...unrelated
+        } = original;
+        const { model: _resetModel, ...remaining } = reset;
+        expect(remaining).toEqual(unrelated);
+        expect(resetAgentModelSource(result, agentName, subagentPath)).toBe(
+          result,
+        );
+      }
+    },
+  );
+
   it("switches a literal selection to inheritance without changing tools or instructions", () => {
     const input = `import { defineAgent } from 'eve';
       const tool = { run: () => 'tool result', model: 'leave nested values alone' };
@@ -163,4 +203,19 @@ describe("resetAgentModelSource", () => {
       "custom model logic",
     );
   });
+
+  it.each([
+    "import { customResolver as harnesstAgentModel } from '../harnesst/model.js';",
+    "import type { harnesstAgentModel } from '../harnesst/model.js';",
+    "import { type harnesstAgentModel } from '../harnesst/model.js';",
+    "const harnesstAgentModel = (name) => chooseCustomModel(name);",
+  ])(
+    "rejects custom or non-runtime bindings disguised as the resolver: %s",
+    (binding) => {
+      const source = `import { defineAgent } from 'eve'; ${binding} export default defineAgent({model: harnesstAgentModel('ledger')});`;
+      expect(() => resetAgentModelSource(source, "ledger")).toThrow(
+        "custom model logic",
+      );
+    },
+  );
 });
