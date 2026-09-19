@@ -204,9 +204,10 @@ function resolveMemberTarget(
   const member = {
     kind: "member" as const,
     memberName: isTeam ? agent.name : null,
+    resolverAgentName: agent.name,
     root: agent.root,
   };
-  // A member selection keeps producing today's exact shape, with neither new field set.
+  // A member selection needs no declared-subagent scope.
   if (!subagentPath) return { agent, target: member };
   if (!declaredSubagentPaths(repoPaths, agent.root).includes(subagentPath)) {
     return null;

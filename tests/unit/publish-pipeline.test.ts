@@ -25,6 +25,7 @@
  *     removed (issue #344).
  */
 import { createHash } from "node:crypto";
+import { draftSnapshotFingerprint } from "~/publish/draft-snapshot";
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -1158,5 +1159,55 @@ describe("runPublish — model override cleanup", () => {
 
     const row = await store.workspaceTasks.findById(task.id);
     expect(row?.status).toBe("succeeded");
+  });
+});
+
+
+describe("automatic reset publish snapshot", () => {
+  it("never reports another running publish as completion of a reset", async () => {
+    seedTeam();
+    await stageDrafts({ "agents/ivy/agent/agent.ts": "reset source" });
+    await seedTask();
+    const fingerprint = draftSnapshotFingerprint(await store.drafts.listByProject(PROJECT));
+    await expect(startPublish({ projectId: PROJECT, originUrl: "/settings", resetDraftFingerprint: fingerprint }, store)).rejects.toThrow("Another publish is running");
+    expect(await drainJobs()).toEqual([]);
+  });
+
+  it("refuses a changed snapshot before queuing any publish", async () => {
+    seedTeam();
+    await stageDrafts({ "agents/ivy/agent/agent.ts": "reset source" });
+    const fingerprint = draftSnapshotFingerprint(await store.drafts.listByProject(PROJECT));
+    await stageDrafts({ "agents/ivy/agent/instructions.md": "new human edit" });
+    await expect(startPublish({ projectId: PROJECT, originUrl: "/settings", resetDraftFingerprint: fingerprint }, store)).rejects.toThrow("Saved changes changed");
+    expect(await drainJobs()).toEqual([]);
+    expect(await store.drafts.listByProject(PROJECT)).toHaveLength(2);
+  });
+
+  it("fails before building if another draft arrives after the reset was queued", async () => {
+    seedTeam();
+    await stageDrafts({ "agents/ivy/agent/agent.ts": "reset source" });
+    const fingerprint = draftSnapshotFingerprint(await store.drafts.listByProject(PROJECT));
+    await startPublish({ projectId: PROJECT, originUrl: "/settings", resetDraftFingerprint: fingerprint }, store);
+    const jobs = await drainJobs();
+    expect(jobs).toHaveLength(1);
+    await stageDrafts({ "agents/ivy/agent/instructions.md": "new human edit" });
+    const deps = makeDeps();
+    const result = await runPublish(jobs[0].payload as never, deps, store);
+    expect(result.status).toBe("failed");
+    expect(result.error).toContain("Saved changes changed");
+    expect(deps.checkBuild).not.toHaveBeenCalled();
+    expect(deps.commitToDefaultBranch).not.toHaveBeenCalled();
+    expect(await store.drafts.listByProject(PROJECT)).toHaveLength(2);
+  });
+
+  it("publishes the authorized snapshot when it remains unchanged", async () => {
+    seedTeam();
+    await stageDrafts({ "agents/ivy/agent/agent.ts": "reset source" });
+    const fingerprint = draftSnapshotFingerprint(await store.drafts.listByProject(PROJECT));
+    const task = await seedTask();
+    const deps = makeDeps();
+    const result = await runPublish(payload(task.id, { resetDraftFingerprint: fingerprint }), deps, store);
+    expect(result.status).toBe("succeeded");
+    expect(deps.commitToDefaultBranch).toHaveBeenCalledOnce();
   });
 });

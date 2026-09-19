@@ -444,6 +444,12 @@ export async function action(args: ActionFunctionArgs) {
   }
 
   if (intent === "remove-agent-model-override") {
+    if (!(await getWorkspaceAssistantSelection(org.id)).model) {
+      return {
+        error:
+          "Configure a workspace default model before removing an override.",
+      };
+    }
     const agentName = String(form.get("agentName") ?? "").trim();
     if (!agentName) return { error: "No agent specified." };
     // The full row key: a declared subagent's row lives under the same agent name, and two repos
@@ -694,8 +700,9 @@ export default function WorkspaceSettings({
                 </p>
               )}
               <p className="text-xs text-muted-foreground">
-                Used by the authoring assistant and by every agent without an
-                override below. Running agents resolve this at each step, so a
+                Used by the authoring assistant and agents configured to inherit.
+                Legacy agents keep their configuration until reset in Agent Settings.
+                Running inheriting agents resolve this at each step, so a
                 change lands within about 30 seconds — no redeploy. A workspace
                 with no default has no implicit fallback: agents error until a
                 model is configured here.
@@ -849,7 +856,8 @@ function AgentOverridesSection({
       </p>
       {overrides.length === 0 ? (
         <div className="rounded-lg border border-dashed p-3 text-sm text-muted-foreground">
-          No overrides — every agent uses the default model.
+          No saved overrides. Legacy agents may still have a model configured in
+          their source.
         </div>
       ) : (
         <ul className="divide-y rounded-lg border">
@@ -918,7 +926,7 @@ function AgentOverrideRow({
             )
           }
         >
-          Use default
+          Remove saved override
         </Button>
       )}
       {fetcher.data && "error" in fetcher.data && fetcher.data.error && (

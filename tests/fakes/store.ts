@@ -791,6 +791,46 @@ export function makeFakeStore(): FakeStore {
         drafts.set(key, row);
         return row;
       },
+      async compareAndStage(projectId, expected, writes) {
+        if (writes.some((write) => write.projectId !== projectId))
+          throw new Error("Draft writes must belong to the reset project.");
+        const current = [...drafts.values()].filter(
+          (row) => row.projectId === projectId,
+        );
+        if (
+          current.length !== expected.length ||
+          current.some(
+            (row) =>
+              !expected.some(
+                (before) =>
+                  before.id === row.id &&
+                  before.path === row.path &&
+                  before.content === row.content &&
+                  before.updatedAt.getTime() === row.updatedAt.getTime(),
+              ),
+          )
+        )
+          return null;
+        // No await inside the compare/write region: the fake models the database transaction.
+        for (const input of writes) {
+          const key = `${projectId}|${input.path}`;
+          const existing = drafts.get(key);
+          drafts.set(key, {
+            id: existing?.id ?? id("draft"),
+            projectId,
+            agentId: input.agentId,
+            path: input.path,
+            content: input.content,
+            baseSha: input.baseSha ?? null,
+            createdBy: input.createdBy ?? null,
+            createdAt: existing?.createdAt ?? new Date(++seq),
+            updatedAt: new Date(++seq),
+          });
+        }
+        return [...drafts.values()]
+          .filter((row) => row.projectId === projectId)
+          .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
+      },
       async get(projectId, path) {
         return drafts.get(`${projectId}|${path}`) ?? null;
       },
@@ -807,7 +847,8 @@ export function makeFakeStore(): FakeStore {
           const key = `${projectId}|${e.path}`;
           const row = drafts.get(key);
           // A row re-saved after the pipeline captured it (newer updatedAt) stays saved.
-          if (row && row.updatedAt.getTime() <= e.updatedAt.getTime()) drafts.delete(key);
+          if (row && row.updatedAt.getTime() <= e.updatedAt.getTime())
+            drafts.delete(key);
         }
       },
     },

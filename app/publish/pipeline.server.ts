@@ -81,9 +81,13 @@ import {
   updateTaskSteps,
 } from "~/tasks/tasks.server";
 
+import { MODEL_RESET_TASK_LABEL } from "~/models/reset-progress";
+import { draftSnapshotFingerprint } from "~/publish/draft-snapshot";
+
 export interface PublishPayload {
   projectId: string;
   taskId: string;
+  resetDraftFingerprint?: string;
   createdBy?: string | null;
   /** The user's one-time environment answer (§2.8 rule 3) — absent unless the panel had to ask. */
   envName?: string | null;
@@ -205,13 +209,23 @@ export async function startPublish(
     createdBy?: string | null;
     /** The user's environment answer, when the panel had to ask (§2.8 rule 3). */
     envName?: string | null;
+    /** Automatic resets may publish only their validated draft snapshot. */
+    resetDraftFingerprint?: string;
   },
   store: DataStore = getRuntime().data,
 ): Promise<{ taskId: string; alreadyRunning: boolean }> {
   const running = await findRunningTask(input.projectId, "publish", store);
-  if (running) return { taskId: running.id, alreadyRunning: true };
+  if (running) {
+    if (input.resetDraftFingerprint) {
+      throw new Error("Another publish is running. Wait for it to finish, then retry the reset.");
+    }
+    return { taskId: running.id, alreadyRunning: true };
+  }
 
   const drafts = await store.drafts.listByProject(input.projectId);
+  if (input.resetDraftFingerprint && draftSnapshotFingerprint(drafts) !== input.resetDraftFingerprint) {
+    throw new Error("Saved changes changed while preparing the reset. Nothing was published; review the changes and retry.");
+  }
   if (drafts.length === 0) throw new Error("Nothing to publish — no saved changes.");
 
   let task: WorkspaceTask;
@@ -221,7 +235,7 @@ export async function startPublish(
         projectId: input.projectId,
         kind: "publish",
         subjectKey: "publish",
-        label: `Publishing ${drafts.length} change${drafts.length === 1 ? "" : "s"}`,
+        label: input.resetDraftFingerprint ? MODEL_RESET_TASK_LABEL : `Publishing ${drafts.length} change${drafts.length === 1 ? "" : "s"}`,
         originUrl: input.originUrl,
         steps: initialPublishSteps(),
         createdBy: input.createdBy,
@@ -231,7 +245,12 @@ export async function startPublish(
   } catch (error) {
     if (isRunningPublishCollision(error)) {
       const winner = await findRunningTask(input.projectId, "publish", store);
-      if (winner) return { taskId: winner.id, alreadyRunning: true };
+      if (winner) {
+        if (input.resetDraftFingerprint) {
+          throw new Error("Another publish started while preparing the reset. Wait for it to finish, then retry.");
+        }
+        return { taskId: winner.id, alreadyRunning: true };
+      }
     }
     throw error;
   }
@@ -242,6 +261,7 @@ export async function startPublish(
       taskId: task.id,
       createdBy: input.createdBy ?? null,
       envName: input.envName ?? null,
+      ...(input.resetDraftFingerprint ? { resetDraftFingerprint: input.resetDraftFingerprint } : {}),
     } satisfies PublishPayload,
     { maxAttempts: 1 },
     store,
@@ -542,6 +562,11 @@ export async function runPublish(
     outcome.failedStep = key;
     outcome.error = error;
   };
+
+  if (payload.resetDraftFingerprint && draftSnapshotFingerprint(drafts) !== payload.resetDraftFingerprint) {
+    await failAt("check", "Saved changes changed after the reset was requested. Nothing was published; review the changes and retry.");
+    return outcome;
+  }
 
   if (drafts.length === 0) {
     await failAt("check", "Nothing to publish — no saved changes.");
