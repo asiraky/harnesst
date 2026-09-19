@@ -9,9 +9,11 @@ import {
 import {
   orgModelModulePath,
   orgModelModuleSource,
+  preCompactionOrgModelModuleSource,
   scaffoldOrgModelAgentModule,
 } from "~/eve/org-model-module";
 import { subagentRootFor } from "~/eve/parse";
+import { agentBuildContextWindow } from "~/eve/model-build-context";
 import { resetAgentModelSource } from "~/eve/reset-model";
 import { readModelResetFile } from "~/github/read-model-reset-file.server";
 import { ensureWorkerStarted } from "~/jobs/worker.server";
@@ -20,6 +22,7 @@ import {
   removeAgentModelOverrides,
   type ModelTargetKey,
 } from "~/models/agent-model-config.server";
+import { findWorkspaceModel } from "~/models/union.server";
 import { getWorkspaceAssistantSelection } from "~/org/workspace.server";
 import { startPublish } from "~/publish/pipeline.server";
 import { draftSnapshotFingerprint } from "~/publish/draft-snapshot";
@@ -49,6 +52,7 @@ export type ResetModelsResult =
 export interface ResetModelsDeps {
   readFile: typeof readModelResetFile;
   getWorkspaceSelection: typeof getWorkspaceAssistantSelection;
+  lookupModel: typeof findWorkspaceModel;
   removeOverrides: typeof removeAgentModelOverrides;
   publish: typeof startPublish;
   startWorker: typeof ensureWorkerStarted;
@@ -68,6 +72,7 @@ export async function resetModelsToWorkspaceDefault(
   const deps: ResetModelsDeps = {
     readFile: readModelResetFile,
     getWorkspaceSelection: getWorkspaceAssistantSelection,
+    lookupModel: findWorkspaceModel,
     removeOverrides: removeAgentModelOverrides,
     publish: startPublish,
     startWorker: ensureWorkerStarted,
@@ -135,7 +140,23 @@ export async function resetModelsToWorkspaceDefault(
         }
       }
     }
+    const workspaceModel = workspace.model;
+    let windowLookup: Promise<number> | undefined;
+    const buildContextWindow = () =>
+      (windowLookup ??= (async () => {
+        const modelInfo = await deps.lookupModel(
+          input.project.orgId,
+          workspaceModel,
+        );
+        const tokens = modelInfo?.contextWindow;
+        if (!tokens || !Number.isSafeInteger(tokens) || tokens <= 0)
+          throw new Error(
+            "The workspace default model has no known context window. Refresh its model connection before resetting.",
+          );
+        return tokens;
+      })());
     const planned = new Map<string, string>();
+    const previousPlan = new Map<string, string>();
     const changes = new Map<string, string>();
     const keys: ModelTargetKey[] = [];
     const roots = new Set<string>();
@@ -154,10 +175,21 @@ export async function resetModelsToWorkspaceDefault(
       try {
         // A reset changes model selection only. In particular, adding a description to an
         // instruction-only subagent would change the delegation metadata eve derives for it.
-        after =
-          before === null
-            ? scaffoldOrgModelAgentModule(name, { subagentPath })
-            : resetAgentModelSource(before, name, subagentPath);
+        const source =
+          before ?? scaffoldOrgModelAgentModule(name, { subagentPath });
+        previousPlan.set(
+          path,
+          resetAgentModelSource(source, name, subagentPath),
+        );
+        after = resetAgentModelSource(
+          source,
+          name,
+          subagentPath,
+          usesOrgModelResolver(source) &&
+            agentBuildContextWindow(source) !== null
+            ? undefined
+            : await buildContextWindow(),
+        );
       } catch (error) {
         const label = [
           target.memberName,
@@ -227,6 +259,7 @@ export async function resetModelsToWorkspaceDefault(
       const module = orgModelModuleSource();
       const currentModule = await read(modulePath);
       planned.set(modulePath, module);
+      previousPlan.set(modulePath, preCompactionOrgModelModuleSource());
       if (currentModule !== module) changes.set(modulePath, module);
       const packagePath = packageJsonPathForRoot(root);
       const currentPackage = await read(packagePath);
@@ -243,7 +276,13 @@ export async function resetModelsToWorkspaceDefault(
       if (nextPackage !== currentPackage) changes.set(packagePath, nextPackage);
     }
     const drafts = await store.drafts.listByProject(input.project.id);
-    if (drafts.some((draft) => planned.get(draft.path) !== draft.content)) {
+    if (
+      drafts.some(
+        (draft) =>
+          planned.get(draft.path) !== draft.content &&
+          previousPlan.get(draft.path) !== draft.content,
+      )
+    ) {
       return {
         ok: false,
         error:
@@ -252,7 +291,8 @@ export async function resetModelsToWorkspaceDefault(
     }
     // Identical drafts from a failed reset remain publishable even when GitHub already has some
     // of the files. No second invocation can report applied while these drafts await deployment.
-    for (const draft of drafts) changes.set(draft.path, draft.content!);
+    for (const draft of drafts)
+      changes.set(draft.path, planned.get(draft.path)!);
     const stagedSnapshot = await store.drafts.compareAndStage(
       input.project.id,
       drafts,

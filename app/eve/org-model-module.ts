@@ -135,6 +135,16 @@ import { defineDynamic } from 'eve';
 
 `;
 
+const WORKSPACE_CONTEXT_VALIDATION = `  // Never replace a known runtime window with undefined: eve cannot rescale it afterwards.
+  if (!Number.isSafeInteger(body.contextWindowTokens) || !body.contextWindowTokens || body.contextWindowTokens <= 0) {
+    throw new Error('The configured model has no known context window. Refresh its model connection in harnesst.');
+  }
+`;
+const SELECTED_CONTEXT_VALIDATION = `          if (!Number.isSafeInteger(selected.contextWindowTokens) || !selected.contextWindowTokens || selected.contextWindowTokens <= 0) {
+            throw new Error('The selected model has no known context window. Select it again in harnesst.');
+          }
+`;
+
 const CONFIG_SECTION = `// ── Workspace model configuration (harnesst control plane) ────────────────────
 type HarnesstReasoningEffort = 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh';
 interface HarnesstModelConfig {
@@ -191,7 +201,7 @@ async function harnesstConfiguredModel(
       body?.error?.message ?? 'harnesst model-config returned HTTP ' + response.status + '.',
     );
   }
-  const config: HarnesstModelConfig = {
+${WORKSPACE_CONTEXT_VALIDATION}  const config: HarnesstModelConfig = {
     model: body.model,
     effort: body.effort ?? null,
     contextWindowTokens: body.contextWindowTokens ?? null,
@@ -226,7 +236,7 @@ export function harnesstAgentModel(agentName: string, subagentPath?: string) {
       'step.started': async (_event, ctx) => {
         const selected = harnesstSelectedModel(ctx.messages);
         if (selected) {
-          return {
+${SELECTED_CONTEXT_VALIDATION}          return {
             model: harnesstModel(selected.id, selected.effort),
             modelContextWindowTokens: selected.contextWindowTokens,
           };
@@ -245,6 +255,13 @@ export function harnesstAgentModel(agentName: string, subagentPath?: string) {
 /** The complete generated `harnesst/model.ts` content. */
 export function orgModelModuleSource(): string {
   return `${MODULE_HEADER}${OPENROUTER_FACTORY}${HARNESST_GATEWAY_FACTORY}\n${HARNESST_MODEL_HELPER}\n${CONFIG_SECTION}`;
+}
+
+/** Exact prior generation, only to recognize and upgrade saved drafts from a failed reset. */
+export function preCompactionOrgModelModuleSource(): string {
+  return orgModelModuleSource()
+    .replace(WORKSPACE_CONTEXT_VALIDATION, "")
+    .replace(SELECTED_CONTEXT_VALIDATION, "");
 }
 
 /**

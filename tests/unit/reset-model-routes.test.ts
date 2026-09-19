@@ -1,5 +1,6 @@
 /** Exercise settings actions with the actual reset service, fake storage and no network. */
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { fixtureCatalog } from "~/seams/oss/catalog.fixture.server";
 import { makeFakeStore, type FakeStore } from "../fakes/store";
 import { ensureModelProviderDependencies } from "~/eve/agentModule";
 import {
@@ -41,7 +42,7 @@ vi.mock("~/project/guard.server", async (importOriginal) => ({
   requireRepo: (project: unknown) => project,
 }));
 vi.mock("~/seams/index.server", () => ({
-  getRuntime: () => ({ data: mocks.store }),
+  getRuntime: () => ({ data: mocks.store, catalog: fixtureCatalog }),
 }));
 vi.mock("~/github/repo.server", async (importOriginal) => ({
   ...(await importOriginal<typeof import("~/github/repo.server")>()),
@@ -69,6 +70,9 @@ vi.mock("~/org/workspace.server", async (importOriginal) => ({
     model: mocks.workspaceModel,
     effort: null,
   }),
+}));
+vi.mock("~/models/union.server", () => ({
+  findWorkspaceModel: async () => ({ contextWindow: 200_000 }),
 }));
 vi.mock("~/models/agent-model-config.server", async (importOriginal) => ({
   ...(await importOriginal<
@@ -182,6 +186,57 @@ function clearedTargets() {
 }
 
 describe("reset model settings actions", () => {
+  it("loads missing installed templates from the lock without error logging and rejects stale updates", async () => {
+    mocks.files["harnesst-lock.json"] = JSON.stringify({
+      version: 1,
+      installs: [
+        {
+          id: "ledger-intake",
+          type: "agent",
+          name: "Ledger Intake",
+          version: "1.0.0",
+          hash: "installed",
+          registry: "fixture",
+          member: "ledger",
+          files: [`${root}/agent.ts`],
+          installedAt: "2026-01-01T00:00:00.000Z",
+        },
+      ],
+    });
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const result = (await load()) as {
+        installs: { id: string; update: string | null }[];
+      };
+      expect(result.installs).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ id: "ledger-intake", update: null }),
+        ]),
+      );
+      expect(
+        warn.mock.calls.filter(([message]) =>
+          String(message).startsWith("[settings]"),
+        ),
+      ).toEqual([]);
+      expect(
+        await post(
+          {},
+          {
+            intent: "update-install",
+            type: "agent",
+            id: "ledger-intake",
+            member: "ledger",
+          },
+        ),
+      ).toMatchObject({
+        error: expect.stringContaining("no longer available"),
+      });
+      expect(await mocks.store!.drafts.listByProject("p")).toEqual([]);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
   it("resets only the URL member despite a hostile form asking for its sibling", async () => {
     expect(
       await post(

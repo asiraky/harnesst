@@ -124,7 +124,7 @@ import {
 } from "~/marketplace/lock";
 import { slugifyResourceName } from "~/eve/templates";
 import {
-  resolveTemplate,
+  resolveInstalledTemplate,
   type ResolvedTemplate,
 } from "~/marketplace/compose.server";
 import type { TemplateType } from "~/marketplace/manifest";
@@ -567,22 +567,23 @@ export const loader = (args: LoaderFunctionArgs) =>
           await Promise.all(
             lock.installs.map(async (entry) => {
               try {
-                const template = await resolveTemplate(
+                const template = await resolveInstalledTemplate(
                   catalog,
                   entry.type,
                   entry.id,
                 );
+                if (!template) return;
                 resolvedTemplates.set(`${entry.type}/${entry.id}`, template);
                 await Promise.all(
                   template.includes.map(async (include) => {
                     const key = `${include.type}/${include.id}`;
                     if (resolvedTemplates.has(key)) return;
-                    const child = await resolveTemplate(
+                    const child = await resolveInstalledTemplate(
                       catalog,
                       include.type,
                       include.id,
                     );
-                    resolvedTemplates.set(key, child);
+                    if (child) resolvedTemplates.set(key, child);
                   }),
                 );
               } catch (error) {
@@ -1068,10 +1069,15 @@ export async function action(args: ActionFunctionArgs) {
       if (!type || !id) return { error: "Missing install to update." };
       // Actions read raw — a stale read merged into a write could clobber newer content.
       const [template, source, drafts] = await Promise.all([
-        resolveTemplate(getRuntime().catalog, type, id),
+        resolveInstalledTemplate(getRuntime().catalog, type, id),
         fetchAgentSource(project.repoInstallationId, repo),
         listDrafts(project.id),
       ]);
+      if (!template)
+        return {
+          error:
+            "This installed template is no longer available in the catalog.",
+        };
       const { roster, active, isTeam } = await resolveSyncedAgentContext(
         project.id,
         member,
@@ -2020,7 +2026,8 @@ function ModelSection({
           {stagedResetPending
             ? "Reset pending deployment. The saved resolver has not been published; the current configuration still uses the legacy model."
             : "Reset pending deployment. The running agent may still use its previous model. Check publish progress or retry the reset."}
-          {!nested && loaderData.workspaceDefaultModel &&
+          {!nested &&
+            loaderData.workspaceDefaultModel &&
             ` After deployment, workspace inheritance resolves to ${loaderData.workspaceDefaultModel}.`}
         </p>
       )}

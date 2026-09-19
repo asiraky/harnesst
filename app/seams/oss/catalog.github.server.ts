@@ -12,6 +12,7 @@
  * so repeat browses are a memory hit and one key never triggers two network calls at once —
  * the same idiom as github/cached.server.ts. Non-200s throw an error naming the failing URL.
  */
+import { CatalogTemplateUnavailableError } from "~/marketplace/catalog-errors";
 import { githubCache } from "~/github/cache.server";
 import {
   parseIndex,
@@ -58,9 +59,12 @@ function typeDir(type: TemplateType): string {
 async function fetchText(url: string): Promise<string> {
   const res = await fetch(url);
   if (!res.ok) {
-    throw new Error(
-      `Catalog fetch failed (${res.status} ${res.statusText}) for ${url}. ` +
-        `Check HARNESST_CATALOG_REPO / HARNESST_CATALOG_REF and that the path exists.`,
+    throw Object.assign(
+      new Error(
+        `Catalog fetch failed (${res.status} ${res.statusText}) for ${url}. ` +
+          `Check HARNESST_CATALOG_REPO / HARNESST_CATALOG_REF and that the path exists.`,
+      ),
+      { status: res.status },
     );
   }
   return res.text();
@@ -87,13 +91,22 @@ export const githubCatalog: CatalogSource = {
     return githubCache.get(key, TEMPLATE_TTL_MS, async () => {
       const base = `templates/${typeDir(type)}/${id}`;
       const manifest = parseManifest(
-        await fetchJson(rawUrl(ptr, `${base}/template.json`)),
+        await fetchJson(rawUrl(ptr, `${base}/template.json`)).catch((error) => {
+          if (error?.status === 404)
+            throw new CatalogTemplateUnavailableError(type, id, {
+              cause: error,
+            });
+          throw error;
+        }),
       );
       // Fetch every declared file in parallel; assemble and cache the whole template.
       const entries = await Promise.all(
         manifest.files.map(
           async (rel) =>
-            [rel, await fetchText(rawUrl(ptr, `${base}/files/${rel}`))] as const,
+            [
+              rel,
+              await fetchText(rawUrl(ptr, `${base}/files/${rel}`)),
+            ] as const,
         ),
       );
       // The assistant skill lives beside files/, not under it — it never installs into a repo.

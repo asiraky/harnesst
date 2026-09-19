@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 import { ensureModelProviderDependencies } from "~/eve/agentModule";
 import {
   orgModelModuleSource,
+  preCompactionOrgModelModuleSource,
   scaffoldOrgModelAgentModule,
 } from "~/eve/org-model-module";
 import {
@@ -40,7 +41,12 @@ function setup(resolver = false) {
   });
   const files: Record<string, string> = {
     [`${target.root}/agent.ts`]: resolver
-      ? resetAgentModelSource(scaffoldOrgModelAgentModule("ledger"), "ledger")
+      ? resetAgentModelSource(
+          scaffoldOrgModelAgentModule("ledger"),
+          "ledger",
+          "",
+          200_000,
+        )
       : legacy,
     "agents/ledger/package.json": ensureModelProviderDependencies(null),
     "agents/ledger/harnesst/model.ts": orgModelModuleSource(),
@@ -51,6 +57,7 @@ function setup(resolver = false) {
       model: "openai/connected/gpt",
       effort: null,
     })),
+    lookupModel: vi.fn(async () => ({ contextWindow: 200_000 }) as never),
     removeOverrides: vi.fn(async () => {}),
     publish: vi.fn(async () => ({
       taskId: "publish-task",
@@ -76,6 +83,55 @@ function setup(resolver = false) {
 }
 
 describe("explicit model reset", () => {
+  it("refuses unknown build metadata before staging or clearing overrides", async () => {
+    const { run, deps, store } = setup();
+    deps.lookupModel = async () => null;
+    expect(await run()).toMatchObject({
+      ok: false,
+      error: expect.stringContaining("context window"),
+    });
+    expect(await store.drafts.listByProject("p")).toEqual([]);
+    expect(deps.removeOverrides).not.toHaveBeenCalled();
+    expect(deps.publish).not.toHaveBeenCalled();
+  });
+
+  it("repairs drafts retained by the pre-fix reset without accepting unrelated edits", async () => {
+    const { run, store, files } = setup();
+    const path = `${target.root}/agent.ts`;
+    await store.drafts.upsert({
+      projectId: "p",
+      agentId: "a",
+      path,
+      content: resetAgentModelSource(files[path], "ledger"),
+      createdBy: "user",
+    });
+    await store.drafts.upsert({
+      projectId: "p",
+      agentId: "a",
+      path: "agents/ledger/harnesst/model.ts",
+      content: preCompactionOrgModelModuleSource(),
+      createdBy: "user",
+    });
+    expect(await run()).toMatchObject({ ok: true, mode: "publishing" });
+    const source = (await store.drafts.listByProject("p")).find(
+      (d) => d.path === path,
+    )!.content!;
+    const exports: { default?: { modelContextWindowTokens: number } } = {};
+    runInNewContext(
+      ts.transpileModule(source, {
+        compilerOptions: { module: ts.ModuleKind.CommonJS },
+      }).outputText,
+      {
+        exports,
+        require: (id: string) =>
+          id === "eve"
+            ? { defineAgent: (value: unknown) => value }
+            : { harnesstAgentModel: () => ({}) },
+      },
+    );
+    expect(exports.default!.modelContextWindowTokens * 0.75).toBe(150_000);
+  });
+
   it("requires a workspace default before any writes", async () => {
     const { run, deps, store } = setup();
     deps.getWorkspaceSelection = async () => ({ model: null, effort: null });
@@ -101,6 +157,15 @@ describe("explicit model reset", () => {
     ]);
     expect(await store.drafts.listByProject("p")).toHaveLength(1);
     expect(deps.publish).toHaveBeenCalledOnce();
+  });
+
+  it("clears an existing resolver pin even while the model catalog is unavailable", async () => {
+    const { run, deps } = setup(true);
+    deps.lookupModel = vi.fn(async () => {
+      throw new Error("catalog offline");
+    });
+    expect(await run()).toMatchObject({ ok: true, mode: "applied" });
+    expect(deps.lookupModel).not.toHaveBeenCalled();
   });
 
   it("clears a resolver pin without publishing and remains idempotent", async () => {

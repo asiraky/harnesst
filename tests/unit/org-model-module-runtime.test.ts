@@ -92,6 +92,7 @@ function runtime(
 describe("generated workspace resolver at runtime", () => {
   it("observes default changes after 30 seconds while independent agent and subagent pins remain fixed", async () => {
     let workspace = "codex/abcdefghijkl/first";
+    let contextWindow = 200000;
     const pins = new Map([
       ["pinned#", "codex/abcdefghijkl/pinned"],
       ["ledger#qa", "codex/abcdefghijkl/qa-pin"],
@@ -99,7 +100,7 @@ describe("generated workspace resolver at runtime", () => {
     const env = runtime((agent, subagent) => ({
       model:
         pins.get(`${agent}#${subagent}`) ?? pins.get(`${agent}#`) ?? workspace,
-      contextWindowTokens: 123456,
+      contextWindowTokens: contextWindow,
     }));
     expect((await env.step("ledger")).model.modelId).toBe(workspace);
     expect((await env.step("ledger", "reviewer")).model.modelId).toBe(
@@ -110,13 +111,14 @@ describe("generated workspace resolver at runtime", () => {
       "/pinned",
     );
     workspace = "codex/abcdefghijkl/second";
+    contextWindow = 128000;
     env.advance(29_999);
     expect((await env.step("ledger")).model.modelId).toContain("/first");
     expect(env.fetch).toHaveBeenCalledTimes(4);
     env.advance(1);
     expect(await env.step("ledger")).toMatchObject({
       model: { modelId: workspace },
-      modelContextWindowTokens: 123456,
+      modelContextWindowTokens: 128000,
     });
     expect((await env.step("ledger", "reviewer")).model.modelId).toBe(
       workspace,
@@ -133,13 +135,27 @@ describe("generated workspace resolver at runtime", () => {
     });
   });
 
+  it("rejects missing context metadata without caching it and recovers on the next step", async () => {
+    let selection: Selection = { model: "codex/abcdefghijkl/default" };
+    const env = runtime(() => selection);
+    await expect(env.step("ledger")).rejects.toThrow("context window");
+    selection = { ...selection, contextWindowTokens: 64000 };
+    expect(await env.step("ledger")).toMatchObject({
+      modelContextWindowTokens: 64000,
+    });
+    expect(env.fetch).toHaveBeenCalledTimes(2);
+  });
+
   it("does not cache missing configuration or serve an expired selection when the lookup fails", async () => {
     let selection: Selection | null = null;
     const env = runtime(() => selection);
     await expect(env.step("ledger")).rejects.toThrow(
       "Set a workspace default first",
     );
-    selection = { model: "codex/abcdefghijkl/default" };
+    selection = {
+      model: "codex/abcdefghijkl/default",
+      contextWindowTokens: 128000,
+    };
     expect((await env.step("ledger")).model.modelId).toBe(selection.model);
     selection = null;
     env.advance(30_000);

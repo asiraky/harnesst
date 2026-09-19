@@ -42,6 +42,31 @@ function evaluate(
 }
 
 describe("resetAgentModelSource", () => {
+  it("seeds compaction from the inherited model, preserves its percentage, and keeps the snapshot stable", () => {
+    const source = `import { defineAgent } from 'eve'; export default defineAgent({
+      model: 'old/model', modelContextWindowTokens: 200000,
+      compaction: { thresholdPercent: 0.75 },
+    });`;
+    const converted = resetAgentModelSource(source, "ledger", "", 128000);
+    const { config } = evaluate(converted);
+    expect(config.model).toEqual({ target: ["ledger"] });
+    expect(config.compaction).toEqual({ thresholdPercent: 0.75 });
+    expect(config.modelContextWindowTokens).toBe(128000);
+    // A later default change is resolved by step.started, not a source rewrite/rebuild.
+    expect(resetAgentModelSource(converted, "ledger", "", 64000)).toBe(
+      converted,
+    );
+  });
+
+  it("repairs invalid context metadata on an existing resolver", () => {
+    const source = `import { defineAgent } from 'eve'; import { harnesstAgentModel } from '../harnesst/model.js';
+      export default defineAgent({ model: harnesstAgentModel('ledger'), modelContextWindowTokens: 0 });`;
+    expect(
+      evaluate(resetAgentModelSource(source, "ledger", "", 64000)).config
+        .modelContextWindowTokens,
+    ).toBe(64000);
+  });
+
   // Frozen from the ledger prototype catalog, including its two declared subagents. Execute
   // both generations and compare unrelated runtime options, rather than asserting shipped text.
   it.each([

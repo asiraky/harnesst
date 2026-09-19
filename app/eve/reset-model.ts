@@ -111,6 +111,7 @@ export function resetAgentModelSource(
   source: string,
   agentName: string,
   subagentPath = "",
+  buildContextWindowTokens?: number,
 ): string {
   const file = ts.createSourceFile(
     "agent.ts",
@@ -204,6 +205,7 @@ export function resetAgentModelSource(
   const model = selections.find(
     (property) => nameOf(property.name) === "model",
   );
+  let alreadyInherits = false;
   if (model) {
     const value = model.initializer;
     const resolver =
@@ -212,6 +214,7 @@ export function resetAgentModelSource(
       value.arguments.length >= 1 &&
       value.arguments.length <= 2 &&
       value.arguments.every(literal);
+    alreadyInherits = resolver;
     const dynamic =
       ts.isCallExpression(value) &&
       value.expression.getText(file) === "defineDynamic" &&
@@ -335,8 +338,36 @@ export function resetAgentModelSource(
       text: `\n  model: harnesstAgentModel(${target}),`,
     });
   }
+  // Eve compiles the dynamic fallback before step.started can resolve the workspace model.
+  // Keep a real initial context window for compilation; runtime selections replace it per step.
+  // An existing resolver's snapshot stays stable when defaults change: no rebuild is required.
+  const context = selections.find(
+    (property) => nameOf(property.name) === "modelContextWindowTokens",
+  );
+  const contextValue =
+    context && ts.isNumericLiteral(context.initializer)
+      ? Number(context.initializer.text)
+      : NaN;
+  const keepContext =
+    alreadyInherits && Number.isSafeInteger(contextValue) && contextValue > 0;
+  if (buildContextWindowTokens !== undefined) {
+    if (
+      !Number.isSafeInteger(buildContextWindowTokens) ||
+      buildContextWindowTokens <= 0
+    )
+      throw new Error(
+        "The workspace model must have a known positive context window before resetting.",
+      );
+    if (!keepContext) {
+      edits.push({
+        start: config.getStart(file) + 1,
+        end: config.getStart(file) + 1,
+        text: `\n  modelContextWindowTokens: ${buildContextWindowTokens},`,
+      });
+    }
+  }
   for (const property of selections) {
-    if (property === model) continue;
+    if (property === model || (property === context && keepContext)) continue;
     const scanner = ts.createScanner(
       ts.ScriptTarget.Latest,
       true,
