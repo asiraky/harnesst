@@ -112,7 +112,10 @@ export function ModelSelection({
         aria-label="Reasoning effort"
       >
         {compact && (
-          <Gauge className="size-3.5 shrink-0 text-muted-foreground" aria-hidden />
+          <Gauge
+            className="size-3.5 shrink-0 text-muted-foreground"
+            aria-hidden
+          />
         )}
         <SelectValue />
       </SelectTrigger>
@@ -430,9 +433,13 @@ export function ModelSelect({
         <p className="mt-2 flex max-w-md items-start gap-1.5 text-xs text-amber-600 dark:text-amber-400">
           <TriangleAlert className="mt-0.5 size-3.5 shrink-0" aria-hidden />
           <span>
-            <span className="font-mono">{value}</span> is unavailable. Its
-            provider connection may have been removed; choose a connected model
-            before saving or deploying.
+            <span className="font-mono">{value}</span> is unavailable. Your
+            selection is preserved.{" "}
+            <Link to="/settings/connections" className="underline">
+              Reauthenticate its provider connection
+            </Link>{" "}
+            to resume. If the connection was deleted, verify and recover its old
+            ID in Connections.
           </span>
         </p>
       )}

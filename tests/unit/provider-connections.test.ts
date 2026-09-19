@@ -50,6 +50,7 @@ describe("API-key credential boundary", () => {
       createdBy: null,
       createdAt: new Date(0),
       updatedAt: new Date(0),
+      credentialVersion: 0,
     });
     expect(display).toEqual({
       id: "abcdefghijkl",
@@ -113,6 +114,7 @@ const NOW = 1_000_000_000_000;
 
 function conn(overrides: Partial<GatewayConnection> = {}): GatewayConnection {
   return {
+    credentialVersion: 0,
     id: "conn_1",
     orgId: "org_1",
     provider: "codex",
@@ -220,5 +222,71 @@ describe("getFreshAccessToken", () => {
     expect(a.accessToken).toBe("shared-access");
     expect(b.accessToken).toBe("shared-access");
     expect(refresh).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("refresh racing credential renewal", () => {
+  it.each(["success", "invalid_grant"])(
+    "uses the new grant when an old refresh finishes with %s",
+    async (outcome) => {
+      let current = conn({ accessTokenExpiresAt: new Date(NOW - 1) });
+      const persist = vi.fn(async () => false);
+      const markStatus = vi.fn(async () => false);
+      const result = await getFreshAccessToken(`race-${outcome}`, {
+        load: async () => current,
+        refresh: async () => {
+          current = conn({ credentialVersion: 1, accessToken: "reauthorized" });
+          if (outcome === "invalid_grant")
+            throw new InvalidGrantError("old grant");
+          return {
+            accessToken: "stale",
+            refreshToken: "stale",
+            idToken: null,
+            expiresIn: 3600,
+          };
+        },
+        persist,
+        markStatus,
+        now: () => NOW,
+      });
+      expect(result.accessToken).toBe("reauthorized");
+      expect(current.status).toBe("active");
+      if (outcome === "success")
+        expect(persist).toHaveBeenCalledWith(
+          expect.any(String),
+          expect.any(Object),
+          0,
+        );
+      else
+        expect(markStatus).toHaveBeenCalledWith(
+          expect.any(String),
+          "expired",
+          0,
+        );
+    },
+  );
+  it("does not resurrect a connection disconnected during refresh", async () => {
+    let current = conn({ accessTokenExpiresAt: new Date(NOW - 1) });
+    await expect(
+      getFreshAccessToken("race-disconnect", {
+        load: async () => current,
+        refresh: async () => {
+          current = conn({
+            credentialVersion: 1,
+            status: "revoked",
+            accessToken: null,
+            refreshToken: null,
+          });
+          return {
+            accessToken: "stale",
+            refreshToken: "stale",
+            idToken: null,
+            expiresIn: 3600,
+          };
+        },
+        persist: async () => false,
+        now: () => NOW,
+      }),
+    ).rejects.toBeInstanceOf(InvalidGrantError);
   });
 });

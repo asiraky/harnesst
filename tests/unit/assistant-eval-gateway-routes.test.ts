@@ -38,6 +38,7 @@ vi.mock("~/models/union.server", () => ({
 }));
 
 vi.mock("~/models/provider-connections.server", () => ({
+  resolveModelConnectionId: async (_org: string, id: string) => id,
   getConnectionForGateway: mocks.getConnectionForGateway,
   getFreshAccessToken: mocks.getFreshAccessToken,
 }));

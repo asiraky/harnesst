@@ -57,10 +57,8 @@ import {
 } from "~/auth/workspace.server";
 import { listAudit, recordAudit } from "~/managed/audit.server";
 import {
-  getWorkspaceAssistantModel,
   getWorkspaceAssistantSelection,
   setWorkspaceAssistantSelection,
-  setWorkspaceAssistantModel,
 } from "~/org/workspace.server";
 import { isReasoningEffort, type ReasoningEffort } from "~/models/reasoning";
 import {
@@ -70,7 +68,8 @@ import {
 } from "~/models/agent-model-config.server";
 import {
   createApiKeyConnection,
-  deleteModelConnection,
+  disconnectModelConnection,
+  recoverDeletedCodexConnection,
   listModelConnections,
   renameModelConnection,
   type ModelConnection,
@@ -78,7 +77,6 @@ import {
 import {
   MODEL_PROVIDERS,
   isApiKeyProviderId,
-  parseProviderModelReference,
   type ApiKeyProviderId,
 } from "~/models/provider-reference";
 import { findWorkspaceModel } from "~/models/union.server";
@@ -237,7 +235,7 @@ export async function action(args: ActionFunctionArgs) {
 
   const intent = String(form.get("intent") ?? "");
   // Every tab posts to its own URL; land back on it rather than on a fixed one.
-  const here = new URL(args.request.url).pathname;
+  const here = new URL(args.request.url).pathname.replace(/\.data$/, "");
 
   if (intent === "rename-workspace") {
     const name = String(form.get("name") ?? "").trim();
@@ -277,6 +275,7 @@ export async function action(args: ActionFunctionArgs) {
         label,
         apiKey,
         createdBy: auth.user.id,
+        connectionId: String(form.get("connectionId") ?? "") || undefined,
       });
       await invalidateOrganizationEnvironments({
         orgId: org.id,
@@ -318,40 +317,39 @@ export async function action(args: ActionFunctionArgs) {
   if (intent === "remove-connection") {
     const id = String(form.get("connectionId") ?? "");
     if (!id) return { error: "No connection specified." };
-    const currentDefault = await getWorkspaceAssistantModel(org.id);
-    if (
-      parseProviderModelReference(currentDefault ?? "")?.connectionId === id
-    ) {
-      await setWorkspaceAssistantModel(org.id, null);
-    }
-    // Agent overrides pinned to the removed connection can never run again — drop them so
-    // those agents fall back to the workspace default instead of a dead credential.
-    const overrides = await listAgentModelOverrides(org.id);
-    await Promise.all(
-      overrides
-        .filter(
-          (o) => parseProviderModelReference(o.model)?.connectionId === id,
-        )
-        .map((o) =>
-          removeAgentModelOverrideRow(org.id, {
-            agentName: o.agentName,
-            subagentPath: o.subagentPath,
-            projectId: o.projectId,
-          }),
-        ),
+    const connection = (await listModelConnections(org.id)).find(
+      (row) => row.id === id,
     );
-    await deleteModelConnection(org.id, id);
-    await invalidateOrganizationEnvironments({
-      orgId: org.id,
-      createdBy: auth.user.id,
-    });
+    await disconnectModelConnection(org.id, id);
+    if (connection && connection.provider !== "codex")
+      await invalidateOrganizationEnvironments({
+        orgId: org.id,
+        createdBy: auth.user.id,
+      });
     await recordAudit({
       orgId: org.id,
       actorUserId: auth.user.id,
-      action: "model_provider_removed",
+      action: "model_provider_disconnected",
       target: id,
     });
     throw redirect(here);
+  }
+
+  if (intent === "recover-connection") {
+    try {
+      await recoverDeletedCodexConnection({
+        orgId: org.id,
+        oldId: String(form.get("oldId") ?? "").trim(),
+        connectionId: String(form.get("connectionId") ?? ""),
+        verifiedBy: auth.user.id,
+        verified: form.get("verified") === "yes",
+      });
+      return { ok: true as const };
+    } catch (error) {
+      return {
+        error: error instanceof Error ? error.message : "Recovery failed.",
+      };
+    }
   }
 
   if (intent === "set-assistant-model") {
@@ -525,231 +523,231 @@ export default function WorkspaceSettings({
 
         {/* Connected model providers + workspace default */}
         {section === "connections" && (
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <Cpu className={`size-4 ${accentText.blue}`} aria-hidden />
-              Model providers
-            </CardTitle>
-            <CardDescription>
-              Connect one or more provider accounts. API keys are injected
-              directly into agent instances for their matching connection; Codex
-              subscription traffic uses harnesst's OAuth gateway. Model pickers show
-              only models from active connections.
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-6">
-            <div className="space-y-3">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <Label className="flex items-center gap-2">
-                  <Plug className="size-4" aria-hidden />
-                  Connected providers
-                </Label>
-                {canManage && (
-                  <div className="flex flex-wrap gap-2">
-                    <ConnectApiKeyDialog />
-                    <ConnectCodexDialog />
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Cpu className={`size-4 ${accentText.blue}`} aria-hidden />
+                Model providers
+              </CardTitle>
+              <CardDescription>
+                Connect one or more provider accounts. API keys are injected
+                directly into agent instances for their matching connection;
+                Codex subscription traffic uses harnesst's OAuth gateway. Model
+                pickers show only models from active connections.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-6">
+              <div className="space-y-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <Label className="flex items-center gap-2">
+                    <Plug className="size-4" aria-hidden />
+                    Connected providers
+                  </Label>
+                  {canManage && (
+                    <div className="flex flex-wrap gap-2">
+                      <ConnectApiKeyDialog />
+                      <ConnectCodexDialog />
+                    </div>
+                  )}
+                </div>
+                {connections.length === 0 ? (
+                  <div className="rounded-lg border border-dashed p-4 text-sm text-muted-foreground">
+                    No model providers are connected. Connect OpenRouter,
+                    Anthropic, OpenAI Platform, or an OpenAI Codex subscription
+                    to make models available.
                   </div>
+                ) : (
+                  <ul className="divide-y rounded-lg border text-sm">
+                    {connections.map((conn) => (
+                      <ConnectionRow
+                        key={conn.id}
+                        conn={conn}
+                        canManage={canManage}
+                      />
+                    ))}
+                  </ul>
+                )}
+                {!canManage && (
+                  <p className="text-xs text-muted-foreground">
+                    Only workspace owners and admins can change provider
+                    connections.
+                  </p>
                 )}
               </div>
-              {connections.length === 0 ? (
-                <div className="rounded-lg border border-dashed p-4 text-sm text-muted-foreground">
-                  No model providers are connected. Connect OpenRouter,
-                  Anthropic, OpenAI Platform, or an OpenAI Codex subscription to
-                  make models available.
-                </div>
-              ) : (
-                <ul className="divide-y rounded-lg border text-sm">
-                  {connections.map((conn) => (
-                    <ConnectionRow
-                      key={conn.id}
-                      conn={conn}
-                      canManage={canManage}
-                    />
-                  ))}
-                </ul>
-              )}
-              {!canManage && (
-                <p className="text-xs text-muted-foreground">
-                  Only workspace owners and admins can change provider
-                  connections.
-                </p>
-              )}
-            </div>
 
-            <div className="max-w-xl space-y-2 border-t pt-4">
-              <div className="flex min-h-8 items-center justify-between gap-3">
-                <Label>Default model</Label>
-                {canManage && assistantModel && (
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="sm"
-                    disabled={modelFetcher.state !== "idle"}
-                    onClick={() =>
+              <div className="max-w-xl space-y-2 border-t pt-4">
+                <div className="flex min-h-8 items-center justify-between gap-3">
+                  <Label>Default model</Label>
+                  {canManage && assistantModel && (
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      disabled={modelFetcher.state !== "idle"}
+                      onClick={() =>
+                        modelFetcher.submit(
+                          {
+                            intent: "set-assistant-model",
+                            assistantModel: "",
+                            assistantEffort: "",
+                          },
+                          { method: "post" },
+                        )
+                      }
+                    >
+                      Clear default
+                    </Button>
+                  )}
+                </div>
+                {canManage ? (
+                  <ModelSelection
+                    model={assistantModel}
+                    effort={assistantEffort}
+                    busy={modelFetcher.state !== "idle"}
+                    onCommit={(model, effort) =>
                       modelFetcher.submit(
                         {
                           intent: "set-assistant-model",
-                          assistantModel: "",
-                          assistantEffort: "",
+                          assistantModel: model,
+                          assistantEffort: effort ?? "",
                         },
                         { method: "post" },
                       )
                     }
-                  >
-                    Clear default
-                  </Button>
-                )}
-              </div>
-              {canManage ? (
-                <ModelSelection
-                  model={assistantModel}
-                  effort={assistantEffort}
-                  busy={modelFetcher.state !== "idle"}
-                  onCommit={(model, effort) =>
-                    modelFetcher.submit(
-                      {
-                        intent: "set-assistant-model",
-                        assistantModel: model,
-                        assistantEffort: effort ?? "",
-                      },
-                      { method: "post" },
-                    )
-                  }
-                />
-              ) : (
-                <p className="font-mono text-sm">
-                  {assistantModel
-                    ? `${assistantModel} · ${assistantEffort ?? "provider default"}`
-                    : "No default configured"}
-                </p>
-              )}
-              <p className="text-xs text-muted-foreground">
-                Used by the authoring assistant and by every agent without an
-                override below. Running agents resolve this at each step, so a
-                change lands within about 30 seconds — no redeploy. A workspace
-                with no default has no implicit fallback: agents error until a
-                model is configured here.
-              </p>
-              {modelFetcher.data &&
-                "error" in modelFetcher.data &&
-                modelFetcher.data.error && (
-                  <p className="text-sm text-destructive">
-                    {modelFetcher.data.error}
+                  />
+                ) : (
+                  <p className="font-mono text-sm">
+                    {assistantModel
+                      ? `${assistantModel} · ${assistantEffort ?? "provider default"}`
+                      : "No default configured"}
                   </p>
                 )}
-            </div>
+                <p className="text-xs text-muted-foreground">
+                  Used by the authoring assistant and by every agent without an
+                  override below. Running agents resolve this at each step, so a
+                  change lands within about 30 seconds — no redeploy. A
+                  workspace with no default has no implicit fallback: agents
+                  error until a model is configured here.
+                </p>
+                {modelFetcher.data &&
+                  "error" in modelFetcher.data &&
+                  modelFetcher.data.error && (
+                    <p className="text-sm text-destructive">
+                      {modelFetcher.data.error}
+                    </p>
+                  )}
+              </div>
 
-            <AgentOverridesSection
-              overrides={agentOverrides}
-              canManage={canManage}
-            />
-          </CardContent>
-        </Card>
+              <AgentOverridesSection
+                overrides={agentOverrides}
+                canManage={canManage}
+              />
+            </CardContent>
+          </Card>
         )}
 
         {/* Spend controls */}
         {section === "general" && (
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <Gauge className={`size-4 ${accentText.amber}`} aria-hidden />
-              Spend controls
-            </CardTitle>
-            <CardDescription>
-              Tokens used (last 30 days):{" "}
-              <span className={`font-medium ${accentText.indigo}`}>
-                <LocalizedNumber value={used} />
-              </span>
-              {limit?.monthlyTokenCap != null && (
-                <>
-                  {" / "}
-                  <LocalizedNumber value={limit.monthlyTokenCap} />
-                </>
-              )}
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            {canManage ? (
-              <Form method="post" className="space-y-4">
-                <div className="space-y-1.5">
-                  <Label htmlFor="monthlyTokenCap">Monthly token cap</Label>
-                  <Input
-                    id="monthlyTokenCap"
-                    name="monthlyTokenCap"
-                    type="number"
-                    min={0}
-                    defaultValue={limit?.monthlyTokenCap ?? ""}
-                    placeholder="unlimited"
-                    className="w-48"
-                  />
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Gauge className={`size-4 ${accentText.amber}`} aria-hidden />
+                Spend controls
+              </CardTitle>
+              <CardDescription>
+                Tokens used (last 30 days):{" "}
+                <span className={`font-medium ${accentText.indigo}`}>
+                  <LocalizedNumber value={used} />
+                </span>
+                {limit?.monthlyTokenCap != null && (
+                  <>
+                    {" / "}
+                    <LocalizedNumber value={limit.monthlyTokenCap} />
+                  </>
+                )}
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              {canManage ? (
+                <Form method="post" className="space-y-4">
+                  <div className="space-y-1.5">
+                    <Label htmlFor="monthlyTokenCap">Monthly token cap</Label>
+                    <Input
+                      id="monthlyTokenCap"
+                      name="monthlyTokenCap"
+                      type="number"
+                      min={0}
+                      defaultValue={limit?.monthlyTokenCap ?? ""}
+                      placeholder="unlimited"
+                      className="w-48"
+                    />
+                  </div>
+                  <Label className="flex items-center gap-2 rounded-lg border border-rose-500/30 bg-rose-500/5 px-3 py-2 font-normal text-rose-700 dark:text-rose-400">
+                    <ShieldAlert className="size-4 shrink-0" aria-hidden />
+                    <input
+                      type="checkbox"
+                      name="killSwitch"
+                      defaultChecked={limit?.killSwitch ?? false}
+                      aria-label="Kill-switch (block all model calls for this tenant)"
+                    />
+                    Kill-switch (block all model calls for this tenant)
+                  </Label>
+                  <Button type="submit">Save</Button>
+                </Form>
+              ) : (
+                <div className="space-y-2 text-sm">
+                  <p>
+                    Monthly token cap:{" "}
+                    {limit?.monthlyTokenCap?.toLocaleString() ?? "unlimited"}
+                  </p>
+                  <p>Kill-switch: {limit?.killSwitch ? "on" : "off"}</p>
+                  <p className="text-muted-foreground">
+                    Only workspace owners and admins can change spend controls.
+                  </p>
                 </div>
-                <Label className="flex items-center gap-2 rounded-lg border border-rose-500/30 bg-rose-500/5 px-3 py-2 font-normal text-rose-700 dark:text-rose-400">
-                  <ShieldAlert className="size-4 shrink-0" aria-hidden />
-                  <input
-                    type="checkbox"
-                    name="killSwitch"
-                    defaultChecked={limit?.killSwitch ?? false}
-                    aria-label="Kill-switch (block all model calls for this tenant)"
-                  />
-                  Kill-switch (block all model calls for this tenant)
-                </Label>
-                <Button type="submit">Save</Button>
-              </Form>
-            ) : (
-              <div className="space-y-2 text-sm">
-                <p>
-                  Monthly token cap:{" "}
-                  {limit?.monthlyTokenCap?.toLocaleString() ?? "unlimited"}
-                </p>
-                <p>Kill-switch: {limit?.killSwitch ? "on" : "off"}</p>
-                <p className="text-muted-foreground">
-                  Only workspace owners and admins can change spend controls.
-                </p>
-              </div>
-            )}
-          </CardContent>
-        </Card>
+              )}
+            </CardContent>
+          </Card>
         )}
 
         {/* Audit log */}
         {section === "audit" && (
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <ScrollText
-                className={`size-4 ${accentText.indigo}`}
-                aria-hidden
-              />
-              Audit log
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            {audit.length === 0 ? (
-              <p className="text-sm text-muted-foreground">
-                No operations recorded yet.
-              </p>
-            ) : (
-              <ul className="divide-y rounded-lg border text-sm">
-                {audit.map((a) => (
-                  <li key={a.id} className="flex justify-between px-4 py-2">
-                    <span>
-                      <span className="font-medium">{a.action}</span>
-                      {a.target && (
-                        <span className="ml-2 font-mono text-muted-foreground">
-                          {a.target}
-                        </span>
-                      )}
-                    </span>
-                    <span className="text-muted-foreground">
-                      <LocalizedDateTime value={a.createdAt} />
-                    </span>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </CardContent>
-        </Card>
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <ScrollText
+                  className={`size-4 ${accentText.indigo}`}
+                  aria-hidden
+                />
+                Audit log
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              {audit.length === 0 ? (
+                <p className="text-sm text-muted-foreground">
+                  No operations recorded yet.
+                </p>
+              ) : (
+                <ul className="divide-y rounded-lg border text-sm">
+                  {audit.map((a) => (
+                    <li key={a.id} className="flex justify-between px-4 py-2">
+                      <span>
+                        <span className="font-medium">{a.action}</span>
+                        {a.target && (
+                          <span className="ml-2 font-mono text-muted-foreground">
+                            {a.target}
+                          </span>
+                        )}
+                      </span>
+                      <span className="text-muted-foreground">
+                        <LocalizedDateTime value={a.createdAt} />
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </CardContent>
+          </Card>
         )}
       </div>
     </AppShell>
@@ -871,7 +869,10 @@ function ConnectionRow({
   const [editing, setEditing] = useState(false);
   const active = conn.status === "active";
   return (
-    <li className="flex flex-wrap items-center justify-between gap-2 px-4 py-3">
+    <li
+      id={`connection-${conn.id}`}
+      className="flex flex-wrap items-center justify-between gap-2 px-4 py-3"
+    >
       <div className="space-y-0.5">
         <div className="flex items-center gap-2">
           <span className="rounded bg-muted px-1.5 py-0.5 text-xs font-medium">
@@ -908,6 +909,9 @@ function ConnectionRow({
             </button>
           )}
         </div>
+        <p className="text-xs text-muted-foreground">
+          Connection ID: <code>{conn.id}</code>
+        </p>
         {conn.accountEmail && (
           <p className="text-xs text-muted-foreground">{conn.accountEmail}</p>
         )}
@@ -918,27 +922,40 @@ function ConnectionRow({
         )}
         {!active && (
           <p className="text-xs text-amber-600 dark:text-amber-400">
-            Reconnect needed — this connection is {conn.status}.
+            Reauthenticate to resume — this connection is{" "}
+            {conn.status === "revoked" ? "disconnected" : conn.status}.
           </p>
         )}
       </div>
       {canManage && (
-        <Form method="post">
-          <input type="hidden" name="intent" value="remove-connection" />
-          <input type="hidden" name="connectionId" value={conn.id} />
-          <Button type="submit" variant="outline" size="sm">
-            Remove
-          </Button>
-        </Form>
+        <div className="flex items-center gap-2">
+          {conn.provider === "codex" ? (
+            <ConnectCodexDialog connection={conn} />
+          ) : (
+            <ConnectApiKeyDialog connection={conn} />
+          )}
+          {conn.provider === "codex" && active && (
+            <RecoverConnectionDialog connection={conn} />
+          )}
+          <Form method="post">
+            <input type="hidden" name="intent" value="remove-connection" />
+            <input type="hidden" name="connectionId" value={conn.id} />
+            <Button type="submit" variant="outline" size="sm">
+              Disconnect
+            </Button>
+          </Form>
+        </div>
       )}
     </li>
   );
 }
 
 /** Add a validated write-only OpenRouter, Anthropic, or OpenAI Platform key connection. */
-function ConnectApiKeyDialog() {
+function ConnectApiKeyDialog({ connection }: { connection?: ModelConnection }) {
   const [open, setOpen] = useState(false);
-  const [provider, setProvider] = useState<ApiKeyProviderId>("openrouter");
+  const [provider, setProvider] = useState<ApiKeyProviderId>(
+    (connection?.provider as ApiKeyProviderId) ?? "openrouter",
+  );
   const fetcher = useFetcher<typeof action>();
 
   useEffect(() => {
@@ -956,22 +973,35 @@ function ConnectApiKeyDialog() {
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>
         <Button type="button" size="sm">
-          Connect API key
+          {connection ? "Reauthenticate" : "Connect API key"}
         </Button>
       </DialogTrigger>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>Connect an API-key provider</DialogTitle>
+          <DialogTitle>
+            {connection
+              ? `Reauthenticate ${connection.label}`
+              : "Connect an API-key provider"}
+          </DialogTitle>
           <DialogDescription>
-            harnesst validates the key before sealing it. Keys are write-only and
-            are sent directly to agent instances for this exact connection.
+            harnesst validates the key before sealing it. Keys are write-only
+            and are sent directly to agent instances for this exact connection.
           </DialogDescription>
         </DialogHeader>
         <fetcher.Form method="post" className="space-y-4">
           <input type="hidden" name="intent" value="connect-api-key" />
+          <input
+            type="hidden"
+            name="connectionId"
+            value={connection?.id ?? ""}
+          />
+          {connection && (
+            <input type="hidden" name="provider" value={connection.provider} />
+          )}
           <div className="space-y-1.5">
             <Label htmlFor="provider">Provider</Label>
             <select
+              disabled={!!connection}
               id="provider"
               name="provider"
               aria-label="Provider"
@@ -990,6 +1020,7 @@ function ConnectApiKeyDialog() {
             <Label htmlFor="connectionLabel">Connection name</Label>
             <Input
               id="connectionLabel"
+              defaultValue={connection?.label}
               name="label"
               required
               maxLength={80}
@@ -1018,7 +1049,11 @@ function ConnectApiKeyDialog() {
             </p>
           )}
           <Button type="submit" disabled={fetcher.state !== "idle"}>
-            {fetcher.state === "idle" ? "Connect provider" : "Validating…"}
+            {fetcher.state === "idle"
+              ? connection
+                ? "Update credentials"
+                : "Connect provider"
+              : "Validating…"}
           </Button>
         </fetcher.Form>
       </DialogContent>
@@ -1028,7 +1063,7 @@ function ConnectApiKeyDialog() {
 
 type CodexConnectResponse =
   | {
-      deviceAuthId: string;
+      attemptId: string;
       userCode: string;
       interval: number;
       verificationUrl: string;
@@ -1042,24 +1077,27 @@ type CodexConnectResponse =
  * verification URL, then poll until they authorize — closing and revalidating on success so the
  * connections list refreshes.
  */
-function ConnectCodexDialog() {
+function ConnectCodexDialog({ connection }: { connection?: ModelConnection }) {
   const [open, setOpen] = useState(false);
   const fetcher = useFetcher<CodexConnectResponse>();
   const revalidator = useRevalidator();
   const [device, setDevice] = useState<{
-    deviceAuthId: string;
+    attemptId: string;
     userCode: string;
     verificationUrl: string;
     interval: number;
   } | null>(null);
   const started = useRef(false);
+  const cancel = useFetcher();
+  const openRef = useRef(open);
+  openRef.current = open;
 
   // Kick off the device-code request once per open.
   useEffect(() => {
     if (open && !started.current) {
       started.current = true;
       fetcher.submit(
-        { intent: "start" },
+        { intent: "start", connectionId: connection?.id ?? "" },
         { method: "post", action: "/api/connections/codex" },
       );
     }
@@ -1075,9 +1113,16 @@ function ConnectCodexDialog() {
   useEffect(() => {
     const d = fetcher.data;
     if (!d) return;
-    if ("deviceAuthId" in d && d.deviceAuthId) {
+    if ("attemptId" in d && d.attemptId) {
+      if (!openRef.current) {
+        cancel.submit(
+          { intent: "cancel", attemptId: d.attemptId },
+          { method: "post", action: "/api/connections/codex" },
+        );
+        return;
+      }
       setDevice({
-        deviceAuthId: d.deviceAuthId,
+        attemptId: d.attemptId,
         userCode: d.userCode,
         verificationUrl: d.verificationUrl,
         interval: d.interval,
@@ -1088,44 +1133,64 @@ function ConnectCodexDialog() {
       setDevice(null);
       revalidator.revalidate();
     }
-  }, [fetcher.data, revalidator]);
+  }, [fetcher.data]);
 
   // Poll for authorization at the server-provided interval while the dialog is open.
   useEffect(() => {
-    if (!open || !device) return;
-    const timer = setInterval(
+    if (
+      !open ||
+      !device ||
+      fetcher.state !== "idle" ||
+      (fetcher.data && "error" in fetcher.data)
+    )
+      return;
+    const timer = setTimeout(
       () => {
         fetcher.submit(
           {
             intent: "poll",
-            deviceAuthId: device.deviceAuthId,
-            userCode: device.userCode,
+            attemptId: device.attemptId,
           },
           { method: "post", action: "/api/connections/codex" },
         );
       },
       Math.max(device.interval, 1) * 1000,
     );
-    return () => clearInterval(timer);
+    return () => clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, device]);
+  }, [open, device, fetcher.state, fetcher.data]);
 
   const error =
     fetcher.data && "error" in fetcher.data ? fetcher.data.error : null;
 
   return (
-    <Dialog open={open} onOpenChange={setOpen}>
+    <Dialog
+      open={open}
+      onOpenChange={(next) => {
+        if (!next && device)
+          cancel.submit(
+            { intent: "cancel", attemptId: device.attemptId },
+            { method: "post", action: "/api/connections/codex" },
+          );
+        setOpen(next);
+      }}
+    >
       <DialogTrigger asChild>
         <Button type="button" size="sm">
-          Connect OpenAI Codex
+          {connection ? "Reauthenticate" : "Connect OpenAI Codex"}
         </Button>
       </DialogTrigger>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>Connect OpenAI Codex</DialogTitle>
+          <DialogTitle>
+            {connection
+              ? `Reauthenticate ${connection.label}`
+              : "Connect OpenAI Codex"}
+          </DialogTitle>
           <DialogDescription>
-            Sign in with your ChatGPT subscription to run agents on your Codex
-            plan.
+            {connection
+              ? "Sign in to the same OpenAI account. Your connection ID, models, effort, and sessions will stay unchanged."
+              : "Sign in with your ChatGPT subscription. Reconnecting the same account restores its existing connection."}
           </DialogDescription>
         </DialogHeader>
         {error ? (
@@ -1152,6 +1217,68 @@ function ConnectCodexDialog() {
         ) : (
           <p className="text-sm text-muted-foreground">Starting…</p>
         )}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function RecoverConnectionDialog({
+  connection,
+}: {
+  connection: ModelConnection;
+}) {
+  const fetcher = useFetcher<typeof action>();
+  return (
+    <Dialog>
+      <DialogTrigger asChild>
+        <Button variant="outline" size="sm">
+          Recover deleted ID
+        </Button>
+      </DialogTrigger>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Recover a deleted Codex connection</DialogTitle>
+          <DialogDescription>
+            Restore old agent and session references using {connection.label}.
+            The deleted account identity cannot be inferred. Verify the original
+            account from your records before linking it.
+          </DialogDescription>
+        </DialogHeader>
+        <fetcher.Form method="post" className="space-y-4">
+          <input type="hidden" name="intent" value="recover-connection" />
+          <input type="hidden" name="connectionId" value={connection.id} />
+          <Label htmlFor={`old-${connection.id}`}>Deleted connection ID</Label>
+          <Input
+            id={`old-${connection.id}`}
+            name="oldId"
+            required
+            pattern="[a-z]{12}"
+            placeholder="12 lowercase letters"
+          />
+          <label className="flex gap-2 text-sm">
+            <input type="checkbox" name="verified" value="yes" required />I
+            verified that the deleted connection used the same OpenAI account as{" "}
+            {connection.label} ({connection.accountEmail ?? connection.id}).
+          </label>
+          <p className="text-sm text-muted-foreground">
+            This mapping is recorded in the audit log. Previously cleared
+            selections cannot be reconstructed; references that still contain
+            the deleted ID will work again.
+          </p>
+          {fetcher.data && "error" in fetcher.data && (
+            <p role="alert" className="text-sm text-destructive">
+              {fetcher.data.error}
+            </p>
+          )}
+          {fetcher.data && "ok" in fetcher.data && (
+            <p role="status">
+              Recovery mapping saved. Existing references can resume.
+            </p>
+          )}
+          <Button disabled={fetcher.state !== "idle"} type="submit">
+            Restore references
+          </Button>
+        </fetcher.Form>
       </DialogContent>
     </Dialog>
   );

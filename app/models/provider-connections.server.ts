@@ -10,10 +10,14 @@
  * promise map collapses concurrent gateway requests onto one refresh) and always persists a rotated
  * refresh token. A dead grant marks the connection `expired` and throws `InvalidGrantError`.
  */
-import { and, asc, desc, eq } from "drizzle-orm";
+import { and, asc, desc, eq, sql } from "drizzle-orm";
 
 import { db } from "~/db/client.server";
-import { modelProviderConnections } from "~/db/schema";
+import {
+  modelProviderConnections,
+  modelConnectionAliases,
+  auditLog,
+} from "~/db/schema";
 import { decodeKey, open, seal } from "~/seams/oss/secretbox";
 import {
   InvalidGrantError,
@@ -23,6 +27,7 @@ import { validateProviderApiKey } from "~/models/provider-catalog.server";
 import {
   MODEL_PROVIDERS,
   isApiKeyProviderId,
+  isProviderConnectionId,
   isModelProviderId,
   providerConnectionApiKeyEnvName,
   type ApiKeyProviderId,
@@ -43,6 +48,7 @@ export interface ModelConnection {
 
 /** Gateway-side view including the unsealed tokens. NEVER return this to a loader/client. */
 export interface GatewayConnection {
+  credentialVersion: number;
   id: string;
   orgId: string;
   provider: ModelProviderId;
@@ -132,15 +138,57 @@ export async function createApiKeyConnection(
     label: string;
     apiKey: string;
     createdBy?: string | null;
+    connectionId?: string;
   },
   deps: { validate?: typeof validateProviderApiKey } = {},
 ): Promise<ModelConnection> {
   if (!isApiKeyProviderId(input.provider)) {
     throw new Error("This provider does not accept API-key connections.");
   }
+  const [existing] = input.connectionId
+    ? await db
+        .select()
+        .from(modelProviderConnections)
+        .where(
+          and(
+            eq(modelProviderConnections.orgId, input.orgId),
+            eq(modelProviderConnections.id, input.connectionId),
+            eq(modelProviderConnections.provider, input.provider),
+          ),
+        )
+    : [];
+  if (input.connectionId && !existing)
+    throw new Error(
+      "This provider connection is unavailable in this workspace.",
+    );
   const apiKey = input.apiKey.trim();
   await (deps.validate ?? validateProviderApiKey)(input.provider, apiKey);
   const sealed = sealApiKeyCredential(apiKey);
+  if (existing) {
+    const [updated] = await db
+      .update(modelProviderConnections)
+      .set({
+        ...sealed,
+        status: "active",
+        credentialVersion: existing.credentialVersion + 1,
+        updatedAt: new Date(),
+      })
+      .where(
+        and(
+          eq(modelProviderConnections.id, existing.id),
+          eq(
+            modelProviderConnections.credentialVersion,
+            existing.credentialVersion,
+          ),
+        ),
+      )
+      .returning();
+    if (!updated)
+      throw new Error(
+        "This connection changed while the key was being validated. Try again.",
+      );
+    return toDisplayModelConnection(updated);
+  }
   const [row] = await db
     .insert(modelProviderConnections)
     .values({
@@ -157,28 +205,83 @@ export async function createApiKeyConnection(
   return toDisplayModelConnection(row);
 }
 
-/** Create a Codex connection, sealing its access + refresh tokens. Returns the display row. */
-export async function createCodexConnection(input: {
-  orgId: string;
-  label: string;
-  accountEmail: string | null;
-  accountId: string | null;
-  accessToken: string;
-  refreshToken: string;
-  expiresAt: Date | null;
-  createdBy?: string | null;
-}): Promise<ModelConnection> {
-  const key = secretsKey();
-  const access = seal(key, input.accessToken);
-  const refresh = seal(key, input.refreshToken);
-  const [row] = await db
-    .insert(modelProviderConnections)
-    .values({
-      orgId: input.orgId,
-      provider: "codex",
-      label: input.label,
+type ConnectionTransaction = Parameters<
+  Parameters<typeof db.transaction>[0]
+>[0];
+
+/** Serialize account matching within a workspace, including concurrent first-time connects. */
+export async function createCodexConnection(
+  input: {
+    orgId: string;
+    label: string;
+    accountEmail: string | null;
+    accountId: string | null;
+    accessToken: string;
+    refreshToken: string;
+    expiresAt: Date | null;
+    createdBy?: string | null;
+    connectionId?: string;
+    credentialVersion?: number;
+  },
+  transaction?: ConnectionTransaction,
+): Promise<ModelConnection> {
+  if (
+    !input.accessToken ||
+    !input.refreshToken ||
+    !input.accountId ||
+    !input.expiresAt ||
+    !Number.isFinite(input.expiresAt.getTime()) ||
+    input.expiresAt <= new Date()
+  ) {
+    throw new Error(
+      "OpenAI did not return a complete grant and account identity. Existing credentials have not changed; try signing in again.",
+    );
+  }
+  const save = async (tx: ConnectionTransaction) => {
+    await tx.execute(
+      sql`select pg_advisory_xact_lock(hashtext(${input.orgId}), 391)`,
+    );
+    const rows = await tx
+      .select()
+      .from(modelProviderConnections)
+      .where(
+        and(
+          eq(modelProviderConnections.orgId, input.orgId),
+          eq(modelProviderConnections.provider, "codex"),
+        ),
+      )
+      .for("update");
+    const matching = rows.filter((row) => row.accountId === input.accountId);
+    const target = input.connectionId
+      ? rows.find((row) => row.id === input.connectionId)
+      : matching[0];
+    if (input.connectionId && !target)
+      throw new Error(
+        "This Codex connection is unavailable in this workspace.",
+      );
+    if (target && target.accountId !== input.accountId) {
+      throw new Error(
+        "Sign in to the same OpenAI account as this connection. No credentials or selections were changed.",
+      );
+    }
+    if (!input.connectionId && matching.length > 1) {
+      throw new Error(
+        "Several connections use this OpenAI account. Close this dialog and choose Reauthenticate on the connection you want to renew.",
+      );
+    }
+    if (
+      target &&
+      input.credentialVersion !== undefined &&
+      target.credentialVersion !== input.credentialVersion
+    ) {
+      throw new Error(
+        "This connection changed during sign-in. Close this dialog and try again.",
+      );
+    }
+    const access = seal(secretsKey(), input.accessToken);
+    const refresh = seal(secretsKey(), input.refreshToken);
+    const credentials = {
       accountEmail: input.accountEmail,
-      accountId: input.accountId,
       accessTokenCiphertext: access.ciphertext,
       accessTokenIv: access.iv,
       accessTokenAuthTag: access.authTag,
@@ -187,10 +290,113 @@ export async function createCodexConnection(input: {
       refreshTokenAuthTag: refresh.authTag,
       accessTokenExpiresAt: input.expiresAt,
       status: "active",
-      createdBy: input.createdBy ?? null,
-    })
-    .returning();
-  return toDisplayModelConnection(row);
+      updatedAt: new Date(),
+    };
+    const [row] = target
+      ? await tx
+          .update(modelProviderConnections)
+          .set({
+            ...credentials,
+            credentialVersion: target.credentialVersion + 1,
+          })
+          .where(eq(modelProviderConnections.id, target.id))
+          .returning()
+      : await tx
+          .insert(modelProviderConnections)
+          .values({
+            ...credentials,
+            orgId: input.orgId,
+            provider: "codex",
+            label: input.label,
+            accountId: input.accountId,
+            createdBy: input.createdBy ?? null,
+          })
+          .returning();
+    return toDisplayModelConnection(row);
+  };
+  return transaction ? save(transaction) : db.transaction(save);
+}
+
+/** Resolve only explicit recovery mappings; never substitute the workspace default. */
+export async function resolveModelConnectionId(
+  orgId: string,
+  id: string,
+): Promise<string> {
+  const [alias] = await db
+    .select()
+    .from(modelConnectionAliases)
+    .where(
+      and(
+        eq(modelConnectionAliases.orgId, orgId),
+        eq(modelConnectionAliases.oldId, id),
+      ),
+    )
+    .limit(1);
+  return alias?.connectionId ?? id;
+}
+
+export async function recoverDeletedCodexConnection(input: {
+  orgId: string;
+  oldId: string;
+  connectionId: string;
+  verifiedBy: string;
+  verified: boolean;
+}): Promise<void> {
+  if (!input.verified || !isProviderConnectionId(input.oldId)) {
+    throw new Error(
+      "Enter the deleted connection ID and confirm you verified the original OpenAI account.",
+    );
+  }
+  await db.transaction(async (tx) => {
+    await tx.execute(
+      sql`select pg_advisory_xact_lock(hashtext(${input.orgId}), 391)`,
+    );
+    const [existing] = await tx
+      .select()
+      .from(modelProviderConnections)
+      .where(eq(modelProviderConnections.id, input.oldId));
+    if (existing)
+      throw new Error(
+        "That connection still exists. Reauthenticate it directly.",
+      );
+    const [target] = await tx
+      .select()
+      .from(modelProviderConnections)
+      .where(
+        and(
+          eq(modelProviderConnections.orgId, input.orgId),
+          eq(modelProviderConnections.id, input.connectionId),
+          eq(modelProviderConnections.provider, "codex"),
+          eq(modelProviderConnections.status, "active"),
+        ),
+      )
+      .for("update");
+    if (!target?.accountId)
+      throw new Error(
+        "Choose an active Codex connection with a verified provider account ID.",
+      );
+    const [alias] = await tx
+      .select()
+      .from(modelConnectionAliases)
+      .where(
+        and(
+          eq(modelConnectionAliases.orgId, input.orgId),
+          eq(modelConnectionAliases.oldId, input.oldId),
+        ),
+      );
+    if (alias)
+      throw new Error("That deleted ID already has a recovery mapping.");
+    await tx.insert(modelConnectionAliases).values(input);
+    await tx
+      .insert(auditLog)
+      .values({
+        orgId: input.orgId,
+        actorUserId: input.verifiedBy,
+        action: "model_provider_recovery_verified",
+        target: input.oldId,
+        meta: { connectionId: target.id, accountId: target.accountId },
+      });
+  });
 }
 
 /** Every connection for an org, newest first — display metadata only. */
@@ -230,18 +436,19 @@ export async function getActiveModelConnection(
   orgId: string,
   id: string,
 ): Promise<ModelConnection | null> {
+  const resolvedId = await resolveModelConnectionId(orgId, id);
   const [row] = await db
     .select()
     .from(modelProviderConnections)
     .where(
       and(
-        eq(modelProviderConnections.id, id),
+        eq(modelProviderConnections.id, resolvedId),
         eq(modelProviderConnections.orgId, orgId),
         eq(modelProviderConnections.status, "active"),
       ),
     )
     .limit(1);
-  return row ? toDisplayModelConnection(row) : null;
+  return row ? { ...toDisplayModelConnection(row), id } : null;
 }
 
 /** Active Codex connections for an org (drives the model-picker union + gateway injection). */
@@ -287,30 +494,57 @@ export async function renameModelConnection(
     );
 }
 
-/** Delete a connection, org-checked. */
-export async function deleteModelConnection(
+/** Disconnect credentials while retaining identity and every model/effort reference. */
+export async function disconnectModelConnection(
   orgId: string,
   id: string,
 ): Promise<void> {
   await db
-    .delete(modelProviderConnections)
+    .update(modelProviderConnections)
+    .set({
+      status: "revoked",
+      credentialVersion: sql`${modelProviderConnections.credentialVersion} + 1`,
+      apiKeyCiphertext: null,
+      apiKeyIv: null,
+      apiKeyAuthTag: null,
+      accessTokenCiphertext: null,
+      accessTokenIv: null,
+      accessTokenAuthTag: null,
+      refreshTokenCiphertext: null,
+      refreshTokenIv: null,
+      refreshTokenAuthTag: null,
+      accessTokenExpiresAt: null,
+      updatedAt: new Date(),
+    })
     .where(
       and(
-        eq(modelProviderConnections.id, id),
         eq(modelProviderConnections.orgId, orgId),
+        eq(modelProviderConnections.id, id),
       ),
     );
 }
 
-/** Flip a connection's status (e.g. a dead refresh token → "expired"). */
+/** Compare-and-swap prevents a stale refresh failure from expiring a renewed grant. */
 export async function markConnectionStatus(
   id: string,
   status: ConnectionStatus,
-): Promise<void> {
-  await db
+  version: number,
+): Promise<boolean> {
+  const rows = await db
     .update(modelProviderConnections)
-    .set({ status, updatedAt: new Date() })
-    .where(eq(modelProviderConnections.id, id));
+    .set({
+      status,
+      updatedAt: new Date(),
+      credentialVersion: sql`${modelProviderConnections.credentialVersion} + 1`,
+    })
+    .where(
+      and(
+        eq(modelProviderConnections.id, id),
+        eq(modelProviderConnections.credentialVersion, version),
+      ),
+    )
+    .returning({ id: modelProviderConnections.id });
+  return rows.length === 1;
 }
 
 /** Server-only view of one API-key connection. Never return this object from a loader. */
@@ -319,6 +553,7 @@ export interface ApiKeyConnectionSecret {
   orgId: string;
   provider: ApiKeyProviderId;
   apiKey: string;
+  credentialVersion?: number;
 }
 
 /** Pure env projection; input order decides each provider's conventional default alias. */
@@ -360,7 +595,13 @@ export async function getApiKeyConnection(
   if (!row || !isApiKeyProviderId(row.provider)) return null;
   const apiKey = openApiKeyCredential(row);
   return apiKey
-    ? { id: row.id, orgId: row.orgId, provider: row.provider, apiKey }
+    ? {
+        id: row.id,
+        orgId: row.orgId,
+        provider: row.provider,
+        apiKey,
+        credentialVersion: row.credentialVersion,
+      }
     : null;
 }
 
@@ -430,6 +671,7 @@ export async function getConnectionForGateway(
     throw new Error(`Unknown model provider on connection ${row.id}.`);
   }
   return {
+    credentialVersion: row.credentialVersion,
     id: row.id,
     orgId: row.orgId,
     provider: row.provider,
@@ -445,11 +687,12 @@ export async function getConnectionForGateway(
 export async function persistRefreshedTokens(
   id: string,
   tokens: { accessToken: string; refreshToken: string; expiresAt: Date | null },
-): Promise<void> {
+  version: number,
+): Promise<boolean> {
   const key = secretsKey();
   const access = seal(key, tokens.accessToken);
   const refresh = seal(key, tokens.refreshToken);
-  await db
+  const rows = await db
     .update(modelProviderConnections)
     .set({
       accessTokenCiphertext: access.ciphertext,
@@ -460,9 +703,17 @@ export async function persistRefreshedTokens(
       refreshTokenAuthTag: refresh.authTag,
       accessTokenExpiresAt: tokens.expiresAt,
       status: "active",
+      credentialVersion: sql`${modelProviderConnections.credentialVersion} + 1`,
       updatedAt: new Date(),
     })
-    .where(eq(modelProviderConnections.id, id));
+    .where(
+      and(
+        eq(modelProviderConnections.id, id),
+        eq(modelProviderConnections.credentialVersion, version),
+      ),
+    )
+    .returning({ id: modelProviderConnections.id });
+  return rows.length === 1;
 }
 
 /** Refresh when the access token is within this margin of expiry. */
@@ -488,8 +739,12 @@ export async function getFreshAccessToken(
   deps: {
     load?: typeof getConnectionForGateway;
     refresh?: typeof refreshCodexTokens;
-    persist?: typeof persistRefreshedTokens;
-    markStatus?: typeof markConnectionStatus;
+    persist?: (
+      ...args: Parameters<typeof persistRefreshedTokens>
+    ) => Promise<boolean | void>;
+    markStatus?: (
+      ...args: Parameters<typeof markConnectionStatus>
+    ) => Promise<boolean | void>;
     now?: () => number;
   } = {},
 ): Promise<FreshAccess> {
@@ -514,34 +769,55 @@ export async function getFreshAccessToken(
     return { accessToken: conn.accessToken, accountId: conn.accountId };
   }
 
-  const existing = inflightRefresh.get(connectionId);
+  const refreshKey = `${connectionId}:${conn.credentialVersion}`;
+  const existing = inflightRefresh.get(refreshKey);
   if (existing) return existing;
 
-  const run = (async (): Promise<FreshAccess> => {
-    if (!conn.refreshToken) {
-      await markStatus(connectionId, "expired");
+  const currentAccess = async (): Promise<FreshAccess> => {
+    const current = await load(connectionId);
+    if (!current || current.status !== "active" || !current.accessToken) {
       throw new InvalidGrantError(
-        "This provider connection has no refresh token — reconnect it in Org settings.",
+        "Reauthenticate OpenAI Codex in workspace connections.",
       );
     }
+    return { accessToken: current.accessToken, accountId: current.accountId };
+  };
+  const run = (async (): Promise<FreshAccess> => {
     try {
+      if (!conn.refreshToken) {
+        throw new InvalidGrantError(
+          "This provider connection has no refresh token — reconnect it in Org settings.",
+        );
+      }
       const tokens = await refresh(conn.refreshToken);
       const expiry = new Date(now() + tokens.expiresIn * 1000);
-      await persist(connectionId, {
-        accessToken: tokens.accessToken,
-        refreshToken: tokens.refreshToken || conn.refreshToken,
-        expiresAt: expiry,
-      });
+      const saved = await persist(
+        connectionId,
+        {
+          accessToken: tokens.accessToken,
+          refreshToken: tokens.refreshToken || conn.refreshToken,
+          expiresAt: expiry,
+        },
+        conn.credentialVersion,
+      );
+      if (saved === false) return currentAccess();
       return { accessToken: tokens.accessToken, accountId: conn.accountId };
     } catch (error) {
       if (error instanceof InvalidGrantError) {
-        await markStatus(connectionId, "expired");
+        if (
+          (await markStatus(
+            connectionId,
+            "expired",
+            conn.credentialVersion,
+          )) === false
+        )
+          return currentAccess();
       }
       throw error;
     } finally {
-      inflightRefresh.delete(connectionId);
+      inflightRefresh.delete(refreshKey);
     }
   })();
-  inflightRefresh.set(connectionId, run);
+  inflightRefresh.set(refreshKey, run);
   return run;
 }

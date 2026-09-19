@@ -103,7 +103,12 @@ export async function requestDeviceCode(
     throw new Error("Codex device-login response is missing expected fields.");
   }
   const interval = Math.max(Math.trunc(Number(data.interval) || 5), 1);
-  return { deviceAuthId, userCode, interval, verificationUrl: `${base}/codex/device` };
+  return {
+    deviceAuthId,
+    userCode,
+    interval,
+    verificationUrl: `${base}/codex/device`,
+  };
 }
 
 /** Server-generated PKCE pair + authorization code returned once the user authorizes. */
@@ -244,10 +249,12 @@ function readTokenResponse(json: unknown): CodexTokens {
 
 /**
  * Decode a JWT payload (the middle base64url segment) WITHOUT verifying the signature. We only use
- * the claims for display (email) and to read the ChatGPT account id header — never for trust — so
- * signature verification is unnecessary. Null on anything malformed.
+ * claims from tokens returned directly by the trusted OAuth endpoint. Never call identity
+ * extraction on client-supplied tokens. Null on anything malformed.
  */
-export function decodeJwtClaims(token: string | null | undefined): Record<string, unknown> | null {
+export function decodeJwtClaims(
+  token: string | null | undefined,
+): Record<string, unknown> | null {
   if (typeof token !== "string" || token.split(".").length !== 3) return null;
   try {
     const payload = token.split(".")[1];
@@ -294,7 +301,9 @@ export function extractAccountIdentity(input: {
   return { email, accountId };
 }
 
-function accountIdFromClaims(claims: Record<string, unknown> | null): string | null {
+function accountIdFromClaims(
+  claims: Record<string, unknown> | null,
+): string | null {
   if (!claims) return null;
   const top = claims.chatgpt_account_id;
   if (typeof top === "string" && top) return top;
@@ -304,7 +313,7 @@ function accountIdFromClaims(claims: Record<string, unknown> | null): string | n
     const nested = authObj.chatgpt_account_id;
     if (typeof nested === "string" && nested) return nested;
     const orgs = authObj.organizations;
-    if (Array.isArray(orgs) && orgs.length > 0) {
+    if (Array.isArray(orgs) && orgs.length === 1) {
       const first = orgs[0] as Record<string, unknown> | undefined;
       if (first && typeof first.id === "string" && first.id) return first.id;
     }

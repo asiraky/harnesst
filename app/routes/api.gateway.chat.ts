@@ -20,6 +20,7 @@ import { codexApiBase, InvalidGrantError } from "~/connections/codex.server";
 import { parseCodexModelId } from "~/models/codex-catalog";
 import {
   getConnectionForGateway,
+  resolveModelConnectionId,
   getFreshAccessToken,
 } from "~/models/provider-connections.server";
 import {
@@ -118,10 +119,19 @@ export async function action({ request }: ActionFunctionArgs) {
     await finishEvalModelCall(activeEvalGrantId).catch(() => {});
   };
 
-  const conn = await getConnectionForGateway(parsed.connectionId);
+  const recoveryUrl = new URL(
+    `/settings/connections#connection-${parsed.connectionId}`,
+    process.env.BETTER_AUTH_URL || request.url,
+  ).href;
+  const reauthenticate = `OpenAI Codex needs authentication. Reauthenticate: ${recoveryUrl}. If this ID was deleted, use Recover deleted ID after verifying the original account.`;
+  const resolvedId = await resolveModelConnectionId(
+    orgId!,
+    parsed.connectionId,
+  );
+  const conn = await getConnectionForGateway(resolvedId);
   if (!conn) {
     await releaseEvalCall();
-    return errorResponse("Model connection not found.", 404);
+    return errorResponse(reauthenticate, 404);
   }
   if (conn.orgId !== orgId || conn.provider !== "codex") {
     await releaseEvalCall();
@@ -130,14 +140,11 @@ export async function action({ request }: ActionFunctionArgs) {
 
   let access;
   try {
-    access = await getFreshAccessToken(parsed.connectionId);
+    access = await getFreshAccessToken(resolvedId);
   } catch (error) {
     if (error instanceof InvalidGrantError) {
       await releaseEvalCall();
-      return errorResponse(
-        "This Codex connection is no longer valid — reconnect it in Org settings.",
-        403,
-      );
+      return errorResponse(reauthenticate, 403);
     }
     await releaseEvalCall();
     return errorResponse(
@@ -175,6 +182,8 @@ export async function action({ request }: ActionFunctionArgs) {
   if (!upstream.ok || !upstream.body) {
     const text = await upstream.text().catch(() => "");
     await releaseEvalCall();
+    if (upstream.status === 401 || upstream.status === 403)
+      return errorResponse(reauthenticate, 403);
     return errorResponse(
       `Codex backend error (HTTP ${upstream.status})${text ? `: ${text}` : "."}`,
       upstream.status >= 400 && upstream.status < 600 ? upstream.status : 502,

@@ -1,3 +1,4 @@
+import { Link } from "react-router";
 import { useState } from "react";
 import { Button } from "~/components/ui/button";
 
@@ -15,10 +16,24 @@ export function TurnError({
   busy?: boolean;
 }) {
   const [showDetail, setShowDetail] = useState(false);
+  const needsCodexAuth =
+    /OpenAI Codex needs authentication|Reauthenticate OpenAI Codex/.test(
+      `${message} ${detail ?? ""}`,
+    );
+  const errorDetail = detail || (needsCodexAuth ? message : null);
   return (
     <div className="space-y-2">
-      <p className="whitespace-pre-wrap text-destructive">{message}</p>
-      {(detail || (retryable && onRetry)) && (
+      <p className="whitespace-pre-wrap text-destructive">
+        {needsCodexAuth
+          ? "OpenAI Codex needs authentication. Reauthenticate the connection to resume this conversation with your existing model and effort selections."
+          : message}
+      </p>
+      {needsCodexAuth && (
+        <Link className="text-sm underline" to="/settings/connections">
+          Reauthenticate OpenAI Codex
+        </Link>
+      )}
+      {(errorDetail || (retryable && onRetry)) && (
         <div className="flex flex-wrap items-center gap-3">
           {retryable && onRetry && (
             <Button
@@ -31,7 +46,7 @@ export function TurnError({
               Retry
             </Button>
           )}
-          {detail && (
+          {errorDetail && (
             <button
               type="button"
               className="text-xs text-muted-foreground underline underline-offset-2"
@@ -42,9 +57,9 @@ export function TurnError({
           )}
         </div>
       )}
-      {showDetail && detail && (
+      {showDetail && errorDetail && (
         <pre className="overflow-x-auto rounded-lg bg-muted/50 p-3 font-mono text-xs text-muted-foreground">
-          {detail}
+          {errorDetail}
         </pre>
       )}
     </div>
