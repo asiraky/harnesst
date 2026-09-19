@@ -202,8 +202,8 @@ export const drizzleDataStore: DataStore = {
         .limit(1);
       return row ?? null;
     },
-    async setImageRef(id, imageRef) {
-      await db.update(releases).set({ imageRef }).where(eq(releases.id, id));
+    async setImageRef(id, imageRef, provenance) {
+      await db.update(releases).set({ imageRef, artifactProvenance: provenance ?? null }).where(eq(releases.id, id));
     },
     async listByProject(projectId) {
       return db
@@ -266,6 +266,7 @@ export const drizzleDataStore: DataStore = {
           releaseId: deployments.releaseId,
           version: releases.version,
           gitSha: releases.gitSha,
+          artifactProvenance: deployments.artifactProvenance,
         })
         .from(deployments)
         .innerJoin(releases, eq(deployments.releaseId, releases.id))

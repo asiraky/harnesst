@@ -28,6 +28,7 @@ function liveDep(releaseId: string): DeploymentWithRelease {
     releaseId,
     version: "v1",
     gitSha: "a".repeat(40),
+    artifactProvenance: null,
   };
 }
 

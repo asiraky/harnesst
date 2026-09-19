@@ -337,6 +337,7 @@ export function makeFakeStore(): FakeStore {
           version: input.version,
           gitSha: input.gitSha,
           imageRef: null,
+          artifactProvenance: null,
           changelog: input.changelog ?? null,
           createdBy: input.createdBy ?? null,
           createdAt: new Date(seq),
@@ -354,9 +355,9 @@ export function makeFakeStore(): FakeStore {
           ) ?? null
         );
       },
-      async setImageRef(rid, imageRef) {
+      async setImageRef(rid, imageRef, provenance) {
         const r = releases.get(rid);
-        if (r) releases.set(rid, { ...r, imageRef });
+        if (r) releases.set(rid, { ...r, imageRef, artifactProvenance: provenance ?? null });
       },
       async listByProject(projectId) {
         return [...releases.values()]
@@ -384,6 +385,7 @@ export function makeFakeStore(): FakeStore {
           id: id("dep"),
           environmentId: input.environmentId,
           releaseId: input.releaseId,
+          artifactProvenance: null,
           status: input.status,
           trafficWeight: input.trafficWeight,
           url: null,
@@ -438,6 +440,7 @@ export function makeFakeStore(): FakeStore {
               releaseId: d.releaseId,
               version: rel?.version ?? "?",
               gitSha: rel?.gitSha ?? "?",
+              artifactProvenance: d.artifactProvenance,
             };
           });
       },

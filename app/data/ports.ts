@@ -7,6 +7,7 @@
  *
  * Row types are the schema's inferred selects, so the fake and the real impl can't drift.
  */
+import type { ArtifactProvenance } from "~/deploy/artifact-provenance.server";
 import type {
   agentLinks,
   agents,
@@ -49,6 +50,7 @@ export interface DeploymentWithRelease {
   releaseId: string;
   version: string;
   gitSha: string;
+  artifactProvenance: ArtifactProvenance | null;
 }
 
 export interface AgentRepo {
@@ -104,7 +106,7 @@ export interface ReleaseRepo {
   }): Promise<Release>;
   findById(id: string): Promise<Release | null>;
   findByCommit(agentId: string, gitSha: string): Promise<Release | null>;
-  setImageRef(id: string, imageRef: string): Promise<void>;
+  setImageRef(id: string, imageRef: string, provenance?: ArtifactProvenance): Promise<void>;
 }
 
 export interface DeploymentRepo {
@@ -123,7 +125,7 @@ export interface DeploymentRepo {
   }): Promise<Deployment>;
   update(
     id: string,
-    patch: Partial<Pick<Deployment, "status" | "url" | "errorDetail" | "trafficWeight" | "envRevision">>,
+    patch: Partial<Pick<Deployment, "status" | "url" | "errorDetail" | "trafficWeight" | "envRevision" | "artifactProvenance">>,
   ): Promise<Deployment>;
   /**
    * Compare-and-set a deployment during background lifecycle reconciliation. Returns null when
@@ -132,7 +134,7 @@ export interface DeploymentRepo {
   updateIfStatus(
     id: string,
     expectedStatus: string,
-    patch: Partial<Pick<Deployment, "status" | "url" | "errorDetail" | "trafficWeight" | "envRevision">>,
+    patch: Partial<Pick<Deployment, "status" | "url" | "errorDetail" | "trafficWeight" | "envRevision" | "artifactProvenance">>,
   ): Promise<Deployment | null>;
   listByEnvironment(environmentId: string): Promise<DeploymentWithRelease[]>;
   /** Set every currently-live deployment in the env to draining at weight 0 (rollback). */

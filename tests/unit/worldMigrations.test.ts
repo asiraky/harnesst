@@ -13,7 +13,11 @@ describe("runWorldMigrations", () => {
       throw new Error(`unexpected docker call: ${args.join(" ")}`);
     });
 
-    await runWorldMigrations("harnesst/proj-x:abc", "postgres://world", runDocker);
+    await runWorldMigrations(
+      "harnesst/proj-x:abc",
+      "postgres://world",
+      runDocker,
+    );
 
     expect(runDocker).toHaveBeenCalledTimes(2);
     expect(runDocker).toHaveBeenLastCalledWith([
@@ -29,7 +33,11 @@ describe("runWorldMigrations", () => {
   it("runs the Workflow setup script when it is present", async () => {
     const runDocker = vi.fn(async (_args: string[]) => "");
 
-    await runWorldMigrations("harnesst/proj-x:abc", "postgres://world", runDocker);
+    await runWorldMigrations(
+      "harnesst/proj-x:abc",
+      "postgres://world",
+      runDocker,
+    );
 
     expect(runDocker).toHaveBeenCalledTimes(4);
     expect(runDocker.mock.calls[2]?.[0]).toEqual([
@@ -55,6 +63,40 @@ describe("runWorldMigrations", () => {
       "node",
       WORLD_POSTGRES_SETUP_SCRIPT,
     ]);
+  });
+
+  it("runs migrations using the recorded immutable build image rather than a mutable tag", async () => {
+    const runDocker = vi.fn(async (_args: string[]) => "");
+    await runWorldMigrations(
+      "mutable:tag",
+      "postgres://world",
+      runDocker,
+      "sha256:pinned",
+    );
+    expect(runDocker.mock.calls[0][0]).toEqual([
+      "image",
+      "inspect",
+      "sha256:pinned",
+    ]);
+    for (const [args] of runDocker.mock.calls.slice(1)) {
+      expect(args).toContain("sha256:pinned");
+      expect(args).not.toContain("mutable:tag-build");
+    }
+  });
+
+  it("fails if the recorded immutable build image is missing", async () => {
+    const runDocker = vi.fn(async (_args: string[]) => {
+      throw new Error("missing");
+    });
+    await expect(
+      runWorldMigrations(
+        "mutable:tag",
+        "postgres://world",
+        runDocker,
+        "sha256:pinned",
+      ),
+    ).rejects.toThrow("Artifact verification failed");
+    expect(runDocker).toHaveBeenCalledOnce();
   });
 
   it("fails before setup when Postgres is unreachable from the container", async () => {

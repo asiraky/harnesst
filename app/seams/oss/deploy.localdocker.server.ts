@@ -37,6 +37,10 @@ import { createHash } from "node:crypto";
 import { promisify } from "node:util";
 
 import postgres from "postgres";
+import {
+  verifyArtifactImage,
+  verifyArtifactContainer,
+} from "~/deploy/artifact-provenance.server";
 
 import {
   commandErrorText,
@@ -484,11 +488,17 @@ export async function runWorldMigrations(
   imageRef: string,
   dbUrl: string,
   runDocker: DockerRunner = docker,
+  buildDigest?: string,
 ): Promise<void> {
-  const buildTag = buildStageTagFor(imageRef);
+  const buildTag = buildDigest ?? buildStageTagFor(imageRef);
   try {
     await runDocker(["image", "inspect", buildTag]);
-  } catch {
+  } catch (error) {
+    if (buildDigest)
+      throw new Error(
+        `Artifact verification failed: build image ${buildDigest} is unavailable`,
+        { cause: error },
+      );
     return; // no build-stage image — nothing to migrate
   }
 
@@ -639,8 +649,15 @@ export const localDockerTarget: DeployTarget = {
         detail: "no image to run (build did not produce one)",
       };
     }
+    if (req.isolateSessionWorkspace && !req.provenance) {
+      throw new Error(
+        "Artifact verification failed: member deployment has no source provenance.",
+      );
+    }
+    const runtimeImage = req.provenance?.runtimeDigest ?? req.imageRef;
+    if (req.provenance) await verifyArtifactImage(runtimeImage, req.provenance);
     if (req.isolateSessionWorkspace) {
-      if (!(await imageHasSessionWorkspaceRuntime(req.imageRef))) {
+      if (!(await imageHasSessionWorkspaceRuntime(runtimeImage))) {
         return {
           status: "failed",
           detail:
@@ -672,7 +689,12 @@ export const localDockerTarget: DeployTarget = {
     // The world-local FILE store shared via the volume below has no such guarantee — see the
     // known-limitation note on the volume mount.
     const dbUrl = await provisionWorldDb(req.worldKey);
-    await runWorldMigrations(req.imageRef, dbUrl);
+    await runWorldMigrations(
+      req.imageRef,
+      dbUrl,
+      docker,
+      req.provenance?.buildDigest,
+    );
     // The Postgres World reads WORKFLOW_POSTGRES_URL; DATABASE_URL kept for authored tools.
     const envArgs = Object.entries({
       ...req.env,
@@ -729,7 +751,7 @@ export const localDockerTarget: DeployTarget = {
       "-p",
       `127.0.0.1:0:${AUX_PORT}`,
       ...envArgs,
-      req.imageRef,
+      runtimeImage,
     ]);
 
     const url = await instanceUrl(name);
@@ -739,7 +761,10 @@ export const localDockerTarget: DeployTarget = {
       DEPLOY_HEALTH_TIMEOUT_MS,
       async () => (await inspectRunning(name)) === true,
     );
-    if (healthy) return { status: "live", url };
+    if (healthy) {
+      if (req.provenance) await verifyArtifactContainer(name, req.provenance);
+      return { status: "live", url };
+    }
     return {
       status: "failed",
       url,
