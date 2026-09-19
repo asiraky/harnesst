@@ -133,3 +133,13 @@ export function providerConnectionEnvName(
 
 /** Explicit alias retained for call sites where the credential kind is useful context. */
 export const providerConnectionApiKeyEnvName = providerConnectionEnvName;
+
+/** Shared preflight/gateway guidance, preserving the chosen reference instead of proposing a fallback. */
+export function modelConnectionRecoveryMessage(model: string): string {
+  const reference = parseProviderModelReference(model);
+  const provider = reference
+    ? MODEL_PROVIDERS[reference.provider].displayName
+    : "Model provider";
+  const link = `/settings/connections${reference ? `#connection-${reference.connectionId}` : ""}`;
+  return `${provider} needs authentication. Reauthenticate: ${link}. Your model and effort selections are preserved.`;
+}

@@ -16,21 +16,21 @@ export function TurnError({
   busy?: boolean;
 }) {
   const [showDetail, setShowDetail] = useState(false);
-  const needsCodexAuth =
-    /OpenAI Codex needs authentication|Reauthenticate OpenAI Codex/.test(
+  const authProvider =
+    /(OpenAI Codex|OpenAI Platform|OpenRouter|Anthropic|Model provider) needs authentication/.exec(
       `${message} ${detail ?? ""}`,
-    );
-  const errorDetail = detail || (needsCodexAuth ? message : null);
+    )?.[1];
+  const errorDetail = detail || (authProvider ? message : null);
   return (
     <div className="space-y-2">
       <p className="whitespace-pre-wrap text-destructive">
-        {needsCodexAuth
-          ? "OpenAI Codex needs authentication. Reauthenticate the connection to resume this conversation with your existing model and effort selections."
+        {authProvider
+          ? `${authProvider} needs authentication. Reauthenticate the connection to resume this conversation with your existing model and effort selections.`
           : message}
       </p>
-      {needsCodexAuth && (
+      {authProvider && (
         <Link className="text-sm underline" to="/settings/connections">
-          Reauthenticate OpenAI Codex
+          Reauthenticate {authProvider}
         </Link>
       )}
       {(errorDetail || (retryable && onRetry)) && (

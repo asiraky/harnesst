@@ -1,3 +1,4 @@
+import { modelConnectionRecoveryMessage } from "~/models/provider-reference";
 /**
  * FOH streaming turn (resource route, action only) — the front-of-house sibling of the
  * playground stream route (D20 copy, not a shared refactor). Differences from the playground:
@@ -138,8 +139,7 @@ export async function action(args: ActionFunctionArgs) {
   if (requestedModelId && !requestedModel) {
     throw data(
       {
-        error:
-          "That model is not available from an active provider connection in this workspace.",
+        error: modelConnectionRecoveryMessage(requestedModelId),
       },
       { status: 400 },
     );
@@ -238,8 +238,7 @@ export async function action(args: ActionFunctionArgs) {
   if (effectiveModel && !effectiveModelOwned) {
     throw data(
       {
-        error:
-          "This conversation's model is no longer available. Choose a model from an active provider connection.",
+        error: modelConnectionRecoveryMessage(effectiveModel),
       },
       { status: 400 },
     );
@@ -310,9 +309,8 @@ export async function action(args: ActionFunctionArgs) {
   // Re-check on the CLAIMED row so a stale pre-wake snapshot cannot allow a partial batch.
   // Rejecting releases the claim without touching the park: eve has not been contacted.
   if (session.pendingInputAt) {
-    const pendingItems = await getRuntime().data.inboxItems.findPendingBySession(
-      session.id,
-    );
+    const pendingItems =
+      await getRuntime().data.inboxItems.findPendingBySession(session.id);
     const pendingIds = new Set(
       pendingItems.flatMap((item) =>
         (item.kind === "question" || item.kind === "approval") && item.requestId

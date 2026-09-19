@@ -771,7 +771,10 @@ export default function Playground({ loaderData }: Route.ComponentProps) {
           busy={false}
           disabled={busy}
           placeholder="Deployed model"
-          triggerClassName={cn(CONTROL_PILL, "h-9 max-w-44 font-normal sm:max-w-56")}
+          triggerClassName={cn(
+            CONTROL_PILL,
+            "h-9 max-w-44 font-normal sm:max-w-56",
+          )}
           effortTriggerClassName={CONTROL_PILL}
           onCommit={changeModel}
         />
@@ -855,7 +858,9 @@ export default function Playground({ loaderData }: Route.ComponentProps) {
         )}
         {sendError && (
           <Alert variant="destructive" className="mb-4">
-            <AlertDescription>{sendError}</AlertDescription>
+            <AlertDescription>
+              <TurnError message={sendError} />
+            </AlertDescription>
           </Alert>
         )}
       </>

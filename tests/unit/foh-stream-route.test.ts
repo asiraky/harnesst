@@ -867,3 +867,36 @@ describe("FOH stream route", () => {
     ).rejects.toMatchObject({ init: { status: 404 } });
   });
 });
+
+describe("model connection recovery during session preflight", () => {
+  it.each(["codex", "anthropic"])(
+    "preserves a stored %s pin and returns a provider-specific recovery link",
+    async (provider) => {
+      mocks.getFohSessionForViewer.mockResolvedValue(
+        sessionRow({
+          modelId: `${provider}/abcdefghijkl/model`,
+          effort: "high",
+        }),
+      );
+      mocks.ownsWorkspaceModelReference.mockResolvedValueOnce(false);
+      const result = await action(
+        args({
+          agentId: "agent_1",
+          playgroundSessionId: "ps_1",
+          message: "continue",
+        }),
+      ).catch((error) => error);
+      expect(result.init.status).toBe(400);
+      expect(result.data.error).toContain(
+        provider === "codex"
+          ? "OpenAI Codex needs authentication"
+          : "Anthropic needs authentication",
+      );
+      expect(result.data.error).toContain(
+        "/settings/connections#connection-abcdefghijkl",
+      );
+      expect(mocks.setPlaygroundSessionModel).not.toHaveBeenCalled();
+      expect(mocks.streamTurnResponse).not.toHaveBeenCalled();
+    },
+  );
+});

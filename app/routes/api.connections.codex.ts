@@ -13,7 +13,11 @@
 import { and, eq, gt, lt } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import { db } from "~/db/client.server";
-import { modelConnectionLogins, modelProviderConnections } from "~/db/schema";
+import {
+  auditLog,
+  modelConnectionLogins,
+  modelProviderConnections,
+} from "~/db/schema";
 import { data, redirect, type ActionFunctionArgs } from "react-router";
 
 import { getSessionAuth } from "~/auth/session.server";
@@ -26,7 +30,6 @@ import {
   requestDeviceCode,
 } from "~/connections/codex.server";
 import { auth as betterAuth } from "~/lib/auth.server";
-import { recordAudit } from "~/managed/audit.server";
 import { createCodexConnection } from "~/models/provider-connections.server";
 
 async function canManageWorkspace(
@@ -56,24 +59,29 @@ export async function action(args: ActionFunctionArgs) {
   if (intent === "start") {
     try {
       const connectionId = String(form.get("connectionId") ?? "");
-      let credentialVersion: number | null = null;
-      if (connectionId) {
-        const [target] = await db
-          .select()
-          .from(modelProviderConnections)
-          .where(
-            and(
-              eq(modelProviderConnections.id, connectionId),
-              eq(modelProviderConnections.orgId, org.id),
-              eq(modelProviderConnections.provider, "codex"),
-            ),
-          );
-        if (!target)
-          return data({
-            error: "This Codex connection is unavailable in this workspace.",
-          });
-        credentialVersion = target.credentialVersion;
-      }
+      const connections = await db
+        .select({
+          id: modelProviderConnections.id,
+          credentialVersion: modelProviderConnections.credentialVersion,
+        })
+        .from(modelProviderConnections)
+        .where(
+          and(
+            eq(modelProviderConnections.orgId, org.id),
+            eq(modelProviderConnections.provider, "codex"),
+          ),
+        );
+      const target = connectionId
+        ? connections.find((row) => row.id === connectionId)
+        : undefined;
+      if (connectionId && !target)
+        return data({
+          error: "This Codex connection is unavailable in this workspace.",
+        });
+      const credentialVersion = target?.credentialVersion ?? null;
+      const connectionVersions = Object.fromEntries(
+        connections.map((row) => [row.id, row.credentialVersion]),
+      );
       const device = await requestDeviceCode();
       await db
         .delete(modelConnectionLogins)
@@ -85,6 +93,7 @@ export async function action(args: ActionFunctionArgs) {
         userId: auth.user.id,
         connectionId: connectionId || null,
         credentialVersion,
+        connectionVersions,
         deviceAuthId: device.deviceAuthId,
         userCode: device.userCode,
         expiresAt: new Date(Date.now() + 15 * 60 * 1000),
@@ -150,7 +159,7 @@ export async function action(args: ActionFunctionArgs) {
         idToken: tokens.idToken,
         accessToken: tokens.accessToken,
       });
-      const connection = await db.transaction(async (tx) => {
+      await db.transaction(async (tx) => {
         const [consumed] = await tx
           .delete(modelConnectionLogins)
           .where(
@@ -161,7 +170,7 @@ export async function action(args: ActionFunctionArgs) {
           throw new Error(
             "Sign-in was cancelled or expired. Existing credentials were preserved.",
           );
-        return createCodexConnection(
+        const connection = await createCodexConnection(
           {
             orgId: org.id,
             label: identity.email ?? "Codex",
@@ -173,17 +182,18 @@ export async function action(args: ActionFunctionArgs) {
             createdBy: auth.user!.id,
             connectionId: attempt.connectionId ?? undefined,
             credentialVersion: attempt.credentialVersion ?? undefined,
+            connectionVersions: attempt.connectionVersions,
           },
           tx,
         );
-      });
-      await recordAudit({
-        orgId: org.id,
-        actorUserId: auth.user.id,
-        action: attempt.connectionId
-          ? "model_provider_reauthenticated"
-          : "model_provider_connected",
-        target: connection.id,
+        await tx.insert(auditLog).values({
+          orgId: org.id,
+          actorUserId: auth.user!.id,
+          action: attempt.connectionId
+            ? "model_provider_reauthenticated"
+            : "model_provider_connected",
+          target: connection.id,
+        });
       });
       return data({ done: true });
     } catch (error) {

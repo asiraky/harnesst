@@ -222,6 +222,7 @@ export async function createCodexConnection(
     createdBy?: string | null;
     connectionId?: string;
     credentialVersion?: number;
+    connectionVersions?: Record<string, number>;
   },
   transaction?: ConnectionTransaction,
 ): Promise<ModelConnection> {
@@ -269,10 +270,17 @@ export async function createCodexConnection(
         "Several connections use this OpenAI account. Close this dialog and choose Reauthenticate on the connection you want to renew.",
       );
     }
+    const expectedVersion = input.connectionId
+      ? input.credentialVersion
+      : target && input.connectionVersions
+        ? input.connectionVersions[target.id]
+        : undefined;
     if (
       target &&
-      input.credentialVersion !== undefined &&
-      target.credentialVersion !== input.credentialVersion
+      ((input.connectionVersions !== undefined &&
+        expectedVersion === undefined) ||
+        (expectedVersion !== undefined &&
+          target.credentialVersion !== expectedVersion))
     ) {
       throw new Error(
         "This connection changed during sign-in. Close this dialog and try again.",
@@ -387,15 +395,13 @@ export async function recoverDeletedCodexConnection(input: {
     if (alias)
       throw new Error("That deleted ID already has a recovery mapping.");
     await tx.insert(modelConnectionAliases).values(input);
-    await tx
-      .insert(auditLog)
-      .values({
-        orgId: input.orgId,
-        actorUserId: input.verifiedBy,
-        action: "model_provider_recovery_verified",
-        target: input.oldId,
-        meta: { connectionId: target.id, accountId: target.accountId },
-      });
+    await tx.insert(auditLog).values({
+      orgId: input.orgId,
+      actorUserId: input.verifiedBy,
+      action: "model_provider_recovery_verified",
+      target: input.oldId,
+      meta: { connectionId: target.id, accountId: target.accountId },
+    });
   });
 }
 
@@ -428,7 +434,29 @@ export async function listActiveModelConnections(
       asc(modelProviderConnections.createdAt),
       asc(modelProviderConnections.id),
     );
-  return rows.map(toDisplayModelConnection);
+  const canonical = rows.map(toDisplayModelConnection);
+  const aliases = await db
+    .select()
+    .from(modelConnectionAliases)
+    .where(eq(modelConnectionAliases.orgId, orgId));
+  const byId = new Map(
+    canonical.map((connection) => [connection.id, connection]),
+  );
+  return [
+    ...canonical,
+    ...aliases.flatMap((alias) => {
+      const connection = byId.get(alias.connectionId);
+      return connection?.provider === "codex"
+        ? [
+            {
+              ...connection,
+              id: alias.oldId,
+              label: `${connection.label} (recovered ${alias.oldId})`,
+            },
+          ]
+        : [];
+    }),
+  ];
 }
 
 /** Resolve one exact active connection, scoped to its owning org. */

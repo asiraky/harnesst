@@ -1,3 +1,4 @@
+import { modelConnectionRecoveryMessage } from "~/models/provider-reference";
 /**
  * Playground streaming turn (resource route, action only). The page POSTs a message here and
  * reads back an NDJSON stream of the turn as it runs. The disconnect-safe drain + persistence +
@@ -64,8 +65,7 @@ export async function action(args: ActionFunctionArgs) {
   if (requestedModelId && !requestedModel) {
     throw data(
       {
-        error:
-          "That model is not available from an active provider connection in this workspace.",
+        error: modelConnectionRecoveryMessage(requestedModelId),
       },
       { status: 400 },
     );
@@ -122,8 +122,7 @@ export async function action(args: ActionFunctionArgs) {
   if (effectiveModel && !effectiveModelOwned) {
     throw data(
       {
-        error:
-          "This conversation's model is no longer available. Choose a model from an active provider connection.",
+        error: modelConnectionRecoveryMessage(effectiveModel),
       },
       { status: 400 },
     );

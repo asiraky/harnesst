@@ -1270,6 +1270,10 @@ export const modelConnectionLogins = pgTable("model_connection_logins", {
     .references(() => user.id, { onDelete: "cascade" }),
   connectionId: varchar("connection_id", { length: 12 }),
   credentialVersion: integer("credential_version"),
+  connectionVersions: jsonb("connection_versions")
+    .$type<Record<string, number>>()
+    .notNull()
+    .default({}),
   deviceAuthId: text("device_auth_id").notNull(),
   userCode: text("user_code").notNull(),
   processing: boolean("processing").notNull().default(false),

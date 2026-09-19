@@ -253,6 +253,13 @@
       "when": 1789781060097,
       "tag": "0035_model_connection_lifecycle",
       "breakpoints": true
+    },
+    {
+      "idx": 36,
+      "version": "7",
+      "when": 1789782471749,
+      "tag": "0036_fence_implicit_codex_login",
+      "breakpoints": true
     }
   ]
 }

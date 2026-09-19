@@ -535,8 +535,7 @@ export default function FohSession({ loaderData }: Route.ComponentProps) {
   const pendingRequestIds = pendingRequests.map((request) => request.requestId);
   const pendingBatchKey = `${sessionId}:${pendingRequestIds.join("\u0000")}`;
   const queuedAnswers = useMemo(
-    () =>
-      answerQueue.batchKey === pendingBatchKey ? answerQueue.items : [],
+    () => (answerQueue.batchKey === pendingBatchKey ? answerQueue.items : []),
     [answerQueue, pendingBatchKey],
   );
   const queuedRequestIds = useMemo(
@@ -544,8 +543,9 @@ export default function FohSession({ loaderData }: Route.ComponentProps) {
     [queuedAnswers],
   );
   const pendingRequest =
-    pendingRequests.find((request) => !queuedRequestIds.has(request.requestId)) ??
-    null;
+    pendingRequests.find(
+      (request) => !queuedRequestIds.has(request.requestId),
+    ) ?? null;
   // Only a request that ACCEPTS typed input turns the composer into the answer box — an
   // options-only approval is answered by its buttons, never by free text.
   const typedAnswerRequest =
@@ -865,9 +865,9 @@ export default function FohSession({ loaderData }: Route.ComponentProps) {
                 </p>
               )}
               {sendError && (
-                <p className="mb-4 rounded-md border border-destructive/40 bg-destructive/5 px-3 py-2 text-sm text-destructive">
-                  {sendError}
-                </p>
+                <div className="mb-4 rounded-md border border-destructive/40 bg-destructive/5 px-3 py-2 text-sm">
+                  <TurnError message={sendError} />
+                </div>
               )}
             </>
           }
@@ -975,7 +975,10 @@ export default function FohSession({ loaderData }: Route.ComponentProps) {
           {typedAnswerRequest && !busy && (
             <p className="mb-2 pl-1 text-xs text-muted-foreground">
               Your reply answers the current request above
-              {channelLabel ? ` and goes back to the ${channelLabel} thread` : ""}.
+              {channelLabel
+                ? ` and goes back to the ${channelLabel} thread`
+                : ""}
+              .
             </p>
           )}
           <ChatComposer
@@ -986,7 +989,7 @@ export default function FohSession({ loaderData }: Route.ComponentProps) {
                 ? `Answer ${agentName}’s question…`
                 : pendingRequest
                   ? `Use the approval controls above…`
-                : `Message ${agentName}…`
+                  : `Message ${agentName}…`
             }
             busy={busy}
             disabled={Boolean(pendingRequest && !typedAnswerRequest)}

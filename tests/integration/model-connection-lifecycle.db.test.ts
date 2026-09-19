@@ -56,6 +56,7 @@ import { resolveTargetModel } from "~/models/agent-model-config.server";
 import {
   ownsWorkspaceModelReference,
   findWorkspaceModel,
+  listWorkspaceModels,
 } from "~/models/union.server";
 import { action as login } from "~/routes/api.connections.codex";
 import { action as chat } from "~/routes/api.gateway.chat";
@@ -392,6 +393,12 @@ describe.runIf(process.env.HARNESST_DB_SMOKE === "1")(
           `codex/${input.oldId}/gpt-5.5`,
         ),
       ).not.toBeNull();
+      const pickerModels = await listWorkspaceModels(authState.orgId);
+      expect(
+        pickerModels.some(
+          (model) => model.id === `codex/${input.oldId}/gpt-5.5`,
+        ),
+      ).toBe(true);
       const upstream = vi.fn(
         async (_url: string | URL | Request, _options?: RequestInit) =>
           new Response(
@@ -456,6 +463,33 @@ describe.runIf(process.env.HARNESST_DB_SMOKE === "1")(
         (await submit({ intent: "poll", attemptId: start.attemptId })).error,
       ).toBeTruthy();
     });
+
+    it.each(["disconnect", "renew", "create"])(
+      "fences generic Connect against a later %s",
+      async (change) => {
+        let connection =
+          change === "create" ? null : await createCodexConnection(grant());
+        const attempt = await submit({ intent: "start" });
+        if (change === "create")
+          connection = await createCodexConnection(grant());
+        else if (change === "disconnect")
+          await disconnectModelConnection(authState.orgId, connection!.id);
+        else
+          await createCodexConnection(
+            grant({
+              connectionId: connection!.id,
+              accessToken: "newer-authorization",
+            }),
+          );
+        const before = await getConnectionForGateway(connection!.id);
+        const result = await submit({
+          intent: "poll",
+          attemptId: attempt.attemptId,
+        });
+        expect(result.error).toContain("changed during sign-in");
+        expect(await getConnectionForGateway(connection!.id)).toEqual(before);
+      },
+    );
 
     it("cancellation during token exchange preserves the usable grant", async () => {
       const conn = await createCodexConnection(grant());
