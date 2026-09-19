@@ -143,7 +143,7 @@ export interface DeployTarget {
   /** Scale-to-zero: stop an idle instance (0 CPU/RAM); state survives in Postgres. */
   stop(deploymentId: string): Promise<void>;
   /** Wake a stopped instance. */
-  start(deploymentId: string): Promise<InstanceHealth>;
+  start(deploymentId: string, provenance?: ArtifactProvenance): Promise<InstanceHealth>;
   health(deploymentId: string): Promise<InstanceHealth>;
   /**
    * Permanently tear an instance down (environment delete): stop AND remove the container.

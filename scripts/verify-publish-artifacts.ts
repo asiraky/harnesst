@@ -19,7 +19,7 @@ const tags: string[] = [];
 try {
   const base = process.env.HARNESST_PROBE_BASE ?? "node:24-slim";
   const members = ["intake", "infra", "implementer"];
-  await Promise.all(
+  const results = await Promise.allSettled(
     members.map(async (member) => {
       const dir = path.join(scratch, member);
       await mkdir(path.join(dir, "agent"), { recursive: true });
@@ -93,6 +93,8 @@ try {
       }
     }),
   );
+  const failed = results.find((result) => result.status === "rejected");
+  if (failed?.status === "rejected") throw failed.reason;
 } finally {
   for (const tag of tags) await exec("docker", ["rmi", tag]).catch(() => {});
   await rm(scratch, { recursive: true, force: true });

@@ -40,6 +40,7 @@ import postgres from "postgres";
 import {
   verifyArtifactImage,
   verifyArtifactContainer,
+  type ArtifactProvenance,
 } from "~/deploy/artifact-provenance.server";
 
 import {
@@ -785,7 +786,7 @@ export const localDockerTarget: DeployTarget = {
     }
   },
 
-  async start(deploymentId: string): Promise<InstanceHealth> {
+  async start(deploymentId: string, provenance?: ArtifactProvenance): Promise<InstanceHealth> {
     const name = containerName(deploymentId);
     await docker(["start", name]);
     const url = await instanceUrl(name);
@@ -794,7 +795,18 @@ export const localDockerTarget: DeployTarget = {
       WAKE_HEALTH_TIMEOUT_MS,
       async () => (await inspectRunning(name)) === true,
     );
-    if (healthy) return { status: "live", url };
+    if (healthy) {
+      if (provenance) {
+        try {
+          await verifyArtifactContainer(name, provenance);
+        } catch (error) {
+          // A restarted process can run background channels even while routing rejects it.
+          await docker(["stop", name]);
+          throw error;
+        }
+      }
+      return { status: "live", url };
+    }
     return {
       status: "failed",
       url,
