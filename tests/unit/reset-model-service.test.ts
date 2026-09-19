@@ -1,3 +1,5 @@
+import { runInNewContext } from "node:vm";
+import ts from "typescript";
 import { describe, expect, it, vi } from "vitest";
 import { ensureModelProviderDependencies } from "~/eve/agentModule";
 import {
@@ -56,9 +58,17 @@ function setup(resolver = false) {
     })),
     startWorker: vi.fn(),
   };
-  const run = (targets = [target]) =>
+  const run = (
+    targets = [target],
+    projectOverrides: Partial<typeof project> = {},
+  ) =>
     resetModelsToWorkspaceDefault(
-      { project, targets, createdBy: "user", originUrl: "/repos/p/settings" },
+      {
+        project: { ...project, ...projectOverrides },
+        targets,
+        createdBy: "user",
+        originUrl: "/repos/p/settings",
+      },
       store,
       deps,
     );
@@ -71,7 +81,7 @@ describe("explicit model reset", () => {
     deps.getWorkspaceSelection = async () => ({ model: null, effort: null });
     expect(await run()).toMatchObject({
       ok: false,
-      error: expect.stringContaining("Org settings"),
+      error: expect.stringContaining("workspace default"),
     });
     expect(await store.drafts.listByProject("p")).toEqual([]);
     expect(deps.removeOverrides).not.toHaveBeenCalled();
@@ -265,4 +275,135 @@ describe("explicit model reset", () => {
     expect(deps.removeOverrides).not.toHaveBeenCalled();
     expect(deps.publish).not.toHaveBeenCalled();
   });
+  it("preserves absent delegation description when scaffolding an instruction-only child", async () => {
+    const { run, store } = setup(true);
+    const child = {
+      ...target,
+      root: `${target.root}/subagents/qa`,
+      subagentPath: "qa",
+    };
+    expect(await run([child])).toMatchObject({ ok: true, mode: "publishing" });
+    const draft = await store.drafts.get("p", `${child.root}/agent.ts`);
+    const exports: { default?: { model: unknown; description?: string } } = {};
+    runInNewContext(
+      ts.transpileModule(draft!.content!, {
+        compilerOptions: { module: ts.ModuleKind.CommonJS },
+      }).outputText,
+      {
+        exports,
+        require: (specifier: string) =>
+          specifier === "eve"
+            ? { defineAgent: (config: unknown) => config }
+            : { harnesstAgentModel: (...target: string[]) => ({ target }) },
+      },
+    );
+    expect(exports.default?.model).toEqual({ target: ["ledger", "qa"] });
+    expect(exports.default?.description).toBeUndefined();
+  });
+
+  it("names an unsupported subagent in preflight without suggesting saved work exists", async () => {
+    const { run, files, store, deps } = setup(true);
+    const child = {
+      ...target,
+      root: `${target.root}/subagents/qa`,
+      subagentPath: "qa",
+    };
+    files[`${child.root}/agent.ts`] =
+      'import { defineAgent } from "eve"; export default defineAgent({ model: custom() });';
+    const result = await run([target, child]);
+    expect(result).toMatchObject({
+      ok: false,
+      error: expect.stringContaining(
+        `Cannot reset ledger / qa (${child.root}/agent.ts):`,
+      ),
+    });
+    if (!result.ok) expect(result.error).not.toContain("saved reset changes");
+    expect(await store.drafts.listByProject("p")).toEqual([]);
+    expect(deps.removeOverrides).not.toHaveBeenCalled();
+  });
+
+  it.each(["custom historical model", "unavailable historical revision"])(
+    "redeploys validated HEAD despite %s",
+    async (failure) => {
+      const { run, deps, store } = setup(true);
+      store.seedEnvironment({
+        id: "env",
+        projectId: "p",
+        agentId: "a",
+        name: "default",
+      });
+      const release = await store.releases.insert({
+        projectId: "p",
+        agentId: "a",
+        version: "v1",
+        gitSha: "old",
+      });
+      await store.deployments.insert({
+        environmentId: "env",
+        releaseId: release.id,
+        status: "live",
+        trafficWeight: 100,
+      });
+      const read = deps.readFile;
+      deps.readFile = async (id, repo, path) => {
+        if (repo.ref === "old") {
+          if (failure === "unavailable historical revision")
+            throw new Error("Revision no longer exists");
+          return 'import { defineAgent } from "eve"; export default defineAgent({ model: custom() });';
+        }
+        return read(id, repo, path);
+      };
+      expect(await run()).toMatchObject({ ok: true, mode: "publishing" });
+      expect(deps.publish).toHaveBeenCalledOnce();
+    },
+  );
+
+  it("still fails closed when current HEAD cannot be read", async () => {
+    const { run, deps, store } = setup(true);
+    deps.readFile = async () => {
+      throw new Error("HEAD read failed");
+    };
+    expect(await run()).toMatchObject({
+      ok: false,
+      error: expect.stringContaining("HEAD read failed"),
+    });
+    expect(await store.drafts.listByProject("p")).toEqual([]);
+    expect(deps.removeOverrides).not.toHaveBeenCalled();
+    expect(deps.publish).not.toHaveBeenCalled();
+  });
+
+  it.each(["live", "building"])(
+    "inspects %s deployments when the configured environment is stale",
+    async (status) => {
+      const { run, deps, store } = setup(true);
+      store.seedEnvironment({
+        id: "env",
+        projectId: "p",
+        agentId: "a",
+        name: "actual",
+      });
+      const release = await store.releases.insert({
+        projectId: "p",
+        agentId: "a",
+        version: "v1",
+        gitSha: "old",
+      });
+      await store.deployments.insert({
+        environmentId: "env",
+        releaseId: release.id,
+        status,
+        trafficWeight: 100,
+      });
+      const read = deps.readFile;
+      deps.readFile = async (id, repo, path) =>
+        repo.ref === "old" ? legacy : read(id, repo, path);
+      expect(await run()).toMatchObject(
+        status === "live"
+          ? { ok: true, mode: "publishing" }
+          : { ok: false, error: expect.stringContaining("still starting") },
+      );
+      if (status === "building")
+        expect(deps.removeOverrides).not.toHaveBeenCalled();
+    },
+  );
 });

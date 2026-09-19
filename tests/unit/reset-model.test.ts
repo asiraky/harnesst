@@ -141,6 +141,18 @@ describe("resetAgentModelSource", () => {
     expect(evaluate(result).config.model).toEqual({ target: ["ledger"] });
   });
 
+  it.each(["reasoning:'high'", "modelContextWindowTokens:200000"])(
+    "replaces a minified selection-only declaration: %s",
+    (selection) => {
+      const source = `import {defineAgent} from 'eve';export default defineAgent({${selection}});`;
+      const result = resetAgentModelSource(source, "ledger");
+      expect(evaluate(result).config).toEqual({
+        model: { target: ["ledger"] },
+      });
+      expect(resetAgentModelSource(result, "ledger")).toBe(result);
+    },
+  );
+
   it("leaves an already inheriting module byte-identical", () => {
     const source =
       "import { defineAgent } from 'eve'; import { harnesstAgentModel } from '../harnesst/model.js'; export default defineAgent({ model: harnesstAgentModel('ledger'), tools: {} });";

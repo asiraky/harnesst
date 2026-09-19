@@ -81,6 +81,7 @@ import {
   updateTaskSteps,
 } from "~/tasks/tasks.server";
 
+import { MODEL_RESET_TASK_LABEL } from "~/models/reset-progress";
 import { draftSnapshotFingerprint } from "~/publish/draft-snapshot";
 
 export interface PublishPayload {
@@ -234,7 +235,7 @@ export async function startPublish(
         projectId: input.projectId,
         kind: "publish",
         subjectKey: "publish",
-        label: `Publishing ${drafts.length} change${drafts.length === 1 ? "" : "s"}`,
+        label: input.resetDraftFingerprint ? MODEL_RESET_TASK_LABEL : `Publishing ${drafts.length} change${drafts.length === 1 ? "" : "s"}`,
         originUrl: input.originUrl,
         steps: initialPublishSteps(),
         createdBy: input.createdBy,

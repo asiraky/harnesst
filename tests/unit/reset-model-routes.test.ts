@@ -14,13 +14,26 @@ const mocks = vi.hoisted(() => ({
   removeOverrides: vi.fn(),
   publish: vi.fn(),
   requireProject: vi.fn(),
+  modelOverrides: [] as {
+    projectId: string;
+    agentName: string;
+    subagentPath: string;
+    model: string;
+    effort: null;
+  }[],
+  resolveTargetModel: vi.fn(),
 }));
 vi.mock("~/auth/session.server", () => ({
   getSessionAuth: async () => ({
     user: { id: "owner" },
     organizationId: "org",
   }),
-  sessionLoader: vi.fn(),
+  sessionLoader: async (
+    _args: unknown,
+    callback: (input: {
+      auth: { user: { id: string }; organizationId: string };
+    }) => Promise<unknown>,
+  ) => callback({ auth: { user: { id: "owner" }, organizationId: "org" } }),
 }));
 vi.mock("~/project/guard.server", async (importOriginal) => ({
   ...(await importOriginal<typeof import("~/project/guard.server")>()),
@@ -62,12 +75,31 @@ vi.mock("~/models/agent-model-config.server", async (importOriginal) => ({
     typeof import("~/models/agent-model-config.server")
   >()),
   removeAgentModelOverrides: mocks.removeOverrides,
+  listAgentModelOverrides: async () => mocks.modelOverrides,
+  resolveTargetModel: mocks.resolveTargetModel,
 }));
 vi.mock("~/publish/pipeline.server", async (importOriginal) => ({
   ...(await importOriginal<typeof import("~/publish/pipeline.server")>()),
   startPublish: mocks.publish,
 }));
 vi.mock("~/jobs/worker.server", () => ({ ensureWorkerStarted: vi.fn() }));
+
+vi.mock("~/db/queries.server", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("~/db/queries.server")>()),
+  listAgentEnvironments: async () => [],
+}));
+vi.mock("~/observability/store.server", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("~/observability/store.server")>()),
+  listIngestTokens: async () => [],
+}));
+vi.mock("~/project/secrets.server", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("~/project/secrets.server")>()),
+  listAgentSecretRows: async () => [],
+  listSharedSecrets: async () => [],
+  listAttachments: async () => [],
+  listDismissedRequirements: async () => [],
+  listSharedAttachments: async () => [],
+}));
 
 const project = {
   id: "p",
@@ -97,6 +129,8 @@ beforeEach(() => {
   });
   mocks.store = store;
   mocks.workspaceModel = "openai/connection/gpt";
+  mocks.modelOverrides = [];
+  mocks.resolveTargetModel.mockReset().mockResolvedValue(null);
   mocks.files = {
     [`${root}/agent.ts`]: legacy,
     [`${child}/agent.ts`]: legacy,
@@ -124,6 +158,18 @@ async function post(
   const url = "https://h.example.com/repos/ledger-team/settings";
   return action({
     request: new Request(url, { method: "POST", body }),
+    url: new URL(url),
+    pattern: new URL(url).pathname,
+    params: { projectId: "p", ...params },
+    context: {} as never,
+  });
+}
+
+async function load(params: { agentName?: string; subPath?: string } = {}) {
+  const { loader } = await import("~/routes/projects.$projectId.settings");
+  const url = "https://h.example.com/repos/ledger-team/settings";
+  return loader({
+    request: new Request(url),
     url: new URL(url),
     pattern: new URL(url).pathname,
     params: { projectId: "p", ...params },
@@ -194,7 +240,7 @@ describe("reset model settings actions", () => {
       await post({}, { intent: "reset-all-model-defaults" }),
     ).toMatchObject({
       ok: false,
-      error: expect.stringContaining("Org settings"),
+      error: expect.stringContaining("workspace default"),
     });
     expect(await mocks.store!.drafts.listByProject("p")).toEqual([]);
     expect(mocks.removeOverrides).not.toHaveBeenCalled();
@@ -235,5 +281,99 @@ describe("reset model settings actions", () => {
     });
     expect(await mocks.store!.drafts.listByProject("p")).toEqual([]);
     expect(mocks.removeOverrides).not.toHaveBeenCalled();
+  });
+});
+
+describe("reset model settings loader", () => {
+  it("keeps the committed legacy model visible while its resolver reset is staged", async () => {
+    await mocks.store!.drafts.upsert({
+      projectId: "p",
+      agentId: "ledger",
+      path: `${root}/agent.ts`,
+      content: scaffoldOrgModelAgentModule("ledger"),
+    });
+    mocks.resolveTargetModel.mockResolvedValue({
+      model: "new/workspace/model",
+      effort: null,
+      source: "workspace-default",
+    });
+    expect(await load({ agentName: "ledger" })).toMatchObject({
+      model: "anthropic/connection/claude",
+      modelLegacy: true,
+      modelResetPending: true,
+      modelInherited: false,
+      modelSource: null,
+    });
+  });
+
+  it("shows the nearest legacy parent's effective model for an instruction-only child", async () => {
+    delete mocks.files[`${child}/agent.ts`];
+    mocks.files[`${child}/instructions.md`] = "Do QA";
+    expect(await load({ agentName: "ledger", subPath: "qa" })).toMatchObject({
+      model: "anthropic/connection/claude",
+      modelLegacy: true,
+      modelLegacyParent: "ledger",
+      modelInheritedFrom: "",
+      hasAgentModule: false,
+      modelSource: null,
+    });
+  });
+
+  it("retains a child's own choice while directing reset to a legacy parent first", async () => {
+    mocks.files[`${child}/agent.ts`] = legacy.replace(
+      "anthropic/connection/claude",
+      "openai/connection/pinned-child",
+    );
+    expect(await load({ agentName: "ledger", subPath: "qa" })).toMatchObject({
+      model: "openai/connection/pinned-child",
+      modelLegacy: true,
+      modelLegacyParent: "ledger",
+      modelInherited: false,
+    });
+  });
+
+  it("labels team reset targets with both pins and legacy state without leaking another repo's pin", async () => {
+    mocks.modelOverrides = [
+      {
+        projectId: "p",
+        agentName: "ledger",
+        subagentPath: "qa",
+        model: "pin",
+        effort: null,
+      },
+      {
+        projectId: "p",
+        agentName: "ledger",
+        subagentPath: "qa/reviewer",
+        model: "nested pin",
+        effort: null,
+      },
+      {
+        projectId: "another",
+        agentName: "reporter",
+        subagentPath: "",
+        model: "foreign pin",
+        effort: null,
+      },
+    ];
+    expect(await load()).toMatchObject({
+      resetScope: [
+        "ledger (legacy configuration)",
+        "ledger / qa (explicit override) (legacy configuration)",
+        "ledger / qa/reviewer (explicit override)",
+        "reporter (legacy configuration)",
+      ],
+    });
+  });
+
+  it("keeps workspace inheritance explicit even when no default resolves", async () => {
+    mocks.workspaceModel = null;
+    mocks.files[`${root}/agent.ts`] = scaffoldOrgModelAgentModule("ledger");
+    expect(await load({ agentName: "ledger" })).toMatchObject({
+      model: null,
+      modelInherited: true,
+      modelSource: "workspace-default",
+      modelLegacy: false,
+    });
   });
 });

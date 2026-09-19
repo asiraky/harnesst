@@ -10,7 +10,6 @@ import {
   orgModelModulePath,
   orgModelModuleSource,
   scaffoldOrgModelAgentModule,
-  subagentStarterDescription,
 } from "~/eve/org-model-module";
 import { subagentRootFor } from "~/eve/parse";
 import { resetAgentModelSource } from "~/eve/reset-model";
@@ -74,13 +73,14 @@ export async function resetModelsToWorkspaceDefault(
     startWorker: ensureWorkerStarted,
     ...overrides,
   };
+  let resetChangesStaged = false;
   try {
     const workspace = await deps.getWorkspaceSelection(input.project.orgId);
     if (!workspace.model) {
       return {
         ok: false,
         error:
-          "Configure a workspace default model in Org settings before resetting agents.",
+          "Configure a workspace default model in workspace Connections settings before resetting agents.",
       };
     }
     if (!input.targets.length)
@@ -150,15 +150,24 @@ export async function resetModelsToWorkspaceDefault(
       const path = `${target.root}/agent.ts`;
       const before = await read(path);
       const subagentPath = target.subagentPath ?? "";
-      const after =
-        before === null
-          ? scaffoldOrgModelAgentModule(name, {
-              subagentPath,
-              ...(subagentPath
-                ? { description: subagentStarterDescription(subagentPath) }
-                : {}),
-            })
-          : resetAgentModelSource(before, name, subagentPath);
+      let after: string;
+      try {
+        // A reset changes model selection only. In particular, adding a description to an
+        // instruction-only subagent would change the delegation metadata eve derives for it.
+        after =
+          before === null
+            ? scaffoldOrgModelAgentModule(name, { subagentPath })
+            : resetAgentModelSource(before, name, subagentPath);
+      } catch (error) {
+        const label = [
+          target.memberName,
+          ...subagentPath.split("/").filter(Boolean),
+        ].join(" / ");
+        return {
+          ok: false,
+          error: `Cannot reset ${label} (${path}): ${error instanceof Error ? error.message : String(error)}`,
+        };
+      }
       planned.set(path, after);
       if (after !== before) changes.set(path, after);
       roots.add(target.deploymentRoot);
@@ -170,12 +179,18 @@ export async function resetModelsToWorkspaceDefault(
         (a) => a.root === target.deploymentRoot && a.kind === "member",
       );
       if (agent) {
-        for (const env of environments.filter(
-          (e) =>
-            e.agentId === agent.id &&
-            (!input.project.liveEnvironmentName ||
-              e.name === input.project.liveEnvironmentName),
-        )) {
+        const memberEnvironments = environments.filter(
+          (env) => env.agentId === agent.id,
+        );
+        const configuredEnvironmentExists = memberEnvironments.some(
+          (env) => env.name === input.project.liveEnvironmentName,
+        );
+        const inspectedEnvironments = configuredEnvironmentExists
+          ? memberEnvironments.filter(
+              (env) => env.name === input.project.liveEnvironmentName,
+            )
+          : memberEnvironments;
+        for (const env of inspectedEnvironments) {
           const deployments = await store.deployments.listByEnvironment(env.id);
           if (
             deployments.some(
@@ -191,12 +206,18 @@ export async function resetModelsToWorkspaceDefault(
           for (const deployment of deployments.filter(
             (d) => d.status === "live" && d.trafficWeight > 0,
           )) {
-            const live = await read(path, deployment.gitSha);
-            if (
-              live === null ||
-              resetAgentModelSource(live, name, subagentPath) !== live
-            )
+            try {
+              const live = await read(path, deployment.gitSha);
+              if (
+                live === null ||
+                resetAgentModelSource(live, name, subagentPath) !== live
+              )
+                changes.set(path, after);
+            } catch {
+              // HEAD already passed conversion validation. An unavailable historical revision
+              // or custom legacy runtime means redeploy HEAD, not reject that valid repair.
               changes.set(path, after);
+            }
           }
         }
       }
@@ -250,6 +271,7 @@ export async function resetModelsToWorkspaceDefault(
           "Saved changes changed while preparing the reset. Review them, then retry; no reset changes were staged.",
       };
     }
+    resetChangesStaged = changes.size > 0;
     await deps.removeOverrides(input.project.orgId, keys);
     if (!changes.size) return { ok: true, mode: "applied", cacheSeconds: 30 };
     deps.startWorker();
@@ -272,7 +294,9 @@ export async function resetModelsToWorkspaceDefault(
   } catch (error) {
     return {
       ok: false,
-      error: `Reset did not finish: ${error instanceof Error ? error.message : String(error)}. Any saved reset changes are retained; retry the reset or open publish progress.`,
+      error: resetChangesStaged
+        ? `Reset did not finish: ${error instanceof Error ? error.message : String(error)}. Any saved reset changes are retained; retry the reset or open publish progress.`
+        : `Reset could not be prepared: ${error instanceof Error ? error.message : String(error)}`,
     };
   }
 }

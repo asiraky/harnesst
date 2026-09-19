@@ -35,6 +35,7 @@ import {
   redirect,
   useFetcher,
   useNavigation,
+  useLocation,
   useSearchParams,
   useSubmit,
   type ActionFunctionArgs,
@@ -47,6 +48,7 @@ import { usePublishHref } from "~/components/publish";
 import { EmptyTeamState } from "~/components/empty-team-state";
 import { LocalizedDate } from "~/components/localized-values";
 import { ModelSelection } from "~/components/model-select";
+import type { WorkspaceTask } from "~/components/workspace-tasks";
 import {
   AgentNav,
   AppShell,
@@ -84,11 +86,7 @@ import {
   createIngestToken,
   listIngestTokens,
 } from "~/observability/store.server";
-import {
-  listDrafts,
-  stageDeletions,
-  stageDraft,
-} from "~/drafts/drafts.server";
+import { listDrafts, stageDeletions, stageDraft } from "~/drafts/drafts.server";
 import {
   EMPTY_TEAM_MARKER,
   subagentRootFor,
@@ -133,8 +131,10 @@ import type { TemplateType } from "~/marketplace/manifest";
 import {
   resolveAgentModel,
   resolveTargetModel,
+  listAgentModelOverrides,
 } from "~/models/agent-model-config.server";
 import { ModelResetControl } from "~/components/model-reset-control";
+import { selectResetTask } from "~/models/reset-progress";
 import {
   resetModelsToWorkspaceDefault,
   type ModelResetTarget,
@@ -238,6 +238,8 @@ interface SettingsView {
   hasAgentModule: boolean;
   modelStaged: boolean;
   modelLegacy: boolean;
+  modelResetPending: boolean;
+  modelLegacyParent: string | null;
   workspaceDefaultModel: string | null;
   resetScope: string[];
   /** Member: secrets scope state. */
@@ -621,12 +623,10 @@ export const loader = (args: LoaderFunctionArgs) =>
         hasAgentModule: false,
         modelStaged: false,
         modelLegacy: false,
+        modelResetPending: false,
+        modelLegacyParent: null,
         workspaceDefaultModel: workspaceSelection.model,
-        resetScope: teamResetTargets(roster, [...present]).map((target) =>
-          target.subagentPath
-            ? `${target.memberName} / ${target.subagentPath}`
-            : target.memberName,
-        ),
+        resetScope: [],
         envs: [],
         scope: { environmentId: null, label: "All environments" },
         secrets: [],
@@ -658,6 +658,40 @@ export const loader = (args: LoaderFunctionArgs) =>
         teamLinks: [],
       };
 
+      if (showRepo && isTeam) {
+        const overrides = await listAgentModelOverrides(project.orgId);
+        base.resetScope = teamResetTargets(roster, [...present]).map(
+          (target) => {
+            const memberModule =
+              source.files[`${target.deploymentRoot}/agent.ts`] ?? null;
+            const resolverName =
+              (memberModule && orgResolverAgentName(memberModule)) ||
+              target.memberName;
+            const ownPath = `${target.root}/agent.ts`;
+            const ownModule =
+              source.files[ownPath] ??
+              drafts.find((draft) => draft.path === ownPath)?.content ??
+              null;
+            const labels: string[] = [];
+            if (
+              overrides.some(
+                (row) =>
+                  row.agentName === resolverName &&
+                  row.subagentPath === (target.subagentPath ?? "") &&
+                  (row.projectId === project.id || row.projectId === ""),
+              )
+            )
+              labels.push("explicit override");
+            if (ownModule && !usesOrgModelResolver(ownModule))
+              labels.push("legacy configuration");
+            const label = target.subagentPath
+              ? `${target.memberName} / ${target.subagentPath}`
+              : target.memberName;
+            return `${label}${labels.map((state) => ` (${state})`).join("")}`;
+          },
+        );
+      }
+
       if (showMember && active) {
         const agentTsPath = `${active.root}/agent.ts`;
         const agentTsDraft = drafts.find((d) => d.path === agentTsPath);
@@ -665,7 +699,19 @@ export const loader = (args: LoaderFunctionArgs) =>
           agentTsDraft !== undefined
             ? agentTsDraft.content
             : (source.files[agentTsPath] ?? null);
-        const resolverName = agentTs ? orgResolverAgentName(agentTs) : null;
+        const committedAgentTs = source.files[agentTsPath] ?? null;
+        base.modelResetPending = Boolean(
+          agentTsDraft?.content &&
+          usesOrgModelResolver(agentTsDraft.content) &&
+          committedAgentTs &&
+          !usesOrgModelResolver(committedAgentTs),
+        );
+        const effectiveAgentTs = base.modelResetPending
+          ? committedAgentTs
+          : agentTs;
+        const resolverName = effectiveAgentTs
+          ? orgResolverAgentName(effectiveAgentTs)
+          : null;
         const [envs, resolved] = await Promise.all([
           listAgentEnvironments(active.id),
           // Scoped to THIS repo (issue #344): another repo in the workspace may hold a
@@ -679,21 +725,22 @@ export const loader = (args: LoaderFunctionArgs) =>
               }).catch(() => null)
             : Promise.resolve(null),
         ]);
-        if (agentTs && usesOrgModelResolver(agentTs)) {
+        if (effectiveAgentTs && usesOrgModelResolver(effectiveAgentTs)) {
           // Resolver-backed agents are keyed by the identity embedded in agent.ts. It can differ
           // from a renamed UI roster entry, and using the roster name here makes a successful save
           // appear to snap back to the workspace default after revalidation.
           base.model = resolved?.model ?? null;
           base.effort = resolved?.effort ?? null;
-          base.modelInherited = resolved?.source === "workspace-default";
+          base.modelInherited =
+            resolved === null || resolved.source === "workspace-default";
           base.modelOverridden = resolved?.source === "override";
-          base.modelSource = resolved?.source ?? null;
-        } else if (agentTs) {
+          base.modelSource = resolved?.source ?? "workspace-default";
+        } else if (effectiveAgentTs) {
           // Legacy agents still carry their model in repo content. A staged draft wins over the
           // branch copy so Settings reflects a successful save immediately.
           base.modelLegacy = true;
-          base.model = readModel(agentTs);
-          base.effort = readReasoningEffort(agentTs);
+          base.model = readModel(effectiveAgentTs);
+          base.effort = readReasoningEffort(effectiveAgentTs);
         }
         const agentTsStaged =
           agentTsDraft !== undefined && agentTsDraft.content !== null;
@@ -770,19 +817,66 @@ export const loader = (args: LoaderFunctionArgs) =>
         base.modelStaged = drafts.some(
           (d) => d.path === ownPath && d.content !== null,
         );
-        if (ownModule && !usesOrgModelResolver(ownModule)) {
-          // A subagent carrying its own baked model is legacy repo content, like a legacy member.
+        const committedOwnModule = source.files[ownPath] ?? null;
+        base.modelResetPending = Boolean(
+          base.modelStaged &&
+          ownModule &&
+          usesOrgModelResolver(ownModule) &&
+          committedOwnModule &&
+          !usesOrgModelResolver(committedOwnModule),
+        );
+        const effectiveOwnModule = base.modelResetPending
+          ? committedOwnModule
+          : ownModule;
+        // A missing module inherits eve's nearest authored ancestor, which may still contain a
+        // literal choice outside the workspace resolver. Do not present a nonexistent default.
+        let legacyParentModule: string | null = null;
+        let foundAncestor = false;
+        const segments = target.kind === "subagent" ? target.subagentPath : [];
+        for (let depth = segments.length - 1; depth >= 0; depth--) {
+          const ancestorPath = `${subagentRootFor(target.deploymentRoot, segments.slice(0, depth))}/agent.ts`;
+          const ancestorModule = source.files[ancestorPath] ?? null;
+          if (!ancestorModule) continue;
+          if (!usesOrgModelResolver(ancestorModule)) {
+            base.modelLegacyParent = [
+              target.member,
+              ...segments.slice(0, depth),
+            ].join(" / ");
+            base.modelInheritedFrom = segments.slice(0, depth).join("/");
+            if (
+              !foundAncestor &&
+              (effectiveOwnModule === null ||
+                (committedOwnModule === null && base.modelStaged))
+            ) {
+              legacyParentModule = ancestorModule;
+              if (ownModule && usesOrgModelResolver(ownModule))
+                base.modelResetPending = true;
+            }
+            break;
+          }
+          foundAncestor = true;
+        }
+        if (legacyParentModule) {
           base.modelLegacy = true;
-          base.model = readModel(ownModule);
-          base.effort = readReasoningEffort(ownModule);
+          base.modelInherited = true;
+          base.model = readModel(legacyParentModule);
+          base.effort = readReasoningEffort(legacyParentModule);
+        } else if (
+          effectiveOwnModule &&
+          !usesOrgModelResolver(effectiveOwnModule)
+        ) {
+          base.modelLegacy = true;
+          base.model = readModel(effectiveOwnModule);
+          base.effort = readReasoningEffort(effectiveOwnModule);
         } else {
           base.model = resolved?.model ?? null;
           base.effort = resolved?.effort ?? null;
-          base.modelSource = resolved?.source ?? null;
-          base.modelInheritedFrom = resolved?.inheritedFrom ?? null;
+          base.modelSource = resolved?.source ?? "workspace-default";
+          if (!base.modelLegacyParent)
+            base.modelInheritedFrom = resolved?.inheritedFrom ?? null;
           base.modelOverridden = resolved?.source === "override";
           base.modelInherited =
-            resolved !== null && resolved.source !== "override";
+            resolved === null || resolved.source !== "override";
         }
       }
       if (showRepo) {
@@ -1808,6 +1902,8 @@ function ModelSection({
     modelInherited,
     modelOverridden,
     modelLegacy,
+    modelResetPending: stagedResetPending,
+    modelLegacyParent,
     modelSource,
     modelInheritedFrom,
     subagentPath,
@@ -1837,17 +1933,41 @@ function ModelSection({
     mode?: "staged" | "applied";
     upgraded?: boolean;
   }>();
+  const tasks = useFetcher<{ tasks: WorkspaceTask[] }>({
+    key: "workspace-tasks",
+  });
+  const publishing =
+    tasks.data?.tasks.some(
+      (task) => task.kind === "publish" && task.status === "running",
+    ) ?? false;
+  const location = useLocation();
+  const resetTask = selectResetTask(
+    tasks.data?.tasks ?? [],
+    location.pathname,
+    `/repos/${loaderData.project.slug}/settings`,
+  );
+  const modelResetPending =
+    stagedResetPending ||
+    resetTask?.status === "running" ||
+    resetTask?.status === "failed";
+  const modelBusy = fetcher.state !== "idle" || publishing;
+  const legacyParentHref = `${subagentContextPath(loaderData.project.slug, loaderData.isTeam ? member : null, modelInheritedFrom ? modelInheritedFrom.split("/") : [])}/settings`;
   const modelBadges = useMemo(
     () => (
       <>
         {modelStaged && (
           <Badge variant="outline" className="text-xs">
-            saved
+            Saved
           </Badge>
         )}
-        {modelInherited && (
+        {modelResetPending && (
           <Badge variant="outline" className="text-xs">
-            {modelSource === "parent-override"
+            Reset pending deployment
+          </Badge>
+        )}
+        {modelInherited && !modelResetPending && (
+          <Badge variant="outline" className="text-xs">
+            {modelLegacyParent || modelSource === "parent-override"
               ? "Inherits parent"
               : "Workspace default"}
           </Badge>
@@ -1875,6 +1995,8 @@ function ModelSection({
       hasAgentModule,
       modelOverridden,
       modelLegacy,
+      modelResetPending,
+      modelLegacyParent,
       modelSource,
     ],
   );
@@ -1893,10 +2015,33 @@ function ModelSection({
             " Picking a model here overrides it for this subagent only."}
         </p>
       )}
+      {modelResetPending && (
+        <p className="mb-3 text-sm text-muted-foreground">
+          {stagedResetPending
+            ? "Reset pending deployment. The saved resolver has not been published; the current configuration still uses the legacy model."
+            : "Reset pending deployment. The running agent may still use its previous model. Check publish progress or retry the reset."}
+          {!nested && loaderData.workspaceDefaultModel &&
+            ` After deployment, workspace inheritance resolves to ${loaderData.workspaceDefaultModel}.`}
+        </p>
+      )}
+      {modelSource === "workspace-default" &&
+        model === null &&
+        !modelResetPending && (
+          <p className="mb-3 text-sm text-destructive">
+            No workspace default — this agent has no model.{" "}
+            <Link
+              to="/settings/connections"
+              className="underline underline-offset-4"
+            >
+              Configure one in workspace Connections settings.
+            </Link>
+          </p>
+        )}
       <ModelSelection
         model={model}
         effort={effort}
         busy={fetcher.state !== "idle"}
+        disabled={publishing}
         onCommit={(m, nextEffort) =>
           fetcher.submit(
             { intent: "set-model", model: m, effort: nextEffort ?? "" },
@@ -1905,13 +2050,29 @@ function ModelSection({
         }
       />
       <div className="mt-3">
-        <ModelResetControl
-          projectId={loaderData.project.slug}
-          workspaceDefaultModel={loaderData.workspaceDefaultModel}
-          scope={[nested ? `${member} / ${subagentPath.join("/")}` : member]}
-          nested={nested}
-          disabled={fetcher.state !== "idle"}
-        />
+        {modelLegacyParent ? (
+          <p className="text-sm text-muted-foreground">
+            {hasAgentModule
+              ? `The parent ${modelLegacyParent} still uses a legacy model. `
+              : `Inherits ${modelLegacyParent}'s legacy model. `}
+            <Link
+              to={legacyParentHref}
+              className="underline underline-offset-4"
+            >
+              Reset {modelLegacyParent} first in its settings
+            </Link>
+            , or reset the whole team.
+          </p>
+        ) : (
+          <ModelResetControl
+            projectId={loaderData.project.slug}
+            workspaceDefaultModel={loaderData.workspaceDefaultModel}
+            scope={[nested ? `${member} / ${subagentPath.join("/")}` : member]}
+            nested={nested}
+            parentName={member}
+            disabled={modelBusy}
+          />
+        )}
       </div>
       {fetcher.data?.error && (
         <p className="mt-2 text-sm text-destructive">{fetcher.data.error}</p>

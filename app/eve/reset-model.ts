@@ -352,7 +352,7 @@ export function resetAgentModelSource(
     edits.push({ start: property.getStart(file), end, text: "" });
   }
   return edits
-    .sort((a, b) => b.start - a.start)
+    .sort((a, b) => b.start - a.start || b.end - a.end)
     .reduce(
       (result, edit) =>
         result.slice(0, edit.start) + edit.text + result.slice(edit.end),
