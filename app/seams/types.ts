@@ -13,6 +13,7 @@ import type {
   TemplateManifest,
   TemplateType,
 } from "~/marketplace/manifest";
+import type { ArtifactProvenance } from "~/deploy/artifact-provenance.server";
 import type { DataStore } from "~/data/ports";
 
 export type HarnesstMode = "oss" | "managed";
@@ -48,11 +49,14 @@ export interface BuiltArtifact {
   /** Content-addressed digest (sha256:…) — the immutable half of a Release identity. */
   digest: string;
   logs?: string;
+  provenance?: ArtifactProvenance;
 }
 
 export interface DeployRequest {
   deploymentId: string;
   imageRef: string;
+  /** Verified source manifest and immutable runtime/build image IDs. */
+  provenance?: ArtifactProvenance;
   /** Secrets + config injected as container env at start. */
   env: Record<string, string>;
   /**
@@ -92,7 +96,12 @@ export interface BuildCheckRequest {
 export type BuildCheckResult =
   /** Build passed (or the target has no toolchain and the build was skipped). When the target
    * built a real image, `provisionalTag` names it for post-commit promotion (§3.2). */
-  | { ok: true; skipped?: boolean; provisionalTag?: string }
+  | {
+      ok: true;
+      skipped?: boolean;
+      provisionalTag?: string;
+      provenance?: ArtifactProvenance;
+    }
   /** Build failed — `output` is the compiler/tool error, human-readable. */
   | { ok: false; output: string };
 
@@ -134,7 +143,7 @@ export interface DeployTarget {
   /** Scale-to-zero: stop an idle instance (0 CPU/RAM); state survives in Postgres. */
   stop(deploymentId: string): Promise<void>;
   /** Wake a stopped instance. */
-  start(deploymentId: string): Promise<InstanceHealth>;
+  start(deploymentId: string, provenance?: ArtifactProvenance): Promise<InstanceHealth>;
   health(deploymentId: string): Promise<InstanceHealth>;
   /**
    * Permanently tear an instance down (environment delete): stop AND remove the container.

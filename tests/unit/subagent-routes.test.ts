@@ -85,6 +85,18 @@ vi.mock("~/seams/index.server", () => ({
   }),
 }));
 
+// Model selection lives outside the fake data store; keep these route tests database-free.
+vi.mock("~/org/workspace.server", () => ({
+  getWorkspaceAssistantSelection: async () => ({ model: null, effort: null }),
+}));
+
+vi.mock("~/models/agent-model-config.server", async (importOriginal) => ({
+  ...(await importOriginal<
+    typeof import("~/models/agent-model-config.server")
+  >()),
+  resolveTargetModel: async () => null,
+}));
+
 const PROJECT = {
   id: "p1",
   orgId: "o1",

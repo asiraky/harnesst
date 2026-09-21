@@ -384,6 +384,7 @@ interface LiveTurn {
   inputRequests: ChatInputRequest[];
   error: string | null;
   errorDetail: string | null;
+  errorModelId?: string | null;
   errorRetryable: boolean;
   done: boolean;
 }
@@ -421,6 +422,7 @@ export default function FohSession({ loaderData }: Route.ComponentProps) {
 
   const [live, setLive] = useState<LiveTurn | null>(null);
   const [sendError, setSendError] = useState<string | null>(null);
+  const [sendErrorModel, setSendErrorModel] = useState<string | null>(null);
   const [answerQueue, setAnswerQueue] = useState<{
     batchKey: string;
     items: Array<{ answer: ChatInputAnswer; label: string }>;
@@ -447,6 +449,7 @@ export default function FohSession({ loaderData }: Route.ComponentProps) {
       prev && prev.playgroundSessionId !== sessionId ? null : prev,
     );
     setSendError(null);
+    setSendErrorModel(null);
   }, [sessionId]);
 
   const liveSessionMismatch = live
@@ -570,6 +573,7 @@ export default function FohSession({ loaderData }: Route.ComponentProps) {
         );
 
       setSendError(null);
+      setSendErrorModel(null);
       stopRequestedRef.current = false;
       applyIfCurrent(() => ({
         playgroundSessionId: forSession,
@@ -624,7 +628,13 @@ export default function FohSession({ loaderData }: Route.ComponentProps) {
         if (!res.ok) {
           const detail = (await res.json().catch(() => null)) as {
             error?: unknown;
+            model?: unknown;
+            code?: unknown;
           } | null;
+          if (isCurrent())
+            setSendErrorModel(
+              typeof detail?.model === "string" && (detail.code === "connection_unavailable" || detail.code === "model_unavailable") ? detail.model : null,
+            );
           const errorMessage =
             typeof detail?.error === "string" ? detail.error : null;
           throw new Error(errorMessage ?? `Stream failed (${res.status}).`);
@@ -761,6 +771,7 @@ export default function FohSession({ loaderData }: Route.ComponentProps) {
 
   const stopTurn = useCallback(async () => {
     setSendError(null);
+    setSendErrorModel(null);
     const form = new FormData();
     form.set("playgroundSessionId", sessionId);
     stopRequestedRef.current = true;
@@ -865,9 +876,9 @@ export default function FohSession({ loaderData }: Route.ComponentProps) {
                 </p>
               )}
               {sendError && (
-                <p className="mb-4 rounded-md border border-destructive/40 bg-destructive/5 px-3 py-2 text-sm text-destructive">
-                  {sendError}
-                </p>
+                <div className="mb-4 rounded-md border border-destructive/40 bg-destructive/5 px-3 py-2 text-sm">
+                  <TurnError message={sendError} recoveryModelId={sendErrorModel} />
+                </div>
               )}
             </>
           }
@@ -1081,6 +1092,7 @@ type StreamEvent =
       inputRequests?: ChatInputRequest[];
       error: string | null;
       errorDetail?: string | null;
+      errorModelId?: string | null;
       errorRetryable?: boolean;
       modelId: string | null;
       version: string;
@@ -1126,6 +1138,7 @@ function reduceLive(prev: LiveTurn, evt: StreamEvent): LiveTurn {
             : prev.inputRequests,
         error: evt.error,
         errorDetail: evt.errorDetail ?? null,
+        errorModelId: evt.errorModelId ?? null,
         errorRetryable: evt.errorRetryable ?? false,
         modelId: evt.modelId ?? prev.modelId,
         activity: null,
@@ -1152,6 +1165,7 @@ function LiveBubble({
           {live.error ? (
             <TurnError
               message={live.error}
+              recoveryModelId={live.errorModelId}
               detail={live.errorDetail}
               retryable={live.errorRetryable}
               onRetry={onRetry}
@@ -1210,6 +1224,7 @@ export function AgentEntry({
           {entry.error ? (
             <TurnError
               message={entry.error}
+              recoveryModelId={entry.errorModelId}
               detail={entry.errorDetail}
               retryable={entry.errorRetryable}
               onRetry={onRetry}

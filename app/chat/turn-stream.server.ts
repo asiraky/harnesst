@@ -515,6 +515,7 @@ export function streamTurnResponse(input: {
                   structured: event.result.replyIsStructured,
                   inputRequests: event.result.inputRequests,
                   error: normalizedError?.message ?? null,
+                  errorModelId: event.result.errorModelId ?? null,
                   errorDetail: normalizedError?.detail ?? null,
                   errorRetryable: normalizedError?.retryable ?? false,
                   modelId: event.result.modelId,

@@ -20,6 +20,25 @@
  * `chatmock/utils.py`) — the same client id and endpoints the Codex CLI uses.
  */
 
+/** Finish before the route's 60-second processing lease can be reclaimed. */
+async function withOAuthDeadline<T>(
+  run: (signal: AbortSignal) => Promise<T>,
+): Promise<T> {
+  const controller = new AbortController();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<never>((_resolve, reject) => {
+    timer = setTimeout(() => {
+      controller.abort();
+      reject(new Error("Codex authentication request timed out."));
+    }, 30_000);
+  });
+  try {
+    return await Promise.race([run(controller.signal), deadline]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 /** The public Codex CLI OAuth client id (no secret). Same value the Codex CLI ships. */
 export const CODEX_CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann";
 
@@ -103,7 +122,12 @@ export async function requestDeviceCode(
     throw new Error("Codex device-login response is missing expected fields.");
   }
   const interval = Math.max(Math.trunc(Number(data.interval) || 5), 1);
-  return { deviceAuthId, userCode, interval, verificationUrl: `${base}/codex/device` };
+  return {
+    deviceAuthId,
+    userCode,
+    interval,
+    verificationUrl: `${base}/codex/device`,
+  };
 }
 
 /** Server-generated PKCE pair + authorization code returned once the user authorizes. */
@@ -120,38 +144,43 @@ export async function pollDeviceToken(
   input: { deviceAuthId: string; userCode: string },
   fetchImpl: typeof fetch = fetch,
 ): Promise<"pending" | DevicePollSuccess> {
-  const res = await fetchImpl(
-    `${codexAuthBase()}/api/accounts/deviceauth/token`,
-    {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        device_auth_id: input.deviceAuthId,
-        user_code: input.userCode,
-      }),
-    },
-  );
-  if (res.status === 403 || res.status === 404) return "pending";
-  if (!res.ok) {
-    const body = await res.text().catch(() => "");
-    throw new Error(
-      `Codex device login failed (HTTP ${res.status})${body ? `: ${body}` : "."}`,
+  return withOAuthDeadline(async (signal) => {
+    const res = await fetchImpl(
+      `${codexAuthBase()}/api/accounts/deviceauth/token`,
+      {
+        method: "POST",
+        signal,
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          device_auth_id: input.deviceAuthId,
+          user_code: input.userCode,
+        }),
+      },
     );
-  }
-  const data = (await res.json()) as {
-    authorization_code?: string;
-    code_verifier?: string;
-  };
-  if (
-    typeof data.authorization_code !== "string" ||
-    typeof data.code_verifier !== "string"
-  ) {
-    throw new Error("Codex device-token response is missing expected fields.");
-  }
-  return {
-    authorizationCode: data.authorization_code,
-    codeVerifier: data.code_verifier,
-  };
+    if (res.status === 403 || res.status === 404) return "pending";
+    if (!res.ok) {
+      const body = await res.text().catch(() => "");
+      throw new Error(
+        `Codex device login failed (HTTP ${res.status})${body ? `: ${body}` : "."}`,
+      );
+    }
+    const data = (await res.json()) as {
+      authorization_code?: string;
+      code_verifier?: string;
+    };
+    if (
+      typeof data.authorization_code !== "string" ||
+      typeof data.code_verifier !== "string"
+    ) {
+      throw new Error(
+        "Codex device-token response is missing expected fields.",
+      );
+    }
+    return {
+      authorizationCode: data.authorization_code,
+      codeVerifier: data.code_verifier,
+    };
+  });
 }
 
 export interface CodexTokens {
@@ -167,25 +196,28 @@ export async function exchangeDeviceCode(
   input: { authorizationCode: string; codeVerifier: string },
   fetchImpl: typeof fetch = fetch,
 ): Promise<CodexTokens> {
-  const base = codexAuthBase();
-  const res = await fetchImpl(`${base}/oauth/token`, {
-    method: "POST",
-    headers: { "content-type": "application/x-www-form-urlencoded" },
-    body: new URLSearchParams({
-      grant_type: "authorization_code",
-      client_id: CODEX_CLIENT_ID,
-      code: input.authorizationCode,
-      code_verifier: input.codeVerifier,
-      redirect_uri: `${base}/deviceauth/callback`,
-    }).toString(),
+  return withOAuthDeadline(async (signal) => {
+    const base = codexAuthBase();
+    const res = await fetchImpl(`${base}/oauth/token`, {
+      method: "POST",
+      signal,
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        grant_type: "authorization_code",
+        client_id: CODEX_CLIENT_ID,
+        code: input.authorizationCode,
+        code_verifier: input.codeVerifier,
+        redirect_uri: `${base}/deviceauth/callback`,
+      }).toString(),
+    });
+    if (!res.ok) {
+      const body = await res.text().catch(() => "");
+      throw new Error(
+        `Codex rejected the token exchange (HTTP ${res.status})${body ? `: ${body}` : "."}`,
+      );
+    }
+    return readTokenResponse(await res.json());
   });
-  if (!res.ok) {
-    const body = await res.text().catch(() => "");
-    throw new Error(
-      `Codex rejected the token exchange (HTTP ${res.status})${body ? `: ${body}` : "."}`,
-    );
-  }
-  return readTokenResponse(await res.json());
 }
 
 /**
@@ -244,10 +276,12 @@ function readTokenResponse(json: unknown): CodexTokens {
 
 /**
  * Decode a JWT payload (the middle base64url segment) WITHOUT verifying the signature. We only use
- * the claims for display (email) and to read the ChatGPT account id header — never for trust — so
- * signature verification is unnecessary. Null on anything malformed.
+ * claims from tokens returned directly by the trusted OAuth endpoint. Never call identity
+ * extraction on client-supplied tokens. Null on anything malformed.
  */
-export function decodeJwtClaims(token: string | null | undefined): Record<string, unknown> | null {
+export function decodeJwtClaims(
+  token: string | null | undefined,
+): Record<string, unknown> | null {
   if (typeof token !== "string" || token.split(".").length !== 3) return null;
   try {
     const payload = token.split(".")[1];
@@ -273,7 +307,7 @@ export interface AccountIdentity {
  * access token:
  *   top-level `chatgpt_account_id`
  *   → `["https://api.openai.com/auth"].chatgpt_account_id`
- *   → `["https://api.openai.com/auth"].organizations[0].id`
+ *   → the only `["https://api.openai.com/auth"].organizations` entry (multiple entries require explicit selection)
  * The email is read from the id_token's `email` claim.
  */
 export function extractAccountIdentity(input: {
@@ -294,7 +328,9 @@ export function extractAccountIdentity(input: {
   return { email, accountId };
 }
 
-function accountIdFromClaims(claims: Record<string, unknown> | null): string | null {
+function accountIdFromClaims(
+  claims: Record<string, unknown> | null,
+): string | null {
   if (!claims) return null;
   const top = claims.chatgpt_account_id;
   if (typeof top === "string" && top) return top;
@@ -304,10 +340,39 @@ function accountIdFromClaims(claims: Record<string, unknown> | null): string | n
     const nested = authObj.chatgpt_account_id;
     if (typeof nested === "string" && nested) return nested;
     const orgs = authObj.organizations;
-    if (Array.isArray(orgs) && orgs.length > 0) {
+    if (Array.isArray(orgs) && orgs.length === 1) {
       const first = orgs[0] as Record<string, unknown> | undefined;
       if (first && typeof first.id === "string" && first.id) return first.id;
     }
   }
   return null;
+}
+
+/** Candidate IDs from the trusted OAuth response, for explicit legacy account verification. */
+export function extractAccountIds(input: {
+  idToken: string | null;
+  accessToken: string | null;
+}): string[] {
+  const identity = extractAccountIdentity(input);
+  if (identity.accountId) return [identity.accountId];
+  return extractOrganizationIds(input);
+}
+
+/** Legacy versions used the first organization ID; never silently reinterpret that identity. */
+export function extractOrganizationIds(input: {
+  idToken: string | null;
+  accessToken: string | null;
+}): string[] {
+  const ids: string[] = [];
+  for (const token of [input.idToken, input.accessToken]) {
+    const claims = decodeJwtClaims(token);
+    const auth = claims?.["https://api.openai.com/auth"];
+    if (!auth || typeof auth !== "object") continue;
+    const organizations = (auth as Record<string, unknown>).organizations;
+    if (!Array.isArray(organizations)) continue;
+    for (const org of organizations) {
+      if (org && typeof org.id === "string" && org.id) ids.push(org.id);
+    }
+  }
+  return [...new Set(ids)];
 }

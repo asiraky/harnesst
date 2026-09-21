@@ -6,6 +6,7 @@ import {
 } from "react-router";
 
 import { auth } from "~/lib/auth.server";
+import { isDevTrustedOrigin } from "~/lib/auth-env.server";
 import { marketingHostRedirect } from "~/lib/marketing-host.server";
 import {
   isPublicSharePath,
@@ -117,7 +118,11 @@ function hasValidMutationOrigin(request: Request): boolean {
   const suppliedOrigin = request.headers.get("origin");
   if (!suppliedOrigin) return false;
   try {
-    return new URL(suppliedOrigin).origin === expectedOrigin;
+    const origin = new URL(suppliedOrigin).origin;
+    if (origin === expectedOrigin) return true;
+    // Sign-in already trusts the tailnet dev host. Its subsequent same-origin mutations
+    // must pass too; keep production pinned to BETTER_AUTH_URL and reject cross-host POSTs.
+    return origin === new URL(request.url).origin && isDevTrustedOrigin(origin);
   } catch {
     return false;
   }

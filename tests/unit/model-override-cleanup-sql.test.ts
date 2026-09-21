@@ -1,14 +1,12 @@
 /**
- * The two DELETE predicates over `agent_model_overrides` that no other test can reach — they are
- * pure SQL, and getting them wrong deletes someone else's configuration (issue #344).
+ * Override cleanup and workspace-default mutations must not delete someone else's configuration.
  *
  *  - `cleanupSubagentOverrides` must take the removed subagent AND its descendants, nothing
  *    shallower and nothing merely prefix-similar, and must leave a LEGACY top-level row (no
  *    project pin) alone even when the whole member goes — another repo's same-named agent may
  *    still be resolving through it;
- *  - `setWorkspaceAssistantSelection`'s "redundant pin" sweep must be restricted to top-level
- *    rows, because a subagent row equal to the new default is still a deliberate exception to its
- *    parent's selection.
+ *  - `setWorkspaceAssistantSelection` must retain every explicit pin, even when a pin equals
+ *    the new workspace default. Equality does not mean inheritance (issue #392).
  *
  * The `db` seam is faked down to the WHERE clause, which is rendered with drizzle's own dialect —
  * so the assertion is about the predicate that would reach Postgres, not about a re-implementation
@@ -18,7 +16,10 @@ import { PgDialect } from "drizzle-orm/pg-core";
 import type { SQL } from "drizzle-orm";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const captured = vi.hoisted(() => ({ deletes: [] as unknown[] }));
+const captured = vi.hoisted(() => ({
+  deletes: [] as unknown[],
+  writes: [] as unknown[],
+}));
 
 vi.mock("~/db/client.server", () => {
   const del = () => ({
@@ -28,20 +29,27 @@ vi.mock("~/db/client.server", () => {
   });
   const tx = {
     delete: del,
-    insert: () => ({ values: () => ({ onConflictDoUpdate: async () => {} }) }),
+    insert: () => ({
+      values: (row: unknown) => ({
+        onConflictDoUpdate: async () => {
+          captured.writes.push(row);
+        },
+      }),
+    }),
   };
   return {
     db: {
       delete: del,
-      transaction: async (callback: (t: typeof tx) => Promise<void>) => callback(tx),
+      transaction: async (callback: (t: typeof tx) => Promise<void>) =>
+        callback(tx),
     },
   };
 });
 
-const { cleanupSubagentOverrides } = await import(
-  "~/models/agent-model-config.server"
-);
-const { setWorkspaceAssistantSelection } = await import("~/org/workspace.server");
+const { cleanupSubagentOverrides } =
+  await import("~/models/agent-model-config.server");
+const { setWorkspaceAssistantSelection } =
+  await import("~/org/workspace.server");
 
 const dialect = new PgDialect();
 
@@ -54,6 +62,7 @@ function lastDelete(): { sql: string; params: unknown[] } {
 
 beforeEach(() => {
   captured.deletes = [];
+  captured.writes = [];
 });
 
 describe("cleanupSubagentOverrides", () => {
@@ -88,23 +97,43 @@ describe("cleanupSubagentOverrides", () => {
 });
 
 describe("setWorkspaceAssistantSelection", () => {
-  it("sweeps only top-level pins that equal the new default", async () => {
+  it("saves a new default without clearing matching agent or subagent pins", async () => {
     await setWorkspaceAssistantSelection("org_1", {
       model: "anthropic/conn_1/claude-opus-4.8",
       effort: "high",
     });
 
-    const { sql, params } = lastDelete();
-    expect(sql).toContain('"subagent_path" =');
-    // The empty string is the top-level target — subagent rows are never swept.
-    expect(params).toContain("");
-    expect(params).toContain("anthropic/conn_1/claude-opus-4.8");
-    expect(params).toContain("high");
+    expect(captured.deletes).toEqual([]);
+    expect(captured.writes).toEqual([
+      {
+        orgId: "org_1",
+        assistantModel: "anthropic/conn_1/claude-opus-4.8",
+        assistantEffort: "high",
+      },
+    ]);
   });
 
-  it("sweeps nothing when the default is cleared", async () => {
-    await setWorkspaceAssistantSelection("org_1", { model: null, effort: "high" });
+  it("preserves pins when the default changes away and back", async () => {
+    for (const model of [
+      "openai/conn_1/first",
+      "openai/conn_1/second",
+      "openai/conn_1/first",
+    ]) {
+      await setWorkspaceAssistantSelection("org_1", { model, effort: null });
+    }
+    expect(captured.deletes).toEqual([]);
+    expect(captured.writes).toHaveLength(3);
+  });
+
+  it("clears the default and its reasoning without clearing agent pins", async () => {
+    await setWorkspaceAssistantSelection("org_1", {
+      model: null,
+      effort: "high",
+    });
 
     expect(captured.deletes).toEqual([]);
+    expect(captured.writes).toEqual([
+      { orgId: "org_1", assistantModel: null, assistantEffort: null },
+    ]);
   });
 });

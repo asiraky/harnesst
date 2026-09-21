@@ -133,3 +133,80 @@ export function providerConnectionEnvName(
 
 /** Explicit alias retained for call sites where the credential kind is useful context. */
 export const providerConnectionApiKeyEnvName = providerConnectionEnvName;
+
+/** A connection-specific settings destination derived from a validated reference. */
+export function modelConnectionSettingsUrl(model: string): string {
+  const reference = parseProviderModelReference(model);
+  return `/settings/connections${reference ? `#connection-${reference.connectionId}` : ""}`;
+}
+
+/** Catalog lookup failure does not prove credentials have expired. */
+export function modelUnavailableMessage(model: string): string {
+  const reference = parseProviderModelReference(model);
+  const provider = reference
+    ? MODEL_PROVIDERS[reference.provider].displayName
+    : "Model provider";
+  return `${provider}'s selected model is unavailable. The model catalog may be unavailable or the model may no longer be offered. Review the connection at ${modelConnectionSettingsUrl(model)}, or ask a workspace owner or admin for help. Your selection is preserved.`;
+}
+
+/** Only use after checking connection ownership/status, never for a catalog miss. */
+export function modelConnectionRecoveryMessage(model: string): string {
+  const reference = parseProviderModelReference(model);
+  const provider = reference
+    ? MODEL_PROVIDERS[reference.provider].displayName
+    : "Model provider";
+  return `${provider}'s selected connection is unavailable. A workspace owner or admin can reauthenticate it or recover a deleted ID at ${modelConnectionSettingsUrl(model)}. Your model and effort selections are preserved.`;
+}
+
+/** Machine-readable context lets callers offer recovery without inspecting prose. */
+export function modelSelectionFailure(
+  model: string,
+  reason: "connection_unavailable" | "model_unavailable",
+) {
+  return {
+    error:
+      reason === "connection_unavailable"
+        ? modelConnectionRecoveryMessage(model)
+        : modelUnavailableMessage(model),
+    code: reason,
+    model,
+    recoveryUrl: modelConnectionSettingsUrl(model),
+  };
+}
+
+/** Read gateway recovery metadata before Eve's structured failure is formatted as prose. */
+export function modelConnectionFailureReference(
+  value: unknown,
+  depth = 0,
+): string | null {
+  if (depth > 10 || value == null) return null;
+  if (typeof value === "string") {
+    if (value.length > 100_000) return null;
+    try {
+      return modelConnectionFailureReference(JSON.parse(value), depth + 1);
+    } catch {
+      return null;
+    }
+  }
+  if (typeof value !== "object" || Array.isArray(value)) return null;
+  const record = value as Record<string, unknown>;
+  if (
+    record.code === "connection_unavailable" &&
+    typeof record.model === "string" &&
+    parseProviderModelReference(record.model)
+  )
+    return record.model;
+  for (const key of [
+    "error",
+    "details",
+    "detail",
+    "cause",
+    "data",
+    "responseBody",
+    "responseBodySnippet",
+  ]) {
+    const model = modelConnectionFailureReference(record[key], depth + 1);
+    if (model) return model;
+  }
+  return null;
+}

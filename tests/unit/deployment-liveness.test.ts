@@ -4,6 +4,7 @@ import type { DeploymentWithRelease } from "~/data/ports";
 import { reconcileLiveDeployments } from "~/deploy/liveness.server";
 import { ensureLiveDeploymentForEnvironment } from "~/deploy/wake.server";
 import type { DeployTarget, InstanceHealth } from "~/seams/types";
+import { fakeDeployTarget } from "../fakes/infra";
 import { makeFakeStore, type FakeStore } from "../fakes/store";
 
 let store: FakeStore;
@@ -64,6 +65,26 @@ describe("deployment liveness recovery", () => {
       status: "live",
       url: "http://fresh.local",
     });
+  });
+
+  it("passes the deployment snapshot on wake and refuses a failed verification", async () => {
+    const live = await seedLive("env_member", "member");
+    const artifact = await fakeDeployTarget().build({ projectId: "p", repo: { owner: "o", repo: "r" }, ref: live.gitSha });
+    artifact.provenance!.files = { "agent/agent.ts": "sha256:published" };
+    await store.releases.setImageRef(live.releaseId, artifact.imageRef, artifact.provenance);
+    await store.deployments.update(live.id, { artifactProvenance: artifact.provenance });
+    const [listed] = await store.deployments.listByEnvironment("env_member");
+    expect(listed.artifactProvenance).not.toHaveProperty("files");
+    const [listedRelease] = await store.releases.listByProject("p");
+    expect(listedRelease.artifactProvenance).not.toHaveProperty("files");
+    const start = vi.fn(async () => { throw new Error("Artifact verification failed: source differs"); });
+    const recovered = await ensureLiveDeploymentForEnvironment("env_member", {
+      store,
+      deployTarget: target(async () => ({ status: "stopped" }), start),
+    });
+    expect(start).toHaveBeenCalledWith(live.id, artifact.provenance);
+    expect(recovered).toBeNull();
+    expect(await store.deployments.findById(live.id)).toMatchObject({ status: "stopped", url: null, errorDetail: "Artifact verification failed: source differs" });
   });
 
   it("restores stale live deployments for every environment during the boot sweep", async () => {

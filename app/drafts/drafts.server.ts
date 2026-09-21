@@ -14,12 +14,17 @@ import {
   LEGACY_OPENROUTER_PROVIDER_PACKAGE,
   OPENROUTER_PROVIDER_PACKAGE,
   repairHarnesstGatewayWiring,
+  orgResolverTarget,
 } from "~/eve/agentModule";
 import {
   legacyOrgModelModulePath,
   orgModelModulePath,
   rewriteOrgModelImports,
 } from "~/eve/org-model-module";
+import {
+  agentBuildContextWindow,
+  withAgentBuildContextWindow,
+} from "~/eve/model-build-context";
 import { EMPTY_TEAM_MARKER } from "~/eve/parse";
 import { fetchAgentSource, readAgentFile } from "~/github/repo.server";
 import { isAssistantConfigPath } from "~/project/guard.server";
@@ -299,6 +304,8 @@ function usesOpenRouter(source: string | null | undefined): boolean {
 
 interface NormalizeInput {
   project: {
+    id: string;
+    orgId: string;
     repoInstallationId: string;
     repoOwner: string;
     repoName: string;
@@ -410,17 +417,37 @@ export async function normalizeOrgModelImportDrafts(
   input: NormalizeInput,
 ): Promise<PublishFile[]> {
   const byPath = new Map(
-    (await relocateLegacyModelModuleDrafts(input)).map((file) => [file.path, file]),
+    (await relocateLegacyModelModuleDrafts(input)).map((file) => [
+      file.path,
+      file,
+    ]),
   );
   const roots = new Set<string>();
   for (const path of byPath.keys()) {
     const root = agentRootForStagedPath(path);
     if (root) roots.add(root);
   }
-  if (roots.size === 0) return [...byPath.values()];
+  const nonAssistantPaths = [...byPath.keys()].filter(
+    (path) => !isAssistantConfigPath(path),
+  );
+  if (!nonAssistantPaths.length) return [...byPath.values()];
+  const buildsAll =
+    roots.size === 0 ||
+    nonAssistantPaths.some(
+      (path) =>
+        !agentRootForStagedPath(path) &&
+        path !== "harnesst-lock.json" &&
+        path !== EMPTY_TEAM_MARKER,
+    );
 
   const repo = { owner: input.project.repoOwner, repo: input.project.repoName };
   const source = await fetchAgentSource(input.project.repoInstallationId, repo);
+  if (buildsAll) {
+    for (const path of [...source.paths, ...byPath.keys()]) {
+      const root = agentRootForAgentModule(path);
+      if (root) roots.add(root);
+    }
+  }
   const candidates = new Set(
     [...source.paths, ...byPath.keys()].filter((path) => {
       const root = agentRootForAgentModule(path);
@@ -428,6 +455,10 @@ export async function normalizeOrgModelImportDrafts(
     }),
   );
 
+  const [{ resolveTargetModel }, { findWorkspaceModel }] = await Promise.all([
+    import("~/models/agent-model-config.server"),
+    import("~/models/union.server"),
+  ]);
   await Promise.all(
     [...candidates].map(async (path) => {
       const staged = byPath.get(path)?.content;
@@ -443,7 +474,26 @@ export async function normalizeOrgModelImportDrafts(
       // Model saves before #354 could place harnesstGateway inside a multiline OpenRouter object.
       // Heal that generated syntax during the normal publish coherence pass so an already-saved
       // draft becomes publishable immediately after the control-plane fix is deployed.
-      const after = repairHarnesstGatewayWiring(rewriteOrgModelImports(before, depth));
+      let after = repairHarnesstGatewayWiring(
+        rewriteOrgModelImports(before, depth),
+      );
+      // Eve builds the entire member tree, including unchanged and freshly scaffolded subagents.
+      // Add missing metadata without clearing any of those targets' model overrides.
+      const target = orgResolverTarget(after);
+      if (target && agentBuildContextWindow(after) === null) {
+        const selection = await resolveTargetModel(input.project.orgId, {
+          ...target,
+          projectId: input.project.id,
+        });
+        const model =
+          selection &&
+          (await findWorkspaceModel(input.project.orgId, selection.model));
+        if (!model?.contextWindow)
+          throw new Error(
+            `No known model context window for ${path}. Configure its workspace model before publishing.`,
+          );
+        after = withAgentBuildContextWindow(after, model.contextWindow);
+      }
       if (after !== before) byPath.set(path, { path, content: after });
     }),
   );

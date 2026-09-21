@@ -1,3 +1,4 @@
+import { modelUnavailableMessage } from "~/models/provider-reference";
 /**
  * Assistant configuration — the user layer over `.harnesst/assistant/**`.
  * Editing here SAVES drafts like every other edit; the fixed harnesst-owned layer (instructions +
@@ -238,8 +239,7 @@ export async function action(args: ActionFunctionArgs) {
         : null;
       if (model && !modelInfo) {
         return {
-          error:
-            "That model is not available from an active provider connection in this workspace.",
+          error: modelUnavailableMessage(model),
         };
       }
       if (rawEffort && !effort) {
@@ -481,10 +481,9 @@ export default function AssistantConfig({ loaderData }: Route.ComponentProps) {
                   ))}
                 </ul>
                 <p className="text-xs text-muted-foreground">
-                  These ship with installed marketplace templates — the
-                  template author's contract with the assistant. Updating or
-                  uninstalling the template changes them; they can't be edited
-                  here.
+                  These ship with installed marketplace templates — the template
+                  author's contract with the assistant. Updating or uninstalling
+                  the template changes them; they can't be edited here.
                 </p>
                 <Separator />
               </div>

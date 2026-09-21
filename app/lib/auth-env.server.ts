@@ -171,3 +171,16 @@ export function devTrustedOrigins(
   }
   return [`http://*.harnesst.test:${port}`];
 }
+
+/** Match the same development host/port policy used by Better Auth. */
+export function isDevTrustedOrigin(origin: string): boolean {
+  const url = new URL(origin);
+  return devTrustedOrigins().some((pattern) => {
+    const trusted = new URL(pattern.replace("*.", ""));
+    return (
+      url.protocol === trusted.protocol &&
+      url.port === trusted.port &&
+      url.hostname.endsWith(`.${trusted.hostname}`)
+    );
+  });
+}

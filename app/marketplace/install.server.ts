@@ -23,10 +23,14 @@ import { defaultCapabilityGroupIds } from "~/capabilities/definition.server";
 import { getCapability } from "~/capabilities/registry.server";
 import {
   ensureModelProviderDependencies,
-  setModel,
   ZOD_PACKAGE,
   ZOD_VERSION,
 } from "~/eve/agentModule";
+import {
+  orgModelModulePath,
+  orgModelModuleSource,
+} from "~/eve/org-model-module";
+import { resetAgentModelSource } from "~/eve/reset-model";
 import {
   isPlatformPath,
   platformRootForAgentRoot,
@@ -319,6 +323,8 @@ export type InstallTarget =
   | {
       kind: "member";
       memberName: string | null;
+      /** Runtime lookup name (needed for a single-agent repo with no member directory). */
+      resolverAgentName?: string;
       /** Directory the install's FILES land under (a member root, or a declared subagent root). */
       root: string;
       /**
@@ -369,7 +375,7 @@ export interface PlanContext {
   target: InstallTarget;
   /** Existing roster member names — a new-member install must not collide with one. */
   rosterNames?: string[];
-  /** Qualified model to write into an agent template instead of its catalog placeholder. */
+  /** Workspace selection supplied by callers for install eligibility; never baked into code. */
   model?: string | null;
   /** Explicit workspace/member effort paired with the model. */
   effort?: ReasoningEffort | null;
@@ -677,6 +683,55 @@ export function planInstall(ctx: PlanContext): InstallPlan {
   const subagentPath =
     target.kind === "member" ? (target.subagentPath ?? "") : "";
 
+  const existing =
+    target.kind === "member"
+      ? findInstallAtTarget(ctx.lock, manifest.id, target)
+      : undefined;
+  const occupiedModelPaths = new Set<string>();
+  let installsResolver = false;
+  const resolverName =
+    target.kind === "new-member"
+      ? target.name
+      : (target.resolverAgentName ?? target.memberName);
+  const mapTemplateFile = (file: string) => {
+    const path = installedFilePath(agentRoot, file, deploymentRoot);
+    const content = template.files[file];
+    // Only actual eve modules participate, including arbitrarily nested declared subagents.
+    if (!/^(?:subagents\/[^/]+\/)*agent\.ts$/.test(file))
+      return { path, content };
+    const draft = ctx.drafts.find((entry) => entry.path === path);
+    const occupied = draft
+      ? draft.content !== null
+      : ctx.repoPaths.includes(path);
+    if (occupied && (existing || ctx.keepExistingFiles)) {
+      // Updating tools/instructions must never implicitly reset an existing model or custom logic.
+      occupiedModelPaths.add(path);
+      return { path, content };
+    }
+    if (!resolverName) {
+      conflicts.push(
+        `Cannot configure ${path}: the agent's runtime name is missing.`,
+      );
+      return { path, content };
+    }
+    const nested = file.split("/").filter((_, index) => index % 2 === 1);
+    const selectionPath = [subagentPath, ...nested].filter(Boolean).join("/");
+    try {
+      const converted = resetAgentModelSource(
+        content,
+        resolverName,
+        selectionPath || undefined,
+      );
+      installsResolver = true;
+      return { path, content: converted };
+    } catch (error) {
+      conflicts.push(
+        `${path}: ${error instanceof Error ? error.message : String(error)}`,
+      );
+      return { path, content };
+    }
+  };
+
   const secrets = (manifest.secrets ?? []).map((s) => ({
     name: s.name,
     description: s.description,
@@ -731,13 +786,7 @@ export function planInstall(ctx: PlanContext): InstallPlan {
         `An agent named "${target.name}" already exists — pick another name, or install into it instead.`,
       );
     }
-    fileWrites = manifest.files.map((f) => ({
-      path: installedFilePath(agentRoot, f, deploymentRoot),
-      content:
-        manifest.type === "agent" && f === "agent.ts" && ctx.model
-          ? setModel(template.files[f], ctx.model, { effort: ctx.effort })
-          : template.files[f],
-    }));
+    fileWrites = manifest.files.map(mapTemplateFile);
     if (hasSandboxWork(manifest.sandbox)) {
       fileWrites.push({
         path: sandboxAddonPath(agentRoot, manifest.id),
@@ -745,10 +794,9 @@ export function planInstall(ctx: PlanContext): InstallPlan {
       });
     }
     const pkg = newMemberPackageJson(target.name, manifest.dependencies ?? {});
-    const packageContent =
-      manifest.type === "agent" && ctx.model
-        ? ensureModelProviderDependencies(pkg.content)
-        : pkg.content;
+    const packageContent = installsResolver
+      ? ensureModelProviderDependencies(pkg.content)
+      : pkg.content;
     writes.push(...fileWrites, {
       path: `agents/${target.name}/package.json`,
       content: packageContent,
@@ -756,13 +804,7 @@ export function planInstall(ctx: PlanContext): InstallPlan {
     warnings.push(...pkg.warnings);
   } else {
     member = target.memberName;
-    fileWrites = manifest.files.map((f) => ({
-      path: installedFilePath(agentRoot, f, deploymentRoot),
-      content:
-        manifest.type === "agent" && f === "agent.ts" && ctx.model
-          ? setModel(template.files[f], ctx.model, { effort: ctx.effort })
-          : template.files[f],
-    }));
+    fileWrites = manifest.files.map(mapTemplateFile);
     if (hasSandboxWork(manifest.sandbox)) {
       fileWrites.push({
         path: sandboxAddonPath(agentRoot, manifest.id),
@@ -771,8 +813,7 @@ export function planInstall(ctx: PlanContext): InstallPlan {
     }
     writes.push(...fileWrites);
     // Dependency merge into the member's package.json (only when the template asks for any).
-    const needsModelProviderDependencies =
-      manifest.type === "agent" && Boolean(ctx.model);
+    const needsModelProviderDependencies = installsResolver;
     if (
       (manifest.dependencies &&
         Object.keys(manifest.dependencies).length > 0) ||
@@ -819,10 +860,21 @@ export function planInstall(ctx: PlanContext): InstallPlan {
   // an UPDATE — and turns files the old version had but the new one lacks into deletions. The
   // subagent scope is part of the identity: the member's own copy of a template is a different
   // install living in a different tree, so it must neither be updated nor deleted from here.
-  const existing =
-    target.kind === "member"
-      ? findInstallAtTarget(ctx.lock, manifest.id, target)
-      : undefined;
+  // The generated resolver is deployment-owned, never owned/uninstalled by a template.
+  if (installsResolver) {
+    writes.push({
+      path: orgModelModulePath(deploymentRoot),
+      content: orgModelModuleSource(),
+    });
+  }
+  for (let index = writes.length - 1; index >= 0; index--) {
+    if (occupiedModelPaths.has(writes[index].path)) writes.splice(index, 1);
+  }
+  if (occupiedModelPaths.size > 0) {
+    warnings.push(
+      "Existing agent model modules were kept unchanged. Use Reset to workspace default to change their model inheritance.",
+    );
+  }
   const isUpdate = !!existing;
   const owned = new Set(existing?.files ?? []);
   const newPaths = new Set(fileWrites.map((w) => w.path));

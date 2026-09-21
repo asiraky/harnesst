@@ -22,6 +22,13 @@ import type {
   WorkspaceTask,
 } from "~/data/ports";
 
+/** Match history queries: the per-file manifest is fetched only for a concrete artifact. */
+function provenanceSummary(provenance: Release["artifactProvenance"]) {
+  if (!provenance) return null;
+  const { files: _files, ...summary } = provenance;
+  return summary;
+}
+
 /** A collision error shaped like the Postgres one isVersionLabelCollision looks for. */
 function versionCollision(): Error {
   return Object.assign(new Error("duplicate key value violates unique constraint"), {
@@ -337,6 +344,7 @@ export function makeFakeStore(): FakeStore {
           version: input.version,
           gitSha: input.gitSha,
           imageRef: null,
+          artifactProvenance: null,
           changelog: input.changelog ?? null,
           createdBy: input.createdBy ?? null,
           createdAt: new Date(seq),
@@ -354,14 +362,15 @@ export function makeFakeStore(): FakeStore {
           ) ?? null
         );
       },
-      async setImageRef(rid, imageRef) {
+      async setImageRef(rid, imageRef, provenance) {
         const r = releases.get(rid);
-        if (r) releases.set(rid, { ...r, imageRef });
+        if (r) releases.set(rid, { ...r, imageRef, artifactProvenance: provenance ?? null });
       },
       async listByProject(projectId) {
         return [...releases.values()]
           .filter((r) => r.projectId === projectId)
-          .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+          .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())
+          .map((release) => ({ ...release, artifactProvenance: provenanceSummary(release.artifactProvenance) }));
       },
     },
 
@@ -384,6 +393,7 @@ export function makeFakeStore(): FakeStore {
           id: id("dep"),
           environmentId: input.environmentId,
           releaseId: input.releaseId,
+          artifactProvenance: null,
           status: input.status,
           trafficWeight: input.trafficWeight,
           url: null,
@@ -438,6 +448,7 @@ export function makeFakeStore(): FakeStore {
               releaseId: d.releaseId,
               version: rel?.version ?? "?",
               gitSha: rel?.gitSha ?? "?",
+              artifactProvenance: provenanceSummary(d.artifactProvenance),
             };
           });
       },
@@ -791,6 +802,46 @@ export function makeFakeStore(): FakeStore {
         drafts.set(key, row);
         return row;
       },
+      async compareAndStage(projectId, expected, writes) {
+        if (writes.some((write) => write.projectId !== projectId))
+          throw new Error("Draft writes must belong to the reset project.");
+        const current = [...drafts.values()].filter(
+          (row) => row.projectId === projectId,
+        );
+        if (
+          current.length !== expected.length ||
+          current.some(
+            (row) =>
+              !expected.some(
+                (before) =>
+                  before.id === row.id &&
+                  before.path === row.path &&
+                  before.content === row.content &&
+                  before.updatedAt.getTime() === row.updatedAt.getTime(),
+              ),
+          )
+        )
+          return null;
+        // No await inside the compare/write region: the fake models the database transaction.
+        for (const input of writes) {
+          const key = `${projectId}|${input.path}`;
+          const existing = drafts.get(key);
+          drafts.set(key, {
+            id: existing?.id ?? id("draft"),
+            projectId,
+            agentId: input.agentId,
+            path: input.path,
+            content: input.content,
+            baseSha: input.baseSha ?? null,
+            createdBy: input.createdBy ?? null,
+            createdAt: existing?.createdAt ?? new Date(++seq),
+            updatedAt: new Date(++seq),
+          });
+        }
+        return [...drafts.values()]
+          .filter((row) => row.projectId === projectId)
+          .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
+      },
       async get(projectId, path) {
         return drafts.get(`${projectId}|${path}`) ?? null;
       },
@@ -807,7 +858,8 @@ export function makeFakeStore(): FakeStore {
           const key = `${projectId}|${e.path}`;
           const row = drafts.get(key);
           // A row re-saved after the pipeline captured it (newer updatedAt) stays saved.
-          if (row && row.updatedAt.getTime() <= e.updatedAt.getTime()) drafts.delete(key);
+          if (row && row.updatedAt.getTime() <= e.updatedAt.getTime())
+            drafts.delete(key);
         }
       },
     },

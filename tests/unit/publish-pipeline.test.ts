@@ -24,7 +24,9 @@
  *     owning member only, and a committed deletion prunes the model overrides of the targets it
  *     removed (issue #344).
  */
+import type { ArtifactProvenance } from "~/deploy/artifact-provenance.server";
 import { createHash } from "node:crypto";
+import { draftSnapshotFingerprint } from "~/publish/draft-snapshot";
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -47,6 +49,11 @@ import { makeFakeStore, type FakeStore } from "../fakes/store";
 let store: FakeStore;
 const PROJECT = "proj_1";
 const SHA = "cafebabe00112233445566778899aabbccddeeff";
+
+function provenance(agentRoot = "agent"): ArtifactProvenance {
+  return { version: 1, gitSha: SHA, agentRoot, sourceDigest: "source", contextDigest: "context",
+    files: {}, platformFiles: [], runtimeDigest: "sha256:runtime", buildDigest: "sha256:build" };
+}
 
 function seedTeam(opts: { envNames?: string[]; live?: string | null } = {}): void {
   store.seedProject({
@@ -107,6 +114,7 @@ function makeDeps(over: Partial<PublishPipelineDeps> = {}): PublishPipelineDeps 
     checkBuild: vi.fn(async (req: { agentRoot?: string }) => ({
       ok: true as const,
       provisionalTag: `harnesst/publish-task:${req.agentRoot ?? "repo"}`,
+      provenance: provenance(req.agentRoot),
     })),
     listRepoPaths: vi
       .fn()
@@ -127,6 +135,7 @@ function makeDeps(over: Partial<PublishPipelineDeps> = {}): PublishPipelineDeps 
       async (input: { provisionalTag: string; gitSha: string; agentRoot?: string }) => ({
         imageRef: `promoted:${input.agentRoot}@${input.gitSha.slice(0, 12)}`,
         digest: "sha256:abc",
+        provenance: provenance(input.agentRoot),
       }),
     ),
     removeProvisionalImages: vi.fn().mockResolvedValue(undefined),
@@ -178,7 +187,7 @@ describe("runPublish — happy path", () => {
         const row = await store.workspaceTasks.findById(task.id);
         const build = row!.steps!.find((s) => s.key === "build")!;
         observed.push({ status: build.status, detail: build.detail });
-        return { ok: true as const, provisionalTag: `harnesst/publish-task:${req.agentRoot}` };
+        return { ok: true as const, provisionalTag: `harnesst/publish-task:${req.agentRoot}`, provenance: provenance(req.agentRoot) };
       }),
     });
 
@@ -237,6 +246,32 @@ describe("runPublish — happy path", () => {
       "harnesst/publish-task:agents/ivy/agent",
       "harnesst/publish-task:agents/otto/agent",
     ]);
+  });
+
+  it("fails versioning and queues no deployments when artifact verification fails", async () => {
+    seedTeam();
+    await stageDrafts({ "agents/ivy/agent/agent.ts": "export default {};" });
+    const task = await seedTask();
+    const deps = makeDeps({ promoteImage: vi.fn().mockRejectedValue(new Error("Runtime source differs from committed configuration")) });
+    const result = await runPublish(payload(task.id), deps, store);
+    expect(result.status).toBe("failed");
+    expect(result.failedStep).toBe("version");
+    expect(result.error).toContain("Runtime source differs");
+    expect((await stepStatuses(task.id)).deploy).toBe("pending");
+    expect(await drainJobs()).toEqual([]);
+    expect(deps.removeProvisionalImages).toHaveBeenCalledOnce();
+  });
+
+  it("rejects a provisional image without recorded provenance", async () => {
+    seedTeam();
+    await stageDrafts({ "agents/ivy/agent/agent.ts": "export default {};" });
+    const task = await seedTask();
+    const deps = makeDeps({ checkBuild: vi.fn().mockResolvedValue({ ok: true, provisionalTag: "unverified:image" }) });
+    const result = await runPublish(payload(task.id), deps, store);
+    expect(result.failedStep).toBe("version");
+    expect(result.error).toContain("did not record source provenance");
+    expect(deps.promoteImage).not.toHaveBeenCalled();
+    expect(await drainJobs()).toEqual([]);
   });
 
   it("promotes only the touched root — untouched members deploy without an imageRef", async () => {
@@ -347,7 +382,7 @@ describe("runPublish — parallel builds (issue #375)", () => {
         peak = Math.max(peak, inFlight);
         await new Promise((r) => setTimeout(r, 5));
         inFlight--;
-        return { ok: true as const, provisionalTag: `harnesst/publish-task:${req.agentRoot}` };
+        return { ok: true as const, provisionalTag: `harnesst/publish-task:${req.agentRoot}`, provenance: provenance(req.agentRoot) };
       }),
     });
 
@@ -373,7 +408,7 @@ describe("runPublish — parallel builds (issue #375)", () => {
           return { ok: false as const, output: "TS2304: Cannot find name 'foo'." };
         }
         await new Promise((r) => setTimeout(r, 10));
-        return { ok: true as const, provisionalTag: `harnesst/publish-task:${req.agentRoot}` };
+        return { ok: true as const, provisionalTag: `harnesst/publish-task:${req.agentRoot}`, provenance: provenance(req.agentRoot) };
       }),
     });
 
@@ -432,7 +467,7 @@ describe("runPublish — parallel builds (issue #375)", () => {
       buildConcurrency: 2,
       checkBuild: vi.fn(async (req: { agentRoot?: string }) => {
         if (req.agentRoot === "agents/ivy/agent") throw new Error("docker daemon unreachable");
-        return { ok: true as const, provisionalTag: `harnesst/publish-task:${req.agentRoot}` };
+        return { ok: true as const, provisionalTag: `harnesst/publish-task:${req.agentRoot}`, provenance: provenance(req.agentRoot) };
       }),
     });
 
@@ -465,7 +500,7 @@ describe("runPublish — parallel builds (issue #375)", () => {
         peak = Math.max(peak, inFlight);
         await new Promise((r) => setTimeout(r, 2));
         inFlight--;
-        return { ok: true as const, provisionalTag: `harnesst/publish-task:${req.agentRoot}` };
+        return { ok: true as const, provisionalTag: `harnesst/publish-task:${req.agentRoot}`, provenance: provenance(req.agentRoot) };
       }),
     });
 
@@ -1158,5 +1193,55 @@ describe("runPublish — model override cleanup", () => {
 
     const row = await store.workspaceTasks.findById(task.id);
     expect(row?.status).toBe("succeeded");
+  });
+});
+
+
+describe("automatic reset publish snapshot", () => {
+  it("never reports another running publish as completion of a reset", async () => {
+    seedTeam();
+    await stageDrafts({ "agents/ivy/agent/agent.ts": "reset source" });
+    await seedTask();
+    const fingerprint = draftSnapshotFingerprint(await store.drafts.listByProject(PROJECT));
+    await expect(startPublish({ projectId: PROJECT, originUrl: "/settings", resetDraftFingerprint: fingerprint }, store)).rejects.toThrow("Another publish is running");
+    expect(await drainJobs()).toEqual([]);
+  });
+
+  it("refuses a changed snapshot before queuing any publish", async () => {
+    seedTeam();
+    await stageDrafts({ "agents/ivy/agent/agent.ts": "reset source" });
+    const fingerprint = draftSnapshotFingerprint(await store.drafts.listByProject(PROJECT));
+    await stageDrafts({ "agents/ivy/agent/instructions.md": "new human edit" });
+    await expect(startPublish({ projectId: PROJECT, originUrl: "/settings", resetDraftFingerprint: fingerprint }, store)).rejects.toThrow("Saved changes changed");
+    expect(await drainJobs()).toEqual([]);
+    expect(await store.drafts.listByProject(PROJECT)).toHaveLength(2);
+  });
+
+  it("fails before building if another draft arrives after the reset was queued", async () => {
+    seedTeam();
+    await stageDrafts({ "agents/ivy/agent/agent.ts": "reset source" });
+    const fingerprint = draftSnapshotFingerprint(await store.drafts.listByProject(PROJECT));
+    await startPublish({ projectId: PROJECT, originUrl: "/settings", resetDraftFingerprint: fingerprint }, store);
+    const jobs = await drainJobs();
+    expect(jobs).toHaveLength(1);
+    await stageDrafts({ "agents/ivy/agent/instructions.md": "new human edit" });
+    const deps = makeDeps();
+    const result = await runPublish(jobs[0].payload as never, deps, store);
+    expect(result.status).toBe("failed");
+    expect(result.error).toContain("Saved changes changed");
+    expect(deps.checkBuild).not.toHaveBeenCalled();
+    expect(deps.commitToDefaultBranch).not.toHaveBeenCalled();
+    expect(await store.drafts.listByProject(PROJECT)).toHaveLength(2);
+  });
+
+  it("publishes the authorized snapshot when it remains unchanged", async () => {
+    seedTeam();
+    await stageDrafts({ "agents/ivy/agent/agent.ts": "reset source" });
+    const fingerprint = draftSnapshotFingerprint(await store.drafts.listByProject(PROJECT));
+    const task = await seedTask();
+    const deps = makeDeps();
+    const result = await runPublish(payload(task.id, { resetDraftFingerprint: fingerprint }), deps, store);
+    expect(result.status).toBe("succeeded");
+    expect(deps.commitToDefaultBranch).toHaveBeenCalledOnce();
   });
 });

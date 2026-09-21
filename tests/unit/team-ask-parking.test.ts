@@ -211,6 +211,7 @@ describe("runAsk — wake-on-delegation", () => {
       releaseId: stopped.releaseId,
       version: "v1",
       gitSha: "b".repeat(40),
+      artifactProvenance: null,
     }));
     const deps = makeDeps({
       ensureLiveDeployment: wake,

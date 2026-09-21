@@ -1,3 +1,4 @@
+import { modelUnavailableMessage } from "~/models/provider-reference";
 /**
  * Model staging for Settings' "Model" section. Two module generations exist:
  *
@@ -40,7 +41,6 @@ import {
 import type { ReasoningEffort } from "~/models/reasoning";
 import { packageJsonPathForRoot } from "~/marketplace/install.server";
 import {
-  inheritanceChain,
   removeAgentModelOverride,
   resolveTargetModel,
   setAgentModelOverride,
@@ -123,8 +123,7 @@ export async function stageModelChange(
   if (!modelInfo) {
     return {
       ok: false,
-      error:
-        "That model is not available from an active provider connection in this workspace.",
+      error: modelUnavailableMessage(input.model),
     };
   }
   if (input.effort && !modelInfo.supportedEfforts?.includes(input.effort)) {
@@ -174,24 +173,7 @@ export async function stageModelChange(
       model: input.model,
       effort: input.effort ?? null,
     };
-    // What this target inherits with no row of its own: the PARENT's effective selection for a
-    // subagent, the workspace default for the agent itself. Choosing exactly that is
-    // inheritance, not an explicit pin — a redundant row would freeze the target on today's
-    // value when the thing it inherits from changes later.
-    const parentPath = inheritanceChain(subagentPath)[1] ?? null;
-    const inherited =
-      parentPath === null
-        ? await (deps?.getWorkspaceSelection ?? getWorkspaceAssistantSelection)(
-            input.project.orgId,
-          )
-        : ((await (deps?.resolveTarget ?? resolveTargetModel)(
-            input.project.orgId,
-            {
-              agentName: resolverName,
-              subagentPath: parentPath,
-              projectId: input.project.id,
-            },
-          )) ?? { model: null, effort: null });
+    // Picking a model is an explicit pin, even when it equals the inherited selection.
     const key = {
       agentName: resolverName,
       subagentPath,
@@ -225,21 +207,11 @@ export async function stageModelChange(
         store,
       );
     }
-    if (
-      inherited.model === selection.model &&
-      inherited.effort === selection.effort
-    ) {
-      await (deps?.removeOverride ?? removeAgentModelOverride)(
-        input.project.orgId,
-        key,
-      );
-    } else {
-      await (deps?.setOverride ?? setAgentModelOverride)(
-        input.project.orgId,
-        key,
-        selection,
-      );
-    }
+    await (deps?.setOverride ?? setAgentModelOverride)(
+      input.project.orgId,
+      key,
+      selection,
+    );
     // The row is live for any deployment speaking the two-argument protocol; a staged upgrade
     // reaches the running agent on the next publish.
     return stagedUpgrade

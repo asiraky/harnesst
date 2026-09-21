@@ -419,6 +419,7 @@ export async function installMarketplaceTemplate(
       target = {
         kind: "member",
         memberName: context.isTeam ? secretAgent.name : null,
+        resolverAgentName: secretAgent.name,
         root,
         // The member owns the deployment — package.json, the platform tree, the sandbox and the
         // secrets a subagent's tools read at runtime all stay here.

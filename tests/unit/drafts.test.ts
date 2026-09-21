@@ -33,12 +33,19 @@ vi.mock("~/github/repo.server", () => ({
   readAgentFile: vi.fn(),
   fetchAgentSource: vi.fn(),
 }));
+vi.mock("~/models/agent-model-config.server", () => ({
+  resolveTargetModel: vi.fn(async () => ({ model: "codex/connected/default" })),
+}));
+vi.mock("~/models/union.server", () => ({
+  findWorkspaceModel: vi.fn(async () => ({ contextWindow: 128000 })),
+}));
 const readAgentFileMock = vi.mocked(readAgentFile);
 const fetchAgentSourceMock = vi.mocked(fetchAgentSource);
 
 let store: FakeStore;
 const PROJECT = {
   id: "proj_1",
+  orgId: "org_1",
   repoInstallationId: "inst_1",
   repoOwner: "acme",
   repoName: "agent",
@@ -808,4 +815,51 @@ describe("resolveFileView", () => {
       existsInRepo: false,
     });
   });
+});
+
+describe("inheriting model build metadata", () => {
+  it.each([
+    "agents/ivy/agent/instructions.md",
+    "agents/ivy/agent/subagents/qa/instructions.md",
+    "package.json",
+  ])(
+    "repairs the parent and unchanged subagents when publishing %s",
+    async (changedPath) => {
+      const { scaffoldOrgModelAgentModule } =
+        await import("~/eve/org-model-module");
+      const { agentBuildContextWindow } =
+        await import("~/eve/model-build-context");
+      const { resolveTargetModel } =
+        await import("~/models/agent-model-config.server");
+      const files = {
+        "agents/ivy/agent/agent.ts": scaffoldOrgModelAgentModule("ivy"),
+        "agents/ivy/agent/subagents/qa/agent.ts": scaffoldOrgModelAgentModule(
+          "ivy",
+          { subagentPath: "qa", description: "Review" },
+        ),
+      };
+      fetchAgentSourceMock.mockResolvedValue({
+        files,
+        paths: Object.keys(files),
+        ref: "main",
+        truncated: false,
+      });
+      const normalized = await normalizeOrgModelImportDrafts({
+        project: PROJECT,
+        files: [{ path: changedPath, content: "{}" }],
+      });
+      for (const path of Object.keys(files)) {
+        expect(
+          agentBuildContextWindow(
+            normalized.find((file) => file.path === path)!.content!,
+          ),
+        ).toBe(128000);
+      }
+      expect(resolveTargetModel).toHaveBeenCalledWith("org_1", {
+        projectId: "proj_1",
+        agentName: "ivy",
+        subagentPath: "qa",
+      });
+    },
+  );
 });

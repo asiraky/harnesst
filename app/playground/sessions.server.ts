@@ -1,3 +1,4 @@
+import { modelConnectionFailureReference } from "~/models/provider-reference";
 import {
   and,
   desc,
@@ -1864,6 +1865,7 @@ interface TurnProjection {
   stepStarts: Map<number, number>;
   actionsBySeq: Map<number, TurnAction[]>;
   actionByCallId: Map<string, TurnAction>;
+  errorModelId?: string | null;
 }
 
 interface TurnAction {
@@ -2044,7 +2046,10 @@ export function projectEventsToEntries(
           event.type === "step.failed"
             ? failureOf(data, "The agent step failed.")
             : null;
-        if (failure) turn.error = failure.text;
+        if (failure) {
+          turn.error = failure.text;
+          turn.errorModelId = modelConnectionFailureReference(data);
+        }
         const usage = data.usage as Record<string, unknown> | undefined;
         const started = turn.stepStarts.get(sequence);
         const actions = turn.actionsBySeq.get(sequence);
@@ -2075,7 +2080,10 @@ export function projectEventsToEntries(
         if (turn || event.type === "session.failed") {
           const failure = failureOf(data, "The turn failed.");
           const targetTurn = turn ?? ordered.at(-1);
-          if (targetTurn) targetTurn.error = failure.text;
+          if (targetTurn) {
+            targetTurn.error = failure.text;
+            targetTurn.errorModelId = modelConnectionFailureReference(data) ?? targetTurn.errorModelId;
+          }
         }
         break;
     }
@@ -2134,6 +2142,7 @@ export function projectEventsToEntries(
         inputRequests:
           turn.inputRequests.length > 0 ? turn.inputRequests : undefined,
         error: normalizedError?.message ?? null,
+        errorModelId: turn.errorModelId ?? null,
         errorDetail: normalizedError?.detail ?? null,
         errorRetryable: normalizedError?.retryable ?? false,
       });

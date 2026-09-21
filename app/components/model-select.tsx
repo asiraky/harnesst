@@ -26,6 +26,7 @@ import {
 import { filterModels, limitModelsPerConnection } from "~/models/filter";
 import type { ModelCatalogEntry } from "~/models/catalog.server";
 import type { ReasoningEffort } from "~/models/reasoning";
+import { modelConnectionSettingsUrl } from "~/models/provider-reference";
 import { cn } from "~/lib/utils";
 
 const MAX_ROWS_PER_CONNECTION = 50;
@@ -70,10 +71,15 @@ export function ModelSelection({
   const fetcher = useFetcher<ModelsApiResponse>();
 
   useEffect(() => {
-    if (fetcher.state === "idle" && !fetcher.data) fetcher.load("/api/models");
-  }, [fetcher]);
+    if (
+      fetcher.state === "idle" &&
+      (!fetcher.data || fetcher.data.requestedModel !== model)
+    ) {
+      fetcher.load(modelsApiUrl(model));
+    }
+  }, [fetcher, model]);
 
-  const selected = fetcher.data?.models.find((entry) => entry.id === model);
+  const selected = selectedCatalogModel(fetcher.data, model);
   const supported = selected?.supportedEfforts;
   const effectiveEffort = effort && supported?.includes(effort) ? effort : null;
 
@@ -112,7 +118,10 @@ export function ModelSelection({
         aria-label="Reasoning effort"
       >
         {compact && (
-          <Gauge className="size-3.5 shrink-0 text-muted-foreground" aria-hidden />
+          <Gauge
+            className="size-3.5 shrink-0 text-muted-foreground"
+            aria-hidden
+          />
         )}
         <SelectValue />
       </SelectTrigger>
@@ -154,6 +163,33 @@ export function ModelSelection({
 export interface ModelsApiResponse {
   models: ModelCatalogEntry[];
   unavailable: UnavailableModelConnection[];
+  requestedModel: string | null;
+  selectedModel: ModelCatalogEntry | null;
+  canManageConnections?: boolean;
+  selectedConnection?: {
+    connectionId: string | null;
+    status: "active" | "expired" | "revoked" | "missing";
+    settingsUrl: string;
+  } | null;
+  inactiveConnections?: { id: string; label: string; status: string }[];
+}
+
+function modelsApiUrl(model: string | null): string {
+  return model
+    ? `/api/models?${new URLSearchParams({ selected: model })}`
+    : "/api/models";
+}
+
+/** Resolve saved aliases for display while leaving the selectable union canonical. */
+export function selectedCatalogModel(
+  data: ModelsApiResponse | undefined,
+  model: string | null,
+): ModelCatalogEntry | undefined {
+  if (!model) return undefined;
+  return (
+    data?.models.find((entry) => entry.id === model) ??
+    (data?.selectedModel?.id === model ? data.selectedModel : undefined)
+  );
 }
 
 function formatContext(tokens: number | null): string | null {
@@ -169,7 +205,27 @@ function formatPricing(model: ModelCatalogEntry): string | null {
 }
 
 function groupLabel(model: ModelCatalogEntry): string {
-  return `${model.providerName} · ${model.connectionLabel}`;
+  return `${model.providerName} · ${model.connectionLabel} · ${model.connectionId}`;
+}
+
+/** Group by identity, never a potentially duplicated human label. */
+export function groupPickerModels(
+  models: ModelCatalogEntry[],
+): { key: string; label: string; models: ModelCatalogEntry[] }[] {
+  const groups = new Map<
+    string,
+    { key: string; label: string; models: ModelCatalogEntry[] }
+  >();
+  for (const model of models) {
+    const key = `${model.provider}/${model.connectionId}`;
+    let group = groups.get(key);
+    if (!group) {
+      group = { key, label: groupLabel(model), models: [] };
+      groups.set(key, group);
+    }
+    group.models.push(model);
+  }
+  return [...groups.values()];
 }
 
 export function ModelSelect({
@@ -196,15 +252,19 @@ export function ModelSelect({
   // (openrouter/abc…/slug) into "Name · Provider", which needs the catalog.
   const { load, state, data } = fetcher;
   useEffect(() => {
-    if (state === "idle" && !data) load("/api/models");
-  }, [state, data, load]);
+    if (state === "idle" && (!data || data.requestedModel !== value))
+      load(modelsApiUrl(value));
+  }, [state, data, load, value]);
 
   const models = fetcher.data?.models;
   const unavailable = fetcher.data?.unavailable ?? [];
   const loading = fetcher.state === "loading";
-  const selected = value
-    ? models?.find((entry) => entry.id === value)
-    : undefined;
+  const connection = fetcher.data?.selectedConnection;
+  const canManage = fetcher.data?.canManageConnections;
+  const inactive = fetcher.data?.inactiveConnections ?? [];
+  const needsAuthentication =
+    connection?.status === "revoked" || connection?.status === "expired";
+  const selected = selectedCatalogModel(fetcher.data, value);
 
   const commit = (id: string) => {
     setOpen(false);
@@ -220,7 +280,7 @@ export function ModelSelect({
       // Connections can be renamed or removed while this component stays mounted after route
       // revalidation, so each open refreshes the authoritative connected union.
       if (fetcher.state === "idle") {
-        fetcher.load("/api/models");
+        fetcher.load(modelsApiUrl(value));
       }
     }
   };
@@ -237,19 +297,12 @@ export function ModelSelect({
       MAX_ROWS_PER_CONNECTION,
     );
     const targets: string[] = [];
-    let previousGroup: string | null = null;
-    for (const model of filtered) {
-      const group = groupLabel(model);
-      if (group !== previousGroup) {
-        rows.push({
-          type: "label",
-          key: `${model.provider}/${model.connectionId}`,
-          text: group,
-        });
-        previousGroup = group;
+    for (const group of groupPickerModels(filtered)) {
+      rows.push({ type: "label", key: group.key, text: group.label });
+      for (const model of group.models) {
+        rows.push({ type: "model", model, index: targets.length });
+        targets.push(model.id);
       }
-      rows.push({ type: "model", model, index: targets.length });
-      targets.push(model.id);
     }
     return { display: rows, targets };
   }, [models, query]);
@@ -275,8 +328,9 @@ export function ModelSelect({
   const removed =
     Boolean(value) &&
     !loading &&
+    fetcher.data?.requestedModel === value &&
     Array.isArray(models) &&
-    !models.some((m) => m.id === value);
+    !selected;
 
   return (
     <div>
@@ -286,6 +340,11 @@ export function ModelSelect({
             variant="outline"
             disabled={busy || disabled}
             aria-label="Model"
+            title={
+              selected
+                ? `${selected.name} · ${selected.connectionLabel} · ${selected.connectionId}`
+                : undefined
+            }
             className={cn(
               "w-full justify-between font-mono text-sm sm:w-72",
               triggerClassName,
@@ -349,9 +408,17 @@ export function ModelSelect({
                   className="mx-auto size-5 text-muted-foreground"
                   aria-hidden
                 />
-                <p>No model provider is connected to this workspace.</p>
+                <p>
+                  {inactive.length
+                    ? "Your model connections are disconnected or need authentication."
+                    : "No model provider is connected to this workspace."}
+                </p>
                 <Button asChild size="sm" variant="secondary">
-                  <Link to="/settings/connections">Connect a provider</Link>
+                  <Link to="/settings/connections">
+                    {inactive.length
+                      ? "Review connections"
+                      : "Connect a provider"}
+                  </Link>
                 </Button>
               </div>
             )}
@@ -389,6 +456,7 @@ export function ModelSelect({
                 return (
                   <Option
                     key={model.id}
+                    label={`${model.name} · ${model.connectionLabel} · ${model.connectionId}`}
                     highlighted={highlight === row.index}
                     selected={model.id === value}
                     onHighlight={() => setHighlight(row.index)}
@@ -430,9 +498,33 @@ export function ModelSelect({
         <p className="mt-2 flex max-w-md items-start gap-1.5 text-xs text-amber-600 dark:text-amber-400">
           <TriangleAlert className="mt-0.5 size-3.5 shrink-0" aria-hidden />
           <span>
-            <span className="font-mono">{value}</span> is unavailable. Its
-            provider connection may have been removed; choose a connected model
-            before saving or deploying.
+            <span className="font-mono">{value}</span> is unavailable. Your
+            selection is preserved.{" "}
+            <Link
+              to={
+                connection?.settingsUrl ??
+                modelConnectionSettingsUrl(value ?? "")
+              }
+              className="underline"
+            >
+              {canManage && needsAuthentication
+                ? "Reauthenticate this connection"
+                : canManage && connection?.status === "missing"
+                  ? "Recover this connection"
+                  : "Review its provider connection"}
+            </Link>
+            .{" "}
+            {connection?.status === "revoked"
+              ? "This connection is disconnected."
+              : connection?.status === "expired"
+                ? "This connection needs authentication."
+                : connection?.status === "missing"
+                  ? "This connection was deleted or is no longer available in this workspace."
+                  : "The catalog may be unavailable or the model may no longer be offered."}
+            {!canManage &&
+            (needsAuthentication || connection?.status === "missing")
+              ? " Ask a workspace owner or admin to restore it."
+              : ""}
           </span>
         </p>
       )}
@@ -441,12 +533,14 @@ export function ModelSelect({
 }
 
 function Option({
+  label,
   highlighted,
   selected,
   onHighlight,
   onSelect,
   children,
 }: {
+  label: string;
   highlighted: boolean;
   selected: boolean;
   onHighlight: () => void;
@@ -456,6 +550,7 @@ function Option({
   return (
     <div
       role="option"
+      aria-label={label}
       aria-selected={selected}
       tabIndex={highlighted ? 0 : -1}
       onMouseMove={onHighlight}
