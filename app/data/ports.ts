@@ -7,6 +7,7 @@
  *
  * Row types are the schema's inferred selects, so the fake and the real impl can't drift.
  */
+import type { ArtifactProvenance } from "~/deploy/artifact-provenance.server";
 import type {
   agentLinks,
   agents,
@@ -26,6 +27,11 @@ import type {
 export type Agent = typeof agents.$inferSelect;
 export type DraftChange = typeof draftChanges.$inferSelect;
 export type Release = typeof releases.$inferSelect;
+/** History/UI evidence excludes the potentially large per-file source manifest. */
+export type ArtifactProvenanceSummary = Omit<ArtifactProvenance, "files">;
+export type ReleaseSummary = Omit<Release, "artifactProvenance"> & {
+  artifactProvenance: ArtifactProvenanceSummary | null;
+};
 export type Deployment = typeof deployments.$inferSelect;
 export type Environment = typeof environments.$inferSelect;
 export type Project = typeof projects.$inferSelect;
@@ -49,6 +55,7 @@ export interface DeploymentWithRelease {
   releaseId: string;
   version: string;
   gitSha: string;
+  artifactProvenance: ArtifactProvenanceSummary | null;
 }
 
 export interface AgentRepo {
@@ -92,7 +99,7 @@ export interface ReleaseRepo {
   /** Existing releases for one agent (version numbering is per agent). */
   countByAgent(agentId: string): Promise<number>;
   /** A project's releases, newest first (version history). */
-  listByProject(projectId: string): Promise<Release[]>;
+  listByProject(projectId: string): Promise<ReleaseSummary[]>;
   /** Insert a release; throws an (agent, version) unique-violation like Postgres would. */
   insert(input: {
     projectId: string;
@@ -104,7 +111,7 @@ export interface ReleaseRepo {
   }): Promise<Release>;
   findById(id: string): Promise<Release | null>;
   findByCommit(agentId: string, gitSha: string): Promise<Release | null>;
-  setImageRef(id: string, imageRef: string): Promise<void>;
+  setImageRef(id: string, imageRef: string, provenance?: ArtifactProvenance): Promise<void>;
 }
 
 export interface DeploymentRepo {
@@ -123,7 +130,7 @@ export interface DeploymentRepo {
   }): Promise<Deployment>;
   update(
     id: string,
-    patch: Partial<Pick<Deployment, "status" | "url" | "errorDetail" | "trafficWeight" | "envRevision">>,
+    patch: Partial<Pick<Deployment, "status" | "url" | "errorDetail" | "trafficWeight" | "envRevision" | "artifactProvenance">>,
   ): Promise<Deployment>;
   /**
    * Compare-and-set a deployment during background lifecycle reconciliation. Returns null when
@@ -132,7 +139,7 @@ export interface DeploymentRepo {
   updateIfStatus(
     id: string,
     expectedStatus: string,
-    patch: Partial<Pick<Deployment, "status" | "url" | "errorDetail" | "trafficWeight" | "envRevision">>,
+    patch: Partial<Pick<Deployment, "status" | "url" | "errorDetail" | "trafficWeight" | "envRevision" | "artifactProvenance">>,
   ): Promise<Deployment | null>;
   listByEnvironment(environmentId: string): Promise<DeploymentWithRelease[]>;
   /** Set every currently-live deployment in the env to draining at weight 0 (rollback). */
@@ -305,18 +312,26 @@ export interface WorkspaceTaskRepo {
   listRunningByKind(kind: string): Promise<WorkspaceTask[]>;
 }
 
+export interface DraftWrite {
+  projectId: string;
+  /** Owning roster member; null for project-shared files (root package.json). */
+  agentId: string | null;
+  path: string;
+  /** Full file contents; null stages a DELETION of the path. */
+  content: string | null;
+  baseSha?: string | null;
+  createdBy?: string | null;
+}
+
 export interface DraftRepo {
   /** Stage (upsert) a draft: latest content per (project, path) wins. */
-  upsert(input: {
-    projectId: string;
-    /** Owning roster member; null for project-shared files (root package.json). */
-    agentId: string | null;
-    path: string;
-    /** Full file contents; null stages a DELETION of the path. */
-    content: string | null;
-    baseSha?: string | null;
-    createdBy?: string | null;
-  }): Promise<DraftChange>;
+  upsert(input: DraftWrite): Promise<DraftChange>;
+  /** Atomically replace a known project draft snapshot with these writes; null means concurrent edits. */
+  compareAndStage(
+    projectId: string,
+    expected: DraftChange[],
+    writes: DraftWrite[],
+  ): Promise<DraftChange[] | null>;
   get(projectId: string, path: string): Promise<DraftChange | null>;
   /** A project's saved drafts, oldest first (stable order in the publish panel). */
   listByProject(projectId: string): Promise<DraftChange[]>;

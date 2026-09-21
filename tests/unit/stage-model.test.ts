@@ -161,10 +161,7 @@ describe("stageModelChange", () => {
       deps,
     );
 
-    expect(result).toEqual({
-      ok: false,
-      error: expect.stringContaining("active provider connection"),
-    });
+    expect(result.ok).toBe(false);
     expect(await getDraft(PROJECT.id, "agent/agent.ts", store)).toBeNull();
   });
 
@@ -199,7 +196,7 @@ describe("stageModelChange", () => {
     expect(await listDrafts(PROJECT.id, store)).toEqual([]);
   });
 
-  it("removes the override when the agent chooses the workspace default", async () => {
+  it("keeps an explicit pin when the agent chooses the workspace default", async () => {
     const deps = fakeDeps({
       "agent/agent.ts": RESOLVER_AGENT_TS,
       "package.json": PKG,
@@ -226,12 +223,16 @@ describe("stageModelChange", () => {
     );
 
     expect(result).toEqual({ ok: true, mode: "applied" });
-    expect(removeOverride).toHaveBeenCalledWith("org_1", {
-      agentName: "bookkeeping",
-      subagentPath: "",
-      projectId: PROJECT.id,
-    });
-    expect(setOverride).not.toHaveBeenCalled();
+    expect(removeOverride).not.toHaveBeenCalled();
+    expect(setOverride).toHaveBeenCalledWith(
+      "org_1",
+      {
+        agentName: "bookkeeping",
+        subagentPath: "",
+        projectId: PROJECT.id,
+      },
+      { model: "openai/abcdefghijkl/gpt-5.1", effort: null },
+    );
   });
 });
 
@@ -372,7 +373,7 @@ describe("stageModelChange — declared subagent targets", () => {
     expect(draft!.content).toContain("from '../../../harnesst/model.js'");
   });
 
-  it("drops the row when the subagent picks exactly what its PARENT resolves to", async () => {
+  it("pins the subagent even when it picks what its parent resolves to", async () => {
     const deps = fakeDeps({
       "agent/agent.ts": RESOLVER_AGENT_TS,
       "agent/subagents/researcher/agent.ts": LEGACY_SUBAGENT_TS.replace(
@@ -396,24 +397,23 @@ describe("stageModelChange — declared subagent targets", () => {
     const result = await stageModelChange({ ...SUBAGENT_INPUT }, store, deps);
 
     expect(result).toEqual({ ok: true, mode: "applied" });
-    expect(removeOverride).toHaveBeenCalledWith("org_1", {
-      agentName: "bookkeeping",
-      subagentPath: "researcher",
-      projectId: PROJECT.id,
-    });
-    expect(setOverride).not.toHaveBeenCalled();
-    // The parent chain is what was consulted.
-    expect(deps.resolveTarget).toHaveBeenCalledWith("org_1", {
-      agentName: "bookkeeping",
-      subagentPath: "",
-      projectId: PROJECT.id,
-    });
+    expect(removeOverride).not.toHaveBeenCalled();
+    expect(setOverride).toHaveBeenCalledWith(
+      "org_1",
+      {
+        agentName: "bookkeeping",
+        subagentPath: "researcher",
+        projectId: PROJECT.id,
+      },
+      { model: "openai/abcdefghijkl/gpt-5.1", effort: null },
+    );
   });
 
-  it("stages a nested subagent's own two-argument call and asks its immediate parent", async () => {
+  it("stages a nested subagent's own two-argument call and pins its target", async () => {
     const deps = fakeDeps({
       "agent/agent.ts": RESOLVER_AGENT_TS,
-      "agent/subagents/researcher/subagents/checker/agent.ts": LEGACY_SUBAGENT_TS,
+      "agent/subagents/researcher/subagents/checker/agent.ts":
+        LEGACY_SUBAGENT_TS,
       "package.json": PKG,
     });
     deps.setOverride = vi.fn().mockResolvedValue(undefined);
@@ -430,11 +430,15 @@ describe("stageModelChange — declared subagent targets", () => {
     );
 
     expect(result).toEqual({ ok: true, mode: "applied", upgraded: true });
-    expect(deps.resolveTarget).toHaveBeenCalledWith("org_1", {
-      agentName: "bookkeeping",
-      subagentPath: "researcher",
-      projectId: PROJECT.id,
-    });
+    expect(deps.setOverride).toHaveBeenCalledWith(
+      "org_1",
+      {
+        agentName: "bookkeeping",
+        subagentPath: "researcher/checker",
+        projectId: PROJECT.id,
+      },
+      { model: "openai/abcdefghijkl/gpt-5.1", effort: null },
+    );
     const draft = await getDraft(
       PROJECT.id,
       "agent/subagents/researcher/subagents/checker/agent.ts",

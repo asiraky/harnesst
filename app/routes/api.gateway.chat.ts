@@ -17,10 +17,13 @@
 import type { ActionFunctionArgs } from "react-router";
 
 import { codexApiBase, InvalidGrantError } from "~/connections/codex.server";
+import { modelSelectionFailure } from "~/models/provider-reference";
 import { parseCodexModelId } from "~/models/codex-catalog";
 import {
   getConnectionForGateway,
+  resolveModelConnectionId,
   getFreshAccessToken,
+  markConnectionStatus,
 } from "~/models/provider-connections.server";
 import {
   aggregateChunks,
@@ -40,8 +43,12 @@ import {
 } from "~/gateway/eval-grant.server";
 import { verifyEvalGatewayToken } from "~/gateway/eval-token.server";
 
-function errorResponse(message: string, status: number): Response {
-  return new Response(JSON.stringify({ error: { message } }), {
+function errorResponse(
+  message: string,
+  status: number,
+  context?: { code: string; model: string; recoveryUrl: string },
+): Response {
+  return new Response(JSON.stringify({ error: { message, ...context } }), {
     status,
     headers: { "content-type": "application/json" },
   });
@@ -118,10 +125,24 @@ export async function action({ request }: ActionFunctionArgs) {
     await finishEvalModelCall(activeEvalGrantId).catch(() => {});
   };
 
-  const conn = await getConnectionForGateway(parsed.connectionId);
+  const recoveryUrl = new URL(
+    `/settings/connections#connection-${parsed.connectionId}`,
+    process.env.BETTER_AUTH_URL || request.url,
+  ).href;
+  const failure = modelSelectionFailure(
+    body.model as string,
+    "connection_unavailable",
+  );
+  const recovery = { code: failure.code, model: failure.model, recoveryUrl };
+  const reauthenticate = `OpenAI Codex needs authentication. A workspace owner or admin can reauthenticate at ${recoveryUrl}. If this ID was deleted, use Recover deleted ID after verifying the original account.`;
+  const resolvedId = await resolveModelConnectionId(
+    orgId!,
+    parsed.connectionId,
+  );
+  const conn = await getConnectionForGateway(resolvedId);
   if (!conn) {
     await releaseEvalCall();
-    return errorResponse("Model connection not found.", 404);
+    return errorResponse(reauthenticate, 404, recovery);
   }
   if (conn.orgId !== orgId || conn.provider !== "codex") {
     await releaseEvalCall();
@@ -130,14 +151,11 @@ export async function action({ request }: ActionFunctionArgs) {
 
   let access;
   try {
-    access = await getFreshAccessToken(parsed.connectionId);
+    access = await getFreshAccessToken(resolvedId);
   } catch (error) {
     if (error instanceof InvalidGrantError) {
       await releaseEvalCall();
-      return errorResponse(
-        "This Codex connection is no longer valid — reconnect it in Org settings.",
-        403,
-      );
+      return errorResponse(reauthenticate, 403, recovery);
     }
     await releaseEvalCall();
     return errorResponse(
@@ -175,6 +193,20 @@ export async function action({ request }: ActionFunctionArgs) {
   if (!upstream.ok || !upstream.body) {
     const text = await upstream.text().catch(() => "");
     await releaseEvalCall();
+    if (upstream.status === 401) {
+      // Expire only the credential generation that actually received the rejection.
+      // A concurrently renewed grant must remain usable.
+      await markConnectionStatus(
+        resolvedId,
+        "expired",
+        access.credentialVersion,
+      );
+      return errorResponse(
+        `${reauthenticate}${text ? ` Codex backend error (HTTP 401): ${text}` : ""}`,
+        401,
+        recovery,
+      );
+    }
     return errorResponse(
       `Codex backend error (HTTP ${upstream.status})${text ? `: ${text}` : "."}`,
       upstream.status >= 400 && upstream.status < 600 ? upstream.status : 502,

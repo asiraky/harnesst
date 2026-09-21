@@ -4,7 +4,7 @@ import type {
   DeploymentWithRelease,
   Environment,
   Project,
-  Release,
+  ReleaseSummary,
 } from "~/data/ports";
 import {
   discardDrafts as discardDraftsDirect,
@@ -733,7 +733,7 @@ export function createMcpToolService(
   };
 }
 
-function releaseSummary(release: Release) {
+function releaseSummary(release: ReleaseSummary) {
   return {
     id: release.id,
     projectId: release.projectId,

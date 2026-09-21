@@ -261,3 +261,22 @@ describe("ownsWorkspaceModelReference", () => {
     expect(injected.listProvider).not.toHaveBeenCalled();
   });
 });
+
+describe("connection ownership versus model availability", () => {
+  it.each([[], new Error("Provider offline")])(
+    "keeps healthy connection ownership when its catalog is missing or unavailable",
+    async (catalog) => {
+      const injected = deps({
+        connections: [connection("codex")],
+        catalogs: { codex: catalog },
+      });
+      const model = `codex/${IDS.codex}/missing-model`;
+      await expect(
+        findWorkspaceModel("org_1", model, injected),
+      ).resolves.toBeNull();
+      await expect(
+        ownsWorkspaceModelReference("org_1", model, injected),
+      ).resolves.toBe(true);
+    },
+  );
+});

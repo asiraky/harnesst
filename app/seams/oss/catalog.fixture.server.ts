@@ -12,6 +12,7 @@
  * Every manifest/index read goes through parseManifest/parseIndex — the fixture trusts the
  * bytes on disk no more than the GitHub impl trusts the wire.
  */
+import { CatalogTemplateUnavailableError } from "~/marketplace/catalog-errors";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -49,12 +50,18 @@ export const fixtureCatalog: CatalogSource = {
 
   async template(type: TemplateType, id: string): Promise<CatalogTemplate> {
     const dir = join(catalogRoot(), "templates", typeDir(type), id);
-    const manifest = parseManifest(await readJson(join(dir, "template.json")));
+    const raw = await readJson(join(dir, "template.json")).catch((error) => {
+      if (error?.code === "ENOENT")
+        throw new CatalogTemplateUnavailableError(type, id, { cause: error });
+      throw error;
+    });
+    const manifest = parseManifest(raw);
 
     // Load exactly the files the manifest declares (relative to the template's files/ subtree).
     const entries = await Promise.all(
       manifest.files.map(
-        async (rel) => [rel, await readFile(join(dir, "files", rel), "utf8")] as const,
+        async (rel) =>
+          [rel, await readFile(join(dir, "files", rel), "utf8")] as const,
       ),
     );
     // The assistant skill lives beside files/, not under it — it never installs into a repo.

@@ -105,7 +105,7 @@ async function catalogForConnection(
   const catalog =
     deps === defaultDeps
       ? await providerModelCatalogCache.get(
-          `provider-models:${orgId}:${connection.provider}:${connection.id}`,
+          `provider-models:${orgId}:${connection.provider}:${connection.id}:${apiKeyConnection?.credentialVersion ?? 0}`,
           MODEL_CATALOG_TTL_MS,
           fetchCatalog,
         )

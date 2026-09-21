@@ -137,7 +137,12 @@ function applyInstall(
     packageJson:
       files["package.json"] ?? '{"type":"module","dependencies":{}}\n',
     lock: emptyLock(),
-    target: { kind: "member", memberName: null, root: "agent" },
+    target: {
+      kind: "member",
+      memberName: null,
+      resolverAgentName: template.manifest.id,
+      root: "agent",
+    },
   });
   if (plan.conflicts.length > 0) {
     throw new Error(

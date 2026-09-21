@@ -17,6 +17,7 @@
 import { sql } from "drizzle-orm";
 
 // Type-only (erased at runtime, so no import cycle): the publish pipeline's step shape.
+import type { ArtifactProvenance } from "~/deploy/artifact-provenance.server";
 import type { PipelineStep } from "~/data/ports";
 import { newId, newShareToken } from "~/lib/id";
 import {
@@ -497,6 +498,9 @@ export const releases = pgTable(
     version: text("version").notNull(),
     gitSha: text("git_sha").notNull(),
     imageRef: text("image_ref"),
+    artifactProvenance: jsonb(
+      "artifact_provenance",
+    ).$type<ArtifactProvenance>(),
     changelog: text("changelog"),
     createdBy: text("created_by").references(() => user.id),
     createdAt: createdAt(),
@@ -525,6 +529,10 @@ export const deployments = pgTable(
     releaseId: varchar("release_id", { length: 12 })
       .notNull()
       .references(() => releases.id, { onDelete: "restrict" }),
+    /** Immutable snapshot of the artifact verified for this deployment. */
+    artifactProvenance: jsonb(
+      "artifact_provenance",
+    ).$type<ArtifactProvenance>(),
     // pending | building | live | draining | stopped | failed
     status: text("status").notNull().default("pending"),
     trafficWeight: integer("traffic_weight").notNull().default(100),
@@ -1228,6 +1236,9 @@ export const modelProviderConnections = pgTable(
     accessTokenExpiresAt: timestamp("access_token_expires_at", {
       withTimezone: true,
     }),
+    credentialVersion: integer("credential_version").notNull().default(0),
+    /** Only disconnect and user authorization invalidate pending sign-ins. */
+    authorizationVersion: integer("authorization_version").notNull().default(0),
     /** "active" | "expired" | "revoked" — display + gateway-guard state, not a secret. */
     status: varchar("status", { length: 16 }).notNull().default("active"),
     createdBy: text("created_by").references(() => user.id, {
@@ -1238,6 +1249,56 @@ export const modelProviderConnections = pgTable(
   },
   (t) => [index("model_provider_connections_org_idx").on(t.orgId)],
 );
+
+/** Explicit, workspace-scoped recovery of IDs deleted before recoverable disconnects. */
+export const modelConnectionAliases = pgTable(
+  "model_connection_aliases",
+  {
+    orgId: text("org_id")
+      .notNull()
+      .references(() => organization.id, { onDelete: "cascade" }),
+    oldId: varchar("old_id", { length: 12 }).notNull(),
+    connectionId: varchar("connection_id", { length: 12 })
+      .notNull()
+      .references(() => modelProviderConnections.id, { onDelete: "cascade" }),
+    verifiedBy: text("verified_by").references(() => user.id, {
+      onDelete: "set null",
+    }),
+    createdAt: createdAt(),
+  },
+  (t) => [primaryKey({ columns: [t.orgId, t.oldId] })],
+);
+
+/** Device codes stay server-side and can only be completed by their initiating user/workspace. */
+export const modelConnectionLogins = pgTable("model_connection_logins", {
+  id: text("id").primaryKey(),
+  orgId: text("org_id")
+    .notNull()
+    .references(() => organization.id, { onDelete: "cascade" }),
+  userId: text("user_id")
+    .notNull()
+    .references(() => user.id, { onDelete: "cascade" }),
+  connectionId: varchar("connection_id", { length: 12 }),
+  credentialVersion: integer("credential_version"),
+  authorizationVersion: integer("authorization_version"),
+  connectionVersions: jsonb("connection_versions")
+    .$type<Record<string, number>>()
+    .notNull()
+    .default({}),
+  deviceAuthId: text("device_auth_id").notNull(),
+  userCode: text("user_code").notNull(),
+  processing: boolean("processing").notNull().default(false),
+  processingId: text("processing_id"),
+  processingStartedAt: timestamp("processing_started_at", {
+    withTimezone: true,
+  }),
+  pendingGrant: jsonb("pending_grant").$type<{
+    ciphertext: string;
+    iv: string;
+    authTag: string;
+  }>(),
+  expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+});
 
 /**
  * Channel-homed resume descriptor — the ONE place that answers "how do we deliver an answer

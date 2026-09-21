@@ -4,6 +4,7 @@
  * text yet, and must NOT render the "(empty reply)" fallback. All three transcript views
  * share the guard; the assistant route is the original from #193.
  */
+import { MemoryRouter } from "react-router";
 import { renderToString } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
@@ -47,6 +48,38 @@ describe.each(VIEWS)("%s AgentEntry", (_name, AgentEntry) => {
     );
     expect(html).toContain("partial answer");
     expect(html).not.toContain("(empty reply)");
+  });
+
+  it("does not suggest connection recovery for an unrelated error with model attribution", () => {
+    const html = renderToString(
+      <MemoryRouter>
+        <AgentEntry
+          entry={entry({
+            error: "Tool execution failed",
+            modelId: "codex/abcdefghijkl/pinned",
+          })}
+        />
+      </MemoryRouter>,
+    );
+    expect(html).not.toContain(
+      'href="/settings/connections#connection-abcdefghijkl"',
+    );
+  });
+
+  it("links structured runtime recovery even when model attribution is absent", () => {
+    const html = renderToString(
+      <MemoryRouter>
+        <AgentEntry
+          entry={entry({
+            error: "Provider failure",
+            errorModelId: "codex/abcdefghijkl/pinned",
+          })}
+        />
+      </MemoryRouter>,
+    );
+    expect(html).toContain(
+      'href="/settings/connections#connection-abcdefghijkl"',
+    );
   });
 
   it("shows an error on a running turn", () => {

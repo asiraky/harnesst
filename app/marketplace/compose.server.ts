@@ -34,6 +34,7 @@
  * matches the parent's `index.json` row; each ResolvedInclude.hash is likewise that include's own
  * content hash. Both use the shared hash rule (hash.server.ts) — never a fork.
  */
+import { CatalogTemplateUnavailableError } from "./catalog-errors";
 import type {
   AuthScopeGroup,
   TemplateManifest,
@@ -124,6 +125,20 @@ export async function resolveTemplate(
   id: string,
 ): Promise<ResolvedTemplate> {
   return resolve(source, type, id, []);
+}
+
+/** Installed content outlives its source catalog entry (including missing bundled templates). */
+export async function resolveInstalledTemplate(
+  source: CatalogSource,
+  type: TemplateType,
+  id: string,
+): Promise<ResolvedTemplate | null> {
+  try {
+    return await resolveTemplate(source, type, id);
+  } catch (error) {
+    if (error instanceof CatalogTemplateUnavailableError) return null;
+    throw error;
+  }
 }
 
 async function resolve(

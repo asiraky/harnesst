@@ -10,6 +10,7 @@ import {
   desc,
   eq,
   gt,
+  getTableColumns,
   gte,
   inArray,
   isNull,
@@ -38,7 +39,50 @@ import {
   workspaceTasks,
 } from "~/db/schema";
 import { recordAudit } from "~/managed/audit.server";
-import type { DataStore } from "./ports";
+import type { ArtifactProvenanceSummary, DataStore, DraftChange, DraftWrite } from "./ports";
+
+type DraftTransaction = Parameters<Parameters<typeof db.transaction>[0]>[0];
+
+/** All draft mutations share this short project-scoped lock; a reset cannot overwrite a racing save. */
+async function withDraftLock<T>(
+  projectId: string,
+  operation: (tx: DraftTransaction) => Promise<T>,
+): Promise<T> {
+  return db.transaction(async (tx) => {
+    await tx.execute(
+      sql`select pg_advisory_xact_lock(hashtextextended(${`drafts:${projectId}`}, 0))`,
+    );
+    return operation(tx);
+  });
+}
+
+async function upsertDraft(
+  tx: DraftTransaction,
+  input: DraftWrite,
+): Promise<DraftChange> {
+  const [row] = await tx
+    .insert(draftChanges)
+    .values({
+      projectId: input.projectId,
+      agentId: input.agentId,
+      path: input.path,
+      content: input.content,
+      baseSha: input.baseSha ?? null,
+      createdBy: input.createdBy ?? null,
+    })
+    .onConflictDoUpdate({
+      target: [draftChanges.projectId, draftChanges.path],
+      set: {
+        agentId: input.agentId,
+        content: input.content,
+        baseSha: input.baseSha ?? null,
+        createdBy: input.createdBy ?? null,
+        updatedAt: new Date(),
+      },
+    })
+    .returning();
+  return row;
+}
 
 export const drizzleDataStore: DataStore = {
   agents: {
@@ -159,12 +203,15 @@ export const drizzleDataStore: DataStore = {
         .limit(1);
       return row ?? null;
     },
-    async setImageRef(id, imageRef) {
-      await db.update(releases).set({ imageRef }).where(eq(releases.id, id));
+    async setImageRef(id, imageRef, provenance) {
+      await db.update(releases).set({ imageRef, artifactProvenance: provenance ?? null }).where(eq(releases.id, id));
     },
     async listByProject(projectId) {
       return db
-        .select()
+        .select({
+          ...getTableColumns(releases),
+          artifactProvenance: sql<ArtifactProvenanceSummary | null>`${releases.artifactProvenance} - 'files'`,
+        })
         .from(releases)
         .where(eq(releases.projectId, projectId))
         .orderBy(desc(releases.createdAt));
@@ -223,6 +270,7 @@ export const drizzleDataStore: DataStore = {
           releaseId: deployments.releaseId,
           version: releases.version,
           gitSha: releases.gitSha,
+          artifactProvenance: sql<ArtifactProvenanceSummary | null>`${deployments.artifactProvenance} - 'files'`,
         })
         .from(deployments)
         .innerJoin(releases, eq(deployments.releaseId, releases.id))
@@ -550,34 +598,48 @@ export const drizzleDataStore: DataStore = {
 
   drafts: {
     async upsert(input) {
-      const [row] = await db
-        .insert(draftChanges)
-        .values({
-          projectId: input.projectId,
-          agentId: input.agentId,
-          path: input.path,
-          content: input.content,
-          baseSha: input.baseSha ?? null,
-          createdBy: input.createdBy ?? null,
-        })
-        .onConflictDoUpdate({
-          target: [draftChanges.projectId, draftChanges.path],
-          set: {
-            agentId: input.agentId,
-            content: input.content,
-            baseSha: input.baseSha ?? null,
-            createdBy: input.createdBy ?? null,
-            updatedAt: new Date(),
-          },
-        })
-        .returning();
-      return row;
+      return withDraftLock(input.projectId, (tx) => upsertDraft(tx, input));
+    },
+    async compareAndStage(projectId, expected, writes) {
+      if (writes.some((write) => write.projectId !== projectId))
+        throw new Error("Draft writes must belong to the reset project.");
+      return withDraftLock(projectId, async (tx) => {
+        const current = await tx
+          .select()
+          .from(draftChanges)
+          .where(eq(draftChanges.projectId, projectId));
+        if (
+          current.length !== expected.length ||
+          current.some(
+            (row) =>
+              !expected.some(
+                (before) =>
+                  before.id === row.id &&
+                  before.path === row.path &&
+                  before.content === row.content &&
+                  before.updatedAt.getTime() === row.updatedAt.getTime(),
+              ),
+          )
+        )
+          return null;
+        for (const write of writes) await upsertDraft(tx, write);
+        return tx
+          .select()
+          .from(draftChanges)
+          .where(eq(draftChanges.projectId, projectId))
+          .orderBy(asc(draftChanges.createdAt));
+      });
     },
     async get(projectId, path) {
       const [row] = await db
         .select()
         .from(draftChanges)
-        .where(and(eq(draftChanges.projectId, projectId), eq(draftChanges.path, path)))
+        .where(
+          and(
+            eq(draftChanges.projectId, projectId),
+            eq(draftChanges.path, path),
+          ),
+        )
         .limit(1);
       return row ?? null;
     },
@@ -590,9 +652,16 @@ export const drizzleDataStore: DataStore = {
     },
     async deleteByPaths(projectId, paths) {
       if (paths.length === 0) return;
-      await db
-        .delete(draftChanges)
-        .where(and(eq(draftChanges.projectId, projectId), inArray(draftChanges.path, paths)));
+      await withDraftLock(projectId, async (tx) => {
+        await tx
+          .delete(draftChanges)
+          .where(
+            and(
+              eq(draftChanges.projectId, projectId),
+              inArray(draftChanges.path, paths),
+            ),
+          );
+      });
     },
     async deletePublished(projectId, entries) {
       if (entries.length === 0) return;
@@ -607,19 +676,26 @@ export const drizzleDataStore: DataStore = {
       // changes" never clears (each republish re-commits the same files under a new version).
       // Taking the millisecond's ceiling instead deletes anything saved within the captured
       // millisecond and still keeps any save from a later one.
-      await db.delete(draftChanges).where(
-        and(
-          eq(draftChanges.projectId, projectId),
-          or(
-            ...entries.map((e) =>
-              and(
-                eq(draftChanges.path, e.path),
-                lt(draftChanges.updatedAt, new Date(e.updatedAt.getTime() + 1)),
+      await withDraftLock(projectId, async (tx) => {
+        await tx
+          .delete(draftChanges)
+          .where(
+            and(
+              eq(draftChanges.projectId, projectId),
+              or(
+                ...entries.map((e) =>
+                  and(
+                    eq(draftChanges.path, e.path),
+                    lt(
+                      draftChanges.updatedAt,
+                      new Date(e.updatedAt.getTime() + 1),
+                    ),
+                  ),
+                ),
               ),
             ),
-          ),
-        ),
-      );
+          );
+      });
     },
   },
 

@@ -555,7 +555,8 @@ describe("loadPlaygroundEntriesFromEve", () => {
       type: "turn.failed",
       data: {
         turnId: "turn_1",
-        message: "Our servers are currently overloaded. Please try again later.",
+        message:
+          "Our servers are currently overloaded. Please try again later.",
         code: "MODEL_CALL_FAILED",
       },
       meta: { at },
@@ -683,7 +684,9 @@ describe("loadPlaygroundEntriesFromEve", () => {
         // The successor is read at its cursor; the predecessor under the fixed cap. Both
         // eve sessions restart at turn_0 — the epoch machinery must keep them apart.
         return String(url).includes("/session/sess_0/")
-          ? streamResponse(sessionTurn("m/x", "Issue #2: 404s", "Which branch?"))
+          ? streamResponse(
+              sessionTurn("m/x", "Issue #2: 404s", "Which branch?"),
+            )
           : streamResponse(sessionTurn("m/x", "let's continue here", "On it."));
       }),
     );
@@ -712,7 +715,9 @@ describe("loadPlaygroundEntriesFromEve", () => {
         if (String(url).includes("/session/sess_0/")) {
           throw new Error("connect timeout");
         }
-        return streamResponse(sessionTurn("m/x", "let's continue here", "On it."));
+        return streamResponse(
+          sessionTurn("m/x", "let's continue here", "On it."),
+        );
       }),
     );
 
@@ -859,4 +864,46 @@ describe("projectEventsToEntries", () => {
     ]);
     expect(new Set(entries.map((e) => e.id)).size).toBe(4);
   });
+});
+
+describe("replayed structured connection recovery", () => {
+  it.each(["connection_unavailable", "policy_refusal"])(
+    "keeps runtime recovery context separate from attribution (%s)",
+    (code) => {
+      const model = "codex/abcdefghijkl/pinned";
+      const entries = projectEventsToEntries(
+        [
+          {
+            type: "message.received",
+            data: { message: "hello", turnId: "turn_1" },
+          },
+          {
+            type: "step.failed",
+            data: {
+              turnId: "turn_1",
+              code: "MODEL_CALL_FAILED",
+              message: "Provider supplied failure",
+              details: {
+                cause: {
+                  responseBodySnippet: JSON.stringify({
+                    error: { code, model },
+                  }),
+                },
+              },
+            },
+          },
+          {
+            type: "turn.failed",
+            data: { turnId: "turn_1", message: "Provider supplied failure" },
+          },
+        ] as never,
+        session(),
+      );
+      const error = entries.find((entry) => entry.role === "assistant");
+      expect(error?.errorModelId).toBe(
+        code === "connection_unavailable" ? model : null,
+      );
+      expect(error?.modelId).toBeNull();
+    },
+  );
 });

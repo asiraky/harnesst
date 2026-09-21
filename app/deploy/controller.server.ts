@@ -430,8 +430,11 @@ export async function deployRelease(
     // deleted). Two concurrent first deploys of the same env can race; last write wins, resolved
     // by the next redeploy.
     if (lock && agent) {
-      const generatedNames = lockSecretsForMember(lock, agent.name, isTeamMember)
-        .flatMap((e) => e.secrets.filter((s) => s.generated).map((s) => s.name));
+      const generatedNames = lockSecretsForMember(
+        lock,
+        agent.name,
+        isTeamMember,
+      ).flatMap((e) => e.secrets.filter((s) => s.generated).map((s) => s.name));
       for (const name of new Set(generatedNames)) {
         if (isReservedModelEnvName(name)) continue;
         const ref = {
@@ -491,7 +494,9 @@ export async function deployRelease(
     }
     delete envVars.HARNESST_MODEL_DIRECTIVE_SECRET;
     if (project && deps.modelDirectiveSecret) {
-      envVars.HARNESST_MODEL_DIRECTIVE_SECRET = deps.modelDirectiveSecret(dep.id);
+      envVars.HARNESST_MODEL_DIRECTIVE_SECRET = deps.modelDirectiveSecret(
+        dep.id,
+      );
     }
 
     // A Codex-only org has no API key in env — its model source is the gateway itself.
@@ -782,18 +787,22 @@ export async function deployRelease(
     }
 
     let imageRef = release.imageRef;
+    let provenance = release.artifactProvenance;
     const hasSessionWorkspaceRuntime =
       agent?.kind !== "member" ||
       (imageRef != null &&
         deployTarget.imageSupports != null &&
         (await deployTarget.imageSupports(
-          imageRef,
+          provenance?.runtimeDigest ?? imageRef,
           SESSION_WORKSPACE_IMAGE_CAPABILITY,
         )));
-    // Existing Release rows may point at images built before #315 injected the authenticated
-    // channel and subpath-mount shim. Rebuild those cached member images once during rollout.
+    // Legacy releases predate either session isolation or source provenance. A tag alone
+    // cannot establish their contents: rebuild from the pinned commit before deploying.
     const shouldBuild =
-      input.rebuild || !imageRef || !hasSessionWorkspaceRuntime;
+      input.rebuild ||
+      !imageRef ||
+      !hasSessionWorkspaceRuntime ||
+      (agent?.kind === "member" && !provenance);
     if (shouldBuild) {
       if (!project?.repoOwner || !project.repoName) {
         throw new Error(
@@ -809,12 +818,33 @@ export async function deployRelease(
         injectTeammateTool: isTeamMember,
       });
       imageRef = built.imageRef;
-      await store.releases.setImageRef(release.id, built.imageRef);
+      provenance = built.provenance ?? null;
+      await store.releases.setImageRef(
+        release.id,
+        built.imageRef,
+        built.provenance,
+      );
+    }
+
+    if (agent?.kind === "member" && !provenance) {
+      throw new Error(
+        "Artifact verification failed: build did not produce source provenance.",
+      );
+    }
+    if (
+      provenance &&
+      (provenance.gitSha !== release.gitSha ||
+        provenance.agentRoot !== (agent?.root ?? "agent"))
+    ) {
+      throw new Error(
+        "Artifact verification failed: artifact commit or agent root does not match this release.",
+      );
     }
 
     const health = await deployTarget.deploy({
       deploymentId: dep.id,
-      imageRef: imageRef ?? "",
+      imageRef: provenance?.runtimeDigest ?? imageRef ?? "",
+      provenance: provenance ?? undefined,
       env: envVars,
       // Member-agent working files are private to one harnesst conversation (#315). The built-in
       // assistant uses a different deploy path and keeps its sidecar-managed checkout isolation.
@@ -894,6 +924,7 @@ export async function deployRelease(
       status: health.status,
       url: health.url ?? null,
       errorDetail: null,
+      artifactProvenance: provenance,
     });
     if (project) {
       await store.audit.record({

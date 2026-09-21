@@ -1,3 +1,4 @@
+import { modelUnavailableMessage } from "~/models/provider-reference";
 /**
  * Playground — persistent Eve sessions with a live deployment of this agent.
  *
@@ -275,7 +276,7 @@ export async function action(args: ActionFunctionArgs) {
       if (!model) {
         return {
           error:
-            "That model is not available from an active provider connection in this workspace.",
+            modelUnavailableMessage(modelId),
         };
       }
       if (effort && !model.supportedEfforts?.includes(effort)) {
@@ -328,6 +329,7 @@ interface LiveTurn {
   inputRequests: ChatInputRequest[];
   error: string | null;
   errorDetail: string | null;
+  errorModelId?: string | null;
   errorRetryable: boolean;
   done: boolean;
 }
@@ -392,6 +394,7 @@ export default function Playground({ loaderData }: Route.ComponentProps) {
       ? currentSessionEffort
       : defaultEffort;
   const [sendError, setSendError] = useState<string | null>(null);
+  const [sendErrorModel, setSendErrorModel] = useState<string | null>(null);
   const streamAbortRef = useRef<AbortController | null>(null);
   const stopRequestedRef = useRef(false);
   const remoteBusy = currentSessionStatus === "running";
@@ -484,6 +487,7 @@ export default function Playground({ loaderData }: Route.ComponentProps) {
   const send = useCallback(
     async (message: string) => {
       setSendError(null);
+      setSendErrorModel(null);
       stopRequestedRef.current = false;
       setLive({
         playgroundSessionId: currentSessionId,
@@ -529,7 +533,12 @@ export default function Playground({ loaderData }: Route.ComponentProps) {
         if (!res.ok) {
           const detail = (await res.json().catch(() => null)) as {
             error?: unknown;
+            model?: unknown;
+            code?: unknown;
           } | null;
+          setSendErrorModel(
+            typeof detail?.model === "string" && (detail.code === "connection_unavailable" || detail.code === "model_unavailable") ? detail.model : null,
+          );
           const errorMessage =
             typeof detail?.error === "string" ? detail.error : null;
           if (res.status === 409) {
@@ -675,6 +684,7 @@ export default function Playground({ loaderData }: Route.ComponentProps) {
       visibleLive?.playgroundSessionId ?? currentSessionId;
     if (!playgroundSessionId || !deploymentId) return;
     setSendError(null);
+    setSendErrorModel(null);
 
     const form = new FormData();
     form.set("playgroundSessionId", playgroundSessionId);
@@ -855,7 +865,9 @@ export default function Playground({ loaderData }: Route.ComponentProps) {
         )}
         {sendError && (
           <Alert variant="destructive" className="mb-4">
-            <AlertDescription>{sendError}</AlertDescription>
+            <AlertDescription>
+              <TurnError message={sendError} recoveryModelId={sendErrorModel} />
+            </AlertDescription>
           </Alert>
         )}
       </>
@@ -866,6 +878,7 @@ export default function Playground({ loaderData }: Route.ComponentProps) {
       historyError,
       isTeam,
       sendError,
+      sendErrorModel,
       targets.length,
     ],
   );
@@ -1000,6 +1013,7 @@ type StreamEvent =
       inputRequests?: ChatInputRequest[];
       error: string | null;
       errorDetail?: string | null;
+      errorModelId?: string | null;
       errorRetryable?: boolean;
       modelId: string | null;
       version: string;
@@ -1045,6 +1059,7 @@ function reduceLive(prev: LiveTurn, evt: StreamEvent): LiveTurn {
             : prev.inputRequests,
         error: evt.error,
         errorDetail: evt.errorDetail ?? null,
+        errorModelId: evt.errorModelId ?? null,
         errorRetryable: evt.errorRetryable ?? false,
         modelId: evt.modelId ?? prev.modelId,
         activity: null,
@@ -1109,6 +1124,7 @@ function LiveBubble({
           {live.error ? (
             <TurnError
               message={live.error}
+              recoveryModelId={live.errorModelId}
               detail={live.errorDetail}
               retryable={live.errorRetryable}
               onRetry={onRetry}
@@ -1175,6 +1191,7 @@ export function AgentEntry({
           {entry.error ? (
             <TurnError
               message={entry.error}
+              recoveryModelId={entry.errorModelId}
               detail={entry.errorDetail}
               retryable={entry.errorRetryable}
               onRetry={onRetry}
