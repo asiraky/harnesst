@@ -96,8 +96,8 @@ vi.mock("~/observability/store.server", async (importOriginal) => ({
   ...(await importOriginal<typeof import("~/observability/store.server")>()),
   listIngestTokens: async () => [],
 }));
-vi.mock("~/project/secrets.server", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("~/project/secrets.server")>()),
+vi.mock("~/seams/oss/secret-store", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("~/seams/oss/secret-store")>()),
   listAgentSecretRows: async () => [],
   listSharedSecrets: async () => [],
   listAttachments: async () => [],
@@ -186,7 +186,7 @@ function clearedTargets() {
 }
 
 describe("reset model settings actions", () => {
-  it("loads missing installed templates from the lock without error logging and rejects stale updates", async () => {
+  it("preserves missing installed templates from the lock and rejects stale updates", async () => {
     mocks.files["harnesst-lock.json"] = JSON.stringify({
       version: 1,
       installs: [
@@ -203,38 +203,36 @@ describe("reset model settings actions", () => {
         },
       ],
     });
-    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-    try {
-      const result = (await load()) as {
-        installs: { id: string; update: string | null }[];
-      };
-      expect(result.installs).toEqual(
-        expect.arrayContaining([
-          expect.objectContaining({ id: "ledger-intake", update: null }),
-        ]),
-      );
-      expect(
-        warn.mock.calls.filter(([message]) =>
-          String(message).startsWith("[settings]"),
-        ),
-      ).toEqual([]);
-      expect(
-        await post(
-          {},
-          {
-            intent: "update-install",
-            type: "agent",
-            id: "ledger-intake",
-            member: "ledger",
-          },
-        ),
-      ).toMatchObject({
-        error: expect.stringContaining("no longer available"),
-      });
-      expect(await mocks.store!.drafts.listByProject("p")).toEqual([]);
-    } finally {
-      warn.mockRestore();
-    }
+    const result = (await load()) as { installs: unknown[] };
+    expect(result.installs).toEqual([
+      {
+        id: "ledger-intake",
+        type: "agent",
+        name: "Ledger Intake",
+        version: "1.0.0",
+        member: "ledger",
+        subagent: "",
+        files: [`${root}/agent.ts`],
+        depsLeft: [],
+        update: null,
+        repair: false,
+        providedBy: null,
+      },
+    ]);
+    expect(
+      await post(
+        {},
+        {
+          intent: "update-install",
+          type: "agent",
+          id: "ledger-intake",
+          member: "ledger",
+        },
+      ),
+    ).toMatchObject({
+      error: expect.stringContaining("no longer available"),
+    });
+    expect(await mocks.store!.drafts.listByProject("p")).toEqual([]);
   });
 
   it("resets only the URL member despite a hostile form asking for its sibling", async () => {
