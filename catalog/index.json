@@ -12,9 +12,9 @@
       "id": "ledger-implementer",
       "type": "agent",
       "name": "Ledger Implementer",
-      "version": "0.1.1",
+      "version": "0.2.0",
       "description": "The team’s product engineer. Turn ledger specifications into working changes in the project repository. Use GitHub for code and the ledger for work state. Keep one branch and one PR per item. Delegate browser QA to the qa subagent and independent code review to reviewer; record their findings against the exact head SHA.",
-      "hash": "70d79a6008eb31a6435fd4dc8df9bc13d6c7a7cf"
+      "hash": "af6739a4c9bd11bce097005a6e5424dd4be1d319"
     },
     {
       "id": "ledger-infra",
@@ -28,9 +28,9 @@
       "id": "ledger-intake",
       "type": "agent",
       "name": "Ledger Intake",
-      "version": "0.1.1",
+      "version": "0.2.0",
       "description": "The team’s front of house. Turn requests into testable specifications, break large plans into reviewable work, and relay human decisions. Read project context through the ledger. Report pending May I approvals to the named human and report when their work is live.",
-      "hash": "10f2bc49ce0ffa3eb09e8ab3a59f790c7493a6a5"
+      "hash": "b5cfc3c7b7100d3bb6234aaf4dacbdee058dc969"
     },
     {
       "id": "vercel-issuer",
@@ -334,7 +334,7 @@
       "name": "Using The Ledger",
       "version": "0.1.0",
       "description": "Use when a ledger wake arrives or before recording evidence, handing code to infra for a preview, moving work, resolving a block, or relaying human approval.",
-      "hash": "bc0b31716980c2fe63aae2e79fc94eef92c1bc54"
+      "hash": "44532bb564a0f77a1fe9d99350ed8bfa266ca74c"
     },
     {
       "id": "web-perf",
@@ -359,6 +359,30 @@
       "version": "0.1.0",
       "description": "Run or troubleshoot Wrangler CLI commands and configure Worker projects for local development, deployment, and Cloudflare resource management.",
       "hash": "b523ad2b033386e66e05eb97a657964666e9e0f4"
+    },
+    {
+      "id": "ledger-code-review",
+      "type": "subagent",
+      "name": "reviewer",
+      "version": "0.1.0",
+      "description": "Execute the verbatim two-axis code-review procedure on supplied committed base/head revisions and scope.",
+      "hash": "e977f6470097aa5f9da84ba09ed770ce1985d352"
+    },
+    {
+      "id": "ledger-planner",
+      "type": "subagent",
+      "name": "planner",
+      "version": "0.1.0",
+      "description": "Break one settled issue specification into internal tickets and dependencies; return unresolved decisions to intake.",
+      "hash": "6ff499caaea07fb33986f0951cd2bfb91da6155d"
+    },
+    {
+      "id": "ledger-researcher",
+      "type": "subagent",
+      "name": "researcher",
+      "version": "0.1.0",
+      "description": "Investigate a bounded codebase question for intake; report file references, facts and unknowns without making product decisions.",
+      "hash": "be425ca5991a31ec2b94897076c9ef93947318d7"
     },
     {
       "id": "asset-library",

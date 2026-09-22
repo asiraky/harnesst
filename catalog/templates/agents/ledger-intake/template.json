@@ -2,13 +2,43 @@
   "id": "ledger-intake",
   "type": "agent",
   "name": "Ledger Intake",
-  "description": "The team\u2019s front of house. Turn requests into testable specifications, break large plans into reviewable work, and relay human decisions. Read project context through the ledger. Report pending May I approvals to the named human and report when their work is live.",
-  "version": "0.1.1",
+  "description": "The team’s front of house. Turn requests into testable specifications, break large plans into reviewable work, and relay human decisions. Read project context through the ledger. Report pending May I approvals to the named human and report when their work is live.",
+  "version": "0.2.0",
   "eve": ">=0.22.0",
   "subagentCompatible": false,
   "files": [
     "agent.ts",
-    "instructions.md"
+    "instructions.md",
+    "skills/issue-tickets/SKILL.md",
+    "skills/issue-tickets/ticket-plan.mjs",
+    "skills/matt-pocock-LICENSE",
+    "skills/matt-pocock-codebase-design/DEEPENING.md",
+    "skills/matt-pocock-codebase-design/DESIGN-IT-TWICE.md",
+    "skills/matt-pocock-codebase-design/SKILL.md",
+    "skills/matt-pocock-codebase-design/SOURCE.md",
+    "skills/matt-pocock-codebase-design/agents/openai.yaml",
+    "skills/matt-pocock-domain-modeling/ADR-FORMAT.md",
+    "skills/matt-pocock-domain-modeling/CONTEXT-FORMAT.md",
+    "skills/matt-pocock-domain-modeling/SKILL.md",
+    "skills/matt-pocock-domain-modeling/SOURCE.md",
+    "skills/matt-pocock-domain-modeling/agents/openai.yaml",
+    "skills/matt-pocock-grill-with-docs/SKILL.md",
+    "skills/matt-pocock-grill-with-docs/SOURCE.md",
+    "skills/matt-pocock-grill-with-docs/agents/openai.yaml",
+    "skills/matt-pocock-grilling/SKILL.md",
+    "skills/matt-pocock-grilling/SOURCE.md",
+    "skills/matt-pocock-grilling/agents/openai.yaml",
+    "skills/matt-pocock-setup-matt-pocock-skills/SKILL.md",
+    "skills/matt-pocock-setup-matt-pocock-skills/SOURCE.md",
+    "skills/matt-pocock-setup-matt-pocock-skills/agents/openai.yaml",
+    "skills/matt-pocock-setup-matt-pocock-skills/domain.md",
+    "skills/matt-pocock-setup-matt-pocock-skills/issue-tracker-github.md",
+    "skills/matt-pocock-setup-matt-pocock-skills/issue-tracker-gitlab.md",
+    "skills/matt-pocock-setup-matt-pocock-skills/issue-tracker-local.md",
+    "skills/matt-pocock-setup-matt-pocock-skills/triage-labels.md",
+    "skills/matt-pocock-to-spec/SKILL.md",
+    "skills/matt-pocock-to-spec/SOURCE.md",
+    "skills/matt-pocock-to-spec/agents/openai.yaml"
   ],
   "assistantSkill": "assistant-skill.md",
   "includes": [
@@ -18,11 +48,15 @@
     },
     {
       "type": "skill",
-      "id": "clarifying-a-request"
+      "id": "dev-toolchain"
     },
     {
-      "type": "skill",
-      "id": "breaking-down-work"
+      "type": "subagent",
+      "id": "ledger-planner"
+    },
+    {
+      "type": "subagent",
+      "id": "ledger-researcher"
     }
   ]
 }

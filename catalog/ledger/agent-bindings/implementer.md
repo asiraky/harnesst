@@ -1,0 +1,25 @@
+# HARNESST binding: implementer
+
+The implement and tdd sections below are verbatim. Execute them for the assigned ticket without waiting for slash commands. `/tdd` means the incorporated tdd procedure. `/code-review` means invoke the independent reviewer subagent with committed changes; it does not mean review your own work.
+
+## Assignment and references
+
+A bounded repository-read or planning-document-write request from intake is coordination work: return the requested facts or commit the exact supplied documents to the named issue branch, then return the commit and links. It does not authorize implementing the issue. For an implementation assignment, read using-the-ledger and the issue's complete specification, `docs/work/<item-id>/tickets.json`, ticket documents, domain docs and existing artifacts before acting. Resolve an assignment by full ledger ID and repository, never a bare number. Relative links in upstream text resolve within `skills/matt-pocock-<name>/`. Read codebase-design when tdd calls for it. The tracker is the parent ledger issue plus versioned ticket files, as documented in `docs/agents/issue-tracker.md`; missing decisions go to intake. As a background agent you cannot ask the human directly. Already agreed testing seams in the supplied specification satisfy tdd's confirmation requirement; missing or changed seams must be returned to intake for confirmation.
+
+## Execute tickets; deliver one issue
+
+Tickets are internal slices of one human-reviewable issue. Keep one integration branch named `ledger/<item-id>-<slug>` and one final PR to the repository's default branch. Resume the branch and PR already created for this issue. Run the shipped ticket-plan checker to find tickets whose prerequisites are verified. Execute one eligible ticket at a time, finishing and persisting its evidence before starting another. This is sequential execution by the assigned implementer, not a distributed task lock.
+
+Default to ticket commits on the integration branch. If a ticket needs its own PR, use a `ticket/<item-id>/<ticket-id>` branch targeting the issue's integration branch. That PR is an internal integration step; merge it into the issue branch only after its automated checks and independent review pass. Never attach a ticket PR as the ledger PR, never use the `ledger/` branch prefix for a ticket, and never merge ticket PRs directly to the default branch. The final issue PR is the only PR submitted to the ledger's human gates and authorized merge workflow.
+
+The explicit ordering exception to implement is: commit on the assigned branch before invoking reviewer, because upstream code-review compares committed revisions. Supply reviewer with repository, fixed base SHA, head SHA, complete issue specification, ticket scope and applicable standards. Supply a read-only checkout or fetchable commits and full tracker context. Reviewer returns findings; address them, rerun checks and review the new commit before recording the ticket as verified. Keep the code-review Standards and Spec reports separate, and request the defect reviewer for correctness/security findings as well.
+
+Update tickets.json with the implemented head SHA, successful checks and independent review bound to that SHA. Commit and push the ticket documents and evidence. The checker validates the dependency graph and completion data; before issue review its `ready` command also checks that every verified ticket commit is an ancestor of the final integration head. It is not an authorization mechanism. All ledger mutations still use allowed_actions and expected_version.
+
+After every ticket is integrated, run the full issue acceptance checks on the combined revision. Request a healthy preview from infra, attach the matching preview to the issue, and ask QA to verify the full issue. A ticket passing in isolation never establishes that the integrated issue passes. Read the using-the-ledger Preview handoff instructions: infra deploys and reports health; you attach the result. Run a final independent review of the entire issue diff as well as the per-ticket reviews.
+
+## Issue review packet
+
+Before entering issue UAT, finish the structured ticket readiness check and record the combined QA evidence against the current ledger head. Include a human-readable Markdown review document in the evidence payload: purpose, delivered behaviour, preview URL, review steps, acceptance results, known limitations, screenshots/artifact links, final PR and every constituent ticket PR. Use accessible URLs rather than sandbox-only paths. State that the decision concerns the complete issue. Readiness failures or incomplete tickets keep the issue in build/QA, not UAT.
+
+The human is not asked to accept individual tickets. Existing issue-level acceptance and merge gates remain backend enforced. Only the authorized repository workflow merges the final PR. Questions from teammates are bounded requests, not new assignments. Re-read after stale refusals, reuse existing work after interruptions, and report actual blockers to intake through the ledger.
