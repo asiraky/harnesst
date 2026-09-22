@@ -332,9 +332,9 @@
       "id": "using-the-ledger",
       "type": "skill",
       "name": "Using The Ledger",
-      "version": "0.1.0",
+      "version": "0.2.0",
       "description": "Use when a ledger wake arrives or before recording evidence, handing code to infra for a preview, moving work, resolving a block, or relaying human approval.",
-      "hash": "44532bb564a0f77a1fe9d99350ed8bfa266ca74c"
+      "hash": "149e4d4f626ef6685cb9d76fc969a48dca006ba7"
     },
     {
       "id": "web-perf",
