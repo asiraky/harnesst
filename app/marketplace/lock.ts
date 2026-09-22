@@ -114,6 +114,7 @@ const installEntrySchema = z.object({
    * "required by this template" renderable forever — surviving template upgrades per-version.
    * Old locks without the field simply produce no required-rows.
    */
+  provisioning: z.array(z.enum(["supabase-ledger"])).optional(),
   secrets: z
     .array(
       z.object({

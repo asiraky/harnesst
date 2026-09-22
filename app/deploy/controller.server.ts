@@ -420,7 +420,6 @@ export async function deployRelease(
       lock = overlayLock(lockJson, []);
     }
     const member = isTeamMember && agent ? agent.name : null;
-
     // Generated secrets (issue #163): lock-declared `generated` secrets are minted ONCE per
     // (agent, environment) — 32 random bytes base64url, sealed into secret_values via the normal
     // secrets seam — and reused verbatim on every later deploy. The mint gate is the EXACT
@@ -528,7 +527,8 @@ export async function deployRelease(
     const allowlist = exposed.filter(
       (name) => !isReservedModelEnvName(name) && name in envVars,
     );
-    if (allowlist.length > 0) envVars.HARNESST_SANDBOX_ENV = allowlist.join(",");
+    if (allowlist.length > 0)
+      envVars.HARNESST_SANDBOX_ENV = allowlist.join(",");
 
     // Team delegation (D3): a team member gets the relay coordinates, an HMAC token identifying
     // THIS deployment, and its roster — all harnesst-owned, so stripped from user secrets first (the
@@ -721,7 +721,9 @@ export async function deployRelease(
       // self-managed connector) must not survive into a container whose whole safety story is
       // "the instance holds no vendor credential".
       const capabilityProviderIds = new Set(
-        (grantEnv.HARNESST_CAPABILITY_PROVIDERS ?? "").split(",").filter(Boolean),
+        (grantEnv.HARNESST_CAPABILITY_PROVIDERS ?? "")
+          .split(",")
+          .filter(Boolean),
       );
       for (const def of listProviders()) {
         // Only the providers harnesst actually brokered this deploy — a present <PREFIX>_OAUTH_SCOPES

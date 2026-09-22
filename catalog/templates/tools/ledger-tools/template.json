@@ -1,0 +1,58 @@
+{
+  "id": "ledger-tools",
+  "type": "tool",
+  "name": "Ledger tools",
+  "description": "Read and move team work through database-enforced stages, evidence and human gates.",
+  "version": "0.2.0",
+  "eve": ">=0.22.0",
+  "subagentCompatible": true,
+  "files": [
+    "lib/ledger-lease.ts",
+    "lib/ledger.ts",
+    "tools/ledger-attach.ts",
+    "tools/ledger-block.ts",
+    "tools/ledger-claim.ts",
+    "tools/ledger-complete-wake.ts",
+    "tools/ledger-create-item.ts",
+    "tools/ledger-create-project.ts",
+    "tools/ledger-evidence.ts",
+    "tools/ledger-get-item.ts",
+    "tools/ledger-get-project.ts",
+    "tools/ledger-list-items.ts",
+    "tools/ledger-list-projects.ts",
+    "tools/ledger-resolve-block.ts",
+    "tools/ledger-set-head.ts",
+    "tools/ledger-transition.ts",
+    "tools/ledger-update-spec.ts",
+    "tools/ledger-whoami.ts"
+  ],
+  "assistantSkill": "assistant-skill.md",
+  "dependencies": {
+    "zod": "^4.4.3"
+  },
+  "secrets": [
+    {
+      "name": "LEDGER_URL",
+      "description": "Supabase project URL from its Connect dialog: https://PROJECT_REF.supabase.co.",
+      "provisioned": true
+    },
+    {
+      "name": "LEDGER_ANON_KEY",
+      "description": "Supabase publishable key (sb_publishable_\u2026) from Settings \u2192 API Keys. Legacy anon also works. Use the same value for all members; never service_role or a secret key.",
+      "provisioned": true
+    },
+    {
+      "name": "LEDGER_ACTOR_KEY",
+      "description": "This member's actor_key from supabase/mint-actors.sql. Match the intake, infra or implementer row.",
+      "provisioned": true
+    },
+    {
+      "name": "LEDGER_WAKE_TOKEN",
+      "description": "This member's wake_token from supabase/mint-actors.sql. Match its row; this is distinct from actor_key.",
+      "provisioned": true
+    }
+  ],
+  "provisioning": [
+    "supabase-ledger"
+  ]
+}

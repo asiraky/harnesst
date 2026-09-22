@@ -55,7 +55,6 @@ import {
   AppShell,
   PageHeader,
   accentChip,
-  repoCrumbs,
   type Accent,
   type NavLevel,
 } from "~/components/shell";
@@ -1155,20 +1154,13 @@ export default function Deployment({
 
   return (
     <AppShell
-      breadcrumbs={repoCrumbs({
-        projectId: project.id,
-        repoName: project.name,
-        isTeam: level === "member",
-        agentName: activeAgent,
-        tail: [{ label: "Deployment" }],
-      })}
+      nav={
+        <AgentNav
+          base={memberBase}
+          level={level}
+        />
+      }
     >
-      <AgentNav
-        base={memberBase}
-        level={level}
-        roster={roster}
-        activeAgent={level === "member" ? activeAgent : undefined}
-      />
       <PageHeader
         icon={Rocket}
         accent="emerald"

@@ -145,6 +145,7 @@ export const templateManifestSchema = z
      * marks one for the agent's sandbox shell (HARNESST_SANDBOX_ENV convention): the install flips the
      * exposure flag so terminal-driven agents get their credentials without a manual Settings trip.
      */
+    provisioning: z.array(z.enum(["supabase-ledger"])).optional(),
     secrets: z
       .array(
         z.object({

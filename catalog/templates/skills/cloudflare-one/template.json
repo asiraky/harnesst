@@ -1,0 +1,15 @@
+{
+  "id": "cloudflare-one",
+  "type": "skill",
+  "name": "Cloudflare One",
+  "description": "Design, configure, troubleshoot, or review Cloudflare One Zero Trust and SASE deployments. Use cloudflare-one-migrations for migration planning from other vendors.",
+  "version": "0.1.0",
+  "eve": ">=0.22.0",
+  "subagentCompatible": true,
+  "files": [
+    "skills/cloudflare-one/LICENSE",
+    "skills/cloudflare-one/SKILL.md",
+    "skills/cloudflare-one/VENDORED.md"
+  ],
+  "assistantSkill": "assistant-skill.md"
+}

@@ -59,6 +59,18 @@ describe("Git writes for binary assets", () => {
     expect(mocks.invalidateRepoSource).not.toHaveBeenCalled();
   });
 
+  it("publishes text files together without a separate blob request per file", async () => {
+    const files = [{ path: "a.md", content: "Unicode ✓\n" }, { path: "b.md", content: "" }];
+    await commitToDefaultBranch("grant", { owner: "acme", repo: "agents" }, {
+      branch: "main", expectedHeadSha: "head-base", files, message: "Install text",
+    });
+    expect(git.createBlob).not.toHaveBeenCalled();
+    expect(git.createTree).toHaveBeenCalledWith(expect.objectContaining({
+      base_tree: "tree-base",
+      tree: files.map(f => ({ ...f, mode: "100644", type: "blob" })),
+    }));
+  });
+
   it("keeps cache invalidation as the default for publish commits", async () => {
     await commitToDefaultBranch(
       "installation-grant",

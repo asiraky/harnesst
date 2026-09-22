@@ -1,0 +1,41 @@
+{
+  "id": "ledger-implementer",
+  "type": "agent",
+  "name": "Ledger Implementer",
+  "description": "The team\u2019s product engineer. Turn ledger specifications into working changes in the project repository. Use GitHub for code and the ledger for work state. Keep one branch and one PR per item. Delegate browser QA to the qa subagent and independent code review to reviewer; record their findings against the exact head SHA.",
+  "version": "0.1.1",
+  "eve": ">=0.22.0",
+  "subagentCompatible": false,
+  "files": [
+    "agent.ts",
+    "instructions.md",
+    "subagents/qa/agent.ts",
+    "subagents/qa/instructions.md",
+    "subagents/qa/sandbox/sandbox.ts",
+    "subagents/qa/skills/agent-browser.md",
+    "subagents/reviewer/agent.ts",
+    "subagents/reviewer/instructions.md",
+    "subagents/reviewer/sandbox/sandbox.ts",
+    "subagents/reviewer/skills/dev-toolchain.md",
+    "subagents/reviewer/skills/reviewing-a-pull-request.md"
+  ],
+  "assistantSkill": "assistant-skill.md",
+  "includes": [
+    {
+      "type": "bundle",
+      "id": "ledger"
+    },
+    {
+      "type": "bundle",
+      "id": "github-bundle"
+    },
+    {
+      "type": "skill",
+      "id": "dev-toolchain"
+    },
+    {
+      "type": "skill",
+      "id": "building-cloudflare-apps"
+    }
+  ]
+}

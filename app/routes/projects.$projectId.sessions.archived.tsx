@@ -20,7 +20,7 @@ import {
 
 import { ConfirmDialog } from "~/components/confirm-dialog";
 import { RelativeTime } from "~/components/localized-values";
-import { AppShell, PageHeader, repoCrumbs } from "~/components/shell";
+import { AppShell, PageHeader } from "~/components/shell";
 import { Alert, AlertDescription, AlertTitle } from "~/components/ui/alert";
 import { Button } from "~/components/ui/button";
 import {
@@ -119,13 +119,7 @@ export default function ArchivedSessionsPage({
   const busy = navigation.state !== "idle";
 
   return (
-    <AppShell
-      breadcrumbs={repoCrumbs({
-        projectId: project.id,
-        repoName: project.name,
-        tail: [{ label: "Archived conversations" }],
-      })}
-    >
+    <AppShell>
       <PageHeader
         title="Archived conversations"
         description="Conversations someone tidied away from the front of house. Restore one to put it back in the member's list, or delete it permanently — deleting also removes its transcript and cannot be undone."

@@ -97,6 +97,7 @@ export default [
   // Build — every back-of-house page shares one pathless layout whose loader feeds the sidebar
   // (routes/build.tsx). Resource routes are registered outside it: they render nothing.
   layout("routes/build.tsx", [
+    route("repos/:projectId/installation", "routes/projects.$projectId.installation.tsx"),
     route("dashboard", "routes/dashboard.tsx"),
     // Recruit — the marketplace (PRD §7.8, M6). Browse (index.json) + a template detail page.
     route("marketplace", "routes/marketplace.tsx"),

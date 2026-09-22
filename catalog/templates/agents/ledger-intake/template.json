@@ -1,0 +1,28 @@
+{
+  "id": "ledger-intake",
+  "type": "agent",
+  "name": "Ledger Intake",
+  "description": "The team\u2019s front of house. Turn requests into testable specifications, break large plans into reviewable work, and relay human decisions. Read project context through the ledger. Report pending May I approvals to the named human and report when their work is live.",
+  "version": "0.1.1",
+  "eve": ">=0.22.0",
+  "subagentCompatible": false,
+  "files": [
+    "agent.ts",
+    "instructions.md"
+  ],
+  "assistantSkill": "assistant-skill.md",
+  "includes": [
+    {
+      "type": "bundle",
+      "id": "ledger"
+    },
+    {
+      "type": "skill",
+      "id": "clarifying-a-request"
+    },
+    {
+      "type": "skill",
+      "id": "breaking-down-work"
+    }
+  ]
+}

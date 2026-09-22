@@ -32,7 +32,6 @@ import {
   AppShell,
   PageHeader,
   accentText,
-  repoCrumbs,
 } from "~/components/shell";
 import { Alert, AlertDescription, AlertTitle } from "~/components/ui/alert";
 import { Badge } from "~/components/ui/badge";
@@ -88,7 +87,7 @@ export const loader = (args: LoaderFunctionArgs) =>
         normalizeAgentPath(
           new URL(args.request.url).searchParams.get("path") ?? "",
         ) ?? "";
-      const { roster, active, isTeam, target } = await resolveRouteTarget(
+      const { active, isTeam, target } = await resolveRouteTarget(
         project,
         args.params,
         memberFromPath(requested),
@@ -101,7 +100,6 @@ export const loader = (args: LoaderFunctionArgs) =>
       return {
         project,
         path,
-        roster: roster.map((a) => ({ name: a.name })),
         activeAgent: active.name,
         isTeam,
         cron: parsed?.cron || DEFAULT_CRON,
@@ -181,7 +179,7 @@ function ScheduleForm({
   loaderData,
   actionData,
 }: Pick<Route.ComponentProps, "loaderData" | "actionData">) {
-  const { project, path, roster, activeAgent, isTeam, exists, isNew } =
+  const { project, path, activeAgent, isTeam, exists, isNew } =
     loaderData;
   const navigation = useNavigation();
   const submit = useSubmit();
@@ -211,20 +209,13 @@ function ScheduleForm({
 
   return (
     <AppShell
-      breadcrumbs={repoCrumbs({
-        projectId: project.id,
-        repoName: project.name,
-        isTeam,
-        agentName: activeAgent,
-        tail: [{ label: path.split("/").pop() }],
-      })}
+      nav={
+        <AgentNav
+          base={ctx}
+          level={isTeam ? "member" : "single"}
+        />
+      }
     >
-      <AgentNav
-        base={ctx}
-        level={isTeam ? "member" : "single"}
-        roster={roster}
-        activeAgent={isTeam ? activeAgent : undefined}
-      />
       <PageHeader
         icon={CalendarClock}
         accent="amber"

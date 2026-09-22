@@ -41,7 +41,7 @@ import {
   UserBubble,
 } from "~/components/chat";
 import { TurnError } from "~/components/turn-error";
-import { AgentNav, AppShell, PageHeader, repoCrumbs } from "~/components/shell";
+import { AgentNav, AppShell, PageHeader } from "~/components/shell";
 import { LocalizedDate } from "~/components/localized-values";
 import { Alert, AlertDescription, AlertTitle } from "~/components/ui/alert";
 import { Badge } from "~/components/ui/badge";
@@ -100,7 +100,7 @@ export const loader = (args: LoaderFunctionArgs) =>
         const legacy = agentParamRedirect(args.request, project.id);
         if (legacy) throw legacy;
       }
-      const { roster, active, isTeam } = await resolveAgentContext(
+      const { active, isTeam } = await resolveAgentContext(
         project.id,
         agentName,
       );
@@ -232,7 +232,6 @@ export const loader = (args: LoaderFunctionArgs) =>
         defaultEffort: defaultSelection.effort,
         entries,
         historyError,
-        roster: roster.map((a) => ({ name: a.name })),
         activeAgent: active.name,
         isTeam,
       };
@@ -349,7 +348,6 @@ export default function Playground({ loaderData }: Route.ComponentProps) {
     defaultEffort,
     entries,
     historyError,
-    roster,
     activeAgent,
     isTeam,
   } = loaderData;
@@ -886,24 +884,13 @@ export default function Playground({ loaderData }: Route.ComponentProps) {
   return (
     <AppShell
       fullHeight
-      breadcrumbs={repoCrumbs({
-        projectId: project.id,
-        repoName: project.name,
-        isTeam,
-        agentName: activeAgent,
-        tail: [{ label: "Playground" }],
-      })}
-    >
-      <div className="mx-auto w-full max-w-5xl px-4 pt-3 sm:px-6 sm:pt-8">
+      nav={
         <AgentNav
           base={base}
           level={isTeam ? "member" : "single"}
-          roster={roster}
-          activeAgent={isTeam ? activeAgent : undefined}
-          className="mb-0"
         />
-      </div>
-
+      }
+    >
       <ChatTranscript
         dep={`${shownEntries.length}:${shownEntries.at(-1)?.text.length ?? 0}:${shownEntries.at(-1)?.steps?.length ?? 0}:${currentSessionStatus ?? ""}:${visibleLive ? visibleLive.text.length + visibleLive.steps.length + visibleLive.inputRequests.length : 0}`}
         forceScrollDep={visibleLive?.userText}

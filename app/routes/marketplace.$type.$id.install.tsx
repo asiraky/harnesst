@@ -27,6 +27,7 @@ import {
   type LoaderFunctionArgs,
 } from "react-router";
 
+import { ensureProvisioning } from "~/marketplace/provisioning.server";
 import { COPY } from "~/components/secrets-card";
 
 import { TYPE_META, TypeBadge } from "~/components/marketplace-type-badge";
@@ -915,6 +916,10 @@ export async function action(args: ActionFunctionArgs) {
       }
     }
 
+    if (template.manifest.provisioning?.includes("supabase-ledger")) {
+      await ensureProvisioning(project.id);
+      throw redirect(`/repos/${project.slug}/installation`);
+    }
     const memberName =
       target.kind === "new-member" ? null : (target.memberName ?? undefined);
     throw redirect(

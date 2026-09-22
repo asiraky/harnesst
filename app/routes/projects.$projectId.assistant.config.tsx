@@ -27,7 +27,7 @@ import {
 } from "~/assistant/instance.server";
 import { MarkdownText } from "~/components/chat";
 import { ModelSelection } from "~/components/model-select";
-import { AppShell, PageHeader, repoCrumbs } from "~/components/shell";
+import { AppShell, PageHeader } from "~/components/shell";
 import { Alert, AlertDescription } from "~/components/ui/alert";
 import { Badge } from "~/components/ui/badge";
 import { Button } from "~/components/ui/button";
@@ -317,16 +317,7 @@ export default function AssistantConfig({ loaderData }: Route.ComponentProps) {
   const [, setSearchParams] = useSearchParams();
 
   return (
-    <AppShell
-      breadcrumbs={repoCrumbs({
-        projectId: project.id,
-        repoName: project.name,
-        tail: [
-          { label: "Assistant", to: `/repos/${project.id}/assistant` },
-          { label: "Configure" },
-        ],
-      })}
-    >
+    <AppShell>
       <div className="mx-auto w-full max-w-3xl space-y-8 px-4 py-8 sm:px-6">
         <PageHeader
           icon={Sparkles}

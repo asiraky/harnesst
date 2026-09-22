@@ -1939,3 +1939,16 @@ export const artifactFiles = pgTable(
     uniqueIndex("artifact_files_path_uq").on(t.versionId, t.relPath),
   ],
 );
+
+/** Installation state belongs to the control plane, never to agent environment secrets. */
+export const bundleProvisioning = pgTable("bundle_provisioning", {
+  projectId: varchar("project_id", { length: 12 }).primaryKey().references(() => projects.id, { onDelete: "cascade" }),
+  provider: text("provider").notNull().default("supabase-ledger"),
+  status: text("status").notNull().default("pending"),
+  step: text("step").notNull().default("Connect Supabase"),
+  error: text("error"),
+  projectRef: text("project_ref"),
+  publicOrigin: text("public_origin"),
+  encryptedState: jsonb("encrypted_state").$type<{ ciphertext: string; iv: string; authTag: string }>(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});

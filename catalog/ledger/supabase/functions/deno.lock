@@ -1,0 +1,23 @@
+{
+  "version": "5",
+  "specifiers": {
+    "npm:@mayiapp/sdk@0.3.0": "0.3.0"
+  },
+  "npm": {
+    "@mayiapp/sdk@0.3.0": {
+      "integrity": "sha512-kgeMA638aKeG7jWtG6BU2uRl9cHBACyCTPoYTBtXVjUPk9iu7eO/lMYvqUeJInCZE5BxGcyuM4IBDHqa9RFY0g==",
+      "dependencies": [
+        "jose"
+      ],
+      "bin": true
+    },
+    "jose@6.2.12": {
+      "integrity": "sha512-9NiFmJEex0sy2Dk58j2UGBSHgUs2ypF9eZSu4L6vjOX3Dp96Sw1F3uL+H+D1sx02jZZdzUT0HgvCy59CuvXcWw=="
+    }
+  },
+  "workspace": {
+    "dependencies": [
+      "npm:@mayiapp/sdk@0.3.0"
+    ]
+  }
+}

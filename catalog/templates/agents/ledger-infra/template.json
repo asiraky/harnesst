@@ -1,0 +1,32 @@
+{
+  "id": "ledger-infra",
+  "type": "agent",
+  "name": "Ledger Infra",
+  "description": "The team\u2019s infrastructure engineer. Own cloud resources, CI, credentials and deployment configuration. Discover the target product and conventions through the ledger; work through the installed Cloudflare and GitHub tools. Record provisioning results on the item.",
+  "version": "0.1.1",
+  "eve": ">=0.22.0",
+  "subagentCompatible": false,
+  "files": [
+    "agent.ts",
+    "instructions.md"
+  ],
+  "assistantSkill": "assistant-skill.md",
+  "includes": [
+    {
+      "type": "bundle",
+      "id": "ledger"
+    },
+    {
+      "type": "bundle",
+      "id": "github-bundle"
+    },
+    {
+      "type": "skill",
+      "id": "dev-toolchain"
+    },
+    {
+      "type": "bundle",
+      "id": "cloudflare-bundle"
+    }
+  ]
+}

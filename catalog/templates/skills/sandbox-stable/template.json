@@ -1,0 +1,15 @@
+{
+  "id": "sandbox-stable",
+  "type": "skill",
+  "name": "Sandbox Stable",
+  "description": "Build or maintain Cloudflare Sandbox apps on the stable @cloudflare/sandbox package. Use sandbox-next for preview apps and sandbox-migrate-to-next for stable-to-preview migrations.",
+  "version": "0.1.0",
+  "eve": ">=0.22.0",
+  "subagentCompatible": true,
+  "files": [
+    "skills/sandbox-stable/LICENSE",
+    "skills/sandbox-stable/SKILL.md",
+    "skills/sandbox-stable/VENDORED.md"
+  ],
+  "assistantSkill": "assistant-skill.md"
+}

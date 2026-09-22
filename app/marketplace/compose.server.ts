@@ -341,6 +341,8 @@ async function resolve(
   // stripped so the lock's dependency/secret snapshots are exactly the flattened truth.
   const resolvedManifest: TemplateManifest = { ...manifest };
   delete resolvedManifest.includes;
+  const provisioning = [...new Set([...resolvedIncludes.flatMap(c => c.manifest.provisioning ?? []), ...(manifest.provisioning ?? [])])];
+  if (provisioning.length) resolvedManifest.provisioning = provisioning;
   resolvedManifest.files = fileList;
   setOrDelete(
     resolvedManifest,

@@ -1,0 +1,15 @@
+{
+  "id": "wrangler",
+  "type": "skill",
+  "name": "Wrangler",
+  "description": "Run or troubleshoot Wrangler CLI commands and configure Worker projects for local development, deployment, and Cloudflare resource management.",
+  "version": "0.1.0",
+  "eve": ">=0.22.0",
+  "subagentCompatible": true,
+  "files": [
+    "skills/wrangler/LICENSE",
+    "skills/wrangler/SKILL.md",
+    "skills/wrangler/VENDORED.md"
+  ],
+  "assistantSkill": "assistant-skill.md"
+}

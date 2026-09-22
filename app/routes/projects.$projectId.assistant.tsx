@@ -51,7 +51,7 @@ import { TurnError } from "~/components/turn-error";
 import { usePublishHref } from "~/components/publish";
 import { EmptyTeamState } from "~/components/empty-team-state";
 import { LocalizedDate } from "~/components/localized-values";
-import { AgentNav, AppShell, PageHeader, repoCrumbs } from "~/components/shell";
+import { AgentNav, AppShell, PageHeader } from "~/components/shell";
 import { Alert, AlertDescription, AlertTitle } from "~/components/ui/alert";
 import { Button } from "~/components/ui/button";
 import {
@@ -772,26 +772,18 @@ export default function Assistant({ loaderData }: Route.ComponentProps) {
   return (
     <AppShell
       fullHeight
-      breadcrumbs={repoCrumbs({
-        projectId: project.id,
-        repoName: project.name,
-        isTeam,
-        tail: [{ label: "Assistant" }],
-      })}
-    >
-      <div className="mx-auto w-full max-w-5xl px-4 pt-3 sm:px-6 sm:pt-8">
+      nav={
         <AgentNav
           base={base}
           level={isTeam ? "repo" : "single"}
-          roster={roster}
-          className="mb-0"
         />
-        {isTeam && roster.length === 0 && (
-          <div className="mt-6">
-            <EmptyTeamState agentsHref={`/repos/${project.id}`} />
-          </div>
-        )}
-      </div>
+      }
+    >
+      {isTeam && roster.length === 0 && (
+        <div className="mx-auto w-full max-w-5xl px-4 pt-6 sm:px-6">
+          <EmptyTeamState agentsHref={`/repos/${project.id}`} />
+        </div>
+      )}
 
       <ChatTranscript
         dep={`${shownEntries.length}:${shownEntries.at(-1)?.text.length ?? 0}:${shownEntries.at(-1)?.steps?.length ?? 0}:${currentSessionStatus ?? ""}:${instanceStatus}:${visibleLive ? visibleLive.text.length + visibleLive.steps.length + visibleLive.inputRequests.length : 0}`}
