@@ -11,8 +11,7 @@
     "subagents/researcher/instructions.md",
     "subagents/researcher/sandbox/sandbox.ts",
     "subagents/researcher/skills/dev-toolchain.md",
-    "subagents/researcher/skills/github-app-auth.md",
-    "subagents/researcher/skills/matt-pocock-LICENSE"
+    "subagents/researcher/skills/github-app-auth.md"
   ],
   "assistantSkill": "assistant-skill.md"
 }

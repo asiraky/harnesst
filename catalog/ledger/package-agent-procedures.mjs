@@ -28,9 +28,9 @@ function references(base, names) {
     const prefix = source(name).slice(0, -'SKILL.md'.length);
     for (const file of paths.filter((p) => p.startsWith(prefix)))
       emit(`${base}/skills/matt-pocock-${name}/${file.slice(prefix.length) === 'SKILL.md' ? 'SOURCE.md' : file.slice(prefix.length)}`, readFileSync(resolve(vendor, file)));
+    emit(`${base}/skills/matt-pocock-${name}/LICENSE`, readFileSync(resolve(vendor, 'LICENSE')));
     emit(`${base}/skills/matt-pocock-${name}/SKILL.md`, `---\ndescription: Read when the incorporated ${name} procedure calls for its reference material.\n---\n\nThe unchanged upstream procedure is in [SOURCE.md](SOURCE.md). Its invocation metadata is archival; execute the procedure through the agent's HARNESST binding. Relative references resolve in this directory.\n`);
   }
-  emit(`${base}/skills/matt-pocock-LICENSE`, readFileSync(resolve(vendor, 'LICENSE')));
 }
 function ticketFiles(base) {
   emit(`${base}/skills/issue-tickets/SKILL.md`, read('catalog/ledger/agent-bindings/ticket-plan.md'));
@@ -89,7 +89,7 @@ for (const [role, includes] of [
 ]) {
   const template = `catalog/templates/agents/ledger-${role}`;
   const original = JSON.parse(read(`${template}/template.json`));
-  const files = new Set(original.files.filter((p) => !p.startsWith('subagents/reviewer/')));
+  const files = new Set(original.files.filter((p) => !p.startsWith('subagents/reviewer/') && !p.endsWith('/matt-pocock-LICENSE')));
   for (const p of outputs.keys()) if (p.startsWith(`${template}/files/`)) files.add(p.slice(`${template}/files/`.length));
   emit(`${template}/template.json`, json({...original,version:'0.2.0',files:[...files].sort(),includes}));
 }
