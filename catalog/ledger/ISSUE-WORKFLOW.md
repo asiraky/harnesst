@@ -58,3 +58,15 @@ npm run catalog:validate
 node --test catalog/ledger/tests/ticket-plan.test.mjs
 npm run typecheck:composed
 ```
+
+## First-version verification (2026-09-22)
+
+- All 36 vendored files matched the pinned upstream checkout byte-for-byte; the regeneration check validates 143 packaged files.
+- Catalog validation passed. Ledger tests: 69 passed, including seven ticket-plan behaviours. Marketplace/subagent route tests: 93 passed.
+- Actual Eve builds passed for intake, implementer and infra. Published dev team version 10; all three deployments reached live.
+- A read-only intake → planner smoke test produced two pending tickets with the second depending on the first. The planner executed the shipped validator in its own sandbox. Intake rejected two invented requirements and obtained a corrected plan; the corrected JSON passed validation and only ticket 01 was eligible. The response kept human acceptance at issue level. No product repository or ledger work was created by the smoke test.
+- This is not yet an end-to-end multi-ticket product build. The independent reviewer stages built successfully but have not been exercised on a product diff by this smoke test.
+- The repository-wide composed-source typecheck is blocked by pre-existing Supabase/Deno sources being included in the Node agent matrix (untyped RPC default parameter, TypeScript-extension imports and SDK stub errors). Actual Eve builds and the checks above passed; do not describe the full composed check as passing.
+- Adversarial review through Claude Fable was attempted but blocked by the account's Fable usage limit. No independent-review pass is claimed.
+
+This deployment changes agent procedures only. The previously prepared rich May I review-content backend rollout remains separate; this procedure migration does not deploy it or alter pending approvals.
