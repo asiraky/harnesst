@@ -26,21 +26,9 @@ The human reviews the integrated issue, not each ticket or PR. Intake relays the
 
 For teammate questions answer the bounded question, preserving existing work. Report unresolved questions and installation failures clearly. Complete notification wakes after delivery through ledger-complete-wake. Report completion only after the ledger confirms deployment.
 
-<!-- BEGIN VERBATIM skills/engineering/grill-with-docs/SKILL.md @ c55ee46073ed923f86ce59a5eb3b6d895095d1b7 -->
----
-name: grill-with-docs
-description: A relentless interview to sharpen a plan or design, which also creates docs (ADR's and glossary) as we go.
-disable-model-invocation: true
----
 
 Call the Skill tool twice, for "grilling" and "domain-modeling".
-<!-- END VERBATIM skills/engineering/grill-with-docs/SKILL.md -->
 
-<!-- BEGIN VERBATIM skills/productivity/grilling/SKILL.md @ c55ee46073ed923f86ce59a5eb3b6d895095d1b7 -->
----
-name: grilling
-description: Grill the user relentlessly about a plan, decision, or idea. Use when the user wants to stress-test their thinking, or uses any 'grill' trigger phrases.
----
 
 Interview the user relentlessly until you reach a shared understanding. Map this as a **design tree**: every decision branches into the decisions that hang off it.
 
@@ -65,13 +53,7 @@ Each round the user answers reshapes the tree: settled decisions push the fronti
 Finding _facts_ is your job, never the user's. When a frontier question needs a fact from the environment (filesystem, tools, etc.), dispatch a sub-agent to find it; don't ask the user for anything you could look up yourself. Don't block on it: a running exploration is an unsettled prerequisite, so only the questions downstream of it wait for the sub-agent to report; ask the rest of the frontier now. The _decisions_ are the user's: put each to them and wait.
 
 The session is done when the frontier is empty: every branch of the design tree visited, nothing left silently assumed. Do not act on it until the user confirms you have reached a shared understanding.
-<!-- END VERBATIM skills/productivity/grilling/SKILL.md -->
 
-<!-- BEGIN VERBATIM skills/engineering/domain-modeling/SKILL.md @ c55ee46073ed923f86ce59a5eb3b6d895095d1b7 -->
----
-name: domain-modeling
-description: Build and sharpen a project's domain model. Use when discussing codebase terminology, writing or editing a CONTEXT.md, or recording or editing an ADR.
----
 
 # Domain Modeling
 
@@ -142,14 +124,7 @@ Only offer to create an ADR when all three are true:
 3. **The result of a real trade-off**: there were genuine alternatives and you picked one for specific reasons
 
 If any of the three is missing, skip the ADR. Use the format in [ADR-FORMAT.md](./ADR-FORMAT.md).
-<!-- END VERBATIM skills/engineering/domain-modeling/SKILL.md -->
 
-<!-- BEGIN VERBATIM skills/engineering/to-spec/SKILL.md @ c55ee46073ed923f86ce59a5eb3b6d895095d1b7 -->
----
-name: to-spec
-description: "Turn the current conversation into a spec and publish it to the project issue tracker: no interview, just synthesis of what you've already discussed."
-disable-model-invocation: true
----
 
 This skill takes the current conversation context and codebase understanding and produces a spec. Do NOT interview the user; just synthesize what you already know.
 
@@ -220,4 +195,3 @@ A description of the things that are out of scope for this spec.
 Any further notes about the feature.
 
 </spec-template>
-<!-- END VERBATIM skills/engineering/to-spec/SKILL.md -->

@@ -22,3 +22,5 @@ Eve rejects upstream `disable-model-invocation` metadata in discovered skills. P
 All eleven skills and their files are vendored. Role-specific copies are distributed where used. Intake includes grilling and specification inline; planner includes to-tickets inline; implementer includes implement and tdd inline; reviewer includes code-review inline. Two review leaf instructions preserve the upstream briefs and standards baseline. Triage is an optional planner reference, not an additional pass over generated tickets.
 
 Upstream updates are deliberate migrations: fetch a specific revision, review the upstream diff, replace the source files and hashes, regenerate, and review binding compatibility. Never silently update to the latest upstream at install time.
+
+Agent instructions incorporate only the Markdown body of each upstream skill, byte-for-byte after the closing YAML frontmatter delimiter. Skill registration metadata and provenance comments are excluded. Source hashes and the pinned revision stay in this vendor manifest; the complete upstream files remain archived here.

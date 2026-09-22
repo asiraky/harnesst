@@ -24,12 +24,6 @@ Before entering issue UAT, finish the structured ticket readiness check and reco
 
 The human is not asked to accept individual tickets. Existing issue-level acceptance and merge gates remain backend enforced. Only the authorized repository workflow merges the final PR. Questions from teammates are bounded requests, not new assignments. Re-read after stale refusals, reuse existing work after interruptions, and report actual blockers to intake through the ledger.
 
-<!-- BEGIN VERBATIM skills/engineering/implement/SKILL.md @ c55ee46073ed923f86ce59a5eb3b6d895095d1b7 -->
----
-name: implement
-description: "Implement a piece of work based on a spec or set of tickets."
-disable-model-invocation: true
----
 
 Implement the work described by the user in the spec or tickets.
 
@@ -40,13 +34,7 @@ Run typechecking regularly, single test files regularly, and the full test suite
 Once done, use /code-review to review the work.
 
 Commit your work to the current branch.
-<!-- END VERBATIM skills/engineering/implement/SKILL.md -->
 
-<!-- BEGIN VERBATIM skills/engineering/tdd/SKILL.md @ c55ee46073ed923f86ce59a5eb3b6d895095d1b7 -->
----
-name: tdd
-description: Test-driven development. Use when the user wants to build features or fix bugs test-first, mentions "red-green-refactor", or wants integration tests.
----
 
 # Test-Driven Development
 
@@ -81,4 +69,3 @@ When the shape of that interface is itself in question (how deep the module is, 
 - **Red before green.** Write the failing test first, then only enough code to pass it. Don't anticipate future tests or add speculative features.
 - **One slice at a time.** One seam, one test, one minimal implementation per cycle.
 - **Refactoring is not part of the loop.** It belongs to the review stage (see the `code-review` skill), not the red → green implementation cycle.
-<!-- END VERBATIM skills/engineering/tdd/SKILL.md -->

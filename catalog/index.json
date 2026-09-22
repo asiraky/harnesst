@@ -14,7 +14,7 @@
       "name": "Ledger Implementer",
       "version": "0.2.0",
       "description": "The team’s product engineer. Turn ledger specifications into working changes in the project repository. Use GitHub for code and the ledger for work state. Keep one branch and one PR per item. Delegate browser QA to the qa subagent and independent code review to reviewer; record their findings against the exact head SHA.",
-      "hash": "9d051ea1ab5453d093bb4ce0c39f30610e8360e8"
+      "hash": "92dd7e670ba8b21579450e3738c5bacc91588f1c"
     },
     {
       "id": "ledger-infra",
@@ -30,7 +30,7 @@
       "name": "Ledger Intake",
       "version": "0.2.0",
       "description": "The team’s front of house. Turn requests into testable specifications, break large plans into reviewable work, and relay human decisions. Read project context through the ledger. Report pending May I approvals to the named human and report when their work is live.",
-      "hash": "ad71c12f1b38d65a15226c1c0a03caf61e4d56e2"
+      "hash": "8e5a3369268602fc68aa4b09f50ba8429cf36b78"
     },
     {
       "id": "vercel-issuer",
@@ -366,7 +366,7 @@
       "name": "reviewer",
       "version": "0.1.0",
       "description": "Execute the verbatim two-axis code-review procedure on supplied committed base/head revisions and scope.",
-      "hash": "f3fd09b72c33899dd7aa203eaf3e7e2b99c327b7"
+      "hash": "f3ac7f869c5f86c06ba89ebf0e64c6aef338b478"
     },
     {
       "id": "ledger-planner",
@@ -374,7 +374,7 @@
       "name": "planner",
       "version": "0.1.0",
       "description": "Break one settled issue specification into internal tickets and dependencies; return unresolved decisions to intake.",
-      "hash": "d7f90f1f26711a54598517505665b2796a86828b"
+      "hash": "175fb515009fe851eda47c870e6a7614b674ab6b"
     },
     {
       "id": "ledger-researcher",

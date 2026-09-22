@@ -12,12 +12,6 @@ Read the supplied repository snapshot or checkout for facts. The parent supplies
 
 Return file contents or committed document references, the dependency plan, coverage of the parent requirements, and unresolved decisions. Your result is a plan, not an implementation or approval.
 
-<!-- BEGIN VERBATIM skills/engineering/to-tickets/SKILL.md @ c55ee46073ed923f86ce59a5eb3b6d895095d1b7 -->
----
-name: to-tickets
-description: Break a plan, spec, or the current conversation into a set of tracer-bullet tickets, each declaring its blocking edges, published to the configured tracker (edges as text in one file per ticket locally, or native blocking links on a real tracker).
-disable-model-invocation: true
----
 
 # To Tickets
 
@@ -118,4 +112,3 @@ The end-to-end behaviour this ticket makes work, from the user's perspective, no
 </issue-template>
 
 In either form, avoid specific file paths or code snippets: they go stale fast. Exception: if a prototype produced a snippet that encodes a decision more precisely than prose can (state machine, reducer, schema, type shape), inline it and note briefly that it came from a prototype. Trim to the decision-rich parts, not a working demo, just the important bits.
-<!-- END VERBATIM skills/engineering/to-tickets/SKILL.md -->

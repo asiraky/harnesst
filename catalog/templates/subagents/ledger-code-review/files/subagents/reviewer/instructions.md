@@ -10,11 +10,6 @@ The tracker is the supplied ledger specification and versioned ticket documents.
 
 Return the upstream two-axis report with the base/head SHAs and reviewed specification revision. You report findings and do not mutate the ledger, implement fixes, merge PRs or approve human gates. The parent verifies findings and records evidence. A separate defect reviewer covers correctness and security in addition to this standards/specification review.
 
-<!-- BEGIN VERBATIM skills/engineering/code-review/SKILL.md @ c55ee46073ed923f86ce59a5eb3b6d895095d1b7 -->
----
-name: code-review
-description: "Review the changes since a fixed point (commit, branch, tag, or merge-base) along two axes: Standards (does the code follow this repo's documented coding standards?) and Spec (does the code match what the originating issue/spec asked for?). Runs both reviews in parallel sub-agents and reports them side by side. Use when the user wants to review a branch, a PR, work-in-progress changes, or asks to \"review since X\"."
----
 
 Two-axis review of the diff between `HEAD` and a fixed point the user supplies:
 
@@ -98,4 +93,3 @@ A change can pass one axis and fail the other:
 - Code that does exactly what the issue asked but breaks the project's conventions → **Spec pass, Standards fail.**
 
 Reporting them separately stops one axis from masking the other.
-<!-- END VERBATIM skills/engineering/code-review/SKILL.md -->

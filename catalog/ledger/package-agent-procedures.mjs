@@ -16,12 +16,16 @@ for (const [file, hash] of Object.entries(manifest.files)) {
 }
 const paths = Object.keys(manifest.files);
 function source(name) { return paths.find((p) => p.endsWith(`/${name}/SKILL.md`)); }
-function body(name) { return readFileSync(resolve(vendor, source(name)), 'utf8'); }
+function body(name) {
+  const text = readFileSync(resolve(vendor, source(name)), 'utf8');
+  const frontmatter = text.match(/^---\r?\n[\s\S]*?\r?\n---(?:\r?\n|$)/);
+  if (!frontmatter) throw Error(`Missing upstream skill frontmatter: ${source(name)}`);
+  // Skill registration metadata is not agent prose. Preserve every byte after it.
+  return text.slice(frontmatter[0].length);
+}
 function emit(path, content) { outputs.set(path, content); }
 function procedure(role, names) {
-  return read(`catalog/ledger/agent-bindings/${role}.md`) + '\n' + names.map((name) =>
-    `<!-- BEGIN VERBATIM ${source(name)} @ ${manifest.commit} -->\n` + body(name)
-    + `<!-- END VERBATIM ${source(name)} -->\n`).join('\n');
+  return read(`catalog/ledger/agent-bindings/${role}.md`) + '\n' + names.map(body).join('\n');
 }
 function references(base, names) {
   for (const name of names) {
