@@ -28,7 +28,7 @@
 import { removeWorktree } from "./worktree-remove.mjs";
 import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { basename, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import {
   processIsManagedConnector,
@@ -195,7 +195,7 @@ function dropWorktreeDb(root, feat) {
   const res = run(argv);
   if (res.code !== 0) {
     console.warn(
-      `worktree-teardown: failed to drop database "${target}" (via docker exec): ${res.stderr.trim()} [cmd: ${quoteArgv(argv)}]`,
+      `worktree-teardown: failed to drop database "${target}" (via docker exec): ${res.stderr.trim()}`,
     );
     return;
   }
@@ -203,7 +203,18 @@ function dropWorktreeDb(root, feat) {
 }
 
 async function main() {
-  const input = process.argv[2];
+  const lifecycle = process.env.OMNIPLEX_CONTEXT_FILE
+    ? JSON.parse(readFileSync(process.env.OMNIPLEX_CONTEXT_FILE, "utf8"))
+    : null;
+  const savedPath = lifecycle?.provisionResult?.cwd;
+  if (lifecycle && !savedPath)
+    die("Omniplex cleanup requires the saved provisionResult.cwd");
+  const input = savedPath
+    ? basename(savedPath)
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, "-")
+        .replace(/^-+|-+$/g, "")
+    : process.argv[2];
   if (!input) {
     die(
       "missing feature name. usage: node scripts/worktree-teardown.mjs <name>",
@@ -212,7 +223,11 @@ async function main() {
   const feat = parseFeature(input);
 
   const root = getRepoRoot();
-  const worktreePath = repoPath(root, WORKTREE_ROOT_DIR, feat.dir);
+  if (lifecycle && resolve(lifecycle.projectRoot) !== resolve(root))
+    die("Omniplex project root does not match current repository");
+  const worktreePath = savedPath
+    ? resolve(savedPath)
+    : repoPath(root, WORKTREE_ROOT_DIR, feat.dir);
   const paths = tunnelPaths(root, WORKTREE_ROOT_DIR);
   await removeWorktree(root, worktreePath);
 
