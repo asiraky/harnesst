@@ -87,6 +87,14 @@ async function execute(job: Job): Promise<void> {
         environmentId: p.environmentId,
         createdBy: p.createdBy,
       });
+      if (result.status === "stalled") {
+        console.error(
+          `[jobs] env ${p.environmentId} reconciliation stalled: ${result.failures} replacement ` +
+            `deployments failed at the desired revision (latest ${result.deploymentId}); the live ` +
+            "container keeps stale env until the failure is fixed and a redeploy or reconnect bumps it",
+        );
+        return;
+      }
       console.log(`[jobs] reconciled env ${p.environmentId}: ${result.status}`);
       return;
     }

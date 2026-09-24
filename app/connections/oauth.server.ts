@@ -435,6 +435,9 @@ export async function registerOAuthClient(
  * returned as `refreshToken` — every harnesst-side caller MUST persist it back onto the grant before
  * using the new access token. Google returns none; the field stays undefined and nothing changes.
  */
+const DEAD_GRANT_BODY =
+  /invalid_grant|invalid refresh token|refresh token reuse detected/i;
+
 export async function refreshAccessToken(
   input: {
     provider: ProviderDefinition;
@@ -460,7 +463,11 @@ export async function refreshAccessToken(
   });
   if (!res.ok) {
     const body = await res.text().catch(() => "");
-    if (res.status === 400 && /invalid_grant/.test(body)) {
+    // RFC 6749 §5.2 names a dead grant `invalid_grant`. May I? (h3 `createError`) reports the same
+    // condition as `statusMessage: "Invalid refresh token"` (expired after 30 days, revoked, or
+    // never issued) or `"Refresh token reuse detected; connection revoked"` — both mean the grant
+    // is gone for good, so retrying only spins (a rollback loop in prod ran for 13 days on this).
+    if (res.status === 400 && DEAD_GRANT_BODY.test(body)) {
       throw new InvalidGrantError(
         `${provider.label} refused the refresh token (invalid_grant) — the connection is no longer valid.`,
       );
