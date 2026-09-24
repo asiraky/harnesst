@@ -12,6 +12,14 @@ import { getRuntime } from "~/seams/index.server";
 
 const RETRY_DELAY_MS = 2_500;
 const IN_FLIGHT = new Set(["pending", "building"]);
+/**
+ * Failed replacements at the CURRENT desired revision before reconciliation stops queueing more.
+ * A replacement that fails for a deterministic reason (a dead OAuth grant, a missing operator
+ * client) would otherwise fail → re-reconcile → fail every ~2 min until someone notices. A later
+ * revision bump (reconnect, secret change) starts a fresh count because its failures capture the
+ * new revision.
+ */
+const MAX_FAILED_REPLACEMENTS = 3;
 
 export interface EnvInvalidationDeps {
   store: DataStore;
@@ -95,6 +103,7 @@ export async function invalidateOrganizationEnvironments(
 
 export type EnvReconcileResult =
   | { status: "missing" | "not-deployed" | "stopped" | "current" }
+  | { status: "stalled"; deploymentId: string; failures: number }
   | { status: "covered"; deploymentId: string }
   | { status: "waiting"; deploymentId: string }
   | { status: "redeploying"; deploymentId: string };
@@ -156,6 +165,20 @@ export async function reconcileEnvironmentEnv(
       status: rows.some((deployment) => deployment.status === "stopped")
         ? "stopped"
         : "not-deployed",
+    };
+  }
+
+  const failedAtRevision = rows.filter(
+    (deployment) =>
+      deployment.status === "failed" &&
+      deployment.envRevision >= environment.envRevision &&
+      deployment.createdAt > live.createdAt,
+  );
+  if (failedAtRevision.length >= MAX_FAILED_REPLACEMENTS) {
+    return {
+      status: "stalled",
+      deploymentId: failedAtRevision[0].id,
+      failures: failedAtRevision.length,
     };
   }
 
