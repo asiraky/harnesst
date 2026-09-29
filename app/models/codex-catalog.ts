@@ -83,14 +83,6 @@ export const CODEX_MODEL_SPECS: readonly CodexModelSpec[] = [
     supportedEfforts: ["low", "medium", "high", "xhigh"],
     providerDefaultEffort: "medium",
   },
-  // Upstream retires GPT-5.5 on 2026-10-14 (its upgrade target is GPT-5.6 Sol).
-  {
-    slug: "gpt-5.5",
-    name: "GPT-5.5",
-    contextWindow: CODEX_CONTEXT,
-    supportedEfforts: ["low", "medium", "high", "xhigh"],
-    providerDefaultEffort: "medium",
-  },
 ] as const;
 
 /** Prefix marking a connection-qualified Codex model id. */
