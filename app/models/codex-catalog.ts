@@ -6,10 +6,11 @@
  * carries BOTH which connection serves the turn and which upstream model. The gateway parses that
  * id, authorizes the connection, and forwards `<slug>` to the Codex Responses backend.
  *
- * The slug list is curated (source: ChatMock `chatmock/model_registry.py`) pending a dynamic Codex
- * catalog in Phase 2 — the ChatGPT backend has no public models endpoint. Context windows are a
- * conservative 272k for the gpt-5 family (null is acceptable when unknown); pricing is null (a
- * subscription isn't per-token billed here).
+ * The slug list is curated from the Codex backend's own catalog
+ * (`GET https://chatgpt.com/backend-api/codex/models?client_version=<ver>`, what `codex debug
+ * models` renders). That endpoint filters by client version, so an old version string hides newer
+ * models. Only models with `visibility: "list"` are included. Pricing is null (a subscription isn't
+ * per-token billed here).
  */
 import type { ReasoningEffort } from "~/models/reasoning";
 
@@ -20,107 +21,66 @@ export interface CodexModelSpec {
   name: string;
   /** Conservative context window in tokens, or null when unknown. */
   contextWindow: number | null;
-  /** Curated because the subscription backend has no public model metadata endpoint. */
+  /** Efforts harnesst can send, from the backend catalog capped to the ReasoningEffort scale. */
   supportedEfforts: readonly ReasoningEffort[];
   providerDefaultEffort: ReasoningEffort;
 }
 
-/** gpt-5 family context window — conservative; refine when a dynamic catalog lands (Phase 2). */
-const GPT5_CONTEXT = 272_000;
+/** The context window the Codex backend reports for every listed model. */
+const CODEX_CONTEXT = 272_000;
 
 /** Curated Codex-backend model specs. Ordered newest/most-capable first. */
 export const CODEX_MODEL_SPECS: readonly CodexModelSpec[] = [
-  // The 5.6 family (ChatMock registry). Upstream also lists a "max" effort, which harnesst's
-  // ReasoningEffort scale doesn't model — capped at xhigh.
+  // Upstream also lists "max" (and "ultra" on some models) efforts, which harnesst's
+  // ReasoningEffort scale doesn't model, so every list is capped at xhigh. Upstream lists no
+  // "none" effort for any of these, and rejects it.
+  {
+    slug: "gpt-6.1-sol",
+    name: "GPT-6.1 Sol",
+    contextWindow: CODEX_CONTEXT,
+    supportedEfforts: ["low", "medium", "high", "xhigh"],
+    providerDefaultEffort: "low",
+  },
+  {
+    slug: "gpt-6-astra",
+    name: "GPT-6 Astra",
+    contextWindow: CODEX_CONTEXT,
+    supportedEfforts: ["low", "medium", "high", "xhigh"],
+    providerDefaultEffort: "medium",
+  },
+  {
+    slug: "gpt-6-sol",
+    name: "GPT-6 Sol",
+    contextWindow: CODEX_CONTEXT,
+    supportedEfforts: ["low", "medium", "high", "xhigh"],
+    providerDefaultEffort: "medium",
+  },
+  {
+    slug: "gpt-6-luna",
+    name: "GPT-6 Luna",
+    contextWindow: CODEX_CONTEXT,
+    supportedEfforts: ["low", "medium", "high", "xhigh"],
+    providerDefaultEffort: "medium",
+  },
   {
     slug: "gpt-5.6-sol",
     name: "GPT-5.6 Sol",
-    contextWindow: GPT5_CONTEXT,
-    supportedEfforts: ["none", "low", "medium", "high", "xhigh"],
-    providerDefaultEffort: "medium",
+    contextWindow: CODEX_CONTEXT,
+    supportedEfforts: ["low", "medium", "high", "xhigh"],
+    providerDefaultEffort: "low",
   },
   {
     slug: "gpt-5.6-terra",
     name: "GPT-5.6 Terra",
-    contextWindow: GPT5_CONTEXT,
-    supportedEfforts: ["none", "low", "medium", "high", "xhigh"],
+    contextWindow: CODEX_CONTEXT,
+    supportedEfforts: ["low", "medium", "high", "xhigh"],
     providerDefaultEffort: "medium",
   },
   {
     slug: "gpt-5.6-luna",
     name: "GPT-5.6 Luna",
-    contextWindow: GPT5_CONTEXT,
-    supportedEfforts: ["none", "low", "medium", "high", "xhigh"],
-    providerDefaultEffort: "medium",
-  },
-  {
-    slug: "gpt-5.5",
-    name: "GPT-5.5",
-    contextWindow: GPT5_CONTEXT,
+    contextWindow: CODEX_CONTEXT,
     supportedEfforts: ["low", "medium", "high", "xhigh"],
-    providerDefaultEffort: "medium",
-  },
-  {
-    slug: "gpt-5.4",
-    name: "GPT-5.4",
-    contextWindow: GPT5_CONTEXT,
-    supportedEfforts: ["none", "low", "medium", "high", "xhigh"],
-    providerDefaultEffort: "medium",
-  },
-  {
-    slug: "gpt-5.4-mini",
-    name: "GPT-5.4 mini",
-    contextWindow: GPT5_CONTEXT,
-    supportedEfforts: ["low", "medium", "high"],
-    providerDefaultEffort: "medium",
-  },
-  {
-    slug: "gpt-5.3-codex",
-    name: "GPT-5.3 Codex",
-    contextWindow: GPT5_CONTEXT,
-    supportedEfforts: ["low", "medium", "high", "xhigh"],
-    providerDefaultEffort: "medium",
-  },
-  {
-    slug: "gpt-5.2",
-    name: "GPT-5.2",
-    contextWindow: GPT5_CONTEXT,
-    supportedEfforts: ["none", "low", "medium", "high", "xhigh"],
-    providerDefaultEffort: "medium",
-  },
-  {
-    slug: "gpt-5.2-codex",
-    name: "GPT-5.2 Codex",
-    contextWindow: GPT5_CONTEXT,
-    supportedEfforts: ["low", "medium", "high", "xhigh"],
-    providerDefaultEffort: "medium",
-  },
-  {
-    slug: "gpt-5.1-codex-max",
-    name: "GPT-5.1 Codex Max",
-    contextWindow: GPT5_CONTEXT,
-    supportedEfforts: ["none", "low", "medium", "high"],
-    providerDefaultEffort: "medium",
-  },
-  {
-    slug: "gpt-5.1-codex-mini",
-    name: "GPT-5.1 Codex Mini",
-    contextWindow: GPT5_CONTEXT,
-    supportedEfforts: ["none", "low", "medium", "high"],
-    providerDefaultEffort: "medium",
-  },
-  {
-    slug: "gpt-5-codex",
-    name: "GPT-5 Codex",
-    contextWindow: GPT5_CONTEXT,
-    supportedEfforts: ["minimal", "low", "medium", "high"],
-    providerDefaultEffort: "medium",
-  },
-  {
-    slug: "gpt-5",
-    name: "GPT-5",
-    contextWindow: GPT5_CONTEXT,
-    supportedEfforts: ["minimal", "low", "medium", "high"],
     providerDefaultEffort: "medium",
   },
 ] as const;
