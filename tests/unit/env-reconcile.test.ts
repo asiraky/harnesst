@@ -25,16 +25,18 @@ function seededStore(): FakeStore {
   return store;
 }
 
+let seeded = 0;
 async function seedDeployment(
   store: FakeStore,
   status: string,
   envRevision = 0,
 ) {
+  const version = `${status}-${envRevision}-${++seeded}`;
   const release = await store.releases.insert({
     projectId: PROJECT,
     agentId: AGENT,
-    version: `${status}-${envRevision}`,
-    gitSha: `${status}-${envRevision}`.padEnd(40, "0"),
+    version,
+    gitSha: version.padEnd(40, "0"),
   });
   return store.deployments.insert({
     environmentId: ENVIRONMENT,
@@ -187,6 +189,59 @@ describe("environment env reconciliation", () => {
       ),
     ).toEqual({ status: "covered", deploymentId: pending.id });
     expect(reconcileDeps.enqueue).not.toHaveBeenCalled();
+  });
+
+  it("stops queueing replacements after three failures at the desired revision", async () => {
+    const store = seededStore();
+    await seedDeployment(store, "live", 0);
+    await store.environments.bumpEnvRevision(ENVIRONMENT);
+    const failed = [];
+    for (let i = 0; i < 3; i++) {
+      failed.push(await seedDeployment(store, "failed", 1));
+    }
+    const reconcileDeps = deps(store);
+
+    expect(
+      await reconcileEnvironmentEnv(
+        { environmentId: ENVIRONMENT },
+        reconcileDeps,
+      ),
+    ).toEqual({
+      status: "stalled",
+      deploymentId: failed[2].id,
+      failures: 3,
+    });
+    expect(reconcileDeps.queueDeploy).not.toHaveBeenCalled();
+    expect(reconcileDeps.enqueue).not.toHaveBeenCalled();
+  });
+
+  it("still queues a replacement while fewer than three have failed", async () => {
+    const store = seededStore();
+    await seedDeployment(store, "live", 0);
+    await store.environments.bumpEnvRevision(ENVIRONMENT);
+    await seedDeployment(store, "failed", 1);
+    await seedDeployment(store, "failed", 1);
+    const reconcileDeps = deps(store);
+
+    expect(
+      (await reconcileEnvironmentEnv({ environmentId: ENVIRONMENT }, reconcileDeps))
+        .status,
+    ).toBe("redeploying");
+    expect(reconcileDeps.queueDeploy).toHaveBeenCalledOnce();
+  });
+
+  it("restarts the failure count when the desired revision moves on", async () => {
+    const store = seededStore();
+    await seedDeployment(store, "live", 0);
+    await store.environments.bumpEnvRevision(ENVIRONMENT);
+    for (let i = 0; i < 3; i++) await seedDeployment(store, "failed", 1);
+    await store.environments.bumpEnvRevision(ENVIRONMENT);
+    const reconcileDeps = deps(store);
+
+    expect(
+      (await reconcileEnvironmentEnv({ environmentId: ENVIRONMENT }, reconcileDeps))
+        .status,
+    ).toBe("redeploying");
   });
 
   it("leaves stale stopped instances scaled to zero for the wake path to replace", async () => {
