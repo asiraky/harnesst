@@ -40,9 +40,8 @@ describe("buildCodexModelId / parseCodexModelId", () => {
 
 describe("findCodexSpec", () => {
   it("returns a curated spec by slug", () => {
-    const spec = findCodexSpec("gpt-5.5");
-    expect(spec?.name).toBe("GPT-5.5");
-    expect(spec?.contextWindow).toBeGreaterThan(0);
+    const curated = CODEX_MODEL_SPECS[0];
+    expect(findCodexSpec(curated.slug)).toBe(curated);
   });
 
   it("is null for an unknown slug", () => {

@@ -2,6 +2,7 @@
 import { spawn } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { basename } from "node:path";
+import { parseEnv } from "node:util";
 import {
   getMainCheckoutRoot,
   cloudflaredEnvironment,
@@ -15,24 +16,6 @@ import {
 function die(message) {
   console.error(`dev-tunnel: ${message}`);
   process.exit(1);
-}
-
-function parseEnv(text) {
-  const result = {};
-  for (const raw of text.split("\n")) {
-    const line = raw.trim();
-    if (!line || line.startsWith("#")) continue;
-    const at = line.indexOf("=");
-    if (at < 1) continue;
-    let value = line.slice(at + 1).trim();
-    if (
-      (value.startsWith('"') && value.endsWith('"')) ||
-      (value.startsWith("'") && value.endsWith("'"))
-    )
-      value = value.slice(1, -1);
-    result[line.slice(0, at).trim()] = value;
-  }
-  return result;
 }
 
 async function waitForHttp(url, label, timeoutMs = 45_000) {
@@ -120,6 +103,9 @@ async function main() {
   const envPath = new URL("../.env.local", import.meta.url);
   if (!existsSync(envPath))
     die(".env.local is missing; run the worktree setup script first");
+  // node:util parseEnv handles multi-line quoted values (the GitHub App PEM);
+  // a line-by-line parse truncates them, and the truncated value in
+  // process.env shadows Vite's own .env.local load.
   const fileEnv = parseEnv(readFileSync(envPath, "utf8"));
   const port = Number(fileEnv.PORT);
   if (!Number.isInteger(port)) die(".env.local does not contain a valid PORT");

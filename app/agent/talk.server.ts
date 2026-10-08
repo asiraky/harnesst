@@ -31,7 +31,13 @@ import {
   normalizeChatInputOptionPresentation,
   normalizeChatInputSurface,
 } from "~/chat/input-option";
+import { ReasoningAccumulator } from "~/chat/reasoning";
 import type { ChatInputOption, ChatInputRequest } from "~/chat/types";
+import {
+  summarizeUserContent,
+  userMessageHasFiles,
+  type UserMessage,
+} from "~/chat/user-content";
 import {
   SESSION_WORKSPACE_ID_HEADER,
   SESSION_WORKSPACE_ROUTE,
@@ -94,6 +100,8 @@ export interface TurnResult {
    * these joined; this preserves the ordering `reply` loses.
    */
   messages: { afterStepIndex: number; text: string }[];
+  /** The model's visible reasoning for the turn (blocks joined), when the provider streams it. */
+  reasoning?: string | null;
   error: string | null;
   errorModelId?: string | null;
   /**
@@ -157,6 +165,8 @@ export type TalkEvent =
   | { kind: "thinking" }
   | { kind: "action"; toolName: string; summary?: string }
   | { kind: "text"; text: string }
+  /** Cumulative reasoning text for our turn (every block so far, joined by a blank line). */
+  | { kind: "reasoning"; text: string }
   | { kind: "step"; step: TurnStep }
   | { kind: "input"; requests: ChatInputRequest[] }
   | { kind: "done"; result: TurnResult };
@@ -366,6 +376,27 @@ async function readChannelFailure(
   }
 }
 
+/**
+ * Why an attachment-carrying send was refused. Images built before the private workspace channel
+ * accepted a parts `message` answer 400 "Missing message." on a first turn; on a follow-up the old
+ * channel drops the parts and eve fails the empty send (a 5xx). Eve's own upload policy answers
+ * 413/415 with a sentence worth showing verbatim.
+ */
+export function attachmentRefusal(
+  status: number,
+  detail: string | null,
+  privateChannel: boolean,
+): string {
+  const predates =
+    "This agent's build predates attachments — redeploy it to send files.";
+  if (status === 413 || status === 415) {
+    return `The agent refused the attachment${detail ? `: ${detail}` : "."}`;
+  }
+  if (status === 400 && detail && /message/i.test(detail)) return predates;
+  if (privateChannel && status >= 500) return predates;
+  return `The agent couldn't accept the attachment (HTTP ${status})${detail ? `: ${detail}` : "."}`;
+}
+
 /** Detect + prettify a JSON reply (structured output) so the UI can render it as code. */
 function normalizeReply(reply: string | null): {
   reply: string | null;
@@ -393,7 +424,12 @@ function normalizeReply(reply: string | null): {
  */
 export async function* streamTurn(input: {
   baseUrl: string;
-  message: string;
+  /**
+   * A plain string, or eve `UserContent` parts (text + base64 file parts) when the turn carries
+   * attachments. Eve echoes a parts message as its summary (see `summarizeUserContent`), which is
+   * what turn attribution matches on.
+   */
+  message: UserMessage;
   /**
    * Request-correlated HITL answers, forwarded verbatim as eve's `inputResponses`. Only
    * meaningful on a follow-up send (eve resolves them against the session the continuation
@@ -518,6 +554,7 @@ export async function* streamTurn(input: {
     return;
   }
 
+  const hasFiles = userMessageHasFiles(input.message);
   try {
     throwIfAborted();
     const workspace = via ? null : (input.workspace ?? null);
@@ -532,7 +569,7 @@ export async function* streamTurn(input: {
             continuationToken: via.rawToken,
             state: via.state,
             inputResponses: input.inputResponses ?? [],
-            ...(input.message ? { message: input.message } : {}),
+            ...(input.message.length > 0 ? { message: input.message } : {}),
           }),
           signal: AbortSignal.timeout(15_000),
         })
@@ -568,6 +605,18 @@ export async function* streamTurn(input: {
           },
         );
     if (!res.ok && res.status !== 202) {
+      // A turn with files can be refused for reasons that have nothing to do with the agent being
+      // broken: an image built before the private channel accepted parts, or eve's own upload
+      // policy. Name those instead of reporting a bare status line.
+      if (hasFiles) {
+        const failure = await readChannelFailure(res);
+        yield fail(attachmentRefusal(res.status, failure.message, !!workspace || !!via), {
+          sessionId: input.sessionId,
+          continuationToken: input.continuationToken,
+          notDelivered: true,
+        });
+        return;
+      }
       if (via) {
         const failure = await readChannelFailure(res);
         // 409 + `session_gone` is the ONE thing we can honestly name: the token resolves to no
@@ -642,7 +691,7 @@ export async function* streamTurn(input: {
     sessionId,
     continuationToken,
     startIndex: streamIndex,
-    matchMessage: input.message,
+    matchMessage: summarizeUserContent(input.message),
     postedAt,
     initialTurnId: null,
     signal: input.signal,
@@ -699,6 +748,7 @@ async function* drainTurnStream(input: {
   const completedMessages: string[] = [];
   const inputRequests: ChatInputRequest[] = [];
   let lastTextSent: string | null = null;
+  const reasoning = new ReasoningAccumulator();
   let reply: string | null = null;
   let error: string | null = null;
   let lastStepFailure: string | null = null;
@@ -915,6 +965,13 @@ async function* drainTurnStream(input: {
             }
             break;
           }
+          case "reasoning.appended":
+          case "reasoning.completed":
+            if (ours && reasoning.apply(type, data)) {
+              const text = reasoning.text();
+              if (text) yield { kind: "reasoning", text };
+            }
+            break;
           case "message.appended":
             // messageSoFar is cumulative for the CURRENT message only — prefix the turn's
             // earlier completed messages so the live text never loses them.
@@ -1094,6 +1151,7 @@ async function* drainTurnStream(input: {
       turnId: ourTurnId,
       steps,
       messages,
+      reasoning: reasoning.text(),
       error,
       ...(streamLost ? { streamLost: true } : {}),
     },

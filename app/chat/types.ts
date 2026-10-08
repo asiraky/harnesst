@@ -21,6 +21,36 @@ export interface ChatStep {
   toolName?: string | null;
   /** Compacted summary of the primary action — command, skill, or file path. Additive. */
   summary?: string | null;
+  /**
+   * Every action the step ran, with capped + redacted input/output so the transcript can show
+   * what the agent actually did (command and its output), not just a one-line summary. Additive.
+   */
+  actions?: ChatStepAction[];
+}
+
+/** One tool call inside a step. Strings are display-ready: capped and secret-redacted server-side. */
+export interface ChatStepAction {
+  toolName: string;
+  summary?: string | null;
+  /** Pretty-printed input (a bash command verbatim, anything else as JSON). */
+  input?: string | null;
+  /** Pretty-printed output (stdout/stderr for bash-style tools, else JSON). */
+  output?: string | null;
+  exitCode?: number | null;
+  isError?: boolean;
+}
+
+/**
+ * A file the user attached to a message. The bytes are stored by harnesst (never eve's stream);
+ * `url` is a same-origin, session-authorized app path, or null when harnesst no longer has the
+ * bytes (then the chip still names the file).
+ */
+export interface ChatAttachment {
+  id: string;
+  name: string;
+  mediaType: string;
+  size: number | null;
+  url: string | null;
 }
 
 /**
@@ -148,6 +178,12 @@ export interface ChatEntry {
   files?: string[];
   secrets?: string[];
   checks?: { ran: boolean; ok: boolean };
+  /** User entries: files attached to the message. Additive. */
+  attachments?: ChatAttachment[];
+  /** Assistant entries: the model's visible reasoning for the turn, when the provider streams it. */
+  reasoning?: string | null;
+  /** ISO time the entry happened (the user message was received / the reply settled). */
+  at?: string | null;
   /** FOH: the published artifact this entry renders. Set only on `role: "artifact"`. */
   artifact?: ChatArtifact;
   error?: string | null;
