@@ -22,6 +22,7 @@ describe.runIf(LIVE)("FOH turn claim against real Postgres", () => {
       claimPlaygroundSessionForTurn,
       createPlaygroundSession,
       savePlaygroundSessionCursor,
+      touchPlaygroundSessionTurn,
     } = await import("~/playground/sessions.server");
 
     const ORG = "org_foh_claim";
@@ -142,6 +143,57 @@ describe.runIf(LIVE)("FOH turn claim against real Postgres", () => {
     expect(row.status).toBe("waiting");
     expect(row.streamIndex).toBe(9);
     expect(row.continuationToken).toBe("tok_live");
+
+    // 4. The drain heartbeat refreshes only a running row its own claim still holds, and never
+    // revives a settled one. A heartbeat keeps a silent but live turn from being taken over.
+    const STALE = new Date(Date.now() - STALE_AFTER_MS - 60_000);
+    const ageRow = () =>
+      db
+        .update(playgroundSessions)
+        .set({ updatedAt: STALE, lastEventAt: STALE })
+        .where(eq(playgroundSessions.id, session.id));
+    const readRow = async () =>
+      (
+        await db
+          .select()
+          .from(playgroundSessions)
+          .where(eq(playgroundSessions.id, session.id))
+      )[0];
+    const live = await claimPlaygroundSessionForTurn({
+      id: session.id,
+      target,
+      claimId: "claim_D",
+      staleAfterMs: STALE_AFTER_MS,
+    });
+    expect(live).toMatchObject({ status: "running", turnClaimId: "claim_D" });
+
+    await ageRow();
+    await touchPlaygroundSessionTurn({ id: session.id, claimId: "claim_C" });
+    expect((await readRow()).updatedAt.getTime()).toBe(STALE.getTime());
+
+    await touchPlaygroundSessionTurn({ id: session.id, claimId: "claim_D" });
+    row = await readRow();
+    expect(row.updatedAt.getTime()).toBeGreaterThan(STALE.getTime());
+    // Only freshness moves: the last real event time is untouched.
+    expect(row.lastEventAt?.getTime()).toBe(STALE.getTime());
+    expect(
+      await claimPlaygroundSessionForTurn({
+        id: session.id,
+        target,
+        claimId: "claim_E",
+        staleAfterMs: STALE_AFTER_MS,
+      }),
+    ).toBeNull();
+
+    await db
+      .update(playgroundSessions)
+      .set({ status: "stopped" })
+      .where(eq(playgroundSessions.id, session.id));
+    await ageRow();
+    await touchPlaygroundSessionTurn({ id: session.id, claimId: "claim_D" });
+    row = await readRow();
+    expect(row.status).toBe("stopped");
+    expect(row.updatedAt.getTime()).toBe(STALE.getTime());
 
     // Cleanup (org cascade removes project/agent/session rows).
     await db.delete(organization).where(eq(organization.id, ORG));
