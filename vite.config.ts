@@ -14,12 +14,9 @@ export default defineConfig(async ({ command, mode, isPreview }) => {
   const env = loadEnv(mode, process.cwd(), "");
   const port = Number(env.PORT ?? 5173);
   const devServer = command === "serve" && mode === "development" && !isPreview;
+  const dev = devServer ? await tailnetOrigin(env, port) : null;
   return {
-    plugins: [
-      tailwindcss(),
-      reactRouter(),
-      ...(devServer ? [await tailnetOrigin(env, port)] : []),
-    ],
+    plugins: [tailwindcss(), reactRouter(), ...(dev ? [dev.plugin] : [])],
     resolve: {
       tsconfigPaths: true,
     },
@@ -58,6 +55,8 @@ export default defineConfig(async ({ command, mode, isPreview }) => {
         ".harnesst.test",
         ".loca.lt",
         ".trycloudflare.com",
+        // Whatever host the dev origin landed on, e.g. a HARNESST_DEV_HOST outside .harnesst.test.
+        ...(dev ? [dev.hostname] : []),
       ],
       // In production nginx routes /e/<environmentId>/… to the traffic splitter
       // (deploy/vps/nginx-harnesst.conf); mirror that here so the ingress URLs the UI shows —
@@ -80,7 +79,7 @@ export default defineConfig(async ({ command, mode, isPreview }) => {
 async function tailnetOrigin(
   env: Record<string, string>,
   port: number,
-): Promise<Plugin> {
+): Promise<{ plugin: Plugin; hostname: string }> {
   const cwd = process.cwd();
   const { origin, upgraded, note } = await resolveDevOrigin({
     env,
@@ -90,7 +89,7 @@ async function tailnetOrigin(
     resolves: (hostname) => hostResolves(hostname),
   });
   if (upgraded) process.env.BETTER_AUTH_URL = origin;
-  return {
+  const plugin: Plugin = {
     name: "harnesst:tailnet-origin",
     configureServer(server) {
       const printUrls = server.printUrls.bind(server);
@@ -102,4 +101,5 @@ async function tailnetOrigin(
       };
     },
   };
+  return { plugin, hostname: new URL(origin).hostname };
 }
