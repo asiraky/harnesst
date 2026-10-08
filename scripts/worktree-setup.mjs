@@ -602,6 +602,7 @@ function dockerExecArgs(conn, cmd) {
 
 function quoteArgv(argv) {
   return argv
+    .map((a) => (a.startsWith("PGPASSWORD=") ? "PGPASSWORD=[redacted]" : a))
     .map((a) =>
       /[^A-Za-z0-9_\-./=]/.test(a) ? `'${a.replace(/'/g, "'\\''")}'` : a,
     )
@@ -679,11 +680,21 @@ function main() {
     argv = ["--worktree-path", process.env.T3CODE_WORKTREE_PATH];
   }
 
+  const lifecycle = process.env.OMNIPLEX_CONTEXT_FILE
+    ? JSON.parse(readFileSync(process.env.OMNIPLEX_CONTEXT_FILE, "utf8"))
+    : null;
+  let requestedBase = lifecycle?.baseRef;
   let skipValidate = false;
   let input = "";
   let externalPath;
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
+    if (arg === "--base") {
+      const value = argv[++index];
+      if (!value || value.startsWith("--")) die("missing git ref after --base");
+      requestedBase = value;
+      continue;
+    }
     if (arg === "--skip-validate") {
       skipValidate = true;
       continue;
@@ -705,6 +716,10 @@ function main() {
       continue;
     }
     die(`unexpected argument "${arg}"`);
+  }
+  if (lifecycle?.suggestedWorktreePath) {
+    externalPath = lifecycle.suggestedWorktreePath;
+    input = "";
   }
   if (input && externalPath !== undefined) {
     die("pass either a feature name or --worktree-path, not both");
@@ -730,7 +745,9 @@ function main() {
     try {
       root = getMainCheckoutRoot(worktreePath);
     } catch (err) {
-      die(`failed to resolve main repo root from ${worktreePath}: ${err.message}`);
+      die(
+        `failed to resolve main repo root from ${worktreePath}: ${err.message}`,
+      );
     }
     if (!existsSync(join(root, "package.json"))) {
       die(`resolved main root ${root} does not look like the repo root`);
@@ -752,7 +769,30 @@ function main() {
   // branched from. Must happen before the main checkout moves for any reason;
   // `clawd -w` invokes us immediately after `git worktree add`, so HEAD still
   // points at the intended base.
-  const baseBranch = getCurrentBranch(root);
+  const baseBranch = requestedBase || getCurrentBranch(root);
+  if (lifecycle && resolve(lifecycle.projectRoot) !== resolve(root))
+    die("Omniplex project root does not match worktree repository");
+  const sharedEnvPath = join(root, ".env");
+  const sharedEnv = existsSync(sharedEnvPath)
+    ? parseEnvFile(readFileSync(sharedEnvPath, "utf8"))
+    : {};
+  const canonicalEnv = parseEnvFile(
+    readFileSync(join(root, ".env.local"), "utf8"),
+  );
+  const secretsKey =
+    canonicalEnv.HARNESST_SECRETS_KEY ||
+    sharedEnv.HARNESST_SECRETS_KEY ||
+    process.env.HARNESST_SECRETS_KEY;
+  if (
+    !secretsKey ||
+    Buffer.from(
+      secretsKey,
+      /^[a-f0-9]{64}$/i.test(secretsKey) ? "hex" : "base64",
+    ).length !== 32
+  )
+    die(
+      "Canonical HARNESST_SECRETS_KEY is missing or invalid. Restore the original 32-byte key for the cloned credentials before provisioning.",
+    );
 
   // Preflight: all subsequent DB operations run via `docker exec`, so the
   // container must be up before we get deep into the setup.
@@ -832,6 +872,7 @@ function main() {
   );
 
   const worktreeEnv = applyEnvOverrides(mainEnv, {
+    HARNESST_SECRETS_KEY: secretsKey,
     PORT: String(ports.dev),
     BETTER_AUTH_URL: `http://localhost:${ports.dev}`,
     BETTER_AUTH_SECRET: betterAuthSecret,
@@ -916,6 +957,31 @@ function main() {
     );
   } else {
     cloneDatabase(conn, canonicalDb, targetDb);
+  }
+
+  const migration = spawnSync(
+    process.execPath,
+    ["--env-file=.env.local", "node_modules/drizzle-kit/bin.cjs", "migrate"],
+    {
+      cwd: worktreePath,
+      stdio: "inherit",
+      env: {
+        ...process.env,
+        DATABASE_URL: withDatabaseName(mainDbUrl, targetDb),
+      },
+    },
+  );
+  if (migration.status !== 0) die("worktree database migration failed");
+  if (process.env.OMNIPLEX_RESULT_FILE) {
+    writeFileSync(
+      process.env.OMNIPLEX_RESULT_FILE,
+      JSON.stringify({
+        cwd: worktreePath,
+        branch: getWorktreeBranch(worktreePath),
+        resources: { worktreePath, database: targetDb, ports },
+      }) + "\n",
+      { mode: 0o600 },
+    );
   }
 
   console.log(`worktree-setup: ${feat.full}`);
