@@ -8,7 +8,13 @@ import { modelSelectionFailure } from "~/models/provider-reference";
 import { getSessionAuth } from "~/auth/session.server";
 import { data, redirect, type ActionFunctionArgs } from "react-router";
 
+import {
+  attachmentTitleSource,
+  parseAttachments,
+  readChatForm,
+} from "~/chat/attachments.server";
 import { liveTargets } from "~/chat/playground.server";
+import { directiveSignedBody } from "~/chat/user-content";
 import { asString, streamTurnResponse } from "~/chat/turn-stream.server";
 import { listAgentEnvironments } from "~/db/queries.server";
 import { signModelDirective } from "~/models/model-directive.server";
@@ -39,7 +45,7 @@ export async function action(args: ActionFunctionArgs) {
   const project = requireRepo(
     await requireProject(auth, args.params.projectId),
   );
-  const form = await args.request.formData();
+  const form = await readChatForm(args.request);
   const agentName =
     agentFromParams(args.params) ?? asString(form.get("agentName"));
   const { active } = await resolveAgentContext(project.id, agentName);
@@ -48,7 +54,10 @@ export async function action(args: ActionFunctionArgs) {
   const deploymentId = asString(form.get("deploymentId"));
   const playgroundSessionId = asString(form.get("playgroundSessionId")) || null;
   const message = asString(form.get("message")).trim();
-  if (!message) throw data({ error: "Type a message first." }, { status: 400 });
+  const attachments = await parseAttachments(form);
+  if (!message && attachments.length === 0) {
+    throw data({ error: "Type a message or attach a file first." }, { status: 400 });
+  }
   // The composer's current model selection; absent = keep the session's stored override.
   const selection = parseRequestedModelSelection({
     modelId: asString(form.get("modelId")),
@@ -142,7 +151,9 @@ export async function action(args: ActionFunctionArgs) {
       { status: 409 },
     );
   }
-  const title = playgroundSession?.title ? null : titleFromMessage(message);
+  const title = playgroundSession?.title ? null : titleFromMessage(
+    attachmentTitleSource(message, attachments),
+  );
   if (!playgroundSession) {
     playgroundSession = await createPlaygroundSession({
       projectId: project.id,
@@ -195,7 +206,8 @@ export async function action(args: ActionFunctionArgs) {
           effort: effectiveEffort ?? undefined,
         },
         target.deploymentId,
-        message,
+        // The agent verifies over the text it rebuilds from the content parts (one "\n" per file).
+        directiveSignedBody(message, attachments.length),
       )
     : null;
   // The model directive stays the first line of the sent message (both the agent-side resolver
@@ -207,6 +219,7 @@ export async function action(args: ActionFunctionArgs) {
     target,
     session: playgroundSession,
     message,
+    attachments,
     channel: "playground",
     title,
     messagePrefix,

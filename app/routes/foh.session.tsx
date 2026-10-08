@@ -14,7 +14,7 @@
  * PEER session for delegation-opened rows).
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ChevronLeft, Square } from "lucide-react";
+import { ChevronLeft } from "lucide-react";
 import {
   data,
   Link,
@@ -27,6 +27,7 @@ import {
 
 import { liveTargets } from "~/chat/playground.server";
 import type {
+  ChatAttachment,
   ChatEntry,
   ChatInputAnswer,
   ChatInputRequest,
@@ -35,13 +36,24 @@ import type {
 import {
   ArtifactCard,
   AssistantBubble,
+  AssistantTurn,
   ChatComposer,
   ChatTranscript,
   InputRequestsBlock,
   MarkdownText,
+  MessageActions,
+  ReasoningBlock,
   StepsCard,
   UserBubble,
 } from "~/components/chat";
+import {
+  filesForResend,
+  liveAttachments,
+  useReleaseLivePreviews,
+  type LiveAttachment,
+} from "~/components/chat/live-attachments";
+import { toast } from "sonner";
+import { CodeBlock } from "~/components/chat/code-block";
 import { PreviewPanel } from "~/components/artifact-preview-panel";
 import { FohPaneError } from "~/components/foh/pane-error";
 import { SessionStatusDot } from "~/components/foh/session-list";
@@ -376,6 +388,11 @@ interface LiveTurn {
   playgroundSessionId: string | null;
   baseEntryCount: number;
   userText: string;
+  /** Local previews of what the user attached (object URLs until history revalidates). */
+  userAttachments: LiveAttachment[];
+  reasoning: string;
+  startedAt: number;
+  sentAt: string;
   text: string;
   steps: ChatStep[];
   activity: string | null;
@@ -466,9 +483,13 @@ export default function FohSession({ loaderData }: Route.ComponentProps) {
       entries,
     });
   const visibleLive = liveSessionMismatch || liveCoveredByCache ? null : live;
+  useReleaseLivePreviews(live?.userAttachments);
 
   const remoteBusy = sessionStatus === "running";
   const busy = (live !== null && !live.done) || remoteBusy;
+  // A finished turn isn't settled until history has revalidated; the composer stays "busy" for
+  // that session until then, so a queued follow-up can't launch over the unsettled turn.
+  const [settlingSession, setSettlingSession] = useState<string | null>(null);
   const pollRemoteSession = shouldPollRemoteSession(remoteBusy, visibleLive);
   const replayingRunningSession = remoteBusy && !visibleLive;
 
@@ -560,6 +581,7 @@ export default function FohSession({ loaderData }: Route.ComponentProps) {
     async (
       message: string,
       answer?: ChatInputAnswer | readonly ChatInputAnswer[],
+      files: readonly File[] = [],
     ) => {
       // This closure outlives navigation (the reader keeps draining the fetch), so every
       // state update below is keyed to the session it was started for — a stale reader
@@ -575,10 +597,17 @@ export default function FohSession({ loaderData }: Route.ComponentProps) {
       setSendError(null);
       setSendErrorModel(null);
       stopRequestedRef.current = false;
+      setSettlingSession(forSession);
+      const settled = () =>
+        setSettlingSession((s) => (s === forSession ? null : s));
       applyIfCurrent(() => ({
         playgroundSessionId: forSession,
         baseEntryCount: entries.length,
         userText: message,
+        userAttachments: liveAttachments(files),
+        reasoning: "",
+        startedAt: Date.now(),
+        sentAt: new Date().toISOString(),
         text: "",
         steps: [],
         activity: "Thinking…",
@@ -597,6 +626,7 @@ export default function FohSession({ loaderData }: Route.ComponentProps) {
       form.set("message", message);
       form.set("agentId", agentId);
       form.set("playgroundSessionId", forSession);
+      for (const file of files) form.append("attachments", file, file.name);
       // A pending request always gets an explicit correlation. The batch UI passes every
       // collected response; ordinary composer text reaches this fallback only for one freeform
       // request. With nothing pending, channel-homed free text starts a successor (#288 3b).
@@ -649,6 +679,7 @@ export default function FohSession({ loaderData }: Route.ComponentProps) {
           setSendError((error as Error).message);
           await revalidator.revalidate();
         }
+        settled();
         return false;
       }
 
@@ -713,7 +744,7 @@ export default function FohSession({ loaderData }: Route.ComponentProps) {
           );
           await revalidator.revalidate();
         }
-      })();
+      })().finally(settled);
       return true;
     },
     [
@@ -725,6 +756,24 @@ export default function FohSession({ loaderData }: Route.ComponentProps) {
       revalidator,
       sessionId,
     ],
+  );
+
+  /** Retry/Regenerate: resend a turn's text *and* files; refuse rather than drop the files. */
+  const resendTurn = useCallback(
+    async (
+      turn: { text?: string; attachments?: readonly LiveAttachment[] | readonly ChatAttachment[] } | undefined,
+    ) => {
+      if (!turn) return;
+      const text = turn.text ?? "";
+      const files = await filesForResend(turn.attachments);
+      if (!files) {
+        toast.error("Couldn't reload this message's attachments. Attach them again and resend.");
+        return;
+      }
+      if (!text.trim() && files.length === 0) return;
+      void send(text, undefined, files);
+    },
+    [send],
   );
 
   const answerPending = useCallback(
@@ -759,8 +808,8 @@ export default function FohSession({ loaderData }: Route.ComponentProps) {
   );
 
   const sendFromComposer = useCallback(
-    (message: string) => {
-      if (!typedAnswerRequest) return send(message);
+    (message: string, files: File[] = []) => {
+      if (!typedAnswerRequest || files.length > 0) return send(message, undefined, files);
       return answerPending(message, {
         requestId: typedAnswerRequest.requestId,
         text: message,
@@ -802,23 +851,6 @@ export default function FohSession({ loaderData }: Route.ComponentProps) {
       setSendError((error as Error).message);
     }
   }, [projectId, revalidator, sessionId]);
-
-  const composerControls = useMemo(
-    () =>
-      busy ? (
-        <Button
-          type="button"
-          variant="destructive"
-          size="lg"
-          className="gap-1.5"
-          onClick={stopTurn}
-        >
-          <Square className="size-3.5" />
-          Stop
-        </Button>
-      ) : null,
-    [busy, stopTurn],
-  );
 
   return (
     // A fragment, not a wrapper: this route's siblings flatten into the shell's flex row (see
@@ -897,7 +929,12 @@ export default function FohSession({ loaderData }: Route.ComponentProps) {
             )}
           {shownEntries.map((e, i) =>
             e.role === "user" ? (
-              <UserBubble key={e.id} text={e.text} />
+              <UserBubble
+                key={e.id}
+                text={e.text}
+                attachments={e.attachments}
+                at={e.at}
+              />
             ) : e.role === "artifact" ? (
               // A published image (#290) or page (#291) is not the reply — it sits under the turn
               // that made it as its own card, and carries no answer/retry affordances. A page card
@@ -923,12 +960,18 @@ export default function FohSession({ loaderData }: Route.ComponentProps) {
                 answeredRequestIds={queuedRequestIds}
                 onRetry={
                   i === newestTurn.index && !visibleLive && e.errorRetryable
-                    ? () => {
-                        const userText = [...shownEntries.slice(0, i)]
-                          .reverse()
-                          .find((x) => x.role === "user")?.text;
-                        if (userText) send(userText);
-                      }
+                    ? () =>
+                        void resendTurn(
+                          [...shownEntries.slice(0, i)].reverse().find((x) => x.role === "user"),
+                        )
+                    : undefined
+                }
+                onRegenerate={
+                  i === newestTurn.index && !visibleLive
+                    ? () =>
+                        void resendTurn(
+                          [...shownEntries.slice(0, i)].reverse().find((x) => x.role === "user"),
+                        )
                     : undefined
                 }
                 busy={busy}
@@ -966,17 +1009,26 @@ export default function FohSession({ loaderData }: Route.ComponentProps) {
           )}
           {visibleLive && (
             <>
-              <UserBubble text={visibleLive.userText} />
+              <UserBubble
+                text={visibleLive.userText}
+                attachments={visibleLive.userAttachments}
+                at={visibleLive.sentAt}
+              />
               <LiveBubble
                 live={visibleLive}
-                onRetry={() => send(visibleLive.userText)}
+                onRetry={() =>
+                void resendTurn({
+                  text: visibleLive.userText,
+                  attachments: visibleLive.userAttachments,
+                })
+              }
                 busy={busy}
               />
             </>
           )}
         </ChatTranscript>
 
-        <div className="mx-auto w-full max-w-5xl px-4 pb-4 pt-3 sm:px-6">
+        <div className="mx-auto w-full max-w-3xl px-4 pb-4 pt-3 sm:px-6">
           {!online && (
             <p className="mb-2 pl-1 text-xs text-muted-foreground">
               {agentName} is asleep — your next message wakes them (this can
@@ -999,11 +1051,14 @@ export default function FohSession({ loaderData }: Route.ComponentProps) {
                   ? `Use the approval controls above…`
                 : `Message ${agentName}…`
             }
-            busy={busy}
+            busy={busy || settlingSession === sessionId}
             disabled={Boolean(pendingRequest && !typedAnswerRequest)}
             focusKey={sessionId}
+            draftKey={`foh:${sessionId}`}
+            historyScope={`foh:${agentId}`}
             onSend={sendFromComposer}
-            controls={composerControls}
+            onStop={busy ? () => void stopTurn() : undefined}
+            allowAttachments
           />
         </div>
       </section>
@@ -1079,6 +1134,7 @@ type StreamEvent =
   | { type: "session"; playgroundSessionId: string }
   | { type: "model"; modelId: string }
   | { type: "thinking" }
+  | { type: "reasoning"; text: string }
   | { type: "action"; toolName: string; summary: string | null }
   | { type: "text"; text: string }
   | { type: "step"; step: ChatStep }
@@ -1107,6 +1163,8 @@ function reduceLive(prev: LiveTurn, evt: StreamEvent): LiveTurn {
       return { ...prev, modelId: evt.modelId };
     case "thinking":
       return { ...prev, activity: "Thinking…" };
+    case "reasoning":
+      return { ...prev, reasoning: evt.text };
     case "action":
       return {
         ...prev,
@@ -1158,33 +1216,37 @@ function LiveBubble({
   onRetry?: () => void;
   busy?: boolean;
 }) {
+  const streaming = !live.done;
   return (
-    <div className="space-y-2">
-      {(live.text || live.error || live.inputRequests.length > 0) && (
-        <AssistantBubble>
-          {live.error ? (
-            <TurnError
-              message={live.error}
-              recoveryModelId={live.errorModelId}
-              detail={live.errorDetail}
-              retryable={live.errorRetryable}
-              onRetry={onRetry}
-              busy={busy}
-            />
-          ) : live.text ? (
-            <MarkdownText text={live.text} />
-          ) : null}
-          {/* Static while the stream is open — the buttons go live on the persisted
-              entry once the turn settles and history revalidates. */}
-          <InputRequestsBlock requests={live.inputRequests} busy />
-        </AssistantBubble>
+    <AssistantTurn>
+      {live.reasoning && (
+        <ReasoningBlock text={live.reasoning} streaming={streaming && !live.text} />
       )}
       <StepsCard
         steps={live.steps}
         idPrefix="live"
         activity={live.done ? null : live.activity}
+        startedAt={live.done ? null : live.startedAt}
       />
-    </div>
+      {live.error ? (
+        <TurnError
+          message={live.error}
+          recoveryModelId={live.errorModelId}
+          detail={live.errorDetail}
+          retryable={live.errorRetryable}
+          onRetry={onRetry}
+          busy={busy}
+        />
+      ) : live.text ? (
+        <MarkdownText text={live.text} streaming={streaming} />
+      ) : null}
+      {/* Static while the stream is open — the buttons go live on the persisted
+          entry once the turn settles and history revalidates. */}
+      {live.inputRequests.length > 0 && (
+        <InputRequestsBlock requests={live.inputRequests} busy />
+      )}
+      {live.done && live.text && !live.error && <MessageActions text={live.text} />}
+    </AssistantTurn>
   );
 }
 
@@ -1194,6 +1256,7 @@ export function AgentEntry({
   activeRequestId,
   answeredRequestIds,
   onRetry,
+  onRegenerate,
   busy,
   running,
 }: {
@@ -1204,12 +1267,14 @@ export function AgentEntry({
   answeredRequestIds?: ReadonlySet<string>;
   /** Set on the newest errored entry only — resends the message to retry the turn. */
   onRetry?: () => void;
+  /** Set on the newest settled entry — sends the previous user message again. */
+  onRegenerate?: () => void;
   busy?: boolean;
   running?: boolean;
 }) {
   // A still-running turn rebuilt from the event cache (e.g. after switching to another
   // session and back mid-turn) has steps but no reply text yet. Rendering the
-  // "(empty reply)" fallback there reads as a broken message — suppress the bubble and
+  // "(empty reply)" fallback there reads as a broken message — suppress the reply and
   // let the steps card carry the "Still working…" state, matching LiveBubble.
   const awaitingReply =
     running &&
@@ -1218,9 +1283,15 @@ export function AgentEntry({
     !entry.text &&
     !entry.inputRequests?.length;
   return (
-    <div className="space-y-2">
+    <AssistantTurn>
+      {entry.reasoning && <ReasoningBlock text={entry.reasoning} />}
+      <StepsCard
+        steps={entry.steps ?? []}
+        idPrefix={entry.id}
+        activity={running ? "Still working…" : undefined}
+      />
       {!awaitingReply && (
-        <AssistantBubble>
+        <>
           {entry.error ? (
             <TurnError
               message={entry.error}
@@ -1231,13 +1302,11 @@ export function AgentEntry({
               busy={busy}
             />
           ) : entry.structured ? (
-            <pre className="overflow-x-auto rounded-lg bg-muted/50 p-3 font-mono text-xs">
-              {entry.text}
-            </pre>
+            <CodeBlock code={entry.text} language="json" />
           ) : entry.text || !entry.inputRequests?.length ? (
             <MarkdownText text={entry.text || "(empty reply)"} />
           ) : null}
-          {entry.inputRequests && (
+          {entry.inputRequests && entry.inputRequests.length > 0 && (
             <InputRequestsBlock
               requests={entry.inputRequests}
               onAnswer={onAnswer}
@@ -1246,13 +1315,16 @@ export function AgentEntry({
               answeredRequestIds={answeredRequestIds}
             />
           )}
-        </AssistantBubble>
+          {!entry.error && entry.text && (
+            <MessageActions
+              text={entry.text}
+              at={entry.at}
+              onRetry={busy ? undefined : onRegenerate}
+            />
+          )}
+        </>
       )}
-      <StepsCard
-        steps={entry.steps ?? []}
-        idPrefix={entry.id}
-        activity={running ? "Still working…" : undefined}
-      />
-    </div>
+    </AssistantTurn>
   );
 }
+

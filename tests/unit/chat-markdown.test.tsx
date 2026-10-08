@@ -225,3 +225,25 @@ describe("MarkdownText blocks", () => {
     expect(render("Half **bold")).toContain("Half **bold");
   });
 });
+
+describe("MarkdownText GitHub alerts and code fences", () => {
+  it("renders a [!WARNING] blockquote as a callout without the marker", () => {
+    const html = render("> [!WARNING]\n> Deleting this is permanent.");
+    expect(html).toContain("Warning");
+    expect(html).toContain("Deleting this is permanent.");
+    expect(html).not.toContain("[!WARNING]");
+    expect(html).not.toContain("<blockquote");
+  });
+
+  it("leaves an unknown marker as an ordinary quote", () => {
+    const html = render("> [!BOGUS]\n> text");
+    expect(html).toContain("<blockquote");
+    expect(html).toContain("[!BOGUS]");
+  });
+
+  it("renders a fenced block with its language label and verbatim code", () => {
+    const html = render("```ts\nconst a = 1 < 2;\n```");
+    expect(html).toContain(">ts<");
+    expect(html).toContain("const a = 1 &lt; 2;");
+  });
+});

@@ -33,6 +33,78 @@ describe("wantsStreaming", () => {
   });
 });
 
+describe("buildResponsesPayload file parts", () => {
+  const userContent = (payload: Record<string, unknown>) =>
+    ((payload.input as Array<Record<string, unknown>>).at(-1) as { content: unknown[] }).content;
+
+  it("maps a chat-completions file part with inline data to input_file", () => {
+    const payload = buildResponsesPayload(
+      {
+        messages: [
+          {
+            role: "user",
+            content: [
+              { type: "text", text: "read this" },
+              {
+                type: "file",
+                file: { filename: "invoice.pdf", file_data: "data:application/pdf;base64,AAAA" },
+              },
+            ],
+          },
+        ],
+      },
+      "gpt-5.5",
+    );
+    expect(userContent(payload)).toEqual([
+      { type: "input_text", text: "read this" },
+      { type: "input_file", filename: "invoice.pdf", file_data: "data:application/pdf;base64,AAAA" },
+    ]);
+  });
+
+  it("falls back to a default filename and forwards file_id references", () => {
+    const payload = buildResponsesPayload(
+      {
+        messages: [
+          {
+            role: "user",
+            content: [
+              { type: "file", file: { file_data: "data:application/pdf;base64,AAAA" } },
+              { type: "file", file: { file_id: "file-123" } },
+            ],
+          },
+        ],
+      },
+      "gpt-5.5",
+    );
+    expect(userContent(payload)).toEqual([
+      { type: "input_file", filename: "document.pdf", file_data: "data:application/pdf;base64,AAAA" },
+      { type: "input_file", file_id: "file-123" },
+    ]);
+  });
+
+  it("reports parts it cannot translate instead of dropping them silently", () => {
+    const dropped: string[] = [];
+    const payload = buildResponsesPayload(
+      {
+        messages: [
+          {
+            role: "user",
+            content: [
+              { type: "input_audio", input_audio: {} },
+              { type: "file", file: {} },
+              { type: "text", text: "hi" },
+            ],
+          },
+        ],
+      },
+      "gpt-5.5",
+      { onDropped: (t) => dropped.push(t) },
+    );
+    expect(dropped).toEqual(["input_audio", "file"]);
+    expect(userContent(payload)).toEqual([{ type: "input_text", text: "hi" }]);
+  });
+});
+
 describe("buildResponsesPayload", () => {
   it("sends Codex base instructions and moves system prompts to a leading user input item", () => {
     const payload = buildResponsesPayload(
