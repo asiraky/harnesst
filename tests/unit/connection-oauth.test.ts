@@ -15,6 +15,7 @@ import {
   exchangeCode,
   fetchAccountEmail,
   generateCodeVerifier,
+  InvalidGrantError,
   refreshAccessToken,
   registerOAuthClient,
   signConnectState,
@@ -386,6 +387,49 @@ describe("rotating refresh grants (issue #167)", () => {
     );
     expect(out).toEqual({ accessToken: "at", expiresIn: 3599 });
     expect("refreshToken" in out).toBe(false);
+  });
+});
+
+describe("refreshAccessToken dead-grant detection", () => {
+  const config = { clientId: "c" };
+  const failing = (status: number, body: string) =>
+    (async () => new Response(body, { status })) as typeof fetch;
+
+  it("throws InvalidGrantError on RFC 6749 invalid_grant", async () => {
+    await expect(
+      refreshAccessToken(
+        { provider: MAYI, config, refreshToken: "rt" },
+        failing(400, '{"error":"invalid_grant"}'),
+      ),
+    ).rejects.toBeInstanceOf(InvalidGrantError);
+  });
+
+  it("throws InvalidGrantError on May I?'s expired/revoked wording", async () => {
+    for (const body of [
+      '{"statusCode":400,"statusMessage":"Invalid refresh token"}',
+      '{"statusMessage":"Refresh token reuse detected; connection revoked"}',
+    ]) {
+      await expect(
+        refreshAccessToken(
+          { provider: MAYI, config, refreshToken: "rt" },
+          failing(400, body),
+        ),
+      ).rejects.toBeInstanceOf(InvalidGrantError);
+    }
+  });
+
+  it("keeps other refresh failures as plain (retryable) errors", async () => {
+    const err = await refreshAccessToken(
+      { provider: MAYI, config, refreshToken: "rt" },
+      failing(500, "upstream down"),
+    ).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(Error);
+    expect(err).not.toBeInstanceOf(InvalidGrantError);
+    const clientErr = await refreshAccessToken(
+      { provider: MAYI, config, refreshToken: "rt" },
+      failing(400, '{"error":"invalid_client"}'),
+    ).catch((e: unknown) => e);
+    expect(clientErr).not.toBeInstanceOf(InvalidGrantError);
   });
 });
 
