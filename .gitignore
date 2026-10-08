@@ -20,3 +20,6 @@ WORKTREE.md
 CLAUDE.local.md
 # Unattended work-issue runs write their outcome here (see the work-issue skill)
 RESULT.json
+
+# Local artifact + chat-upload store (HARNESST_ARTIFACTS_DIR default)
+/.artifacts/

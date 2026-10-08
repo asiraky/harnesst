@@ -16,7 +16,21 @@ import {
 
 import { inputRequestsOf } from "~/agent/talk.server";
 import { normalizeTurnError } from "~/chat/stream-error";
-import type { ChatEntry, ChatInputRequest, ChatStep } from "~/chat/types";
+import { loadUploadIndex } from "~/chat/attachments.server";
+import { ReasoningAccumulator } from "~/chat/reasoning";
+import { toChatStepActions } from "~/chat/step-actions.server";
+import type {
+  ChatAttachment,
+  ChatEntry,
+  ChatInputRequest,
+  ChatStep,
+} from "~/chat/types";
+import {
+  chatUploadUrl,
+  resolveReceivedAttachments,
+  type ReceivedFilePart,
+  type UploadIndexEntry,
+} from "~/chat/user-content";
 import { user } from "~/db/auth-schema";
 import { db } from "~/db/client.server";
 import {
@@ -178,6 +192,31 @@ export async function getPlaygroundSession(input: {
         eq(playgroundSessions.agentId, input.agentId),
         eq(playgroundSessions.createdBy, input.userId),
         surfaceScope(input.surface ?? "playground"),
+      ),
+    )
+    .limit(1);
+  return row ?? null;
+}
+
+/**
+ * Which surface a conversation belongs to (and its agent) — nothing else. For routes that must
+ * pick the right visibility check (FOH viewer scope vs. creator-only builder surfaces) before they
+ * know which kind of row an id names. NOT an authorization check on its own.
+ */
+export async function findSessionSurface(input: {
+  id: string;
+  projectId: string;
+}): Promise<{ surface: string; agentId: string } | null> {
+  const [row] = await db
+    .select({
+      surface: playgroundSessions.surface,
+      agentId: playgroundSessions.agentId,
+    })
+    .from(playgroundSessions)
+    .where(
+      and(
+        eq(playgroundSessions.id, input.id),
+        eq(playgroundSessions.projectId, input.projectId),
       ),
     )
     .limit(1);
@@ -1435,6 +1474,10 @@ export async function loadPlaygroundEntriesFromEve(input: {
   // folded in AFTER the projection — the event pipeline is untouched. Read even when there
   // are no events: an artifact published before the first event still has to appear.
   const published = await listArtifactsForSession(input.session.id);
+  // Attachments: eve's `message.received` names each file but never returns its bytes; the
+  // upload index maps those names back to what harnesst stored. Best-effort — a missing index
+  // still renders the file chips, just without a preview link.
+  const uploads = await uploadsFor(input.session);
   // Succession stitch (#288 3b): a succeeded conversation spans two eve sessions in the
   // same world store — prepend the predecessor's RAW events and project once; the
   // `session.started` epoch keeps the two sessions' turn keys apart (#261). Best-effort:
@@ -1452,7 +1495,7 @@ export async function loadPlaygroundEntriesFromEve(input: {
         idleStopMs: CAPPED_READ_IDLE_STOP_MS,
       });
       return mergeArtifactEntries(
-        projectEventsToEntries([...prologue, ...events], input.session),
+        projectEventsToEntries([...prologue, ...events], input.session, uploads),
         published,
         [],
       );
@@ -1470,10 +1513,30 @@ export async function loadPlaygroundEntriesFromEve(input: {
     })),
   );
   return mergeArtifactEntries(
-    projectEventsToEntries(events, input.session),
+    projectEventsToEntries(events, input.session, uploads),
     published,
     anchors,
   );
+}
+
+/** The session's stored uploads, for resolving replayed file parts (empty on any failure). */
+async function uploadsFor(session: PlaygroundSession): Promise<UploadLookup> {
+  let index: UploadIndexEntry[] = [];
+  try {
+    index = await loadUploadIndex(session.projectId, session.id);
+  } catch {
+    index = [];
+  }
+  return {
+    index,
+    urlFor: (sha256) => chatUploadUrl(session.projectId, session.id, sha256),
+  };
+}
+
+/** A session's upload index + how to mint a serve URL for one entry. */
+export interface UploadLookup {
+  index: ReadonlyArray<UploadIndexEntry>;
+  urlFor: (sha256: string) => string;
 }
 
 /**
@@ -1853,6 +1916,13 @@ interface TurnProjection {
   key: string;
   index: number;
   userText: string | null;
+  /** Files the user attached to this turn's message (resolved against the upload index). */
+  attachments: ChatAttachment[];
+  /** When eve received the user's message (ISO). */
+  userAt: string | null;
+  /** The last event time seen for this turn (ISO) — when the assistant entry settled. */
+  lastAt: string | null;
+  reasoning: ReasoningAccumulator;
   /** Every settled assistant message of the turn (they interleave with tool steps). */
   messages: string[];
   /** Partial text of a message that never completed (turn cut off mid-stream). */
@@ -1873,6 +1943,9 @@ interface TurnAction {
   summary?: string;
   exitCode?: number;
   isError?: boolean;
+  /** Raw tool input/output; formatted, capped and redacted by `toChatStepActions`. */
+  input?: unknown;
+  output?: unknown;
 }
 
 /**
@@ -1891,6 +1964,7 @@ interface TurnAction {
 export function projectEventsToEntries(
   events: EveStreamEvent[],
   session: PlaygroundSession,
+  uploads?: UploadLookup,
 ): ChatEntry[] {
   const turns = new Map<string, TurnProjection>();
   const ordered: TurnProjection[] = [];
@@ -1911,6 +1985,10 @@ export function projectEventsToEntries(
         key,
         index: ordered.length,
         userText: null,
+        attachments: [],
+        userAt: null,
+        lastAt: null,
+        reasoning: new ReasoningAccumulator(),
         messages: [],
         partial: null,
         inputRequests: [],
@@ -1937,6 +2015,7 @@ export function projectEventsToEntries(
     const turnId = typeof data.turnId === "string" ? data.turnId : null;
     const turn = turnFor(turnId);
     const at = event.meta?.at ? Date.parse(event.meta.at) : Date.now();
+    if (turn && event.meta?.at) turn.lastAt = event.meta.at;
     const stepIndex = typeof data.stepIndex === "number" ? data.stepIndex : 0;
     const sequence =
       typeof data.sequence === "number" ? data.sequence : stepIndex;
@@ -1956,8 +2035,41 @@ export function projectEventsToEntries(
         break;
       case "message.received": {
         if (!turn) break;
-        const raw = textOf(data.message);
+        // A multi-part message (attachments) arrives as `parts`; `message` is then eve's summary
+        // with `[file: …]` lines, so the typed text is read from the text parts instead.
+        const parts = Array.isArray(data.parts)
+          ? (data.parts as unknown[]).filter(
+              (p): p is Record<string, unknown> =>
+                typeof p === "object" && p !== null,
+            )
+          : null;
+        const fileParts = (parts ?? []).filter((p) => p.type === "file");
+        const raw =
+          parts && fileParts.length > 0
+            ? parts
+                .filter((p) => p.type === "text" && typeof p.text === "string")
+                .map((p) => p.text as string)
+                .join("\n")
+            : textOf(data.message);
         if (raw === null) break;
+        turn.userAt = event.meta?.at ?? null;
+        if (fileParts.length > 0) {
+          turn.attachments = resolveReceivedAttachments({
+            parts: fileParts.map(
+              (p): ReceivedFilePart => ({
+                filename:
+                  typeof p.filename === "string" ? p.filename : undefined,
+                mediaType:
+                  typeof p.mediaType === "string" ? p.mediaType : undefined,
+                size: typeof p.size === "number" ? p.size : undefined,
+              }),
+            ),
+            index: uploads?.index ?? [],
+            urlFor: uploads?.urlFor ?? (() => ""),
+            receivedAt: event.meta?.at ? Date.parse(event.meta.at) : null,
+            idPrefix: `${turn.key}:file`,
+          });
+        }
         // The sent message may carry the model directive — attribute the turn to it, and never
         // show it: the transcript displays the message as the user typed it.
         if (dynamicModel) {
@@ -1991,7 +2103,7 @@ export function projectEventsToEntries(
           const toolName =
             typeof action.toolName === "string" ? action.toolName : "tool";
           const summary = summarizeActionInput(action.input);
-          const record: TurnAction = { toolName, summary };
+          const record: TurnAction = { toolName, summary, input: action.input };
           seqActions.push(record);
           if (typeof action.callId === "string") {
             turn.actionByCallId.set(action.callId, record);
@@ -2008,6 +2120,7 @@ export function projectEventsToEntries(
         const record = callId ? turn.actionByCallId.get(callId) : undefined;
         if (!record) break;
         const output = result?.output;
+        if (output !== undefined) record.output = output;
         if (
           output &&
           typeof output === "object" &&
@@ -2021,6 +2134,10 @@ export function projectEventsToEntries(
           (record.exitCode != null && record.exitCode !== 0);
         break;
       }
+      case "reasoning.appended":
+      case "reasoning.completed":
+        turn?.reasoning.apply(event.type, data);
+        break;
       case "message.appended":
         // Cumulative for the CURRENT message only — kept as a fallback in case the
         // message never completes (turn cut off mid-stream).
@@ -2072,6 +2189,7 @@ export function projectEventsToEntries(
           details: failure?.details ?? null,
           toolName: primary?.toolName ?? null,
           summary: primary?.summary ?? null,
+          actions: toChatStepActions(actions),
         });
         break;
       }
@@ -2095,11 +2213,15 @@ export function projectEventsToEntries(
     : null;
   const lastTurn = ordered.at(-1);
   for (const turn of ordered) {
-    if (turn.userText) {
+    if (turn.userText || turn.attachments.length > 0) {
       entries.push({
         id: `${turn.key}:user`,
         role: "user",
-        text: turn.userText,
+        text: turn.userText ?? "",
+        ...(turn.attachments.length > 0
+          ? { attachments: turn.attachments }
+          : {}),
+        ...(turn.userAt ? { at: turn.userAt } : {}),
       });
     }
     const reply =
@@ -2112,7 +2234,8 @@ export function projectEventsToEntries(
       reply !== null ||
       turn.inputRequests.length > 0 ||
       turn.error !== null ||
-      turn.steps.length > 0
+      turn.steps.length > 0 ||
+      turn.reasoning.text() !== null
     ) {
       const normalized = normalizeReply(reply);
       // `session.status` is a property of the SESSION, not of this turn, so it may only stand in
@@ -2145,6 +2268,8 @@ export function projectEventsToEntries(
         errorModelId: turn.errorModelId ?? null,
         errorDetail: normalizedError?.detail ?? null,
         errorRetryable: normalizedError?.retryable ?? false,
+        ...(turn.reasoning.text() ? { reasoning: turn.reasoning.text() } : {}),
+        ...(turn.lastAt ? { at: turn.lastAt } : {}),
       });
     }
   }

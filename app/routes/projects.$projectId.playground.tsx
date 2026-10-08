@@ -17,7 +17,6 @@ import {
   MessageSquare,
   Plus,
   Server,
-  Square,
 } from "lucide-react";
 import {
   redirect,
@@ -30,16 +29,25 @@ import {
 } from "react-router";
 
 import { liveTargets, type Target } from "~/chat/playground.server";
-import type { ChatEntry, ChatInputRequest, ChatStep } from "~/chat/types";
+import type {
+  ChatAttachment,
+  ChatEntry,
+  ChatInputRequest,
+  ChatStep,
+} from "~/chat/types";
 import {
   AssistantBubble,
+  AssistantTurn,
   ChatComposer,
   ChatTranscript,
   InputRequestsBlock,
   MarkdownText,
+  MessageActions,
+  ReasoningBlock,
   StepsCard,
   UserBubble,
 } from "~/components/chat";
+import { CodeBlock } from "~/components/chat/code-block";
 import { TurnError } from "~/components/turn-error";
 import { AgentNav, AppShell, PageHeader, repoCrumbs } from "~/components/shell";
 import { LocalizedDate } from "~/components/localized-values";
@@ -321,6 +329,11 @@ interface LiveTurn {
    */
   baseEntryCount: number;
   userText: string;
+  /** Local previews of what the user attached (object URLs until history revalidates). */
+  userAttachments: LiveAttachment[];
+  reasoning: string;
+  startedAt: number;
+  sentAt: string;
   text: string;
   steps: ChatStep[];
   activity: string | null;
@@ -399,6 +412,10 @@ export default function Playground({ loaderData }: Route.ComponentProps) {
   const stopRequestedRef = useRef(false);
   const remoteBusy = currentSessionStatus === "running";
   const busy = (live !== null && !live.done) || remoteBusy;
+  // A finished turn isn't settled until history has revalidated (and a new conversation has
+  // navigated to its id). The composer stays "busy" until then, so a queued follow-up can't
+  // launch over the unsettled turn and knock it off screen.
+  const [settling, setSettling] = useState(false);
   const creatingSession = newSessionFetcher.state !== "idle";
   const pollRemoteSession = shouldPollRemoteSession(remoteBusy, visibleLive);
   // Keep the display state separate from polling: a completed errored bubble can remain visible
@@ -485,14 +502,19 @@ export default function Playground({ loaderData }: Route.ComponentProps) {
   }, [currentSessionId, entries, visibleLive]);
 
   const send = useCallback(
-    async (message: string) => {
+    async (message: string, files: readonly File[] = []) => {
       setSendError(null);
       setSendErrorModel(null);
       stopRequestedRef.current = false;
+      setSettling(true);
       setLive({
         playgroundSessionId: currentSessionId,
         baseEntryCount: entries.length,
         userText: message,
+        userAttachments: liveAttachments(files),
+        reasoning: "",
+        startedAt: Date.now(),
+        sentAt: new Date().toISOString(),
         text: "",
         steps: [],
         activity: "Thinking…",
@@ -511,6 +533,7 @@ export default function Playground({ loaderData }: Route.ComponentProps) {
       form.set("message", message);
       form.set("deploymentId", deploymentId);
       form.set("agentName", activeAgent);
+      for (const file of files) form.append("attachments", file, file.name);
       if (currentSessionId) form.set("playgroundSessionId", currentSessionId);
       // The current model selection applies to this and subsequent turns (and is persisted on
       // the session server-side, so a first-send selection survives the session's creation).
@@ -543,6 +566,7 @@ export default function Playground({ loaderData }: Route.ComponentProps) {
             typeof detail?.error === "string" ? detail.error : null;
           if (res.status === 409) {
             streamAbortRef.current = null;
+            setSettling(false);
             setLive(null);
             setSendError(
               errorMessage ??
@@ -560,6 +584,7 @@ export default function Playground({ loaderData }: Route.ComponentProps) {
         setLive(null);
         setSendError((error as Error).message);
         await revalidator.revalidate();
+        setSettling(false);
         return false;
       }
 
@@ -606,7 +631,7 @@ export default function Playground({ loaderData }: Route.ComponentProps) {
           );
           await revalidator.revalidate();
           if (!currentSessionId && nextSessionId) {
-            navigate(
+            await navigate(
               `${base}/playground?session=${encodeURIComponent(nextSessionId)}`,
               {
                 replace: true,
@@ -642,7 +667,7 @@ export default function Playground({ loaderData }: Route.ComponentProps) {
           // the turn; until then the errored live view (with the user's message) stays visible.
           await revalidator.revalidate();
         }
-      })();
+      })().finally(() => setSettling(false));
       return true;
     },
     [
@@ -800,25 +825,6 @@ export default function Playground({ loaderData }: Route.ComponentProps) {
     ],
   );
 
-  // The composer's own control slot carries only the Stop button, and only mid-turn — right
-  // next to Send where an interrupt belongs.
-  const composerControls = useMemo(
-    () =>
-      busy ? (
-        <Button
-          type="button"
-          variant="destructive"
-          size="lg"
-          className="gap-1.5"
-          onClick={stopTurn}
-        >
-          <Square className="size-3.5" />
-          Stop
-        </Button>
-      ) : null,
-    [busy, stopTurn],
-  );
-
   const headerActions = useMemo(
     () => (
       <div className="flex flex-wrap items-center gap-2">
@@ -917,7 +923,12 @@ export default function Playground({ loaderData }: Route.ComponentProps) {
         )}
         {shownEntries.map((e, i) =>
           e.role === "user" ? (
-            <UserBubble key={e.id} text={e.text} />
+            <UserBubble
+              key={e.id}
+              text={e.text}
+              attachments={e.attachments}
+              at={e.at}
+            />
           ) : (
             <AgentEntry
               key={e.id}
@@ -931,10 +942,20 @@ export default function Playground({ loaderData }: Route.ComponentProps) {
                 !visibleLive &&
                 e.errorRetryable
                   ? () => {
-                      const userText = [...shownEntries.slice(0, i)]
+                      const userText = shownEntries.slice(0, i)
                         .reverse()
                         .find((x) => x.role === "user")?.text;
                       if (userText) send(userText);
+                    }
+                  : undefined
+              }
+              onRegenerate={
+                i === shownEntries.length - 1 && !visibleLive
+                  ? () => {
+                      const userText = shownEntries.slice(0, i)
+                        .reverse()
+                        .find((x) => x.role === "user")?.text;
+                      if (userText) void send(userText);
                     }
                   : undefined
               }
@@ -967,7 +988,11 @@ export default function Playground({ loaderData }: Route.ComponentProps) {
           )}
         {visibleLive && (
           <>
-            <UserBubble text={visibleLive.userText} />
+            <UserBubble
+              text={visibleLive.userText}
+              attachments={visibleLive.userAttachments}
+              at={visibleLive.sentAt}
+            />
             <LiveBubble
               live={visibleLive}
               onRetry={() => send(visibleLive.userText)}
@@ -978,7 +1003,7 @@ export default function Playground({ loaderData }: Route.ComponentProps) {
       </ChatTranscript>
 
       {targets.length > 0 && (
-        <div className="mx-auto w-full max-w-5xl px-4 pb-4 pt-3 sm:px-6">
+        <div className="mx-auto w-full max-w-3xl px-4 pb-4 pt-3 sm:px-6">
           <div className="mb-2">{runSettings}</div>
           <ChatComposer
             placeholder={
@@ -986,9 +1011,14 @@ export default function Playground({ loaderData }: Route.ComponentProps) {
                 ? `Say something to ${activeAgent}...`
                 : "Say something to the agent..."
             }
-            busy={busy}
+            busy={busy || settling}
+            focusKey={currentSessionId ?? undefined}
+            draftKey={`playground:${project.id}:${currentSessionId ?? "new"}`}
+            carryDraftFrom={`playground:${project.id}:new`}
+            historyScope={`playground:${project.id}`}
             onSend={send}
-            controls={composerControls}
+            onStop={busy ? () => void stopTurn() : undefined}
+            allowAttachments
           />
         </div>
       )}
@@ -1000,6 +1030,7 @@ type StreamEvent =
   | { type: "session"; playgroundSessionId: string }
   | { type: "model"; modelId: string }
   | { type: "thinking" }
+  | { type: "reasoning"; text: string }
   | { type: "action"; toolName: string; summary: string | null }
   | { type: "text"; text: string }
   | { type: "step"; step: ChatStep }
@@ -1028,6 +1059,8 @@ function reduceLive(prev: LiveTurn, evt: StreamEvent): LiveTurn {
       return { ...prev, modelId: evt.modelId };
     case "thinking":
       return { ...prev, activity: "Thinking…" };
+    case "reasoning":
+      return { ...prev, reasoning: evt.text };
     case "action":
       return {
         ...prev,
@@ -1092,8 +1125,8 @@ function formatModelAttribution(
 }
 
 /**
- * The live, in-flight assistant turn: the reply streams first, followed by the collapsed
- * steps card (spinner + what it's doing right now) so activity stays near the scroll bottom.
+ * The live, in-flight assistant turn: reasoning, then the steps card (spinner + what it's doing
+ * right now), then the streaming reply.
  */
 function LiveBubble({
   live,
@@ -1104,46 +1137,55 @@ function LiveBubble({
   onRetry?: () => void;
   busy?: boolean;
 }) {
+  const streaming = !live.done;
   return (
-    <div className="space-y-2">
-      {(live.text || live.error || live.inputRequests.length > 0) && (
-        <AssistantBubble>
-          {live.modelId && (
-            <span className="mb-1.5 flex items-center gap-1.5">
-              {!live.done && (
-                <span
-                  className="size-1.5 animate-pulse rounded-full bg-blue-500"
-                  aria-hidden
-                />
-              )}
-              <span className="font-mono text-xs text-muted-foreground">
-                {formatModelAttribution(live.modelId, live.effort)}
-              </span>
-            </span>
-          )}
-          {live.error ? (
-            <TurnError
-              message={live.error}
-              recoveryModelId={live.errorModelId}
-              detail={live.errorDetail}
-              retryable={live.errorRetryable}
-              onRetry={onRetry}
-              busy={busy}
+    <AssistantTurn>
+      {live.modelId && (
+        <span className="flex items-center gap-1.5">
+          {streaming && (
+            <span
+              className="size-1.5 animate-pulse rounded-full bg-blue-500"
+              aria-hidden
             />
-          ) : live.text ? (
-            <MarkdownText text={live.text} />
-          ) : null}
-          {/* Static while the stream is open — the buttons go live on the persisted
-              entry once the turn settles and history revalidates. */}
-          <InputRequestsBlock requests={live.inputRequests} busy />
-        </AssistantBubble>
+          )}
+          <span className="font-mono text-xs text-muted-foreground">
+            {formatModelAttribution(live.modelId, live.effort)}
+          </span>
+        </span>
+      )}
+      {live.reasoning && (
+        <ReasoningBlock
+          text={live.reasoning}
+          streaming={streaming && !live.text}
+        />
       )}
       <StepsCard
         steps={live.steps}
         idPrefix="live"
         activity={live.done ? null : live.activity}
+        startedAt={live.done ? null : live.startedAt}
       />
-    </div>
+      {live.error ? (
+        <TurnError
+          message={live.error}
+          recoveryModelId={live.errorModelId}
+          detail={live.errorDetail}
+          retryable={live.errorRetryable}
+          onRetry={onRetry}
+          busy={busy}
+        />
+      ) : live.text ? (
+        <MarkdownText text={live.text} streaming={streaming} />
+      ) : null}
+      {/* Static while the stream is open — the buttons go live on the persisted
+          entry once the turn settles and history revalidates. */}
+      {live.inputRequests.length > 0 && (
+        <InputRequestsBlock requests={live.inputRequests} busy />
+      )}
+      {live.done && live.text && !live.error && (
+        <MessageActions text={live.text} />
+      )}
+    </AssistantTurn>
   );
 }
 
@@ -1151,6 +1193,7 @@ export function AgentEntry({
   entry,
   onAnswer,
   onRetry,
+  onRegenerate,
   busy,
   running,
 }: {
@@ -1159,12 +1202,14 @@ export function AgentEntry({
   onAnswer?: (text: string) => void;
   /** Set on the newest errored entry only — resends the message to retry the turn. */
   onRetry?: () => void;
+  /** Set on the newest settled entry — sends the previous user message again. */
+  onRegenerate?: () => void;
   busy?: boolean;
   running?: boolean;
 }) {
   // A still-running turn rebuilt from the event cache (e.g. after navigating away and back
   // mid-turn) has steps but no reply text yet. Rendering the "(empty reply)" fallback there
-  // reads as a broken message — suppress the bubble and let the steps card carry the
+  // reads as a broken message — suppress the reply and let the steps card carry the
   // "Still working…" state, matching LiveBubble.
   const awaitingReply =
     running &&
@@ -1173,21 +1218,27 @@ export function AgentEntry({
     !entry.text &&
     !entry.inputRequests?.length;
   return (
-    <div className="space-y-2">
-      {!awaitingReply && (
-        <AssistantBubble>
-          {entry.version && (
-            <span className="mb-1.5 flex items-center gap-1.5">
-              <Badge variant="secondary" className="text-xs">
-                {entry.version}
-              </Badge>
-              {entry.modelId && (
-                <span className="font-mono text-xs text-muted-foreground">
-                  {formatModelAttribution(entry.modelId, entry.effort ?? null)}
-                </span>
-              )}
+    <AssistantTurn>
+      {entry.version && (
+        <span className="flex items-center gap-1.5">
+          <Badge variant="secondary" className="text-xs">
+            {entry.version}
+          </Badge>
+          {entry.modelId && (
+            <span className="font-mono text-xs text-muted-foreground">
+              {formatModelAttribution(entry.modelId, entry.effort ?? null)}
             </span>
           )}
+        </span>
+      )}
+      {entry.reasoning && <ReasoningBlock text={entry.reasoning} />}
+      <StepsCard
+        steps={entry.steps ?? []}
+        idPrefix={entry.id}
+        activity={running ? "Still working…" : undefined}
+      />
+      {!awaitingReply && (
+        <>
           {entry.error ? (
             <TurnError
               message={entry.error}
@@ -1198,26 +1249,40 @@ export function AgentEntry({
               busy={busy}
             />
           ) : entry.structured ? (
-            <pre className="overflow-x-auto rounded-lg bg-muted/50 p-3 font-mono text-xs">
-              {entry.text}
-            </pre>
+            <CodeBlock code={entry.text} language="json" />
           ) : entry.text || !entry.inputRequests?.length ? (
             <MarkdownText text={entry.text || "(empty reply)"} />
           ) : null}
-          {entry.inputRequests && (
+          {entry.inputRequests && entry.inputRequests.length > 0 && (
             <InputRequestsBlock
               requests={entry.inputRequests}
               onAnswer={onAnswer}
               busy={busy}
             />
           )}
-        </AssistantBubble>
+          {!entry.error && entry.text && (
+            <MessageActions
+              text={entry.text}
+              at={entry.at}
+              onRetry={busy ? undefined : onRegenerate}
+            />
+          )}
+        </>
       )}
-      <StepsCard
-        steps={entry.steps ?? []}
-        idPrefix={entry.id}
-        activity={running ? "Still working…" : undefined}
-      />
-    </div>
+    </AssistantTurn>
   );
+}
+
+type LiveAttachment = ChatAttachment & { previewUrl: string | null };
+
+/** Object-URL previews for the optimistic user bubble; the persisted entry replaces them. */
+function liveAttachments(files: readonly File[]): LiveAttachment[] {
+  return files.map((f, i) => ({
+    id: `live-${i}-${f.name}`,
+    name: f.name,
+    mediaType: f.type || "application/octet-stream",
+    size: f.size,
+    url: null,
+    previewUrl: f.type.startsWith("image/") ? URL.createObjectURL(f) : null,
+  }));
 }

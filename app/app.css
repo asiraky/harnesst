@@ -357,3 +357,85 @@
   [data-slot="button"][data-size^="icon"] { min-width: 44px; }
   input:not([type="checkbox"]):not([type="radio"]), textarea, select { font-size: 16px; }
 }
+
+/* ---------------------------------------------------------------------------------------------
+ * Chat surface (app/components/chat*). Shiki emits both themes as CSS vars; pick per color scheme.
+ * ------------------------------------------------------------------------------------------- */
+.chat-shiki pre,
+.chat-shiki-plain {
+  margin: 0;
+  overflow-x: auto;
+  padding: 0.75rem 0.9rem;
+  background: transparent !important;
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 12px;
+  line-height: 1.6;
+  scrollbar-width: thin;
+  tab-size: 2;
+}
+.chat-shiki pre code,
+.chat-shiki-plain code {
+  background: transparent;
+  padding: 0;
+  font-size: inherit;
+}
+.chat-code[data-wrap="true"] pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.dark .chat-shiki .shiki,
+.dark .chat-shiki .shiki span {
+  color: var(--shiki-dark) !important;
+  font-style: var(--shiki-dark-font-style) !important;
+  font-weight: var(--shiki-dark-font-weight) !important;
+}
+
+/* Streaming caret: a soft block after the last rendered text of an in-flight reply. */
+@keyframes chat-caret-blink {
+  0%, 45% { opacity: 1; }
+  55%, 100% { opacity: 0; }
+}
+.chat-streaming > :last-child:not(pre):not(div):not(ul):not(ol):not(table)::after,
+.chat-streaming > :is(ul, ol):last-child > li:last-child::after {
+  content: "";
+  display: inline-block;
+  width: 0.5em;
+  height: 1.05em;
+  margin-left: 2px;
+  vertical-align: text-bottom;
+  border-radius: 2px;
+  background: var(--primary);
+  animation: chat-caret-blink 1s steps(2, start) infinite;
+}
+
+/* Rows fade/slide in once as they mount. */
+@keyframes chat-row-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: none; }
+}
+@media (prefers-reduced-motion: no-preference) {
+  .chat-row-in { animation: chat-row-in 220ms cubic-bezier(0.2, 0.7, 0.2, 1) both; }
+}
+
+/* Shimmer over live activity labels ("Working…", "Thinking…"). */
+@keyframes chat-shimmer {
+  from { background-position: 150% 0; }
+  to { background-position: -50% 0; }
+}
+@media (prefers-reduced-motion: no-preference) {
+  .chat-shimmer {
+    color: transparent;
+    background-image: linear-gradient(
+      90deg,
+      var(--muted-foreground) 0%,
+      var(--muted-foreground) 40%,
+      var(--foreground) 50%,
+      var(--muted-foreground) 60%,
+      var(--muted-foreground) 100%
+    );
+    background-size: 250% 100%;
+    background-clip: text;
+    -webkit-background-clip: text;
+    animation: chat-shimmer 2.2s linear infinite;
+  }
+}

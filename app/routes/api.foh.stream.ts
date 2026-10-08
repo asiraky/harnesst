@@ -14,8 +14,13 @@ import { data, redirect, type ActionFunctionArgs } from "react-router";
 
 import type { ChatInputAnswer } from "~/chat/types";
 
+import {
+  attachmentTitleSource,
+  parseAttachments,
+} from "~/chat/attachments.server";
 import { liveTargets, type Target } from "~/chat/playground.server";
 import { buildSystemNotes } from "~/chat/system-note";
+import { directiveSignedBody } from "~/chat/user-content";
 import {
   asString,
   streamTurnResponse,
@@ -111,7 +116,10 @@ export async function action(args: ActionFunctionArgs) {
   const form = await args.request.formData();
   const agentId = asString(form.get("agentId"));
   const message = asString(form.get("message")).trim();
-  if (!message) throw data({ error: "Type a message first." }, { status: 400 });
+  const attachments = await parseAttachments(form);
+  if (!message && attachments.length === 0) {
+    throw data({ error: "Type a message or attach a file first." }, { status: 400 });
+  }
   const playgroundSessionId = asString(form.get("playgroundSessionId")) || null;
   const inputResponses = parseInputResponses(
     asString(form.get("inputResponses")),
@@ -241,7 +249,10 @@ export async function action(args: ActionFunctionArgs) {
 
   const title = session?.title
     ? null
-    : await inferFohSessionTitle({ message, project });
+    : await inferFohSessionTitle({
+        message: attachmentTitleSource(message, attachments),
+        project,
+      });
   const isNewSession = !session;
   if (!session) {
     session = await createPlaygroundSession({
@@ -355,6 +366,22 @@ export async function action(args: ActionFunctionArgs) {
   const succeedsChannelSession = Boolean(
     !isNewSession && session.resumeVia && !answers,
   );
+  if (attachments.length > 0 && answers && session.resumeVia) {
+    // A channel-homed answer travels through the channel's own answer route, which carries
+    // request-correlated answers only — never file parts. Refuse before eve is contacted.
+    await releaseRefusedTurnClaim({
+      id: session.id,
+      claimId,
+      status: preClaimStatus,
+    });
+    throw data(
+      {
+        error:
+          "Files can't be sent with an answer in this conversation — send your answer first, then attach the files.",
+      },
+      { status: 400 },
+    );
+  }
 
   let seedContext: string | null = null;
   if (succeedsChannelSession) {
@@ -407,7 +434,7 @@ export async function action(args: ActionFunctionArgs) {
           effort: effectiveEffort ?? undefined,
         },
         target.deploymentId,
-        message,
+        directiveSignedBody(message, attachments.length),
       )
     : null;
   const usesIsolatedWorkspace =
@@ -459,6 +486,7 @@ export async function action(args: ActionFunctionArgs) {
     target,
     session,
     message,
+    attachments,
     channel: "foh",
     title,
     messagePrefix,

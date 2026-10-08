@@ -36,17 +36,25 @@ import {
 } from "~/assistant/instance.server";
 import { getCheckoutRow } from "~/assistant/checkout-sync.server";
 import { hasActiveTurn, TURN_IDLE_TIMEOUT_MS } from "~/chat/turn-stream.server";
-import type { ChatEntry, ChatInputRequest, ChatStep } from "~/chat/types";
+import type {
+  ChatAttachment,
+  ChatEntry,
+  ChatInputRequest,
+  ChatStep,
+} from "~/chat/types";
 import {
   AssistantTurn,
   ChatComposer,
   ChatTranscript,
   InputRequestsBlock,
   MarkdownText,
+  MessageActions,
+  ReasoningBlock,
   StepsCard,
   TurnMeta,
   UserBubble,
 } from "~/components/chat";
+import { CodeBlock } from "~/components/chat/code-block";
 import { TurnError } from "~/components/turn-error";
 import { usePublishHref } from "~/components/publish";
 import { EmptyTeamState } from "~/components/empty-team-state";
@@ -301,6 +309,11 @@ interface LiveTurn {
   /** Loader entry boundary at send time, used to hide the cached copy during handoff. */
   baseEntryCount: number;
   userText: string;
+  /** Local previews of what the user attached (object URLs until history revalidates). */
+  userAttachments: LiveAttachment[];
+  reasoning: string;
+  startedAt: number;
+  sentAt: string;
   text: string;
   steps: ChatStep[];
   activity: string | null;
@@ -431,6 +444,10 @@ export default function Assistant({ loaderData }: Route.ComponentProps) {
       instanceStatus !== "live" &&
       instanceStatus !== "failed");
   const busy = (live !== null && !live.done) || remoteBusy || provisioning;
+  // A finished turn isn't settled until history has revalidated (and a new conversation has
+  // navigated to its id). The composer stays "busy" until then, so a queued follow-up can't
+  // launch over the unsettled turn and knock it off screen.
+  const [settling, setSettling] = useState(false);
   const pollRemoteSession = shouldPollRemoteSession(remoteBusy, visibleLive);
   // Keep the display state separate from polling: a completed errored bubble can remain visible
   // while the loader polls for the detached server drain to finish caching the reply.
@@ -523,14 +540,16 @@ export default function Assistant({ loaderData }: Route.ComponentProps) {
   }, [currentSessionId, entries, visibleLive]);
 
   const send = useCallback(
-    async (message: string) => {
+    async (message: string, files: readonly File[] = []) => {
       setSendError(null);
+      setSettling(true);
       const apply = (evt: StreamEvent) =>
         setLive((prev) => (prev ? reduceLive(prev, evt) : prev));
 
       const form = new FormData();
       form.set("message", message);
       if (currentSessionId) form.set("playgroundSessionId", currentSessionId);
+      for (const file of files) form.append("attachments", file, file.name);
 
       // A 409/provisioning response is not a failed user action. Keep this promise (and thus the
       // draft) pending until polling positively sees `live`, then retry the exact same message.
@@ -539,6 +558,10 @@ export default function Assistant({ loaderData }: Route.ComponentProps) {
           playgroundSessionId: currentSessionId,
           baseEntryCount: entries.length,
           userText: message,
+          userAttachments: liveAttachments(files),
+          reasoning: "",
+          startedAt: Date.now(),
+          sentAt: new Date().toISOString(),
           text: "",
           steps: [],
           activity: "Thinking…",
@@ -580,6 +603,7 @@ export default function Assistant({ loaderData }: Route.ComponentProps) {
               setSendError(
                 "The assistant failed to start. Your message is still in the composer.",
               );
+              setSettling(false);
               return false;
             }
             setLive(null);
@@ -590,6 +614,7 @@ export default function Assistant({ loaderData }: Route.ComponentProps) {
                 : (errorMessage ?? `Stream failed (${res.status}).`),
             );
             if (res.status !== 409) await revalidator.revalidate();
+            setSettling(false);
             return false;
           }
           if (!res.body)
@@ -599,6 +624,7 @@ export default function Assistant({ loaderData }: Route.ComponentProps) {
           setLive(null);
           setSendError((error as Error).message);
           await revalidator.revalidate();
+          setSettling(false);
           return false;
         }
 
@@ -642,7 +668,7 @@ export default function Assistant({ loaderData }: Route.ComponentProps) {
             );
             await revalidator.revalidate();
             if (!currentSessionId && nextSessionId) {
-              navigate(
+              await navigate(
                 `${base}/assistant?session=${encodeURIComponent(nextSessionId)}`,
                 { replace: true },
               );
@@ -665,7 +691,7 @@ export default function Assistant({ loaderData }: Route.ComponentProps) {
             );
             await revalidator.revalidate();
           }
-        })();
+        })().finally(() => setSettling(false));
         return true;
       }
     },
@@ -881,7 +907,12 @@ export default function Assistant({ loaderData }: Route.ComponentProps) {
 
         {shownEntries.map((e, i) =>
           e.role === "user" ? (
-            <UserBubble key={e.id} text={e.text} />
+            <UserBubble
+              key={e.id}
+              text={e.text}
+              attachments={e.attachments}
+              at={e.at}
+            />
           ) : (
             <AgentEntry
               key={e.id}
@@ -894,10 +925,22 @@ export default function Assistant({ loaderData }: Route.ComponentProps) {
                 !visibleLive &&
                 e.errorRetryable
                   ? () => {
-                      const userText = [...shownEntries.slice(0, i)]
+                      const userText = shownEntries
+                        .slice(0, i)
                         .reverse()
                         .find((x) => x.role === "user")?.text;
                       if (userText) send(userText);
+                    }
+                  : undefined
+              }
+              onRegenerate={
+                i === shownEntries.length - 1 && !visibleLive
+                  ? () => {
+                      const userText = shownEntries
+                        .slice(0, i)
+                        .reverse()
+                        .find((x) => x.role === "user")?.text;
+                      if (userText) void send(userText);
                     }
                   : undefined
               }
@@ -929,7 +972,11 @@ export default function Assistant({ loaderData }: Route.ComponentProps) {
           )}
         {visibleLive && (
           <>
-            <UserBubble text={visibleLive.userText} />
+            <UserBubble
+              text={visibleLive.userText}
+              attachments={visibleLive.userAttachments}
+              at={visibleLive.sentAt}
+            />
             <LiveBubble
               live={visibleLive}
               onRetry={() => send(visibleLive.userText)}
@@ -939,7 +986,7 @@ export default function Assistant({ loaderData }: Route.ComponentProps) {
         )}
       </ChatTranscript>
 
-      <div className="mx-auto w-full max-w-5xl px-4 pb-4 pt-3 sm:px-6">
+      <div className="mx-auto w-full max-w-3xl px-4 pb-4 pt-3 sm:px-6">
         <ChatComposer
           placeholder={
             idle || failed
@@ -948,7 +995,7 @@ export default function Assistant({ loaderData }: Route.ComponentProps) {
                 ? "Setting up your assistant…"
                 : "What should your agent be able to do?"
           }
-          busy={busy}
+          busy={busy || settling}
           busyHint={
             provisioning
               ? "Setting up your assistant…"
@@ -957,7 +1004,11 @@ export default function Assistant({ loaderData }: Route.ComponentProps) {
           // Not-yet-provisioned reads as unavailable (setup card explains), not as in-flight work.
           disabled={idle || failed}
           initialValue={fixPrefill ?? undefined}
+          draftKey={`assistant:${project.id}:${currentSessionId ?? "new"}`}
+          carryDraftFrom={`assistant:${project.id}:new`}
+          historyScope={`assistant:${project.id}`}
           onSend={send}
+          allowAttachments
         />
       </div>
     </AppShell>
@@ -968,6 +1019,7 @@ type StreamEvent =
   | { type: "session"; playgroundSessionId: string }
   | { type: "model"; modelId: string }
   | { type: "thinking" }
+  | { type: "reasoning"; text: string }
   | { type: "action"; toolName: string; summary: string | null }
   | { type: "text"; text: string }
   | { type: "step"; step: ChatStep }
@@ -1001,6 +1053,8 @@ function reduceLive(prev: LiveTurn, evt: StreamEvent): LiveTurn {
       return { ...prev, modelId: evt.modelId };
     case "thinking":
       return { ...prev, activity: "Thinking…" };
+    case "reasoning":
+      return { ...prev, reasoning: evt.text };
     case "action":
       return {
         ...prev,
@@ -1174,12 +1228,20 @@ function LiveBubble({
   onRetry?: () => void;
   busy?: boolean;
 }) {
+  const streaming = !live.done;
   return (
     <AssistantTurn>
+      {live.reasoning && (
+        <ReasoningBlock
+          text={live.reasoning}
+          streaming={streaming && !live.text}
+        />
+      )}
       <StepsCard
         steps={live.steps}
         idPrefix="live"
         activity={live.done ? null : live.activity}
+        startedAt={live.done ? null : live.startedAt}
       />
       {live.error ? (
         <TurnError
@@ -1191,9 +1253,16 @@ function LiveBubble({
           busy={busy}
         />
       ) : live.text ? (
-        <MarkdownText text={live.text} />
+        <MarkdownText text={live.text} streaming={streaming} />
       ) : null}
-      <InputRequestsBlock requests={live.inputRequests} busy />
+      {/* Static while the stream is open — the buttons go live on the persisted
+          entry once the turn settles and history revalidates. */}
+      {live.inputRequests.length > 0 && (
+        <InputRequestsBlock requests={live.inputRequests} busy />
+      )}
+      {live.done && live.text && !live.error && (
+        <MessageActions text={live.text} />
+      )}
       {live.sync && <SyncNote sync={live.sync} />}
       <TurnMeta items={[live.done && live.modelId]} />
     </AssistantTurn>
@@ -1249,6 +1318,7 @@ export function AgentEntry({
   entry,
   onAnswer,
   onRetry,
+  onRegenerate,
   busy,
   running,
 }: {
@@ -1256,6 +1326,8 @@ export function AgentEntry({
   onAnswer?: (text: string) => void;
   /** Set on the newest errored entry only — resends the message to retry the turn. */
   onRetry?: () => void;
+  /** Set on the newest settled entry — sends the previous user message again. */
+  onRegenerate?: () => void;
   busy?: boolean;
   running?: boolean;
 }) {
@@ -1271,6 +1343,7 @@ export function AgentEntry({
     !entry.inputRequests?.length;
   return (
     <AssistantTurn>
+      {entry.reasoning && <ReasoningBlock text={entry.reasoning} />}
       <StepsCard
         steps={entry.steps ?? []}
         idPrefix={entry.id}
@@ -1288,17 +1361,22 @@ export function AgentEntry({
               busy={busy}
             />
           ) : entry.structured ? (
-            <pre className="overflow-x-auto rounded-lg bg-muted/50 p-3 font-mono text-xs">
-              {entry.text}
-            </pre>
+            <CodeBlock code={entry.text} language="json" />
           ) : entry.text || !entry.inputRequests?.length ? (
             <MarkdownText text={entry.text || "(empty reply)"} />
           ) : null}
-          {entry.inputRequests && (
+          {entry.inputRequests && entry.inputRequests.length > 0 && (
             <InputRequestsBlock
               requests={entry.inputRequests}
               onAnswer={onAnswer}
               busy={busy}
+            />
+          )}
+          {!entry.error && entry.text && (
+            <MessageActions
+              text={entry.text}
+              at={entry.at}
+              onRetry={busy ? undefined : onRegenerate}
             />
           )}
           <TurnMeta items={[entry.version, entry.modelId]} />
@@ -1306,4 +1384,18 @@ export function AgentEntry({
       )}
     </AssistantTurn>
   );
+}
+
+type LiveAttachment = ChatAttachment & { previewUrl: string | null };
+
+/** Object-URL previews for the optimistic user bubble; the persisted entry replaces them. */
+function liveAttachments(files: readonly File[]): LiveAttachment[] {
+  return files.map((f, i) => ({
+    id: `live-${i}-${f.name}`,
+    name: f.name,
+    mediaType: f.type || "application/octet-stream",
+    size: f.size,
+    url: null,
+    previewUrl: f.type.startsWith("image/") ? URL.createObjectURL(f) : null,
+  }));
 }
