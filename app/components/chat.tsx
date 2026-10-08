@@ -243,7 +243,8 @@ function AttachmentList({
   const images = attachments.filter(
     (a) => a.mediaType.startsWith("image/") && (a.previewUrl ?? a.url),
   );
-  const files = attachments.filter((a) => !images.includes(a));
+  const imageSet = new Set(images);
+  const files = attachments.filter((a) => !imageSet.has(a));
   const gallery = images.map((a) => ({ src: (a.previewUrl ?? a.url)!, alt: a.name }));
   return (
     <div className={cn("flex flex-col gap-1.5", align === "end" ? "items-end" : "items-start")}>

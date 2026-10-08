@@ -1473,11 +1473,14 @@ export async function loadPlaygroundEntriesFromEve(input: {
   // Artifacts (#290) are transcript elements that never travelled through eve, so they are
   // folded in AFTER the projection — the event pipeline is untouched. Read even when there
   // are no events: an artifact published before the first event still has to appear.
-  const published = await listArtifactsForSession(input.session.id);
+  const publishedRead = listArtifactsForSession(input.session.id);
   // Attachments: eve's `message.received` names each file but never returns its bytes; the
   // upload index maps those names back to what harnesst stored. Best-effort — a missing index
   // still renders the file chips, just without a preview link.
-  const uploads = await uploadsFor(input.session);
+  const [published, uploads] = await Promise.all([
+    publishedRead,
+    uploadsFor(input.session),
+  ]);
   // Succession stitch (#288 3b): a succeeded conversation spans two eve sessions in the
   // same world store — prepend the predecessor's RAW events and project once; the
   // `session.started` epoch keeps the two sessions' turn keys apart (#261). Best-effort:

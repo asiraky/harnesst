@@ -20,6 +20,7 @@ import { data } from "react-router";
 
 import {
   admitAttachments,
+  MAX_TOTAL_ATTACHMENT_BYTES,
   isImageMediaType,
   resolveAttachmentMediaType,
 } from "~/chat/attachment-rules";
@@ -111,6 +112,68 @@ export function validateAttachments(
       bytes: file.bytes,
     };
   });
+}
+
+/** Attachments cap plus room for the message text and multipart framing. */
+export const MAX_CHAT_BODY_BYTES = MAX_TOTAL_ATTACHMENT_BYTES + 2 * 1024 * 1024;
+
+/**
+ * Cap a body stream at `limit` bytes: errors the stream as soon as more arrive, so an oversized
+ * (or chunked, length-less) upload is cut off without ever being buffered whole.
+ */
+export function limitBody(
+  body: ReadableStream<Uint8Array>,
+  limit: number,
+): ReadableStream<Uint8Array> {
+  let seen = 0;
+  return body.pipeThrough(
+    new TransformStream<Uint8Array, Uint8Array>({
+      transform(chunk, controller) {
+        seen += chunk.byteLength;
+        if (seen > limit) controller.error(new BodyTooLargeError());
+        else controller.enqueue(chunk);
+      },
+    }),
+  );
+}
+
+class BodyTooLargeError extends Error {
+  constructor() {
+    super("Request body too large");
+  }
+}
+
+/**
+ * A chat stream route's form, read with a hard size cap. The per-file limits in
+ * `parseAttachments` only run once the form is parsed, which buffers the whole body; this stops a
+ * multi-GB POST before it can exhaust memory. Throws a 413 `{ error }` response.
+ */
+export async function readChatForm(
+  request: Request,
+  limit: number = MAX_CHAT_BODY_BYTES,
+): Promise<FormData> {
+  const tooLarge = () =>
+    data(
+      { error: `That message is too large (attachments are limited to ${Math.round(MAX_TOTAL_ATTACHMENT_BYTES / 1024 / 1024)} MB in total).` },
+      { status: 413 },
+    );
+  const declared = Number(request.headers.get("content-length"));
+  if (Number.isFinite(declared) && declared > limit) throw tooLarge();
+  if (!request.body) return request.formData();
+  const capped = new Request(request.url, {
+    method: request.method,
+    headers: request.headers,
+    body: limitBody(request.body, limit),
+    // @ts-expect-error -- Node's fetch Request requires duplex for streaming bodies; not in DOM types.
+    duplex: "half",
+  });
+  try {
+    return await capped.formData();
+  } catch (error) {
+    if (error instanceof BodyTooLargeError || (error as { cause?: unknown })?.cause instanceof BodyTooLargeError)
+      throw tooLarge();
+    throw error;
+  }
 }
 
 /**

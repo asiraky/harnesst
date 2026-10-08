@@ -17,6 +17,7 @@ import type { ChatInputAnswer } from "~/chat/types";
 import {
   attachmentTitleSource,
   parseAttachments,
+  readChatForm,
 } from "~/chat/attachments.server";
 import { liveTargets, type Target } from "~/chat/playground.server";
 import { buildSystemNotes } from "~/chat/system-note";
@@ -113,7 +114,7 @@ export async function action(args: ActionFunctionArgs) {
   const access = await requireFohProject(auth, args.params.projectId);
   const project = access.project;
 
-  const form = await args.request.formData();
+  const form = await readChatForm(args.request);
   const agentId = asString(form.get("agentId"));
   const message = asString(form.get("message")).trim();
   const attachments = await parseAttachments(form);

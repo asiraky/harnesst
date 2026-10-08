@@ -11,6 +11,7 @@ import { data, redirect, type ActionFunctionArgs } from "react-router";
 import {
   attachmentTitleSource,
   parseAttachments,
+  readChatForm,
 } from "~/chat/attachments.server";
 import { liveTargets } from "~/chat/playground.server";
 import { directiveSignedBody } from "~/chat/user-content";
@@ -44,7 +45,7 @@ export async function action(args: ActionFunctionArgs) {
   const project = requireRepo(
     await requireProject(auth, args.params.projectId),
   );
-  const form = await args.request.formData();
+  const form = await readChatForm(args.request);
   const agentName =
     agentFromParams(args.params) ?? asString(form.get("agentName"));
   const { active } = await resolveAgentContext(project.id, agentName);

@@ -12,6 +12,7 @@
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useRef,
   useState,
   type ReactNode,
@@ -169,10 +170,14 @@ export function ChatComposer({
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const historyRef = useRef<string[]>([]);
   const historyIdx = useRef<number | null>(null);
-  const onSendRef = useRef(onSend);
-  onSendRef.current = onSend;
   /** The key the last message was sent from — gates the placeholder-key carry-over. */
   const lastSendKeyRef = useRef<string | null>(null);
+  // Latest `onSend`, synced after commit (not during render) so `dispatch` — and the drain effect
+  // that depends on it — keep a stable identity.
+  const onSendRef = useRef(onSend);
+  useLayoutEffect(() => {
+    onSendRef.current = onSend;
+  });
   const dispatch = useCallback((text: string, files: File[]) => {
     lastSendKeyRef.current = keyRef.current;
     return onSendRef.current(text, files);
@@ -419,6 +424,7 @@ export function ChatComposer({
 
     sendingRef.current = true;
     setSending(true);
+    const origin = keyRef.current;
     let accepted = false;
     try {
       accepted = await dispatch(
@@ -431,17 +437,30 @@ export function ChatComposer({
       sendingRef.current = false;
       setSending(false);
     }
-    const current = ref.current;
-    if (!current) return;
     if (accepted) {
       rememberSent(text);
-      if (current.value.trim() === text) {
-        setText("", { save: false });
-        saveDraftText(keyRef.current, "");
+      const sent = new Set(atts);
+      for (const a of atts) releaseAttachment(a);
+      // The upload can outlast a conversation switch: clear the draft the message was sent from,
+      // never whichever conversation happens to be open now.
+      if (keyRef.current !== origin) {
+        if (loadDraftText(origin).trim() === text) saveDraftText(origin, "");
+        saveDraftAttachments(
+          origin,
+          loadDraftAttachments(origin).filter((a) => !sent.has(a)),
+        );
+        return;
       }
-      setAttachments((prev) => prev.filter((a) => !atts.includes(a)));
+      if (ref.current?.value.trim() === text) {
+        setText("", { save: false });
+        saveDraftText(origin, "");
+      }
+      setAttachments((prev) => prev.filter((a) => !sent.has(a)));
       return;
     }
+    if (keyRef.current !== origin) return;
+    const current = ref.current;
+    if (!current) return;
     autoGrow(current);
     requestAnimationFrame(() => ref.current?.focus());
   };
@@ -462,7 +481,10 @@ export function ChatComposer({
     )
       .catch(() => false)
       .then((ok) => {
-        if (ok) return;
+        if (ok) {
+          for (const a of head.attachments) releaseAttachment(a);
+          return;
+        }
         // Refused: put it back in the box rather than retrying forever — in the conversation it
         // was queued in, even if the user has since navigated away.
         if (keyRef.current !== origin) {
@@ -672,6 +694,7 @@ export function ChatComposer({
           <span className="text-muted-foreground">Send at</span>
           <input
             type="datetime-local"
+            aria-label="Send at"
             value={customTime}
             min={toLocalInputValue(Date.now())}
             onChange={(e) => setCustomTime(e.currentTarget.value)}

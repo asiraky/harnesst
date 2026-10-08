@@ -10,6 +10,7 @@ import {
   buildUserMessage,
   loadUploadIndex,
   parseAttachments,
+  readChatForm,
   readUpload,
   storeAttachments,
   uploadContentDisposition,
@@ -406,5 +407,51 @@ describe("attachmentRefusal", () => {
   it("passes eve's upload-policy refusals through", () => {
     expect(attachmentRefusal(413, "too big", false)).toContain("too big");
     expect(attachmentRefusal(415, "nope", true)).not.toMatch(predates);
+  });
+});
+
+describe("readChatForm", () => {
+  const chunked = (bytes: number) => {
+    const chunk = new Uint8Array(64 * 1024);
+    let sent = 0;
+    return new ReadableStream<Uint8Array>({
+      pull(controller) {
+        if (sent >= bytes) return controller.close();
+        sent += chunk.byteLength;
+        controller.enqueue(chunk);
+      },
+    });
+  };
+  const post = (body: BodyInit | ReadableStream, headers: Record<string, string> = {}) =>
+    new Request("http://x/api", {
+      method: "POST",
+      body: body as BodyInit,
+      headers,
+      // @ts-expect-error -- Node streaming body
+      duplex: "half",
+    });
+  const status = (p: Promise<unknown>) =>
+    p.then(
+      () => 200,
+      (e: { init?: { status?: number } }) => e?.init?.status ?? -1,
+    );
+
+  it("parses a form under the cap", async () => {
+    const form = new FormData();
+    form.set("message", "hi");
+    const parsed = await readChatForm(new Request("http://x", { method: "POST", body: form }), 1024);
+    expect(parsed.get("message")).toBe("hi");
+  });
+
+  it("refuses an oversized declared length before reading", async () => {
+    const req = post("x", { "content-length": "999999999" });
+    expect(await status(readChatForm(req, 1024))).toBe(413);
+  });
+
+  it("cuts off a length-less streamed body once it passes the cap", async () => {
+    const req = post(chunked(10 * 1024 * 1024), {
+      "content-type": "multipart/form-data; boundary=zzz",
+    });
+    expect(await status(readChatForm(req, 256 * 1024))).toBe(413);
   });
 });

@@ -54,6 +54,13 @@ import {
   TurnMeta,
   UserBubble,
 } from "~/components/chat";
+import {
+  filesForResend,
+  liveAttachments,
+  useReleaseLivePreviews,
+  type LiveAttachment,
+} from "~/components/chat/live-attachments";
+import { toast } from "sonner";
 import { CodeBlock } from "~/components/chat/code-block";
 import { TurnError } from "~/components/turn-error";
 import { usePublishHref } from "~/components/publish";
@@ -388,6 +395,7 @@ export default function Assistant({ loaderData }: Route.ComponentProps) {
       entries,
     });
   const visibleLive = liveSessionMismatch || liveCoveredByCache ? null : live;
+  useReleaseLivePreviews(live?.userAttachments);
   const [sendError, setSendError] = useState<string | null>(null);
 
   const remoteBusy = currentSessionStatus === "running";
@@ -706,6 +714,24 @@ export default function Assistant({ loaderData }: Route.ComponentProps) {
     ],
   );
 
+  /** Retry/Regenerate: resend a turn's text *and* files; refuse rather than drop the files. */
+  const resendTurn = useCallback(
+    async (
+      turn: { text?: string; attachments?: readonly LiveAttachment[] | readonly ChatAttachment[] } | undefined,
+    ) => {
+      if (!turn) return;
+      const text = turn.text ?? "";
+      const files = await filesForResend(turn.attachments);
+      if (!files) {
+        toast.error("Couldn't reload this message's attachments. Attach them again and resend.");
+        return;
+      }
+      if (!text.trim() && files.length === 0) return;
+      void send(text, files);
+    },
+    [send],
+  );
+
   const headerActions = useMemo(
     () => (
       <div className="flex flex-wrap items-center gap-2">
@@ -924,24 +950,18 @@ export default function Assistant({ loaderData }: Route.ComponentProps) {
                 i === shownEntries.length - 1 &&
                 !visibleLive &&
                 e.errorRetryable
-                  ? () => {
-                      const userText = shownEntries
-                        .slice(0, i)
-                        .reverse()
-                        .find((x) => x.role === "user")?.text;
-                      if (userText) send(userText);
-                    }
+                  ? () =>
+                      void resendTurn(
+                        [...shownEntries.slice(0, i)].reverse().find((x) => x.role === "user"),
+                      )
                   : undefined
               }
               onRegenerate={
                 i === shownEntries.length - 1 && !visibleLive
-                  ? () => {
-                      const userText = shownEntries
-                        .slice(0, i)
-                        .reverse()
-                        .find((x) => x.role === "user")?.text;
-                      if (userText) void send(userText);
-                    }
+                  ? () =>
+                      void resendTurn(
+                        [...shownEntries.slice(0, i)].reverse().find((x) => x.role === "user"),
+                      )
                   : undefined
               }
               busy={busy}
@@ -979,7 +999,12 @@ export default function Assistant({ loaderData }: Route.ComponentProps) {
             />
             <LiveBubble
               live={visibleLive}
-              onRetry={() => send(visibleLive.userText)}
+              onRetry={() =>
+                void resendTurn({
+                  text: visibleLive.userText,
+                  attachments: visibleLive.userAttachments,
+                })
+              }
               busy={busy}
             />
           </>
@@ -1386,16 +1411,3 @@ export function AgentEntry({
   );
 }
 
-type LiveAttachment = ChatAttachment & { previewUrl: string | null };
-
-/** Object-URL previews for the optimistic user bubble; the persisted entry replaces them. */
-function liveAttachments(files: readonly File[]): LiveAttachment[] {
-  return files.map((f, i) => ({
-    id: `live-${i}-${f.name}`,
-    name: f.name,
-    mediaType: f.type || "application/octet-stream",
-    size: f.size,
-    url: null,
-    previewUrl: f.type.startsWith("image/") ? URL.createObjectURL(f) : null,
-  }));
-}

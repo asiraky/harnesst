@@ -12,6 +12,7 @@ import { data, redirect, type ActionFunctionArgs } from "react-router";
 import {
   attachmentTitleSource,
   parseAttachments,
+  readChatForm,
 } from "~/chat/attachments.server";
 import type { Target } from "~/chat/playground.server";
 import { asString, streamTurnResponse } from "~/chat/turn-stream.server";
@@ -42,7 +43,7 @@ export async function action(args: ActionFunctionArgs) {
   const project = requireRepo(
     await requireProject(auth, args.params.projectId),
   );
-  const form = await args.request.formData();
+  const form = await readChatForm(args.request);
   const playgroundSessionId = asString(form.get("playgroundSessionId")) || null;
   const message = asString(form.get("message")).trim();
   const attachments = await parseAttachments(form);

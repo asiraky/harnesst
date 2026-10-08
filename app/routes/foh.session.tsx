@@ -46,6 +46,13 @@ import {
   StepsCard,
   UserBubble,
 } from "~/components/chat";
+import {
+  filesForResend,
+  liveAttachments,
+  useReleaseLivePreviews,
+  type LiveAttachment,
+} from "~/components/chat/live-attachments";
+import { toast } from "sonner";
 import { CodeBlock } from "~/components/chat/code-block";
 import { PreviewPanel } from "~/components/artifact-preview-panel";
 import { FohPaneError } from "~/components/foh/pane-error";
@@ -476,6 +483,7 @@ export default function FohSession({ loaderData }: Route.ComponentProps) {
       entries,
     });
   const visibleLive = liveSessionMismatch || liveCoveredByCache ? null : live;
+  useReleaseLivePreviews(live?.userAttachments);
 
   const remoteBusy = sessionStatus === "running";
   const busy = (live !== null && !live.done) || remoteBusy;
@@ -750,6 +758,24 @@ export default function FohSession({ loaderData }: Route.ComponentProps) {
     ],
   );
 
+  /** Retry/Regenerate: resend a turn's text *and* files; refuse rather than drop the files. */
+  const resendTurn = useCallback(
+    async (
+      turn: { text?: string; attachments?: readonly LiveAttachment[] | readonly ChatAttachment[] } | undefined,
+    ) => {
+      if (!turn) return;
+      const text = turn.text ?? "";
+      const files = await filesForResend(turn.attachments);
+      if (!files) {
+        toast.error("Couldn't reload this message's attachments. Attach them again and resend.");
+        return;
+      }
+      if (!text.trim() && files.length === 0) return;
+      void send(text, undefined, files);
+    },
+    [send],
+  );
+
   const answerPending = useCallback(
     async (label: string, answer?: ChatInputAnswer) => {
       if (!answer || !pendingRequest) return false;
@@ -934,22 +960,18 @@ export default function FohSession({ loaderData }: Route.ComponentProps) {
                 answeredRequestIds={queuedRequestIds}
                 onRetry={
                   i === newestTurn.index && !visibleLive && e.errorRetryable
-                    ? () => {
-                        const userText = [...shownEntries.slice(0, i)]
-                          .reverse()
-                          .find((x) => x.role === "user")?.text;
-                        if (userText) send(userText);
-                      }
+                    ? () =>
+                        void resendTurn(
+                          [...shownEntries.slice(0, i)].reverse().find((x) => x.role === "user"),
+                        )
                     : undefined
                 }
                 onRegenerate={
                   i === newestTurn.index && !visibleLive
-                    ? () => {
-                        const userText = shownEntries.slice(0, i)
-                          .reverse()
-                          .find((x) => x.role === "user")?.text;
-                        if (userText) void send(userText);
-                      }
+                    ? () =>
+                        void resendTurn(
+                          [...shownEntries.slice(0, i)].reverse().find((x) => x.role === "user"),
+                        )
                     : undefined
                 }
                 busy={busy}
@@ -994,7 +1016,12 @@ export default function FohSession({ loaderData }: Route.ComponentProps) {
               />
               <LiveBubble
                 live={visibleLive}
-                onRetry={() => send(visibleLive.userText)}
+                onRetry={() =>
+                void resendTurn({
+                  text: visibleLive.userText,
+                  attachments: visibleLive.userAttachments,
+                })
+              }
                 busy={busy}
               />
             </>
@@ -1301,16 +1328,3 @@ export function AgentEntry({
   );
 }
 
-type LiveAttachment = ChatAttachment & { previewUrl: string | null };
-
-/** Object-URL previews for the optimistic user bubble; the persisted entry replaces them. */
-function liveAttachments(files: readonly File[]): LiveAttachment[] {
-  return files.map((f, i) => ({
-    id: `live-${i}-${f.name}`,
-    name: f.name,
-    mediaType: f.type || "application/octet-stream",
-    size: f.size,
-    url: null,
-    previewUrl: f.type.startsWith("image/") ? URL.createObjectURL(f) : null,
-  }));
-}
