@@ -317,10 +317,18 @@ export function ChatComposer({
   const addFiles = useCallback(
     async (files: File[]) => {
       if (!allowAttachments || files.length === 0) return;
-      const current = loadDraftAttachments(keyRef.current);
+      const origin = keyRef.current;
+      const current = loadDraftAttachments(origin);
       const { added, rejected } = await prepareAttachments(current, files);
       for (const r of rejected) toast.error(`Couldn't attach ${r.name}: ${r.reason}`);
-      if (added.length) setAttachments((prev) => [...prev, ...added]);
+      if (added.length === 0) return;
+      // Downscaling is async: if the user switched conversations meanwhile, the files still
+      // belong to the draft they were dropped on.
+      if (keyRef.current !== origin) {
+        saveDraftAttachments(origin, [...loadDraftAttachments(origin), ...added]);
+        return;
+      }
+      setAttachments((prev) => [...prev, ...added]);
       ref.current?.focus();
     },
     [allowAttachments, setAttachments],
@@ -391,6 +399,9 @@ export function ChatComposer({
     const text = el.value.trim();
     const atts = attachments;
     if (!text && atts.length === 0) return;
+    // An in-flight send leaves the draft populated until it's accepted; queueing it again here
+    // would send the same message twice.
+    if (sendingRef.current) return;
 
     if (busy) {
       queueSeq += 1;
@@ -406,8 +417,6 @@ export function ChatComposer({
       return;
     }
 
-    // `busy` is render-derived and can lag a double press by a frame.
-    if (sendingRef.current) return;
     sendingRef.current = true;
     setSending(true);
     let accepted = false;
@@ -445,6 +454,7 @@ export function ChatComposer({
     const [head, ...rest] = queue;
     if (!head) return;
     drainingRef.current = true;
+    const origin = keyRef.current;
     setQueue(() => rest);
     void dispatch(
       head.text,
@@ -453,7 +463,14 @@ export function ChatComposer({
       .catch(() => false)
       .then((ok) => {
         if (ok) return;
-        // Refused: put it back in the box rather than retrying forever.
+        // Refused: put it back in the box rather than retrying forever — in the conversation it
+        // was queued in, even if the user has since navigated away.
+        if (keyRef.current !== origin) {
+          const existing = loadDraftText(origin).trim();
+          saveDraftText(origin, [head.text, existing].filter(Boolean).join("\n\n"));
+          saveDraftAttachments(origin, [...head.attachments, ...loadDraftAttachments(origin)]);
+          return;
+        }
         const el = ref.current;
         const existing = el?.value.trim() ?? "";
         setText([head.text, existing].filter(Boolean).join("\n\n"));
@@ -474,17 +491,33 @@ export function ChatComposer({
       const { due, pending } = partitionDue(scheduled, t);
       if (due.length === 0) return;
       setScheduled(() => pending);
-      setQueue((prev) => [
-        ...prev,
-        ...due.map((m) => {
-          const atts = scheduledAttachments(m.id);
-          setScheduledAttachments(m.id, []);
-          return { id: m.id, text: m.text, attachments: atts };
-        }),
-      ]);
-      toast(
-        due.length === 1 ? "Sending scheduled message" : `Sending ${due.length} scheduled messages`,
-      );
+      const ready: QueuedMessage[] = [];
+      const lost: typeof due = [];
+      for (const m of due) {
+        const atts = scheduledAttachments(m.id);
+        setScheduledAttachments(m.id, []);
+        // Files live in memory only; a reload keeps the names but drops the bytes. Sending the
+        // text alone would silently drop the attachments, so hand it back instead.
+        if (m.attachmentNames.length > 0 && atts.length < m.attachmentNames.length) lost.push(m);
+        else ready.push({ id: m.id, text: m.text, attachments: atts });
+      }
+      if (ready.length) {
+        setQueue((prev) => [...prev, ...ready]);
+        toast(
+          ready.length === 1
+            ? "Sending scheduled message"
+            : `Sending ${ready.length} scheduled messages`,
+        );
+      }
+      if (lost.length) {
+        const existing = ref.current?.value.trim() ?? "";
+        setText([...lost.map((m) => m.text), existing].filter(Boolean).join("\n\n"));
+        toast.error(
+          `A scheduled message's attachments were lost when the page reloaded (${lost
+            .flatMap((m) => m.attachmentNames)
+            .join(", ")}). Re-attach them and send.`,
+        );
+      }
     };
     tick();
     const timer = setInterval(tick, 10_000);
@@ -496,7 +529,7 @@ export function ChatComposer({
       clearInterval(timer);
       document.removeEventListener("visibilitychange", onVisible);
     };
-  }, [scheduled, setScheduled, setQueue]);
+  }, [scheduled, setScheduled, setQueue, setText]);
 
   const scheduleCurrent = (dueAt: number) => {
     const el = ref.current;

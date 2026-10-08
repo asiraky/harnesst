@@ -12,7 +12,7 @@
  * index is what lets the transcript replay map a received file part to the stored upload. No DB
  * row: a conversation's uploads live and die with its directory.
  */
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
 
@@ -166,7 +166,8 @@ function sessionDir(projectId: string, sessionId: string): string | null {
 const indexLocks = new Map<string, Promise<unknown>>();
 
 async function writeAtomic(file: string, contents: string | Buffer) {
-  const tmp = `${file}.${process.pid}.${Date.now()}.tmp`;
+  // Unique per call: the same file attached twice in one turn writes the same path concurrently.
+  const tmp = `${file}.${randomUUID()}.tmp`;
   await writeFile(tmp, contents);
   await rename(tmp, file);
 }

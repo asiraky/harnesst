@@ -125,14 +125,24 @@ export function resolveReceivedAttachments(input: {
   idPrefix: string;
 }): ChatAttachment[] {
   const used = new Set<string>();
+  const at = input.receivedAt;
+  const known = at != null && !Number.isNaN(at);
+  // Uploads are written moments before the POST reaches eve, so the right file is normally the
+  // newest one stored at or before the message. Entries up to 60s after it are clock-skew
+  // fallbacks, tried nearest-first, so a later resend of a same-named file never wins over the
+  // message's own upload.
   const candidates = [...input.index]
-    .filter((entry) => {
-      if (input.receivedAt == null || Number.isNaN(input.receivedAt)) return true;
-      const created = Date.parse(entry.createdAt);
-      // Generous skew: the upload is written moments before the POST reaches eve.
-      return Number.isNaN(created) || created <= input.receivedAt + 60_000;
+    .map((entry) => ({ entry, created: Date.parse(entry.createdAt) }))
+    .filter(({ created }) => !known || Number.isNaN(created) || created <= at + 60_000)
+    .sort((a, b) => {
+      const late = (c: number) => (known && !Number.isNaN(c) && c > at ? 1 : 0);
+      const rank = late(a.created) - late(b.created);
+      if (rank !== 0) return rank;
+      return late(a.created)
+        ? a.entry.createdAt.localeCompare(b.entry.createdAt)
+        : b.entry.createdAt.localeCompare(a.entry.createdAt);
     })
-    .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+    .map(({ entry }) => entry);
   return input.parts.map((part, i) => {
     const name = part.filename ?? part.mediaType ?? "attachment";
     const mediaType = part.mediaType ?? "application/octet-stream";

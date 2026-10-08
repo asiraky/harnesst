@@ -324,6 +324,38 @@ describe("resolveReceivedAttachments", () => {
     expect(hit!.id).toBe("2".repeat(64));
   });
 
+  it("never gives an earlier message a same-named resend from seconds later", () => {
+    const index = [
+      entry({ sha256: "1".repeat(64), createdAt: "2026-01-01T00:00:00.000Z" }),
+      entry({ sha256: "2".repeat(64), createdAt: "2026-01-01T00:00:30.000Z" }),
+    ];
+    const resolve = (at: string) =>
+      resolveReceivedAttachments({
+        parts: [{ filename: "a.png", mediaType: "image/png", size: 10 }],
+        index,
+        urlFor,
+        receivedAt: Date.parse(at),
+        idPrefix: "t",
+      })[0]!.id;
+    expect(resolve("2026-01-01T00:00:01.000Z")).toBe("1".repeat(64));
+    expect(resolve("2026-01-01T00:00:31.000Z")).toBe("2".repeat(64));
+  });
+
+  it("falls back to the nearest upload stored just after the message (clock skew)", () => {
+    const index = [
+      entry({ sha256: "1".repeat(64), createdAt: "2026-01-01T00:00:02.000Z" }),
+      entry({ sha256: "2".repeat(64), createdAt: "2026-01-01T00:00:40.000Z" }),
+    ];
+    const [hit] = resolveReceivedAttachments({
+      parts: [{ filename: "a.png", mediaType: "image/png" }],
+      index,
+      urlFor,
+      receivedAt: Date.parse("2026-01-01T00:00:00.000Z"),
+      idPrefix: "t",
+    });
+    expect(hit!.id).toBe("1".repeat(64));
+  });
+
   it("tolerates eve's sanitised staging names and respects a known size", () => {
     const index = [entry({ name: "My Photo (1).png", size: 10 })];
     const [loose] = resolveReceivedAttachments({
