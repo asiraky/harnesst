@@ -352,10 +352,101 @@ function mapUsage(
 export function createChunkTranslator(model: string) {
   const id = `chatcmpl-${Math.random().toString(36).slice(2)}`;
   const created = Math.floor(Date.now() / 1000);
-  const toolCallIndex = new Map<string, number>();
-  let nextToolIndex = 0;
+  // One entry per function call, in the order upstream opened them. Upstream can run several
+  // calls in one response, and their argument deltas may interleave — every delta must land on
+  // the call it belongs to. Calls are found by item id, then by `output_index` (present on every
+  // Responses event). `sent` is what this translator has already forwarded as that call's
+  // arguments, so a `.done` event can supply whatever the deltas did not.
+  const calls: { index: number; itemId: string | null; sent: string }[] = [];
+  const callByOutputIndex = new Map<number, (typeof calls)[number]>();
+  const callByItemId = new Map<string, (typeof calls)[number]>();
   let sawFunctionCall = false;
   let emittedRole = false;
+
+  function findCall(
+    event: Record<string, unknown>,
+  ): (typeof calls)[number] | undefined {
+    const item = event.item as Record<string, unknown> | undefined;
+    const itemId =
+      typeof event.item_id === "string"
+        ? event.item_id
+        : typeof item?.id === "string"
+          ? item.id
+          : null;
+    if (itemId !== null && callByItemId.has(itemId))
+      return callByItemId.get(itemId);
+    if (typeof event.output_index === "number") {
+      const call = callByOutputIndex.get(event.output_index);
+      // An id that names a different call is a different call, whatever its index says.
+      return call && (itemId === null || call.itemId === null)
+        ? call
+        : undefined;
+    }
+    // No identifier at all: only unambiguous with exactly one call open. An unknown id is not
+    // "no identifier": it names a call we never saw.
+    return itemId === null && calls.length === 1 ? calls[0] : undefined;
+  }
+
+  function openCall(event: Record<string, unknown>): ChatCompletionChunk[] {
+    const item = event.item as Record<string, unknown>;
+    const call = {
+      index: calls.length,
+      itemId: typeof item.id === "string" ? item.id : null,
+      sent: "",
+    };
+    calls.push(call);
+    if (typeof event.output_index === "number")
+      callByOutputIndex.set(event.output_index, call);
+    if (call.itemId !== null) callByItemId.set(call.itemId, call);
+    sawFunctionCall = true;
+    const chunks = [
+      base({
+        tool_calls: [
+          {
+            index: call.index,
+            id: String(item.call_id ?? item.id ?? ""),
+            type: "function",
+            function: { name: String(item.name ?? ""), arguments: "" },
+          },
+        ],
+      }),
+    ];
+    // Some upstream events arrive with the arguments already on the item.
+    if (typeof item.arguments === "string")
+      chunks.push(...finishArguments(call, item.arguments));
+    return chunks;
+  }
+
+  function sendArguments(
+    call: (typeof calls)[number],
+    delta: string,
+  ): ChatCompletionChunk[] {
+    if (!delta) return [];
+    call.sent += delta;
+    return [
+      base({
+        tool_calls: [{ index: call.index, function: { arguments: delta } }],
+      }),
+    ];
+  }
+
+  /**
+   * Upstream's final word on a call's arguments. Forward whatever the deltas left out. A chunk
+   * cannot take back arguments already sent, so a final value that does not extend them is left
+   * alone rather than appended to garbage.
+   */
+  function finishArguments(
+    call: (typeof calls)[number],
+    full: string,
+  ): ChatCompletionChunk[] {
+    if (!full.startsWith(call.sent)) {
+      console.warn(
+        `[codex-translate] tool call ${call.index}: final arguments do not extend the streamed ones; keeping the streamed ones`,
+      );
+      return [];
+    }
+    return sendArguments(call, full.slice(call.sent.length));
+  }
 
   function base(
     delta: Record<string, unknown>,
@@ -377,6 +468,11 @@ export function createChunkTranslator(model: string) {
     return [base({ role: "assistant" }), ...chunks];
   }
 
+  function isFunctionCall(event: Record<string, unknown>): boolean {
+    const item = event.item as Record<string, unknown> | undefined;
+    return !!item && item.type === "function_call";
+  }
+
   return {
     translate(record: SseRecord): ChatCompletionChunk[] {
       if (record.data === "[DONE]") return [];
@@ -395,36 +491,46 @@ export function createChunkTranslator(model: string) {
           return withRole([base({ content: delta })]);
         }
         case "response.output_item.added": {
-          const item = event.item as Record<string, unknown> | undefined;
-          if (!item || item.type !== "function_call") return [];
-          const itemId = String(item.id ?? `fc_${nextToolIndex}`);
-          const index = nextToolIndex++;
-          toolCallIndex.set(itemId, index);
-          sawFunctionCall = true;
-          return withRole([
-            base({
-              tool_calls: [
-                {
-                  index,
-                  id: String(item.call_id ?? item.id ?? ""),
-                  type: "function",
-                  function: { name: String(item.name ?? ""), arguments: "" },
-                },
-              ],
-            }),
-          ]);
+          if (!isFunctionCall(event)) return [];
+          return withRole(openCall(event));
         }
         case "response.function_call_arguments.delta": {
           const delta = typeof event.delta === "string" ? event.delta : "";
-          if (!delta) return [];
-          const itemId = String(event.item_id ?? "");
-          const index =
-            toolCallIndex.get(itemId) ?? Math.max(0, nextToolIndex - 1);
-          return withRole([
-            base({
-              tool_calls: [{ index, function: { arguments: delta } }],
-            }),
-          ]);
+          const call = findCall(event);
+          // A delta for a call we cannot place is dropped, not guessed onto the last call
+          // (which corrupted parallel calls); the call's `.done` event supplies it instead.
+          if (!call) return [];
+          return withRole(sendArguments(call, delta));
+        }
+        case "response.function_call_arguments.done": {
+          const call = findCall(event);
+          if (!call || typeof event.arguments !== "string") return [];
+          return withRole(finishArguments(call, event.arguments));
+        }
+        case "response.output_item.done": {
+          if (!isFunctionCall(event)) return [];
+          const item = event.item as Record<string, unknown>;
+          // A call upstream never announced with `.added` is opened here, whole.
+          const call = findCall(event);
+          if (!call) return withRole(openCall(event));
+          if (typeof item.arguments !== "string") return [];
+          return withRole(finishArguments(call, item.arguments));
+        }
+        case "response.incomplete": {
+          // Upstream stopped early (output token cap, content filter). Say so, rather than
+          // ending the stream with no finish_reason as if nothing happened.
+          const response = event.response as
+            Record<string, unknown> | undefined;
+          const reason = (
+            response?.incomplete_details as { reason?: string } | undefined
+          )?.reason;
+          const usage = mapUsage(response?.usage);
+          const chunk = base(
+            {},
+            reason === "content_filter" ? "content_filter" : "length",
+          );
+          if (usage) chunk.usage = usage;
+          return [chunk];
         }
         case "response.completed": {
           const response = event.response as

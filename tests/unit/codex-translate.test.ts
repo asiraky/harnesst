@@ -35,7 +35,11 @@ describe("wantsStreaming", () => {
 
 describe("buildResponsesPayload file parts", () => {
   const userContent = (payload: Record<string, unknown>) =>
-    ((payload.input as Array<Record<string, unknown>>).at(-1) as { content: unknown[] }).content;
+    (
+      (payload.input as Array<Record<string, unknown>>).at(-1) as {
+        content: unknown[];
+      }
+    ).content;
 
   it("maps a chat-completions file part with inline data to input_file", () => {
     const payload = buildResponsesPayload(
@@ -47,7 +51,10 @@ describe("buildResponsesPayload file parts", () => {
               { type: "text", text: "read this" },
               {
                 type: "file",
-                file: { filename: "invoice.pdf", file_data: "data:application/pdf;base64,AAAA" },
+                file: {
+                  filename: "invoice.pdf",
+                  file_data: "data:application/pdf;base64,AAAA",
+                },
               },
             ],
           },
@@ -57,7 +64,11 @@ describe("buildResponsesPayload file parts", () => {
     );
     expect(userContent(payload)).toEqual([
       { type: "input_text", text: "read this" },
-      { type: "input_file", filename: "invoice.pdf", file_data: "data:application/pdf;base64,AAAA" },
+      {
+        type: "input_file",
+        filename: "invoice.pdf",
+        file_data: "data:application/pdf;base64,AAAA",
+      },
     ]);
   });
 
@@ -68,7 +79,10 @@ describe("buildResponsesPayload file parts", () => {
           {
             role: "user",
             content: [
-              { type: "file", file: { file_data: "data:application/pdf;base64,AAAA" } },
+              {
+                type: "file",
+                file: { file_data: "data:application/pdf;base64,AAAA" },
+              },
               { type: "file", file: { file_id: "file-123" } },
             ],
           },
@@ -77,7 +91,11 @@ describe("buildResponsesPayload file parts", () => {
       "gpt-5.5",
     );
     expect(userContent(payload)).toEqual([
-      { type: "input_file", filename: "document.pdf", file_data: "data:application/pdf;base64,AAAA" },
+      {
+        type: "input_file",
+        filename: "document.pdf",
+        file_data: "data:application/pdf;base64,AAAA",
+      },
       { type: "input_file", file_id: "file-123" },
     ]);
   });
@@ -371,6 +389,254 @@ describe("createChunkTranslator", () => {
         data: JSON.stringify({ response: { error: { message: "boom" } } }),
       }),
     ).toThrow(CodexUpstreamError);
+  });
+
+  /** Run upstream events through a fresh translator and fold them into the final message. */
+  function fold(records: Array<{ event: string; data: unknown }>) {
+    const t = createChunkTranslator("codex/c/gpt-5.5");
+    const chunks: ChatCompletionChunk[] = [];
+    for (const record of events(records)) chunks.push(...t.translate(record));
+    return aggregateChunks(chunks, "codex/c/gpt-5.5").choices[0];
+  }
+
+  const added = (outputIndex: number, id: string, name: string) => ({
+    event: "response.output_item.added",
+    data: {
+      output_index: outputIndex,
+      item: {
+        type: "function_call",
+        id,
+        call_id: `call_${id}`,
+        name,
+        arguments: "",
+      },
+    },
+  });
+
+  it("keeps interleaved argument deltas of parallel calls on their own calls", () => {
+    const choice = fold([
+      added(0, "fc_a", "read_file"),
+      added(1, "fc_b", "bash"),
+      {
+        event: "response.function_call_arguments.delta",
+        data: { output_index: 0, item_id: "fc_a", delta: '{"path":' },
+      },
+      {
+        event: "response.function_call_arguments.delta",
+        data: { output_index: 1, item_id: "fc_b", delta: '{"cmd":"ls"}' },
+      },
+      {
+        event: "response.function_call_arguments.delta",
+        data: { output_index: 0, item_id: "fc_a", delta: '"a.txt"}' },
+      },
+      { event: "response.completed", data: { response: {} } },
+    ]);
+    expect(
+      choice.message.tool_calls?.map((c) => [
+        c.function.name,
+        c.function.arguments,
+      ]),
+    ).toEqual([
+      ["read_file", '{"path":"a.txt"}'],
+      ["bash", '{"cmd":"ls"}'],
+    ]);
+    expect(choice.finish_reason).toBe("tool_calls");
+  });
+
+  it("places deltas by output_index when upstream omits the item id", () => {
+    const choice = fold([
+      added(0, "fc_a", "read_file"),
+      added(1, "fc_b", "bash"),
+      {
+        event: "response.function_call_arguments.delta",
+        data: { output_index: 0, delta: '{"path":"a"}' },
+      },
+      {
+        event: "response.function_call_arguments.delta",
+        data: { output_index: 1, delta: '{"cmd":"ls"}' },
+      },
+      { event: "response.completed", data: { response: {} } },
+    ]);
+    expect(choice.message.tool_calls?.map((c) => c.function.arguments)).toEqual(
+      ['{"path":"a"}', '{"cmd":"ls"}'],
+    );
+  });
+
+  it("takes a call's arguments from its .done event when no deltas were streamed", () => {
+    const choice = fold([
+      added(0, "fc_a", "read_file"),
+      added(1, "fc_b", "bash"),
+      {
+        event: "response.function_call_arguments.done",
+        data: { output_index: 1, item_id: "fc_b", arguments: '{"cmd":"ls"}' },
+      },
+      {
+        event: "response.output_item.done",
+        data: {
+          output_index: 0,
+          item: {
+            type: "function_call",
+            id: "fc_a",
+            name: "read_file",
+            arguments: '{"path":"a"}',
+          },
+        },
+      },
+      { event: "response.completed", data: { response: {} } },
+    ]);
+    expect(choice.message.tool_calls?.map((c) => c.function.arguments)).toEqual(
+      ['{"path":"a"}', '{"cmd":"ls"}'],
+    );
+  });
+
+  it("completes partially streamed arguments from .done without duplicating them", () => {
+    const choice = fold([
+      added(0, "fc_a", "write_file"),
+      {
+        event: "response.function_call_arguments.delta",
+        data: { output_index: 0, item_id: "fc_a", delta: '{"path":"x",' },
+      },
+      {
+        event: "response.function_call_arguments.done",
+        data: {
+          output_index: 0,
+          item_id: "fc_a",
+          arguments: '{"path":"x","body":"y"}',
+        },
+      },
+      // The item-level done repeats the same final arguments: nothing more is sent.
+      {
+        event: "response.output_item.done",
+        data: {
+          output_index: 0,
+          item: {
+            type: "function_call",
+            id: "fc_a",
+            arguments: '{"path":"x","body":"y"}',
+          },
+        },
+      },
+      { event: "response.completed", data: { response: {} } },
+    ]);
+    expect(choice.message.tool_calls?.[0].function.arguments).toBe(
+      '{"path":"x","body":"y"}',
+    );
+  });
+
+  it("does not append a final value that contradicts what was already streamed", () => {
+    const choice = fold([
+      added(0, "fc_a", "bash"),
+      {
+        event: "response.function_call_arguments.delta",
+        data: { output_index: 0, item_id: "fc_a", delta: '{"cmd":"ls"}' },
+      },
+      {
+        event: "response.function_call_arguments.done",
+        data: { output_index: 0, item_id: "fc_a", arguments: '{"cmd":"pwd"}' },
+      },
+      { event: "response.completed", data: { response: {} } },
+    ]);
+    expect(choice.message.tool_calls?.[0].function.arguments).toBe(
+      '{"cmd":"ls"}',
+    );
+  });
+
+  it("opens a call first seen at output_item.done, with its arguments", () => {
+    const choice = fold([
+      {
+        event: "response.output_item.done",
+        data: {
+          output_index: 0,
+          item: {
+            type: "function_call",
+            id: "fc_a",
+            call_id: "call_a",
+            name: "bash",
+            arguments: '{"cmd":"ls"}',
+          },
+        },
+      },
+      { event: "response.completed", data: { response: {} } },
+    ]);
+    expect(choice.message.tool_calls).toEqual([
+      {
+        id: "call_a",
+        type: "function",
+        function: { name: "bash", arguments: '{"cmd":"ls"}' },
+      },
+    ]);
+    expect(choice.finish_reason).toBe("tool_calls");
+  });
+
+  it("drops a delta it cannot place among several open calls instead of guessing", () => {
+    const choice = fold([
+      added(0, "fc_a", "read_file"),
+      added(1, "fc_b", "bash"),
+      {
+        event: "response.function_call_arguments.delta",
+        data: { delta: '{"stray":1}' },
+      },
+      {
+        event: "response.function_call_arguments.done",
+        data: { output_index: 0, arguments: '{"path":"a"}' },
+      },
+      {
+        event: "response.function_call_arguments.done",
+        data: { output_index: 1, arguments: '{"cmd":"ls"}' },
+      },
+      { event: "response.completed", data: { response: {} } },
+    ]);
+    expect(choice.message.tool_calls?.map((c) => c.function.arguments)).toEqual(
+      ['{"path":"a"}', '{"cmd":"ls"}'],
+    );
+  });
+
+  it("does not put a delta for an unknown call onto the only call it knows", () => {
+    const choice = fold([
+      added(0, "fc_a", "read_file"),
+      {
+        event: "response.function_call_arguments.delta",
+        data: { output_index: 0, item_id: "fc_a", delta: '{"path":"a"}' },
+      },
+      // A second call whose `.added` never arrived, named by id (with and without an index).
+      {
+        event: "response.function_call_arguments.delta",
+        data: { item_id: "fc_b", delta: '{"cmd":' },
+      },
+      {
+        event: "response.function_call_arguments.delta",
+        data: { output_index: 0, item_id: "fc_b", delta: '"ls"}' },
+      },
+      { event: "response.completed", data: { response: {} } },
+    ]);
+    expect(choice.message.tool_calls?.map((c) => c.function.arguments)).toEqual(
+      ['{"path":"a"}'],
+    );
+  });
+
+  it("finishes an incomplete response with length (or content_filter) and its usage", () => {
+    const capped = fold([
+      { event: "response.output_text.delta", data: { delta: "partial" } },
+      {
+        event: "response.incomplete",
+        data: {
+          response: {
+            incomplete_details: { reason: "max_output_tokens" },
+            usage: { input_tokens: 3, output_tokens: 4, total_tokens: 7 },
+          },
+        },
+      },
+    ]);
+    expect(capped.finish_reason).toBe("length");
+    const filtered = fold([
+      {
+        event: "response.incomplete",
+        data: {
+          response: { incomplete_details: { reason: "content_filter" } },
+        },
+      },
+    ]);
+    expect(filtered.finish_reason).toBe("content_filter");
   });
 
   it("ignores [DONE] and unknown events", () => {

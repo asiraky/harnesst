@@ -9,6 +9,7 @@
  * observability `channel`.
  */
 import {
+  DEFAULT_TURN_FOLLOW,
   streamTurn,
   type TurnResult,
   type TurnStep,
@@ -49,6 +50,7 @@ import {
   releaseRefusedTurnClaim,
   savePlaygroundSessionCursor,
   savePlaygroundSessionProgress,
+  touchPlaygroundSessionTurn,
   type PlaygroundSession,
 } from "~/playground/sessions.server";
 import {
@@ -56,8 +58,15 @@ import {
   syncConversationCheckout,
 } from "~/assistant/checkout-sync.server";
 
-/** Eve turns can run for hours; fail only after this much silence on the event stream. */
+/**
+ * How stale a `running` row may get before it counts as abandoned (stale-claim takeover, settle,
+ * the artifact publish destination), and how long the live stream may be silent before the drain
+ * reconnects to it. Silence does not fail the turn: the drain follows it (DEFAULT_TURN_FOLLOW).
+ */
 export const TURN_IDLE_TIMEOUT_MS = 5 * 60_000;
+
+/** How often a live drain refreshes its row; well inside TURN_IDLE_TIMEOUT_MS. */
+const TURN_HEARTBEAT_MS = 60_000;
 
 const activeTurnControllers = new Map<string, AbortController>();
 
@@ -284,6 +293,14 @@ export function streamTurnResponse(input: {
             Boolean(input.inputResponses && input.inputResponses.length > 0));
         const turnController = new AbortController();
         activeTurnControllers.set(activeSession.id, turnController);
+        // Keeps the row fresh while this drain watches a turn that has gone quiet (see
+        // `touchPlaygroundSessionTurn`). Stopped in the `finally` below.
+        const heartbeat = setInterval(() => {
+          touchPlaygroundSessionTurn({
+            id: activeSession.id,
+            claimId: input.claimId ?? undefined,
+          }).catch((e) => console.error(`${tag} turn heartbeat failed`, e));
+        }, TURN_HEARTBEAT_MS);
 
         const queueProgressSave = (force = false) => {
           if (!sessionId || !successorBound) return;
@@ -404,6 +421,8 @@ export function streamTurnResponse(input: {
             streamIndex: baseStreamIndex,
             signal: turnController.signal,
             timeoutMs: TURN_IDLE_TIMEOUT_MS,
+            // A silent stream is not a failed turn: keep following it until it settles.
+            follow: DEFAULT_TURN_FOLLOW,
           })) {
             if (deferredFohBegin && event.kind === "session") {
               deferredFohBegin = false;
@@ -598,6 +617,7 @@ export function streamTurnResponse(input: {
             version: target.version,
           });
         } finally {
+          clearInterval(heartbeat);
           if (activeTurnControllers.get(activeSession.id) === turnController) {
             activeTurnControllers.delete(activeSession.id);
           }

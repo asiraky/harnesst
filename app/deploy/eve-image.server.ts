@@ -122,8 +122,12 @@ const DOCKER_CLI_VERSION = "27.5.1";
  * exposes a sibling session. A matched session run with a missing/unsafe container name fails
  * closed, because silently restoring the whole environment mount would recreate issue #315.
  *
- * The image's default user is root (`ghcr.io/vercel/eve:latest` sets no USER), so the root-owned
- * /workspace/home mount is already writable — no chown step needed.
+ * OWNERSHIP: the instance creates these directories as root, but the sandbox image runs as an
+ * unprivileged user (`ghcr.io/vercel/eve` sets USER vercel-sandbox, uid 1001). A root-owned 0755
+ * mount point left the agent unable to create anything at the top of its own home without sudo, so
+ * the shim opens both mount roots to every uid on each run (which also repairs directories created
+ * before this fix). The isolation is the subpath mount itself — only this session's sandbox ever
+ * sees its directory — so the mode bits guard nothing between conversations.
  *
  * REAL is overridable via EVE_DOCKER_REAL purely so the unit test can point it at a fake docker;
  * in production it is the static client this same image ships at /usr/local/bin/docker. Pure POSIX
@@ -174,6 +178,8 @@ if [ "$1" = "run" ] && [ "$is_session" = "1" ]; then
       mkdir -p \
         "$HOME_ROOT/sessions/$sbx_container" \
         "$HOME_ROOT/shared"
+      # The sandbox user is not root: let it write the roots of its own mounts (see OWNERSHIP).
+      chmod 0777 "$HOME_ROOT/sessions/$sbx_container" "$HOME_ROOT/shared"
       shift
       set -- run \
         --mount "type=volume,src=$HARNESST_HOME_VOLUME,dst=/workspace/home,volume-subpath=sessions/$sbx_container" \
