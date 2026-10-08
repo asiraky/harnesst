@@ -1,95 +1,75 @@
 ---
 name: dev
-description: Starts the harnesst dev server and tails the logs. Use whenever a running dev server is needed — starting, restarting, or recovering one whose port is blocked.
+description: Starts or restarts this checkout's harnesst dev server and hands the user its tailnet link. Use when asked to run the app, give a dev link, or recover a server whose port is blocked.
 ---
 
 # Dev
 
-Start the dev server and give me the link to it. If the ports are blocked for
-some reason then kill whatever is using them and try again.
+The user opens the link from another tailnet device: a laptop or a phone. The
+job is done when they have the **App line** URL, which opens there.
 
-## Ports
+## 1. Resolve this checkout's ports
 
-Be precise about *which* ports to kill — only kill the ports belonging to this
-checkout, never anything else.
-
-- **Main checkout** (`/Users/aaron/code/harnesst`): dev server `5173`, traffic splitter `8787`.
-- **Worktree**: use the worktree's own ports, listed in the worktree's
-  `WORKTREE.md` (under `## URL & ports`). Worktree dev ports start at `5273+`
-  and splitter ports at `8887+`, unique per worktree — read `WORKTREE.md` at
-  the worktree root to get the exact pair before killing anything.
-
-## Procedure
-
-> **The commands below are EXAMPLES.** They use the main-checkout ports `5173`
-> (dev) / `8787` (splitter). Substitute the real ports for wherever you're
-> running: main checkout uses the pair above; a worktree uses the pair from its
-> `WORKTREE.md`. Always resolve the actual `<PORT>` / `<SPLITTER_PORT>` first,
-> then plug them into every command.
-
-**1. Kill exactly the two ports** (only the listeners on those ports — nothing else):
+`.env.local` is the source of truth. The main checkout has no `PORT` and runs
+on the defaults.
 
 ```bash
-lsof -nP -iTCP:5173 -iTCP:8787 -sTCP:LISTEN -t | xargs kill
+port=$(sed -n 's/^PORT=//p' .env.local); port=${port:-5173}
+splitter=$(sed -n 's/^HARNESST_SPLITTER_PORT=//p' .env.local); splitter=${splitter:-8787}
+echo "$port $splitter"
 ```
 
-`SIGTERM` is normally immediate. If a listener survives after a couple of
-seconds, escalate just the survivors with `kill -9 <pid>`.
+Every later command uses these two numbers and no others: other worktrees'
+servers share this machine.
 
-**2. Confirm both ports are FREE before relaunching** (relaunching while one is
-still bound causes `EADDRINUSE`):
+## 2. Free exactly those two ports
 
 ```bash
-lsof -nP -iTCP:5173 -sTCP:LISTEN -t; lsof -nP -iTCP:8787 -sTCP:LISTEN -t
+lsof -nP -iTCP:<PORT> -iTCP:<SPLITTER> -sTCP:LISTEN -t | xargs -r kill
 ```
 
-Empty output = free. Do not start anything until both are empty.
+Escalate a listener that survives a couple of seconds with `kill -9 <pid>`.
+Done when `lsof -nP -iTCP:<PORT> -iTCP:<SPLITTER> -sTCP:LISTEN -t` prints
+nothing; starting earlier fails with `EADDRINUSE`.
 
-**3. Start the dev server to a deterministic per-port log.** `npm run dev` is a
-single process (React Router/Vite; the traffic splitter is spawned by it), so
-there is only one log.
-
-The log filename MUST embed *this checkout's dev port*:
-`/tmp/harnesst-dev-<PORT>.log`. Do NOT use `mktemp` or any random suffix. Ports are
-unique per checkout/worktree, so port-named logs never collide with another
-agent's logs running in parallel — and because the name is fully determined by
-the port you already resolved in step 1, you can rebuild the exact path in any
-later shell with zero guessing. Each `>` truncates a stale log from a previous
-run of the same server.
+## 3. Start it to the port-named log
 
 ```bash
-# substitute this checkout's real port — e.g. worktree 5273, main 5173
-dev_log=/tmp/harnesst-dev-5173.log
-echo "dev -> $dev_log"
-npm run dev > "$dev_log" 2>&1 &
+npm run dev > /tmp/harnesst-dev-<PORT>.log 2>&1 &
 ```
 
-**Shell variables do NOT persist between Bash tool calls.** In every later
-step, re-derive the same path from the port (just reassign
-`dev_log=/tmp/harnesst-dev-<PORT>.log` at the top of the call). NEVER discover the
-log via `ls -t /tmp/harnesst-*` or any glob — that matches other agents' files and
-will tail the wrong process. Always rebuild the literal port-based path.
+The log path is fixed by the port, so any later shell rebuilds it exactly;
+other agents' logs sit beside it under the same prefix, so always name the
+file by its port.
 
-**4. Verify the server is actually up — watch the log for the Vite "listening"
-line.** Do NOT trust a generic "started" log line; the server is ready when its
-log prints the local URL, e.g.:
+## 4. Read the App line
+
+`npm run dev` picks the tailnet origin itself (`scripts/dev-origin.mjs`) and
+prints it under Vite's URLs:
 
 ```
-➜  Local:   http://localhost:5173/
+➜  App:     http://app--<worktree>.harnesst.test:<PORT>/
 ```
 
-Grep the log for it (re-derive `dev_log` from the port first — see step 3),
-polling until it appears:
+Poll for it:
 
 ```bash
-dev_log=/tmp/harnesst-dev-5173.log
-grep -m1 "Local:   http://localhost:5173/" "$dev_log"
+grep -m1 "App:" /tmp/harnesst-dev-<PORT>.log
 ```
 
-Once the log shows its `Local:` line, report the app URL to the user, and
-mention the port-based log path (`/tmp/harnesst-dev-<PORT>.log`) so they can ask
-what's in it later.
+The server is up when the App line appears. That line is the whole
+verification.
 
-That signal is the ONLY verification — once you have it, report and stop. No
-extra curls, re-tails, or `lsof` re-checks; and empty Bash output means
-buffering, not failure, so never panic-retry or run shell-alive checks.
+## 5. Hand over the link
+
+Reply with the App URL bare on its own line, so the chat autolinks it, plus
+the log path:
+
+http://app--feature-x.harnesst.test:5273/
+
+The main checkout's is `http://app.harnesst.test:5173/`. The tailnet host is
+the one that works for the user: share links, artifact previews and sign-in
+all follow it.
+
+If the App line ends with a note that the `.test` host does not resolve, the
+tailnet DNS is down. Report that, and fix it with the `infra` skill.
