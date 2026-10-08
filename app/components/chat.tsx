@@ -19,136 +19,347 @@ import {
 } from "react";
 import {
   ArrowDown,
-  ArrowUp,
+  BookOpen,
+  Brain,
+  Check,
+  ChevronDown,
   ChevronRight,
   CircleHelp,
   CornerDownLeft,
+  Copy,
   FileCode2,
   FileText,
+  Globe,
   Image as ImageIcon,
+  Info,
+  Lightbulb,
   Loader2,
   Maximize2,
+  MessageSquareWarning,
+  OctagonAlert,
+  Pencil,
+  RotateCcw,
+  Search,
   ShieldAlert,
-  Sparkles,
+  Terminal,
+  TriangleAlert,
+  Wrench,
 } from "lucide-react";
 import Markdown, { type Components } from "react-markdown";
 import remarkBreaks from "remark-breaks";
 import remarkGfm from "remark-gfm";
+import { toast } from "sonner";
 
 import type {
   ChatArtifact,
+  ChatAttachment,
   ChatInputAnswer,
   ChatInputOptionField,
   ChatInputOption,
   ChatInputRequest,
   ChatStep,
+  ChatStepAction,
 } from "~/chat/types";
 import { Button } from "~/components/ui/button";
-import { Textarea } from "~/components/ui/textarea";
 import { cn } from "~/lib/utils";
-
-/** How close to the bottom (px) still counts as "pinned" — scrolling further up pauses
- * auto-scroll until the user returns to the bottom. */
-const PIN_THRESHOLD = 60;
+import { useCopy } from "./chat/clipboard";
+import { CodeBlock, languageFromClassName } from "./chat/code-block";
+import { formatBytes, loadIntoComposer } from "./chat/composer";
+import { LightboxHost, openLightbox } from "./chat/lightbox";
+import { useAutoScroll } from "./chat/use-auto-scroll";
 
 export function ChatTranscript({
   children,
   lead,
-  dep,
   forceScrollDep,
 }: {
   children: ReactNode;
   /** Page intro (title, alerts, …) that scrolls away with the conversation. */
   lead?: ReactNode;
-  /** Changes when new content lands — triggers the scroll-to-bottom. */
-  dep: unknown;
-  /** Changes when user intent should force the newest message into view. */
+  /** Legacy: content growth is observed directly now, so this is ignored. */
+  dep?: unknown;
+  /** Changes when user intent should force the newest message into view (a send). */
   forceScrollDep?: unknown;
 }) {
-  const ref = useRef<HTMLDivElement>(null);
-  const pinnedRef = useRef(true);
-  const [pinned, setPinned] = useState(true);
-  // Scrolls we issue ourselves must not be mistaken for the user scrolling back down —
-  // onScroll can't tell them apart on its own.
-  const programmaticRef = useRef(false);
-  const lastScrollTopRef = useRef(0);
-  const setPin = (value: boolean) => {
-    pinnedRef.current = value;
-    setPinned(value);
-  };
-  const scrollToBottom = (behavior?: ScrollBehavior) => {
-    const el = ref.current;
-    if (!el) return;
-    programmaticRef.current = true;
-    el.scrollTo({ top: el.scrollHeight, behavior });
-  };
-  useEffect(() => {
-    if (pinnedRef.current) scrollToBottom();
-  }, [dep]);
+  const { scrollRef, contentRef, following, hasUnseen, follow } =
+    useAutoScroll();
   useEffect(() => {
     if (forceScrollDep == null || forceScrollDep === "") return;
-    setPin(true);
-    scrollToBottom();
-  }, [forceScrollDep]);
+    follow();
+  }, [forceScrollDep, follow]);
   return (
     <div className="relative min-h-0 flex-1">
       {/* Full-bleed scroll region (content centered inside) so the wheel works anywhere
           across the viewport, not just over the centered column. */}
       <div
-        ref={ref}
-        className="h-full overflow-y-auto overscroll-contain"
-        onWheel={(e) => {
-          // Any upward wheel intent unpins immediately — waiting for the scroll
-          // position to drift PIN_THRESHOLD away loses the race against streaming
-          // content that keeps snapping the view back down.
-          if (e.deltaY < 0) {
-            programmaticRef.current = false;
-            setPin(false);
-          }
-        }}
-        onScroll={(e) => {
-          const el = e.currentTarget;
-          const distanceFromBottom =
-            el.scrollHeight - el.scrollTop - el.clientHeight;
-          const scrolledUp = el.scrollTop < lastScrollTopRef.current - 1;
-          lastScrollTopRef.current = el.scrollTop;
-          if (programmaticRef.current && !scrolledUp) {
-            // Our own scroll-to-bottom only ever moves down — an upward move is
-            // always the user, even mid-programmatic-scroll.
-            if (distanceFromBottom < 2) programmaticRef.current = false;
-            return;
-          }
-          programmaticRef.current = false;
-          if (scrolledUp) setPin(false);
-          else if (distanceFromBottom < PIN_THRESHOLD) setPin(true);
-        }}
+        ref={scrollRef}
+        className="h-full overflow-y-auto overscroll-contain [overflow-anchor:none]"
       >
-        <div className="mx-auto w-full max-w-5xl px-4 pt-6 sm:px-6">
+        <div ref={contentRef} className="mx-auto w-full max-w-3xl px-4 pt-8 sm:px-6">
           {lead}
-          <div className="space-y-6 pb-2">{children}</div>
+          <div className="space-y-8 pb-8">{children}</div>
         </div>
       </div>
-      {!pinned && (
+      <div
+        aria-hidden
+        className="pointer-events-none absolute inset-x-0 bottom-0 h-8 bg-gradient-to-t from-background to-transparent"
+      />
+      {!following && (
         <button
           type="button"
-          aria-label="Scroll to bottom"
-          onClick={() => {
-            setPin(true);
-            scrollToBottom("smooth");
-          }}
-          className="absolute bottom-4 left-1/2 -translate-x-1/2 flex size-9 items-center justify-center rounded-full border bg-background/95 text-foreground shadow-md backdrop-blur transition-colors hover:bg-accent"
+          aria-label="Jump to latest"
+          onClick={() => follow("smooth")}
+          className={cn(
+            "absolute bottom-3 left-1/2 z-10 flex -translate-x-1/2 animate-in items-center gap-1.5 rounded-full border border-border bg-popover/95 text-xs font-medium text-muted-foreground shadow-md backdrop-blur transition-colors fade-in-0 slide-in-from-bottom-2 hover:text-foreground",
+            hasUnseen ? "h-7 px-3" : "size-8 justify-center",
+          )}
         >
           <ArrowDown className="size-4" />
+          {hasUnseen && <span>New messages</span>}
         </button>
+      )}
+      <LightboxHost />
+    </div>
+  );
+}
+
+const COLLAPSE_LINES = 12;
+const COLLAPSE_CHARS = 900;
+
+/** Relative time ("just now", "5m ago", "Tue 14:02") with the full date on hover. */
+function RelativeTime({ at }: { at: string }) {
+  const [, force] = useState(0);
+  useEffect(() => {
+    const t = setInterval(() => force((n) => n + 1), 30_000);
+    return () => clearInterval(t);
+  }, []);
+  const d = new Date(at);
+  if (Number.isNaN(d.getTime())) return null;
+  return (
+    <time
+      dateTime={at}
+      title={d.toLocaleString()}
+      className="text-[11px] text-muted-foreground/70 tabular-nums"
+      suppressHydrationWarning
+    >
+      {formatRelative(d, Date.now())}
+    </time>
+  );
+}
+
+export function formatRelative(d: Date, now: number): string {
+  const s = Math.round((now - d.getTime()) / 1000);
+  if (s < 45) return "just now";
+  if (s < 3600) return `${Math.round(s / 60)}m ago`;
+  const sameDay = new Date(now).toDateString() === d.toDateString();
+  const time = d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+  if (sameDay) return time;
+  if (s < 6 * 86400)
+    return `${d.toLocaleDateString(undefined, { weekday: "short" })} ${time}`;
+  return `${d.toLocaleDateString(undefined, { month: "short", day: "numeric" })} ${time}`;
+}
+
+function ActionButton({
+  label,
+  onClick,
+  children,
+}: {
+  label: string;
+  onClick: () => void;
+  children: ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-label={label}
+      title={label}
+      className="flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+    >
+      {children}
+    </button>
+  );
+}
+
+function CopyAction({ text, label = "Copy" }: { text: string; label?: string }) {
+  const { copy, copied } = useCopy();
+  return (
+    <ActionButton label={copied ? "Copied" : label} onClick={() => void copy(text)}>
+      {copied ? (
+        <Check className="size-3.5 text-emerald-500" />
+      ) : (
+        <Copy className="size-3.5" />
+      )}
+    </ActionButton>
+  );
+}
+
+/**
+ * Hover action row under a message: copy (the markdown source), optional retry, and a timestamp.
+ * Always visible on touch devices, where there's no hover.
+ */
+export function MessageActions({
+  text,
+  at,
+  onRetry,
+  align = "start",
+}: {
+  text: string;
+  at?: string | null;
+  onRetry?: () => void;
+  align?: "start" | "end";
+}) {
+  if (!text && !at) return null;
+  return (
+    <div
+      className={cn(
+        "flex items-center gap-0.5 opacity-0 transition-opacity group-hover/msg:opacity-100 focus-within:opacity-100 pointer-coarse:opacity-100",
+        align === "end" && "justify-end",
+      )}
+    >
+      {text && <CopyAction text={text} />}
+      {onRetry && (
+        <ActionButton label="Retry — send this again" onClick={onRetry}>
+          <RotateCcw className="size-3.5" />
+        </ActionButton>
+      )}
+      {at && (
+        <span className="px-1.5">
+          <RelativeTime at={at} />
+        </span>
       )}
     </div>
   );
 }
 
-export function UserBubble({ text }: { text: string }) {
+function AttachmentList({
+  attachments,
+  align = "end",
+}: {
+  attachments: (ChatAttachment & { previewUrl?: string | null })[];
+  align?: "start" | "end";
+}) {
+  if (attachments.length === 0) return null;
+  const images = attachments.filter(
+    (a) => a.mediaType.startsWith("image/") && (a.previewUrl ?? a.url),
+  );
+  const imageSet = new Set(images);
+  const files = attachments.filter((a) => !imageSet.has(a));
+  const gallery = images.map((a) => ({ src: (a.previewUrl ?? a.url)!, alt: a.name }));
   return (
-    <div className="ml-auto w-fit max-w-[95%] sm:max-w-[85%] rounded-2xl bg-muted px-4 py-2.5 text-sm text-foreground">
-      <p className="whitespace-pre-wrap [overflow-wrap:anywhere]">{text}</p>
+    <div className={cn("flex flex-col gap-1.5", align === "end" ? "items-end" : "items-start")}>
+      {images.length > 0 && (
+        <div className={cn("flex flex-wrap gap-1.5", align === "end" && "justify-end")}>
+          {images.map((a, i) => (
+            <button
+              key={a.id}
+              type="button"
+              onClick={() => openLightbox(gallery, i)}
+              className="overflow-hidden rounded-xl border border-border bg-muted transition hover:opacity-90"
+              aria-label={`View ${a.name}`}
+            >
+              <img
+                src={(a.previewUrl ?? a.url)!}
+                alt={a.name}
+                loading="lazy"
+                className={cn(
+                  "block object-cover",
+                  images.length === 1 ? "max-h-72 min-h-16 min-w-16 max-w-[min(100%,24rem)]" : "size-28",
+                )}
+              />
+            </button>
+          ))}
+        </div>
+      )}
+      {files.map((a) => {
+        const body = (
+          <>
+            <span className="flex size-8 shrink-0 items-center justify-center rounded-md bg-primary/10 text-primary">
+              <FileText className="size-4" />
+            </span>
+            <span className="min-w-0">
+              <span className="block truncate text-xs font-medium">{a.name}</span>
+              <span className="block text-[11px] text-muted-foreground">
+                {a.mediaType}
+                {a.size != null ? ` · ${formatBytes(a.size)}` : ""}
+              </span>
+            </span>
+          </>
+        );
+        const cls =
+          "flex max-w-72 items-center gap-2 rounded-xl border border-border bg-card px-2.5 py-2 text-left";
+        return a.url ? (
+          <a key={a.id} href={a.url} target="_blank" rel="noreferrer" className={cn(cls, "hover:bg-accent/50")}>
+            {body}
+          </a>
+        ) : (
+          <div key={a.id} className={cls}>
+            {body}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+export function UserBubble({
+  text,
+  attachments,
+  at,
+}: {
+  text: string;
+  attachments?: (ChatAttachment & { previewUrl?: string | null })[];
+  at?: string | null;
+}) {
+  const long =
+    text.length > COLLAPSE_CHARS || text.split("\n").length > COLLAPSE_LINES;
+  const [expanded, setExpanded] = useState(false);
+  const collapsed = long && !expanded;
+  return (
+    <div className="group/msg chat-row-in relative ml-auto flex w-full flex-col items-end gap-1">
+      {attachments && attachments.length > 0 && (
+        <AttachmentList attachments={attachments} />
+      )}
+      {text && (
+        <div className="relative w-fit max-w-[90%] rounded-3xl bg-muted px-4 py-2.5 text-sm leading-relaxed text-foreground sm:max-w-[80%]">
+          <p
+            className={cn(
+              "whitespace-pre-wrap [overflow-wrap:anywhere]",
+              collapsed && "max-h-64 overflow-hidden [mask-image:linear-gradient(to_bottom,black_70%,transparent)]",
+            )}
+          >
+            {text}
+          </p>
+          {long && (
+            <button
+              type="button"
+              onClick={() => setExpanded((v) => !v)}
+              className="mt-1 flex items-center gap-1 text-xs font-medium text-muted-foreground hover:text-foreground"
+            >
+              <ChevronDown className={cn("size-3.5 transition-transform", expanded && "rotate-180")} />
+              {expanded ? "Show less" : "Show more"}
+            </button>
+          )}
+        </div>
+      )}
+      <div className="absolute top-full right-0 mt-0.5 flex items-center gap-0.5 opacity-0 transition-opacity group-hover/msg:opacity-100 focus-within:opacity-100 pointer-coarse:static pointer-coarse:mt-0 pointer-coarse:opacity-100">
+        {at && (
+          <span className="px-1.5">
+            <RelativeTime at={at} />
+          </span>
+        )}
+        {text && (
+          <ActionButton
+            label="Edit — load into the composer"
+            onClick={() => {
+              if (!loadIntoComposer(text)) toast.error("No composer on this page");
+            }}
+          >
+            <Pencil className="size-3.5" />
+          </ActionButton>
+        )}
+        {text && <CopyAction text={text} />}
+      </div>
     </div>
   );
 }
@@ -162,22 +373,14 @@ export function AssistantBubble({ children }: { children: ReactNode }) {
 }
 
 /**
- * One assistant turn as an open block with a glyph gutter (no bubble chrome): the glyph
- * marks "the assistant speaks" so user (right, filled) vs assistant (left, open) turns scan
- * instantly, and everything that belongs to the turn — activity, reply, questions, sync
+ * One assistant turn as an open, full-width block (no bubble, no avatar gutter): user turns
+ * are right-aligned filled bubbles, so the unboxed left column reads as the assistant, and
+ * everything that belongs to the turn — activity, reply, questions, sync
  * note, metadata — stacks inside the same column instead of floating as detached cards.
  */
 export function AssistantTurn({ children }: { children: ReactNode }) {
   return (
-    <div className="flex gap-3">
-      <div
-        className="mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary ring-1 ring-primary/20"
-        aria-hidden
-      >
-        <Sparkles className="size-3.5" />
-      </div>
-      <div className="min-w-0 flex-1 space-y-2 pt-1 text-sm">{children}</div>
-    </div>
+    <div className="group/msg chat-row-in min-w-0 space-y-2 text-sm">{children}</div>
   );
 }
 
@@ -224,7 +427,14 @@ type MarkdownNode = {
  */
 const MAX_NESTING = 100;
 
-export function MarkdownText({ text }: { text: string }) {
+export function MarkdownText({
+  text,
+  streaming = false,
+}: {
+  text: string;
+  /** Still arriving: code stays unhighlighted and a caret trails the last block. */
+  streaming?: boolean;
+}) {
   // Footnote ids are page-global, so two replies that both use `[^1]` would emit the same id and
   // the second one's link would jump to the first one's definition. Scope them to this turn.
   const instance = useId().replace(/[^a-zA-Z0-9]/g, "");
@@ -240,14 +450,71 @@ export function MarkdownText({ text }: { text: string }) {
           rehypePlugins={REHYPE_PLUGINS}
           remarkRehypeOptions={{ clobberPrefix: `${instance}-` }}
           urlTransform={markdownUrlTransform}
-          components={MARKDOWN_COMPONENTS}
+          components={streaming ? MARKDOWN_COMPONENTS_STREAMING : MARKDOWN_COMPONENTS}
         >
           {text}
         </Markdown>
       ),
-    [instance, text],
+    [instance, text, streaming],
   );
-  return <div className="space-y-2 [overflow-wrap:anywhere]">{rendered}</div>;
+  return (
+    <div
+      className={cn(
+        "chat-markdown space-y-3 leading-relaxed [overflow-wrap:anywhere]",
+        streaming && "chat-streaming",
+      )}
+    >
+      {rendered}
+    </div>
+  );
+}
+
+/**
+ * The agent's thinking, when the model streams it. Collapsed by default once the turn is done;
+ * open with a shimmering label while it's live.
+ */
+export function ReasoningBlock({
+  text,
+  streaming = false,
+}: {
+  text: string;
+  streaming?: boolean;
+}) {
+  const [open, setOpen] = useState<boolean | null>(null);
+  const isOpen = open ?? false;
+  if (!text.trim()) return null;
+  const words = text.trim().split(/\s+/).length;
+  return (
+    <div className="text-xs">
+      <button
+        type="button"
+        onClick={() => setOpen(!isOpen)}
+        aria-expanded={isOpen}
+        className="flex items-center gap-1.5 rounded-md py-0.5 text-muted-foreground transition-colors hover:text-foreground"
+      >
+        <Brain className="size-3.5 shrink-0" aria-hidden />
+        <span className={cn(streaming && "chat-shimmer")}>
+          {streaming ? "Thinking…" : "Thought"}
+        </span>
+        {!streaming && (
+          <span className="text-muted-foreground/60">· {words} words</span>
+        )}
+        <ChevronRight
+          className={cn("size-3.5 shrink-0 transition-transform", isOpen && "rotate-90")}
+          aria-hidden
+        />
+      </button>
+      {isOpen ? (
+        <div className="mt-1 ml-[7px] max-h-80 overflow-y-auto border-l border-border pl-4 text-muted-foreground">
+          <MarkdownText text={text} streaming={streaming} />
+        </div>
+      ) : streaming ? (
+        <p className="mt-1 ml-[7px] line-clamp-2 border-l border-border pl-4 text-muted-foreground/80 italic">
+          {text.slice(-280)}
+        </p>
+      ) : null}
+    </div>
+  );
 }
 
 /** Every container the parser recurses into — a `>` marker, a list marker, two columns of
@@ -308,7 +575,33 @@ function remarkHtmlAsText() {
 
 /** `remarkBreaks` keeps a single newline a line break, as agents (and the previous renderer)
  * assume, instead of collapsing it into the surrounding paragraph. */
-const REMARK_PLUGINS = [remarkGfm, remarkBreaks, remarkHtmlAsText];
+/**
+ * GitHub alerts: a blockquote whose first line is `[!NOTE]` (TIP, IMPORTANT, WARNING, CAUTION)
+ * renders as a callout. The marker is stripped and the kind lands on `data-alert`.
+ */
+const ALERT_KINDS = new Set(["note", "tip", "important", "warning", "caution"]);
+function remarkAlerts() {
+  return (tree: MarkdownNode) => {
+    const walk = (node: MarkdownNode & { data?: { hProperties?: Record<string, unknown> } }) => {
+      if (node.type === "blockquote") {
+        const para = node.children?.[0];
+        const first = para?.type === "paragraph" ? para.children?.[0] : undefined;
+        const m = first?.type === "text" ? /^\[!(\w+)\][ \t]*\n?/.exec(first.value ?? "") : null;
+        const kind = m?.[1]?.toLowerCase();
+        if (m && first && kind && ALERT_KINDS.has(kind)) {
+          first.value = (first.value ?? "").slice(m[0].length);
+          // remark-breaks turns the newline after the marker into a break node — drop it.
+          if (!first.value && para?.children?.[1]?.type === "break") para.children.splice(1, 1);
+          node.data = { ...node.data, hProperties: { "data-alert": kind } };
+        }
+      }
+      for (const child of node.children ?? []) walk(child);
+    };
+    walk(tree);
+  };
+}
+
+const REMARK_PLUGINS = [remarkGfm, remarkAlerts, remarkBreaks, remarkHtmlAsText];
 
 /**
  * Every `br` is followed by a source-formatting newline in the generated tree. Normally that's
@@ -473,29 +766,53 @@ const MARKDOWN_COMPONENTS: Components = {
     </ul>
   ),
   ol: ({ children, start }) => (
-    <ol start={start} className="list-decimal space-y-1 pl-5 leading-relaxed">
+    <ol start={start} className="list-decimal space-y-1 pl-5 leading-relaxed marker:text-muted-foreground">
       {children}
     </ol>
   ),
-  blockquote: ({ children }) => (
-    <blockquote className="space-y-2 border-l-2 border-muted-foreground/30 pl-3 text-muted-foreground">
-      {children}
-    </blockquote>
-  ),
+  blockquote: ({ children, node }) => {
+    const props = node?.properties as Record<string, unknown> | undefined;
+    // mdast hProperties land verbatim ("data-alert"), not camelCased.
+    const kind = (props?.["data-alert"] ?? props?.dataAlert) as string | undefined;
+    const alert = kind ? ALERT_STYLES[kind] : null;
+    if (alert) {
+      const Icon = alert.icon;
+      return (
+        <div className={cn("space-y-1 rounded-r-lg border-l-2 py-2.5 pr-3.5 pl-3.5", alert.box)}>
+          <p className={cn("flex items-center gap-1.5 text-xs font-semibold", alert.title)}>
+            <Icon className="size-3.5" aria-hidden />
+            {alert.label}
+          </p>
+          <div className="space-y-2">{children}</div>
+        </div>
+      );
+    }
+    return (
+      <blockquote className="space-y-2 border-l-2 border-muted-foreground/30 pl-3 text-muted-foreground">
+        {children}
+      </blockquote>
+    );
+  },
   hr: () => <hr className="border-border" />,
-  pre: ({ node }) => (
-    <pre className="max-w-full overflow-x-auto rounded-lg bg-muted/60 p-3 font-mono text-xs leading-relaxed">
-      <code>{nodeText(node).replace(/\n$/, "")}</code>
-    </pre>
-  ),
+  pre: ({ node }) => {
+    const codeNode = node?.children?.[0] as
+      | { properties?: { className?: unknown } }
+      | undefined;
+    return (
+      <CodeBlock
+        code={nodeText(node as MarkdownNode).replace(/\n$/, "")}
+        language={languageFromClassName(codeNode?.properties?.className)}
+      />
+    );
+  },
   code: ({ children }) => (
     <code className="rounded bg-muted px-1 py-0.5 font-mono text-[0.88em]">
       {children}
     </code>
   ),
   table: ({ children }) => (
-    <div className="max-w-full overflow-x-auto">
-      <table className="w-full min-w-80 border-collapse text-left text-xs">
+    <div className="max-w-full overflow-x-auto rounded-xl border border-border">
+      <table className="w-full min-w-80 border-collapse text-left text-xs [&_tbody_tr:last-child_td]:border-b-0 [&_thead]:bg-muted/50">
         {children}
       </table>
     </div>
@@ -517,6 +834,34 @@ const MARKDOWN_COMPONENTS: Components = {
     </td>
   ),
   img: MarkdownImage,
+};
+
+/** While streaming, fenced blocks skip highlighting (it would re-run on every token). */
+const MARKDOWN_COMPONENTS_STREAMING: Components = {
+  ...MARKDOWN_COMPONENTS,
+  pre: ({ node }) => {
+    const codeNode = node?.children?.[0] as
+      | { properties?: { className?: unknown } }
+      | undefined;
+    return (
+      <CodeBlock
+        code={nodeText(node as MarkdownNode).replace(/\n$/, "")}
+        language={languageFromClassName(codeNode?.properties?.className)}
+        streaming
+      />
+    );
+  },
+};
+
+const ALERT_STYLES: Record<
+  string,
+  { label: string; icon: typeof Info; box: string; title: string }
+> = {
+  note: { label: "Note", icon: Info, box: "border-sky-500 bg-sky-500/[0.06]", title: "text-sky-600 dark:text-sky-400" },
+  tip: { label: "Tip", icon: Lightbulb, box: "border-emerald-500 bg-emerald-500/[0.06]", title: "text-emerald-600 dark:text-emerald-400" },
+  important: { label: "Important", icon: MessageSquareWarning, box: "border-violet-500 bg-violet-500/[0.06]", title: "text-violet-600 dark:text-violet-400" },
+  warning: { label: "Warning", icon: TriangleAlert, box: "border-amber-500 bg-amber-500/[0.07]", title: "text-amber-600 dark:text-amber-400" },
+  caution: { label: "Caution", icon: OctagonAlert, box: "border-red-500 bg-red-500/[0.06]", title: "text-red-600 dark:text-red-400" },
 };
 
 /**
@@ -983,25 +1328,25 @@ export function ArtifactCard({
 
   return (
     <figure className="w-fit max-w-[95%] sm:max-w-[85%] overflow-hidden rounded-xl border border-border bg-card shadow-sm">
-      <a href={artifact.url ?? undefined} target="_blank" rel="noreferrer">
+      <button
+        type="button"
+        className="block cursor-zoom-in"
+        onClick={() =>
+          artifact.url && openLightbox([{ src: artifact.url, alt: label }])
+        }
+        aria-label={`View ${label}`}
+      >
         <img
           src={artifact.url ?? undefined}
           alt={label}
           // Bounded height so a tall screenshot doesn't push the rest of the transcript out of
-          // view; the transcript pins to the bottom as images load.
+          // view; the transcript follows the bottom as images load.
           className="block max-h-96 max-w-full object-contain"
         />
-      </a>
+      </button>
       {caption}
     </figure>
   );
-}
-
-/** Compact byte size for the artifact caption (KB above a kilobyte, MB above a megabyte). */
-function formatBytes(bytes: number): string {
-  if (bytes >= 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-  if (bytes >= 1024) return `${Math.round(bytes / 1024)} KB`;
-  return `${bytes} B`;
 }
 
 /** Typing indicator shown while the assistant turn is in flight — dots, not prose, so it
@@ -1019,260 +1364,212 @@ export function PendingBubble() {
   );
 }
 
+function toolIcon(name: string | null | undefined) {
+  const n = (name ?? "").toLowerCase();
+  if (/bash|shell|exec|command|terminal|run/.test(n)) return Terminal;
+  if (/read|view|cat|open/.test(n)) return FileText;
+  if (/write|edit|patch|replace|create/.test(n)) return Pencil;
+  if (/search|grep|glob|find|list|ls/.test(n)) return Search;
+  if (/fetch|http|web|browse|url/.test(n)) return Globe;
+  if (/skill|load/.test(n)) return BookOpen;
+  return Wrench;
+}
+
+/** "12s", "1m 04s" — ticks by writing the DOM directly so the transcript doesn't re-render. */
+function Elapsed({ since }: { since: number }) {
+  const ref = useRef<HTMLSpanElement>(null);
+  useEffect(() => {
+    const render = () => {
+      if (!ref.current) return;
+      const s = Math.max(0, Math.floor((Date.now() - since) / 1000));
+      ref.current.textContent =
+        s < 60 ? `${s}s` : `${Math.floor(s / 60)}m ${String(s % 60).padStart(2, "0")}s`;
+    };
+    render();
+    const t = setInterval(render, 1000);
+    return () => clearInterval(t);
+  }, [since]);
+  return <span ref={ref} className="tabular-nums" suppressHydrationWarning />;
+}
+
+function ActionDetail({ action }: { action: ChatStepAction }) {
+  const [open, setOpen] = useState(false);
+  const Icon = toolIcon(action.toolName);
+  const hasBody = Boolean(action.input || action.output);
+  const failed = action.isError || (action.exitCode != null && action.exitCode !== 0);
+  return (
+    <li className="min-w-0">
+      <button
+        type="button"
+        disabled={!hasBody}
+        onClick={() => setOpen((v) => !v)}
+        className="flex w-full min-w-0 items-center gap-2 rounded-md py-0.5 text-left enabled:hover:text-foreground"
+        aria-expanded={hasBody ? open : undefined}
+      >
+        <Icon className="size-3.5 shrink-0 text-muted-foreground" aria-hidden />
+        <span className="shrink-0 font-mono font-medium text-foreground/80">
+          {action.toolName}
+        </span>
+        {action.summary && (
+          <span className="min-w-0 truncate font-mono text-muted-foreground">
+            {action.summary}
+          </span>
+        )}
+        {action.exitCode != null && (
+          <span
+            className={cn(
+              "shrink-0 rounded px-1 py-px font-mono text-[10px]",
+              failed ? "bg-destructive/10 text-destructive" : "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400",
+            )}
+          >
+            exit {action.exitCode}
+          </span>
+        )}
+        {action.isError && action.exitCode == null && (
+          <span className="shrink-0 font-medium text-destructive">failed</span>
+        )}
+        {hasBody && (
+          <ChevronRight
+            className={cn("ml-auto size-3 shrink-0 text-muted-foreground transition-transform", open && "rotate-90")}
+            aria-hidden
+          />
+        )}
+      </button>
+      {open && (
+        <div className="mt-1 mb-1.5 space-y-1.5">
+          {action.input && (
+            <CodeBlock
+              code={action.input}
+              language={/bash|shell|exec|command/i.test(action.toolName) ? "bash" : "json"}
+            />
+          )}
+          {action.output && <CodeBlock code={action.output} language="output" />}
+        </div>
+      )}
+    </li>
+  );
+}
+
 /**
  * The agent's work for one turn as a quiet inline disclosure, not a detached card: collapsed
  * it reads as a one-line summary ("4 steps · 12.3s"); expanded it lists each step on a
- * timeline rail with tool + summary, duration/tokens, and failed steps surface their detail.
- * During a live turn, pass `activity` — the row shows a spinner with what the agent is doing
- * right now instead of the summary.
+ * timeline rail with tool + summary, duration/tokens, and every tool call with its input and
+ * output. During a live turn, pass `activity` — the row shows a spinner with what the agent is
+ * doing right now (and, with `startedAt`, a live elapsed timer) instead of the summary.
  */
 export function StepsCard({
   steps,
   idPrefix,
   activity,
+  startedAt,
 }: {
   steps: ChatStep[];
   idPrefix: string;
   /** Live turns: the agent's current activity, shown with a spinner in the header. */
   activity?: string | null;
+  /** Live turns: when the turn started (ms epoch), for the elapsed timer. */
+  startedAt?: number | null;
 }) {
   if (steps.length === 0 && !activity) return null;
   const totalMs = steps.reduce((sum, s) => sum + (s.durationMs ?? 0), 0);
   const failed = steps.some((s) => s.isError);
+  const live = (
+    <span className="flex min-w-0 items-center gap-1.5">
+      <Loader2 className="size-3 shrink-0 animate-spin text-primary" aria-hidden />
+      <span className="chat-shimmer min-w-0 truncate">{activity}</span>
+      {startedAt != null && (
+        <span className="shrink-0 text-muted-foreground/70">
+          · <Elapsed since={startedAt} />
+        </span>
+      )}
+      {steps.length > 0 && (
+        <span className="shrink-0 text-muted-foreground/70">
+          · {steps.length} step{steps.length === 1 ? "" : "s"}
+        </span>
+      )}
+    </span>
+  );
 
   // Nothing to expand yet — a bare working line, no dead chevron.
   if (steps.length === 0) {
-    return (
-      <div className="flex min-w-0 items-center gap-1.5 py-0.5 text-xs text-muted-foreground">
-        <Loader2
-          className="size-3 shrink-0 animate-spin text-primary"
-          aria-hidden
-        />
-        <span className="min-w-0 truncate">{activity}</span>
-      </div>
-    );
+    return <div className="flex min-w-0 py-0.5 text-xs text-muted-foreground">{live}</div>;
   }
 
   return (
-    <details className="group w-fit max-w-full text-xs">
-      <summary className="flex w-fit cursor-pointer select-none items-center gap-1.5 rounded-md py-0.5 pr-1.5 text-muted-foreground transition-colors [&::-webkit-details-marker]:hidden hover:text-foreground">
+    <details className="group w-full max-w-full text-xs">
+      <summary className="flex w-fit max-w-full cursor-pointer select-none items-center gap-1.5 rounded-md py-0.5 text-muted-foreground transition-colors [&::-webkit-details-marker]:hidden hover:text-foreground">
+        {activity ? (
+          live
+        ) : (
+          <>
+            <Wrench className="size-3.5 shrink-0" aria-hidden />
+            <span>
+              {steps.length} step{steps.length === 1 ? "" : "s"}
+              {totalMs > 0 ? <span className="text-muted-foreground/60"> · {formatDuration(totalMs)}</span> : null}
+              {failed ? <span className="text-destructive"> · failed</span> : null}
+            </span>
+          </>
+        )}
         <ChevronRight
           className="size-3.5 shrink-0 transition-transform group-open:rotate-90"
           aria-hidden
         />
-        {activity ? (
-          <span className="flex min-w-0 items-center gap-1.5">
-            <Loader2
-              className="size-3 shrink-0 animate-spin text-primary"
-              aria-hidden
-            />
-            <span className="min-w-0 truncate">{activity}</span>
-            <span className="shrink-0 text-muted-foreground/70">
-              · {steps.length} step{steps.length === 1 ? "" : "s"}
-            </span>
-          </span>
-        ) : (
-          <span>
-            {steps.length} step{steps.length === 1 ? "" : "s"}
-            {totalMs > 0 ? ` · ${(totalMs / 1000).toFixed(1)}s` : ""}
-            {failed ? (
-              <span className="text-destructive"> · failed</span>
-            ) : null}
-          </span>
-        )}
       </summary>
-      <ol className="ml-[7px] mt-1 space-y-1.5 border-l border-border py-1 pl-4">
-        {steps.map((s, i) => (
-          <li key={`${idPrefix}-step-${s.type}-${i}`} className="min-w-0">
-            <div className="flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-0.5">
-              <span className="font-mono font-medium text-foreground/80">
-                {s.toolName ?? s.type}
-              </span>
-              {(s.summary || s.name) && (
-                <span className="min-w-0 max-w-full truncate font-mono text-muted-foreground">
-                  {s.summary ?? s.name}
+      <ol className="mt-1 ml-[7px] space-y-2 border-l border-border py-1 pl-4">
+        {steps.map((s, i) => {
+          const Icon = toolIcon(s.toolName ?? s.type);
+          const actions = s.actions ?? [];
+          return (
+            <li key={`${idPrefix}-step-${s.type}-${i}`} className="min-w-0">
+              <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5">
+                <Icon className="size-3.5 shrink-0 text-muted-foreground" aria-hidden />
+                <span className="font-mono font-medium text-foreground/80">
+                  {s.toolName ?? s.type}
                 </span>
-              )}
-              <span className="shrink-0 text-muted-foreground/70">
-                {s.durationMs != null
-                  ? `${(s.durationMs / 1000).toFixed(1)}s`
-                  : ""}
-                {s.tokensIn != null || s.tokensOut != null
-                  ? `${s.durationMs != null ? " · " : ""}${s.tokensIn ?? 0} in / ${s.tokensOut ?? 0} out tok`
-                  : ""}
-              </span>
-              {s.isError && (
-                <span className="shrink-0 font-medium text-destructive">
-                  failed
+                {(s.summary || s.name) && actions.length <= 1 && (
+                  <span className="min-w-0 max-w-full truncate font-mono text-muted-foreground">
+                    {s.summary ?? s.name}
+                  </span>
+                )}
+                <span className="shrink-0 text-muted-foreground/70">
+                  {s.durationMs != null ? formatDuration(s.durationMs) : ""}
+                  {s.tokensIn != null || s.tokensOut != null
+                    ? `${s.durationMs != null ? " · " : ""}${s.tokensIn ?? 0} in / ${s.tokensOut ?? 0} out tok`
+                    : ""}
                 </span>
-              )}
-            </div>
-            {(s.message || s.code || s.details) && (
-              <div className="mt-0.5 whitespace-pre-wrap font-mono text-destructive">
-                {s.message}
-                {s.code ? `${s.message ? "\n" : ""}Code: ${s.code}` : ""}
-                {s.details
-                  ? `${s.message || s.code ? "\n" : ""}Details: ${s.details}`
-                  : ""}
+                {s.isError && (
+                  <span className="shrink-0 font-medium text-destructive">failed</span>
+                )}
               </div>
-            )}
-          </li>
-        ))}
+              {actions.length > 0 && (
+                <ul className="mt-1 space-y-0.5 pl-1">
+                  {actions.map((a, j) => (
+                    <ActionDetail key={`${idPrefix}-step-${i}-a-${j}`} action={a} />
+                  ))}
+                </ul>
+              )}
+              {(s.message || s.code || s.details) && (
+                <div className="mt-0.5 whitespace-pre-wrap font-mono text-destructive">
+                  {s.message}
+                  {s.code ? `${s.message ? "\n" : ""}Code: ${s.code}` : ""}
+                  {s.details
+                    ? `${s.message || s.code ? "\n" : ""}Details: ${s.details}`
+                    : ""}
+                </div>
+              )}
+            </li>
+          );
+        })}
       </ol>
     </details>
   );
 }
 
-const MAX_COMPOSER_HEIGHT = 192;
-
-/** Grow the textarea to fit its content, up to a cap (then it scrolls). */
-function autoGrow(el: HTMLTextAreaElement) {
-  el.style.height = "auto";
-  el.style.height = `${Math.min(el.scrollHeight, MAX_COMPOSER_HEIGHT)}px`;
+function formatDuration(ms: number): string {
+  if (ms < 1000) return `${ms}ms`;
+  if (ms < 60_000) return `${(ms / 1000).toFixed(1)}s`;
+  const s = Math.round(ms / 1000);
+  return `${Math.floor(s / 60)}m ${String(s % 60).padStart(2, "0")}s`;
 }
 
-function ComposerKbd({ children }: { children: ReactNode }) {
-  return (
-    <kbd className="rounded border border-border bg-muted px-1 py-px font-sans text-[10px] font-medium text-muted-foreground">
-      {children}
-    </kbd>
-  );
-}
-
-export function ChatComposer({
-  placeholder,
-  busy,
-  busyHint,
-  disabled = false,
-  initialValue,
-  focusKey,
-  onSend,
-  controls,
-}: {
-  placeholder: string;
-  busy: boolean;
-  /** What the surface is waiting on while `busy` — shown with a spinner in the toolbar. */
-  busyHint?: string;
-  /** Disable composing without showing the in-flight spinner used for `busy`. */
-  disabled?: boolean;
-  /** Seed the composer's text (e.g. a publish failure handed off as context to fix). */
-  initialValue?: string;
-  /** Refocus the composer when the surrounding conversation changes. */
-  focusKey?: unknown;
-  /** Resolve true once the server accepts the turn; false keeps the draft for retry. */
-  onSend: (message: string) => Promise<boolean>;
-  /** Optional controls rendered in the toolbar, left of the send button (e.g. a picker). */
-  controls?: ReactNode;
-}) {
-  const ref = useRef<HTMLTextAreaElement>(null);
-  const unavailable = busy || disabled;
-
-  // A disabled textarea loses focus when a turn starts. Focus on first availability,
-  // restore it when the turn finishes, and let conversation surfaces request the same
-  // behavior when they switch the conversation without remounting this component.
-  useEffect(() => {
-    if (!unavailable) ref.current?.focus();
-  }, [focusKey, unavailable]);
-
-  // The textarea is uncontrolled, so defaultValue only applies on mount: size a pre-seeded
-  // composer to its content immediately, and re-seed when a new handoff arrives while mounted.
-  useEffect(() => {
-    const el = ref.current;
-    if (!el || initialValue == null || el.value === initialValue) return;
-    el.value = initialValue;
-    autoGrow(el);
-  }, [initialValue]);
-
-  const sendingRef = useRef(false);
-
-  const send = async () => {
-    const el = ref.current;
-    const message = el?.value.trim();
-    if (!message || unavailable) return;
-    // `busy` is a render-derived guard and can lag a double click/key press by one frame.
-    if (sendingRef.current) return;
-    sendingRef.current = true;
-    let accepted = false;
-    try {
-      accepted = await onSend(message);
-    } catch {
-      // A rejected callback is the same as a refused request: retain the user's draft.
-    } finally {
-      sendingRef.current = false;
-    }
-
-    const current = ref.current;
-    if (!current) return;
-    if (accepted) {
-      // Do not erase text typed after a very fast caller accepted without making the
-      // composer busy. Normal chat routes disable it while the request is pending.
-      if (current.value.trim() === message) {
-        current.value = "";
-        current.style.height = "auto";
-      }
-      return;
-    }
-
-    // Rejections leave the uncontrolled value intact. Resize/refocus after the route's
-    // state update has re-enabled the textarea so Enter can retry the same message.
-    autoGrow(current);
-    window.requestAnimationFrame(() => ref.current?.focus());
-  };
-
-  return (
-    <div className="rounded-2xl border bg-card shadow-sm transition focus-within:border-ring focus-within:ring-1 focus-within:ring-ring has-[textarea:disabled]:bg-muted/30">
-      <Textarea
-        ref={ref}
-        placeholder={placeholder}
-        aria-label={placeholder}
-        defaultValue={initialValue}
-        rows={1}
-        className="max-h-48 min-h-11 resize-none border-0 bg-transparent px-4 py-3 text-sm shadow-none focus-visible:ring-0 disabled:bg-transparent dark:bg-transparent dark:disabled:bg-transparent"
-        disabled={unavailable}
-        onInput={(e) => autoGrow(e.currentTarget)}
-        onKeyDown={(e) => {
-          if (e.key === "Enter" && !e.shiftKey) {
-            e.preventDefault();
-            send();
-          }
-        }}
-      />
-      <div className="flex items-center justify-between gap-2 px-2.5 pb-2.5 pl-3.5">
-        <div className="flex min-w-0 items-center gap-2.5">
-          {controls}
-          {busy ? (
-            <span className="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
-              <Loader2
-                className="size-3 shrink-0 animate-spin text-primary"
-                aria-hidden
-              />
-              <span className="min-w-0 truncate">{busyHint ?? "Working…"}</span>
-            </span>
-          ) : (
-            !disabled && (
-              <span className="hidden items-center gap-1 text-[11px] text-muted-foreground/70 sm:flex">
-                <ComposerKbd>Enter</ComposerKbd> to send
-                <span className="text-muted-foreground/50">·</span>
-                <ComposerKbd>Shift+Enter</ComposerKbd> for a new line
-              </span>
-            )
-          )}
-        </div>
-        <Button
-          type="button"
-          size="icon"
-          className="size-9 shrink-0 rounded-full"
-          onClick={send}
-          disabled={unavailable}
-          aria-label={busy ? "Waiting for the current turn" : "Send"}
-        >
-          {busy ? (
-            <Loader2 className="size-4 animate-spin" />
-          ) : (
-            <ArrowUp className="size-4" />
-          )}
-        </Button>
-      </div>
-    </div>
-  );
-}
+export { ChatComposer, loadIntoComposer } from "./chat/composer";

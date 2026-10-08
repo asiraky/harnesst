@@ -239,7 +239,7 @@ describe.runIf(LIVE)(
             createdBy: ownerUserId,
           })
           .returning({ id: modelProviderConnections.id });
-        const ownerModel = `codex/${connection.id}/gpt-5.5`;
+        const ownerModel = `codex/${connection.id}/gpt-6-astra`;
         const ownerResult = await thrownResponse(
           action(settingsActionArgs(settingsRequest(ownerCookie, ownerModel))),
         );
@@ -280,7 +280,7 @@ describe.runIf(LIVE)(
           }),
         ).resolves.toMatchObject({ success: true });
 
-        const adminModel = `codex/${connection.id}/gpt-5.4`;
+        const adminModel = `codex/${connection.id}/gpt-6-sol`;
         const adminResult = await thrownResponse(
           action(settingsActionArgs(settingsRequest(memberCookie, adminModel))),
         );

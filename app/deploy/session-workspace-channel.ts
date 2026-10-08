@@ -37,11 +37,13 @@ export function isSessionWorkspaceContinuationToken(
 
 export const SESSION_WORKSPACE_CHANNEL_SOURCE = `import { timingSafeEqual } from "node:crypto";
 
-import { defineChannel, POST } from "eve/channels";
+import { defineChannel, POST, type SendPayload } from "eve/channels";
 
 const TOKEN = process.env.${SESSION_WORKSPACE_TOKEN_ENV} ?? "";
 const WORKSPACE_HEADER = "${SESSION_WORKSPACE_ID_HEADER}";
 const CREATE_ROUTE = "${SESSION_WORKSPACE_ROUTE}";
+
+type UserContent = Exclude<NonNullable<SendPayload["message"]>, string>;
 
 type WorkspaceState = {
   sandboxSessionId: string;
@@ -75,6 +77,25 @@ function text(value: unknown): string | undefined {
   return typeof value === "string" && value.length > 0 ? value : undefined;
 }
 
+// A user message: non-empty text, or a non-empty UserContent array (text + file parts — chat
+// attachments). Parts are harnesst-built; only their outer shape is checked here.
+function messageValue(value: unknown): string | UserContent | undefined {
+  if (typeof value === "string") return value.length > 0 ? value : undefined;
+  if (
+    Array.isArray(value) &&
+    value.length > 0 &&
+    value.every(
+      (part) =>
+        part !== null &&
+        typeof part === "object" &&
+        typeof (part as { type?: unknown }).type === "string",
+    )
+  ) {
+    return value as UserContent;
+  }
+  return undefined;
+}
+
 function inputResponses(value: unknown) {
   return Array.isArray(value) ? value : undefined;
 }
@@ -96,7 +117,7 @@ export default defineChannel<WorkspaceState>({
       if (!workspace) return badRequest("Missing or invalid workspace id.");
       const body = await jsonBody(request);
       if (!body) return badRequest("Expected a JSON object.");
-      const message = text(body.message);
+      const message = messageValue(body.message);
       if (!message) return badRequest("Missing message.");
 
       const session = await send(
@@ -141,7 +162,7 @@ export default defineChannel<WorkspaceState>({
 
       const session = await send(
         {
-          message: text(body.message),
+          message: messageValue(body.message),
           inputResponses: inputResponses(body.inputResponses) as never,
         },
         {

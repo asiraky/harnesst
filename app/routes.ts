@@ -67,6 +67,12 @@ export default [
     "api/foh/:projectId/artifact/:artifactId/:versionId?",
     "routes/api.foh.artifact.ts",
   ),
+  // The bytes behind a file the user attached to a chat message — the conversation's own
+  // visibility applies, out-of-scope is 404, content-addressed so immutable.
+  route(
+    "api/chat/uploads/:projectId/:sessionId/:sha",
+    "routes/api.chat.uploads.ts",
+  ),
   // Mints a short-lived preview capability for one HTML artifact (#291). POST, because minting is a
   // side effect and this loader-shaped surface is prefetched on hover.
   route(

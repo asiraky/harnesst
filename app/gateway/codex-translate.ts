@@ -64,8 +64,20 @@ export function wantsStreaming(body: ChatCompletionsBody): boolean {
 
 // ── Responses payload shaping ──────────────────────────────────────────────────
 
-/** Convert a chat-message content value into Responses `input_text`/`input_image` parts. */
-function toInputParts(content: unknown): Array<Record<string, unknown>> {
+/**
+ * Convert a chat-message content value into Responses `input_text`/`input_image`/`input_file`
+ * parts.
+ *
+ * File parts are how a PDF reaches the model: eve inlines an attached PDF's bytes, and
+ * `@ai-sdk/openai-compatible` renders it as `{ type: "file", file: { filename, file_data } }` with
+ * `file_data` a `data:application/pdf;base64,…` URL. The Responses API takes the same pair on an
+ * `input_file` part. Anything we can't map is skipped and reported through `onDropped`, so a lost
+ * attachment shows up in the logs instead of the model silently answering without it.
+ */
+export function toInputParts(
+  content: unknown,
+  onDropped?: (type: string) => void,
+): Array<Record<string, unknown>> {
   if (typeof content === "string") {
     return [{ type: "input_text", text: content }];
   }
@@ -84,7 +96,30 @@ function toInputParts(content: unknown): Array<Record<string, unknown>> {
             : p.image_url;
         if (typeof imageUrl === "string") {
           parts.push({ type: "input_image", image_url: imageUrl });
+        } else {
+          onDropped?.("image_url");
         }
+      } else if (p.type === "file") {
+        const file =
+          typeof p.file === "object" && p.file !== null
+            ? (p.file as { filename?: unknown; file_data?: unknown; file_id?: unknown })
+            : null;
+        if (file && typeof file.file_data === "string") {
+          parts.push({
+            type: "input_file",
+            filename:
+              typeof file.filename === "string" && file.filename
+                ? file.filename
+                : "document.pdf",
+            file_data: file.file_data,
+          });
+        } else if (file && typeof file.file_id === "string") {
+          parts.push({ type: "input_file", file_id: file.file_id });
+        } else {
+          onDropped?.("file");
+        }
+      } else {
+        onDropped?.(String(p.type));
       }
     }
     return parts;
@@ -114,12 +149,14 @@ function toText(content: unknown): string {
  *
  * Client system/developer messages CANNOT go in `instructions` (the backend validates that field
  * against the Codex CLI system prompt), so they travel as leading `input` items of role "user".
- * The remaining messages map turn-for-turn: user → input_text/image parts, assistant text →
+ * The remaining messages map turn-for-turn: user → input_text/image/file parts, assistant text →
  * output_text plus a `function_call` item per tool call, tool results → `function_call_output`.
+ * `onDropped` hears about every content part type that had no Responses equivalent.
  */
 export function buildResponsesPayload(
   body: ChatCompletionsBody,
   slug: string,
+  options: { onDropped?: (type: string) => void } = {},
 ): Record<string, unknown> {
   const leading: Array<Record<string, unknown>> = [];
   const rest: Array<Record<string, unknown>> = [];
@@ -129,7 +166,7 @@ export function buildResponsesPayload(
       leading.push({
         type: "message",
         role: "user",
-        content: toInputParts(msg.content),
+        content: toInputParts(msg.content, options.onDropped),
       });
       continue;
     }
@@ -137,7 +174,7 @@ export function buildResponsesPayload(
       rest.push({
         type: "message",
         role: "user",
-        content: toInputParts(msg.content),
+        content: toInputParts(msg.content, options.onDropped),
       });
       continue;
     }

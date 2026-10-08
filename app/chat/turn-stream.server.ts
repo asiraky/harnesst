@@ -13,7 +13,14 @@ import {
   type TurnResult,
   type TurnStep,
 } from "~/agent/talk.server";
+import {
+  buildUserMessage,
+  describeUserTurn,
+  storeAttachments,
+  type ParsedAttachment,
+} from "~/chat/attachments.server";
 import type { Target } from "~/chat/playground.server";
+import { toChatStepActions } from "~/chat/step-actions.server";
 import { normalizeTurnError } from "~/chat/stream-error";
 import type { ChatStep } from "~/chat/types";
 import { isSessionWorkspaceContinuationToken } from "~/deploy/session-workspace-channel";
@@ -85,6 +92,7 @@ export function toChatStep(step: TurnStep): ChatStep {
     details: step.details ?? null,
     toolName: step.toolName ?? null,
     summary: step.summary ?? null,
+    actions: toChatStepActions(step.actions),
   };
 }
 
@@ -148,7 +156,13 @@ export function streamTurnResponse(input: {
   projectId: string;
   target: Target;
   session: PlaygroundSession;
+  /** What the user typed (may be empty when `attachments` carry the turn). */
   message: string;
+  /**
+   * Validated files the user attached (`parseAttachments`). Stored under the conversation before
+   * the send (so the replay can serve them) and sent to eve as base64 file parts.
+   */
+  attachments?: ReadonlyArray<ParsedAttachment>;
   /** Observability channel — "playground" | "assistant" | "foh". */
   channel: string;
   /** Recompute the session title on the first turn (null once titled). */
@@ -199,10 +213,16 @@ export function streamTurnResponse(input: {
     channel,
     title,
   } = input;
-  // What eve actually receives (prefixed with system context); recording/display use plain `message`.
-  const sentMessage = input.messagePrefix
-    ? `${input.messagePrefix}\n\n${message}`
-    : message;
+  const attachments = input.attachments ?? [];
+  // What eve actually receives (prefixed with system context, plus file parts when attached);
+  // recording/display use plain `message`. With no files this is the same string as ever.
+  const sentMessage = buildUserMessage({
+    prefix: input.messagePrefix,
+    message,
+    attachments,
+  });
+  // Observability sees the typed text, plus the file names so a files-only turn isn't blank.
+  const recordedMessage = describeUserTurn(message, attachments);
   const tag = `[${channel}]`;
   // Needs-you writes happen only for FOH conversations (D4) — the builder surfaces must be
   // byte-for-byte unaffected by this chokepoint.
@@ -352,6 +372,19 @@ export function streamTurnResponse(input: {
             (succession ||
               sessionId === null ||
               isSessionWorkspaceContinuationToken(continuationToken));
+          if (attachments.length > 0) {
+            // Stored before the send so the transcript can resolve them the moment eve echoes the
+            // message. Best-effort: a storage failure costs the preview, never the turn.
+            try {
+              await storeAttachments({
+                projectId,
+                sessionId: activeSession.id,
+                attachments,
+              });
+            } catch (e) {
+              console.error(`${tag} storing attachments failed`, e);
+            }
+          }
           const workspace = workspaceRoute
             ? {
                 id: fohWorkspaceId(activeSession),
@@ -437,7 +470,7 @@ export function streamTurnResponse(input: {
                     releaseId: target.releaseId,
                     externalRunId: runId,
                     externalSessionId: sessionId,
-                    userMessage: message,
+                    userMessage: recordedMessage,
                     channel,
                   })
                     .then(() => undefined)
@@ -461,6 +494,9 @@ export function streamTurnResponse(input: {
                 break;
               case "text":
                 send({ type: "text", text: event.text });
+                break;
+              case "reasoning":
+                send({ type: "reasoning", text: event.text });
                 break;
               case "step":
                 send({ type: "step", step: toChatStep(event.step) });
@@ -706,7 +742,7 @@ export function streamTurnResponse(input: {
                   ),
                   externalSessionId: settled.sessionId,
                   result: settled,
-                  userMessage: message,
+                  userMessage: recordedMessage,
                   channel,
                   startedAt,
                   wallClockMs: Date.now() - startedAt.getTime(),

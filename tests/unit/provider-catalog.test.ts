@@ -9,6 +9,7 @@ import {
   normalizeOpenAiCatalog,
   validateProviderApiKey,
 } from "~/models/provider-catalog.server";
+import { CODEX_MODEL_SPECS } from "~/models/codex-catalog";
 
 const oldOpenRouterBase = process.env.HARNESST_OPENROUTER_API_BASE_URL;
 const oldAnthropicBase = process.env.HARNESST_ANTHROPIC_API_BASE_URL;
@@ -71,13 +72,17 @@ describe("OpenRouter provider catalog", () => {
 });
 
 describe("Codex provider catalog", () => {
-  it("includes curated per-model reasoning levels", () => {
+  it("carries each curated spec's reasoning levels onto its picker entry", () => {
     const models = listCodexModels();
-    expect(models.find((model) => model.id === "gpt-5.4")).toMatchObject({
-      supportedEfforts: ["none", "low", "medium", "high", "xhigh"],
-      providerDefaultEffort: "medium",
-    });
-    expect(models.every((model) => model.supportedEfforts?.length)).toBe(true);
+    expect(models.map((model) => model.id)).toEqual(
+      CODEX_MODEL_SPECS.map((spec) => spec.slug),
+    );
+    for (const spec of CODEX_MODEL_SPECS) {
+      expect(models.find((model) => model.id === spec.slug)).toMatchObject({
+        supportedEfforts: [...spec.supportedEfforts],
+        providerDefaultEffort: spec.providerDefaultEffort,
+      });
+    }
   });
 });
 

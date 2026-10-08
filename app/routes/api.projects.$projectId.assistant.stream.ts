@@ -9,6 +9,11 @@
 import { getSessionAuth } from "~/auth/session.server";
 import { data, redirect, type ActionFunctionArgs } from "react-router";
 
+import {
+  attachmentTitleSource,
+  parseAttachments,
+  readChatForm,
+} from "~/chat/attachments.server";
 import type { Target } from "~/chat/playground.server";
 import { asString, streamTurnResponse } from "~/chat/turn-stream.server";
 import { buildSystemNotes } from "~/chat/system-note";
@@ -38,10 +43,13 @@ export async function action(args: ActionFunctionArgs) {
   const project = requireRepo(
     await requireProject(auth, args.params.projectId),
   );
-  const form = await args.request.formData();
+  const form = await readChatForm(args.request);
   const playgroundSessionId = asString(form.get("playgroundSessionId")) || null;
   const message = asString(form.get("message")).trim();
-  if (!message) throw data({ error: "Type a message first." }, { status: 400 });
+  const attachments = await parseAttachments(form);
+  if (!message && attachments.length === 0) {
+    throw data({ error: "Type a message or attach a file first." }, { status: 400 });
+  }
 
   // Resolve (and if needed provision/wake) the project's assistant instance. A turn requires it
   // live; while it provisions the page shows a setup state and retries — so a non-live status is
@@ -83,7 +91,9 @@ export async function action(args: ActionFunctionArgs) {
   if (playgroundSessionId && !session) {
     throw data({ error: "That conversation was not found." }, { status: 404 });
   }
-  const title = session?.title ? null : titleFromMessage(message);
+  const title = session?.title ? null : titleFromMessage(
+    attachmentTitleSource(message, attachments),
+  );
   if (!session) {
     session = await createPlaygroundSession({
       projectId: project.id,
@@ -147,6 +157,7 @@ export async function action(args: ActionFunctionArgs) {
     target,
     session,
     message,
+    attachments,
     channel: "assistant",
     title,
     messagePrefix,

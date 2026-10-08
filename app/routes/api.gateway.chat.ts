@@ -166,7 +166,15 @@ export async function action({ request }: ActionFunctionArgs) {
     );
   }
 
-  const payload = buildResponsesPayload(body, parsed.slug);
+  const dropped = new Set<string>();
+  const payload = buildResponsesPayload(body, parsed.slug, {
+    onDropped: (type) => dropped.add(type),
+  });
+  if (dropped.size > 0) {
+    console.warn(
+      `[gateway] dropped content parts with no Responses equivalent: ${[...dropped].join(", ")}`,
+    );
+  }
   const headers: Record<string, string> = {
     authorization: `Bearer ${access.accessToken}`,
     "content-type": "application/json",
