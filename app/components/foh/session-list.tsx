@@ -28,8 +28,11 @@ const STATUS_LABEL: Record<FohSessionRow["fohStatus"], string> = {
   error: "failed",
 };
 
-/** Row actions: 44px touch targets that stay visible on touch screens, hover-revealed elsewhere. */
-const ACTION_BUTTON =
+/**
+ * Row actions: 44px touch targets that stay visible on touch screens, hover-revealed elsewhere.
+ * `rowPadding` reserves room for them; change both together.
+ */
+const ACTION_BUTTON_CLASS =
   "flex size-11 items-center justify-center rounded-sm p-1 sm:size-auto text-muted-foreground opacity-100 [@media(hover:hover)]:opacity-0 transition-opacity focus-visible:opacity-100 group-hover/session:opacity-100 hover:text-foreground";
 
 export function SessionStatusDot({
@@ -172,7 +175,7 @@ function EditableSessionRow({
 
   return (
     <li className="group/session relative">
-      {/* The link is a full-row sibling, not a parent: the editable title and archive control are
+      {/* The link is a full-row sibling, not a parent: the rename input and row actions are
           interactive in their own right and must never be nested inside an anchor. */}
       <NavLink
         to={`${basePath}/s/${session.id}`}
@@ -190,11 +193,7 @@ function EditableSessionRow({
       <div
         className={cn(
           "pointer-events-none relative flex items-start gap-2 py-2.5 pl-3",
-          editing
-            ? "pr-3"
-            : onArchive
-              ? "pr-24 sm:pr-14"
-              : "pr-12 sm:pr-9",
+          rowPadding(editing, Boolean(onArchive)),
         )}
       >
         <span className="mt-1.5">
@@ -249,42 +248,15 @@ function EditableSessionRow({
         </span>
       </div>
       {!editing && (
-        <div className="absolute right-1 top-1 flex items-center sm:top-2">
-          <button
-            type="button"
-            aria-label={`Rename ${title}`}
-            title="Rename"
-            className={ACTION_BUTTON}
-            onClick={(event) => {
-              event.stopPropagation();
-              setDraft(title);
-              setEditing(true);
-            }}
-            onKeyDown={(event) => event.stopPropagation()}
-          >
-            <Pencil className="size-3.5" aria-hidden />
-          </button>
-          {onArchive && (
-            <button
-              type="button"
-              aria-label={`Archive ${title}`}
-              title="Archive"
-              disabled={archiving}
-              className={cn(ACTION_BUTTON, archiving && "opacity-100")}
-              onClick={(event) => {
-                event.stopPropagation();
-                onArchive(session);
-              }}
-              onKeyDown={(event) => event.stopPropagation()}
-            >
-              {archiving ? (
-                <Loader2 className="size-3.5 animate-spin" aria-hidden />
-              ) : (
-                <Archive className="size-3.5" aria-hidden />
-              )}
-            </button>
-          )}
-        </div>
+        <SessionRowActions
+          title={title}
+          archiving={archiving}
+          onRename={() => {
+            setDraft(title);
+            setEditing(true);
+          }}
+          onArchive={onArchive && (() => onArchive(session))}
+        />
       )}
       {(refusal || rename.data?.error) && (
         <p className="relative px-3 pb-2 text-xs text-destructive" role="alert">
@@ -292,5 +264,61 @@ function EditableSessionRow({
         </p>
       )}
     </li>
+  );
+}
+
+/** Right padding that keeps the title clear of the action cluster; none while renaming. */
+function rowPadding(editing: boolean, archivable: boolean) {
+  if (editing) return "pr-3";
+  return archivable ? "pr-24 sm:pr-14" : "pr-12 sm:pr-9";
+}
+
+function SessionRowActions({
+  title,
+  archiving,
+  onRename,
+  onArchive,
+}: {
+  title: string;
+  archiving: boolean;
+  onRename: () => void;
+  onArchive?: () => void;
+}) {
+  return (
+    <div className="absolute right-1 top-1 flex items-center sm:top-2">
+      <button
+        type="button"
+        aria-label={`Rename ${title}`}
+        title="Rename session"
+        className={ACTION_BUTTON_CLASS}
+        onClick={(event) => {
+          event.stopPropagation();
+          onRename();
+        }}
+        onKeyDown={(event) => event.stopPropagation()}
+      >
+        <Pencil className="size-3.5" aria-hidden />
+      </button>
+      {onArchive && (
+        <button
+          type="button"
+          aria-label={`Archive ${title}`}
+          title="Archive"
+          disabled={archiving}
+          className={cn(ACTION_BUTTON_CLASS, archiving && "opacity-100")}
+          onClick={(event) => {
+            event.stopPropagation();
+            onArchive();
+          }}
+          onKeyDown={(event) => event.stopPropagation()}
+        >
+          {archiving ? (
+            <Loader2 className="size-3.5 animate-spin" aria-hidden />
+          ) : (
+            <Archive className="size-3.5" aria-hidden />
+          )}
+        </button>
+      )}
+    </div>
   );
 }
