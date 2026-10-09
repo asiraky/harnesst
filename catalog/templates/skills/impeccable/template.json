@@ -4,7 +4,7 @@
   "type": "skill",
   "name": "Impeccable",
   "description": "A comprehensive frontend design skill for creating, critiquing, refining, and quality-checking polished interfaces inside harnesst/eve agents.",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "eve": ">=0.22.0",
   "files": [
     "skills/impeccable/LICENSE",

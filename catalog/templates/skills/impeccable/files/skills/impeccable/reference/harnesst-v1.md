@@ -510,9 +510,10 @@ a new version instead of creating a competing artifact.
 
 ## 10. Preview constraints
 
-The preview is network-isolated. It must not require a CDN, remote font, remote image, form
-submission, `fetch`, or XHR. Inline data into HTML. Local sibling stylesheets, scripts, fonts, and
-images are allowed. Keep the bundle to at most 40 regular files with plain names and supported web
+The preview runs in a sandboxed iframe with no access to harnesst's cookies or storage. CDN
+scripts and styles, remote fonts and images, and `fetch` all work; `localStorage` is in-memory and
+resets on reload. Prefer local sibling stylesheets, scripts, fonts and images so the page still
+renders offline and on its share link. Keep the bundle to at most 40 regular files with plain names and supported web
 extensions; do not use symlinks or hidden files inside `artifacts/site`.
 
 Do not enter visualize, live-browser, comp-approval, or subagent flows. Browser use in this agent is

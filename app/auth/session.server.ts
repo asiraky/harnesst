@@ -238,14 +238,15 @@ function hardenDynamicResponse(response: Response): Response {
   response.headers.set("Referrer-Policy", "no-referrer");
   response.headers.set("Permissions-Policy", PERMISSIONS_POLICY);
   // A leaf route that set its OWN Content-Security-Policy keeps it, on the same principle as
-  // Cache-Control above. This exists for one caller — the sandboxed artifact preview (#291), whose
-  // whole safety story is a header set (`sandbox allow-scripts; default-src 'none'; …
-  // frame-ancestors <app-origin>`) that an unconditional `set` here would erase.
+  // Cache-Control above. The artifact routes are the callers: the page preview
+  // (`sandbox allow-scripts …; frame-ancestors <app-origin>`), the raw file and source routes
+  // (`sandbox` and/or `frame-ancestors 'self'`, so the panel can frame a PDF), and the public share
+  // route. An unconditional `set` here would erase the sandbox those responses depend on.
   //
   // X-Frame-Options goes with it, and must: XFO has no `frame-ancestors <origin>` equivalent (the
   // legacy `ALLOW-FROM` is dead in every current browser), so leaving `DENY` on would refuse the
-  // preview iframe outright. The route's own `frame-ancestors` is the stricter replacement — it
-  // names one origin where XFO could only say "nobody" or "same site".
+  // preview iframe outright. A route that wants framing restricted says so in its own
+  // `frame-ancestors`.
   if (response.headers.has("Content-Security-Policy")) {
     response.headers.delete("X-Frame-Options");
     return response;
