@@ -516,13 +516,9 @@ This worktree's branch was created from \`${baseBranch}\`. Any PR opened from th
 - Traffic splitter port: \`${ports.splitter}\` (\`HARNESST_SPLITTER_PORT\`)
 - Deployed-instance base port: \`${ports.instance}\` (\`HARNESST_INSTANCE_PORT\`)
 
-## How to start the dev server
+## Dev server
 
-From the worktree root:
-\`\`\`
-npm run dev
-\`\`\`
-This uses the worktree's \`.env.local\` overrides; the server binds to port ${ports.dev} and prints the app URL on its \`App:\` line.
+Use the \`dev\` skill to start it.
 
 For public testing through Cloudflare, run:
 \`\`\`
