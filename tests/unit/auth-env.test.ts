@@ -1,8 +1,9 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   assertProductionAuthEnvironment,
   devTrustedOrigins,
+  isDevTrustedOrigin,
 } from "~/lib/auth-env.server";
 
 const validProductionEnvironment: NodeJS.ProcessEnv = {
@@ -195,14 +196,18 @@ describe("production auth and email environment", () => {
 });
 
 describe("devTrustedOrigins", () => {
-  it("trusts the tailnet dev hostnames on the dev server's port", () => {
+  it("trusts the tailnet dev hostnames and loopback on the dev server's port", () => {
     expect(
-      devTrustedOrigins({ BETTER_AUTH_URL: "http://localhost:5274" }),
-    ).toEqual(["http://*.harnesst.test:5274"]);
+      devTrustedOrigins({ BETTER_AUTH_URL: "http://app.harnesst.test:5274" }),
+    ).toEqual([
+      "http://*.harnesst.test:5274",
+      "http://localhost:5274",
+      "http://127.0.0.1:5274",
+    ]);
   });
 
   it("falls back to the default dev port when BETTER_AUTH_URL is unset", () => {
-    expect(devTrustedOrigins({})).toEqual(["http://*.harnesst.test:5173"]);
+    expect(devTrustedOrigins({})).toContain("http://*.harnesst.test:5173");
   });
 
   it("trusts nothing extra in production", () => {
@@ -216,5 +221,36 @@ describe("devTrustedOrigins", () => {
 
   it("trusts nothing extra when BETTER_AUTH_URL is unparsable", () => {
     expect(devTrustedOrigins({ BETTER_AUTH_URL: "not a url" })).toEqual([]);
+  });
+});
+
+describe("isDevTrustedOrigin", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  function devServerOn(url: string) {
+    vi.stubEnv("NODE_ENV", "development");
+    vi.stubEnv("BETTER_AUTH_URL", url);
+  }
+
+  it("trusts any harnesst.test host and exact loopback on the dev port", () => {
+    devServerOn("http://app--feature-x.harnesst.test:5280");
+    expect(isDevTrustedOrigin("http://app.harnesst.test:5280")).toBe(true);
+    expect(isDevTrustedOrigin("http://localhost:5280")).toBe(true);
+    expect(isDevTrustedOrigin("http://127.0.0.1:5280")).toBe(true);
+  });
+
+  it("rejects other ports, lookalike hosts and loopback subdomains", () => {
+    devServerOn("http://app.harnesst.test:5280");
+    expect(isDevTrustedOrigin("http://localhost:5173")).toBe(false);
+    expect(isDevTrustedOrigin("http://evil-harnesst.test:5280")).toBe(false);
+    expect(isDevTrustedOrigin("http://preview.localhost:5280")).toBe(false);
+  });
+
+  it("trusts nothing in production", () => {
+    vi.stubEnv("NODE_ENV", "production");
+    vi.stubEnv("BETTER_AUTH_URL", "https://app.example.com");
+    expect(isDevTrustedOrigin("http://localhost:443")).toBe(false);
   });
 });

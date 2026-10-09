@@ -24,11 +24,20 @@ export function envIngressUrl(origin: string, environmentId: string, path = ""):
   return `${origin.replace(/\/+$/, "")}/e/${environmentId}${suffix}`;
 }
 
-/** True when the origin can't be reached by an external webhook (local development). */
+/**
+ * True when the origin can't be reached by an external webhook (local development): loopback, or
+ * a `.test` name that only resolves on the tailnet (scripts/dev-origin.mjs).
+ */
 export function isLocalOrigin(origin: string): boolean {
-  return (
+  if (
     origin.includes("localhost") ||
     origin.includes("127.0.0.1") ||
     origin.includes("0.0.0.0")
-  );
+  )
+    return true;
+  try {
+    return new URL(origin).hostname.endsWith(".test");
+  } catch {
+    return false;
+  }
 }

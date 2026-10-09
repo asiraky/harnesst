@@ -27,6 +27,7 @@ import {
 import { Badge } from "~/components/ui/badge";
 import { stripChannelContext } from "~/chat/channel-context";
 import { formatMs } from "~/lib/time";
+import { copyText } from "~/components/chat/clipboard";
 
 /** A run step as it arrives from the loader (drizzle row; `data` is free-form jsonb). */
 export interface StepView {
@@ -65,13 +66,11 @@ function CopyButton({ value, label }: { value: string; label: string }) {
       type="button"
       className="inline-flex items-center gap-1 rounded-md border px-2 py-1 text-xs text-muted-foreground transition hover:bg-muted"
       onClick={() => {
-        navigator.clipboard?.writeText(value).then(
-          () => {
-            setCopied(true);
-            setTimeout(() => setCopied(false), 1200);
-          },
-          () => {},
-        );
+        void copyText(value).then((ok) => {
+          if (!ok) return;
+          setCopied(true);
+          setTimeout(() => setCopied(false), 1200);
+        });
       }}
     >
       {copied ? <Check className="size-3" /> : <Copy className="size-3" />}
