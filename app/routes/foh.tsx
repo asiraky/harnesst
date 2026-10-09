@@ -31,8 +31,10 @@ import {
 import { AppSidebar } from "~/components/app-sidebar";
 import { InboxIndicator } from "~/components/foh/inbox";
 import { PresenceDot } from "~/components/foh/presence-dot";
+import { useOpenSessionId } from "~/components/foh/use-open-session-id";
 import { MarketingLanding } from "~/components/marketing/landing";
 import { loadFohSidebar } from "~/foh/sidebar.server";
+import { needsYouCount } from "~/foh/unread";
 import { appOrigin, isMarketingHost } from "~/lib/marketing-host.server";
 import { useLiveRevalidate } from "~/lib/use-live-revalidate";
 import { noindexMeta, pageMeta } from "~/lib/seo";
@@ -108,6 +110,9 @@ function FohShell({ data }: { data: ShellData }) {
   // over the pane stack: at lg- this sidebar shows only at `/`, and below md it is the whole
   // page there. Deeper routes hide it and render their own back button.
   const atHome = useLocation().pathname === "/";
+  // The open conversation is acknowledged by its page; its items leave the sidebar count now,
+  // matching the bell and session list, rather than after the read mark and a revalidation.
+  const openSessionId = useOpenSessionId();
   // The toggle only needs to translate URLs for repos the viewer can enter Build for.
   const repos: SurfaceRepo[] = teams
     .filter((team) => team.role === "write")
@@ -172,14 +177,12 @@ function FohShell({ data }: { data: ShellData }) {
                           <span className="min-w-0 flex-1 truncate">
                             {agent.name}
                           </span>
-                          {agent.needsYou > 0 && (
-                            <span
-                              className="flex h-4 min-w-4 items-center justify-center rounded-full bg-amber-500 px-1 text-[10px] font-semibold text-white"
-                              aria-label={`${agent.needsYou} pending`}
-                            >
-                              {agent.needsYou}
-                            </span>
-                          )}
+                          <NeedsYouBadge
+                            count={needsYouCount(
+                              agent.needsYouSessionIds,
+                              openSessionId,
+                            )}
+                          />
                         </NavLink>
                       </li>
                     ))}
@@ -207,5 +210,17 @@ function FohShell({ data }: { data: ShellData }) {
 
       <Outlet />
     </div>
+  );
+}
+
+function NeedsYouBadge({ count }: { count: number }) {
+  if (count <= 0) return null;
+  return (
+    <span
+      className="flex h-4 min-w-4 items-center justify-center rounded-full bg-amber-500 px-1 text-[10px] font-semibold text-white"
+      aria-label={`${count} pending`}
+    >
+      {count}
+    </span>
   );
 }

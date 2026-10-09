@@ -306,7 +306,10 @@ export async function reattachDelegation(
     const observed = Math.max(session.streamIndex, result?.streamIndex ?? 0);
     if (deps.now().getTime() < Date.parse(payload.deadlineAt)) {
       // Bump the row so `shouldSettleAbandonedSession` does not mistake a long silent tool call
-      // for a session abandoned by a dead drain.
+      // for a session abandoned by a dead drain. Only a slice that saw the stream advance counts
+      // as activity: an empty poll moving `lastEventAt` would mark the conversation unread
+      // for its viewers every tick. (A slice with no `done` reports no index, so its events
+      // surface at settle instead.)
       await deps
         .saveCursor({
           id: session.id,
@@ -315,6 +318,7 @@ export async function reattachDelegation(
           continuationToken: session.continuationToken,
           streamIndex: observed,
           status: "running",
+          livenessOnly: observed <= session.streamIndex,
         })
         .catch((error) =>
           console.error("[team] reattach cursor save failed:", error),

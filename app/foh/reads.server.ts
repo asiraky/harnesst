@@ -7,7 +7,12 @@
  */
 import type { DataStore } from "~/data/ports";
 import { acknowledgeVisibleInboxOnRead } from "~/foh/inbox.server";
-import type { PlaygroundSession } from "~/playground/sessions.server";
+// Function-level circular import (sessions.server ↔ inbox.server ↔ here): safe — only
+// referenced inside async function bodies, never during module evaluation.
+import {
+  listFohSessionsByIds,
+  type PlaygroundSession,
+} from "~/playground/sessions.server";
 import { getRuntime } from "~/seams/index.server";
 
 export async function markSessionRead(
@@ -19,4 +24,29 @@ export async function markSessionRead(
     await store.conversationReads.upsert(session.id, userId, session.lastEventAt);
   }
   await acknowledgeVisibleInboxOnRead(session.id, userId, store);
+}
+
+/**
+ * Mark read from the session row's CURRENT `lastEventAt`, for server paths that know the viewer
+ * has seen everything up to now without a round trip through the loader: the drain whose stream
+ * delivered `done` to its viewer, and the viewer's own Stop. Both write `lastEventAt` themselves
+ * after the viewer saw the content, so a mark taken from earlier loader data would leave the
+ * conversation unread once they leave. Archived or vanished rows are skipped — the read route
+ * refuses them too.
+ */
+export async function markSessionReadLatest(
+  sessionId: string,
+  userId: string,
+  deps: {
+    store?: DataStore;
+    sessionsByIds?: (ids: string[]) => Promise<
+      Array<Pick<PlaygroundSession, "id" | "lastEventAt" | "archivedAt">>
+    >;
+  } = {},
+): Promise<void> {
+  const [session] = await (deps.sessionsByIds ?? listFohSessionsByIds)([
+    sessionId,
+  ]);
+  if (!session || session.archivedAt) return;
+  await markSessionRead(session, userId, deps.store);
 }

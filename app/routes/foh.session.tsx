@@ -81,6 +81,7 @@ import {
   repairFohSessionState,
 } from "~/foh/needs-you";
 import { fohSessionStatus } from "~/foh/status";
+import { SESSION_READ_FETCHER_KEY } from "~/foh/unread";
 import {
   cacheCoversCompletedLiveTurn,
   guardStaleLiveUpdate,
@@ -425,7 +426,7 @@ export default function FohSession({ loaderData }: Route.ComponentProps) {
     transcriptIsPredecessorOnly,
     historyError,
   } = loaderData;
-  const read = useFetcher<{ ok: true }>({ key: "foh-session-read" });
+  const read = useFetcher<{ ok: true }>({ key: SESSION_READ_FETCHER_KEY });
   const { submit: markRead } = read;
   const revalidator = useRevalidator();
 
@@ -476,8 +477,8 @@ export default function FohSession({ loaderData }: Route.ComponentProps) {
   const stopRequestedRef = useRef(false);
   // The session on screen, readable from inside a long-lived send() closure (issue #221
   // finding 6): a reader started for session A must stop touching shared state once the
-  // user navigates to session B.
-  const currentSessionRef = useRef(sessionId);
+  // user navigates to session B. Null once the page has unmounted.
+  const currentSessionRef = useRef<string | null>(sessionId);
 
   // Switching sessions drops any live view from the previous one and aborts its browser
   // reader. Only the client copy of the stream stops — the server drain is detached and
@@ -493,6 +494,18 @@ export default function FohSession({ loaderData }: Route.ComponentProps) {
     setSendError(null);
     setSendErrorModel(null);
   }, [sessionId]);
+
+  // Leaving the conversation altogether (to the agent's list, another page) must stop the
+  // reader too, not just switching sessions: the server marks the viewer read once its stream
+  // delivers `done`, and a reader left draining in the background would receive it for them.
+  useEffect(
+    () => () => {
+      currentSessionRef.current = null;
+      streamAbortRef.current?.abort();
+      streamAbortRef.current = null;
+    },
+    [],
+  );
 
   const liveSessionMismatch = live
     ? liveTurnIsForDifferentSession(live.playgroundSessionId, sessionId)

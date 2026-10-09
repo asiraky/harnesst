@@ -27,6 +27,45 @@ export function inboxItemsForOpenSession<
   return visible.length === items.length ? items : visible;
 }
 
+/** Sidebar needs-you count, leaving out the open conversation like the bell and session list. */
+export function needsYouCount(
+  sessionIds: readonly string[],
+  openSessionId: string | null,
+): number {
+  if (!openSessionId) return sessionIds.length;
+  return sessionIds.filter((id) => id !== openSessionId).length;
+}
+
+/**
+ * Fetcher key of the session page's read mark. The bell watches the same fetcher so its catch-up
+ * mark for late items holds off while the page's own is in flight.
+ */
+export const SESSION_READ_FETCHER_KEY = "foh-session-read";
+
+/**
+ * Where to post a catch-up read mark for the open conversation's pending inbox items, with a
+ * stable `key` over their ids — null when there are none. The bell polls on its own clock, so it
+ * can see an item filed after the session page's read mark (a `finished` item written just after
+ * the cursor save it acknowledged). Nothing on the page would acknowledge that one, so the bell
+ * does: a new key means a read mark is due.
+ */
+export function openSessionLateReadTarget(
+  items: ReadonlyArray<{ id: string; sessionId: string; projectId: string }>,
+  openSessionId: string | null,
+): { key: string; projectId: string; sessionId: string } | null {
+  if (!openSessionId) return null;
+  const open = items.filter((item) => item.sessionId === openSessionId);
+  if (open.length === 0) return null;
+  return {
+    key: open
+      .map((item) => item.id)
+      .sort()
+      .join(","),
+    projectId: open[0].projectId,
+    sessionId: openSessionId,
+  };
+}
+
 const TITLE_COUNT_PREFIX = /^\((?:\d+|99\+)\)\s+/;
 
 /** Keep the browser tab on the same count shown by the inbox bell. */

@@ -12,6 +12,7 @@ import { liveTargets } from "~/chat/playground.server";
 import { asString, cancelActiveTurn } from "~/chat/turn-stream.server";
 import { resolveInboxForSession } from "~/foh/inbox.server";
 import { requireFohProject } from "~/foh/guard.server";
+import { markSessionReadLatest } from "~/foh/reads.server";
 import {
   getFohSessionForViewer,
   markPlaygroundSessionStopped,
@@ -76,6 +77,14 @@ export async function action(args: ActionFunctionArgs) {
   await markPlaygroundSessionStopped({ id: session.id, target });
   // The stop clears pendingInputAt (sessions.server); the bell items go with it.
   await resolveInboxForSession(session.id);
+  // The stop is the viewer's own action on a conversation they're watching, but it moved
+  // `lastEventAt` after their page's last read mark. Acknowledge it here, or leaving straight
+  // after stopping shows their own stop as unread. Best-effort: the stop already happened.
+  try {
+    await markSessionReadLatest(session.id, auth.user.id);
+  } catch (e) {
+    console.error("[foh/stop] read mark failed", e);
+  }
 
   return {
     ok: true as const,
