@@ -977,9 +977,9 @@ export default function FohSession({ loaderData }: Route.ComponentProps) {
                 at={e.at}
               />
             ) : e.role === "artifact" ? (
-              // A published image (#290) or page (#291) is not the reply — it sits under the turn
-              // that made it as its own card, and carries no answer/retry affordances. A page card
-              // opens the sandboxed preview panel; an image card ignores `onOpen`.
+              // A published artifact is not the reply — it sits under the turn that made it as its
+              // own card, and carries no answer/retry affordances. Every card opens the artifact
+              // panel; an image also keeps its inline render and lightbox.
               e.artifact && (
                 <ArtifactCard
                   key={e.id}

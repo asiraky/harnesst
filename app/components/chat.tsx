@@ -1,5 +1,5 @@
 /**
- * Shared chat surface pieces (assistant + playground): a transcript that owns its scroll
+ * Shared chat surface pieces (assistant + Front of House chat): a transcript that owns its scroll
  * region and keeps itself pinned to the newest message (unless the user scrolls up to
  * read), user/assistant bubbles, a typing indicator for an in-flight turn, a collapsible
  * steps card for agent tool activity, and a composer that submits on Enter (Shift+Enter
@@ -869,7 +869,7 @@ const ALERT_STYLES: Record<
  * Pending agent input requests (ask_question / tool approvals), rendered inline at the end
  * of the turn so a question never gets lost after a reply that trails off with "one decision
  * for you:". Rendered unboxed (a labelled section, not a nested card) so it sits cleanly
- * whether the surface wraps it in a chat bubble (playground) or an open turn column
+ * whether the surface wraps it in a chat bubble (Front of House) or an open turn column
  * (assistant), instead of stacking a box inside a bubble.
  *
  * The shape of the ask drives the affordance:
