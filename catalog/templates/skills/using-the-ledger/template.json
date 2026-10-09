@@ -1,0 +1,13 @@
+{
+  "id": "using-the-ledger",
+  "type": "skill",
+  "name": "Using The Ledger",
+  "description": "Use when a ledger wake arrives or before recording evidence, handing code to infra for a preview, moving work, resolving a block, or relaying human approval.",
+  "version": "0.2.0",
+  "eve": ">=0.22.0",
+  "subagentCompatible": true,
+  "files": [
+    "skills/using-the-ledger.md"
+  ],
+  "assistantSkill": "assistant-skill.md"
+}

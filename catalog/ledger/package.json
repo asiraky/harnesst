@@ -1,0 +1,12 @@
+{
+  "name": "harnesst-ledger-backend",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test:approvals": "node --experimental-strip-types --test tests/approvals.test.mjs"
+  },
+  "dependencies": {
+    "@mayiapp/sdk": "0.3.0",
+    "postgres": "^3.4.9"
+  }
+}

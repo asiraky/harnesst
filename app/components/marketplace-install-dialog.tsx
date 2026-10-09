@@ -46,7 +46,9 @@ import type {
 } from "~/routes/api.projects.$projectId.marketplace";
 
 /** Everything but `agent` installs INTO an existing agent. */
-const INTO_AGENT_TYPES = TEMPLATE_TYPES.filter((t) => t !== "agent");
+const INTO_AGENT_TYPES = TEMPLATE_TYPES.filter(
+  (t) => t !== "agent" && t !== "team",
+);
 
 function targetLabel(t: Pick<MarketplaceTarget, "member" | "subagentPath">) {
   return [t.member, ...t.subagentPath.split("/").filter(Boolean)].join(" › ");
@@ -257,7 +259,9 @@ function CatalogResults({
           projectId={projectId}
           target={target}
           installed={
-            tpl.type !== "agent" && installed.has(`${tpl.type}/${tpl.id}`)
+            tpl.type !== "agent" &&
+            tpl.type !== "team" &&
+            installed.has(`${tpl.type}/${tpl.id}`)
           }
           returnTo={returnTo}
         />
@@ -279,8 +283,9 @@ function TemplateRow({
   installed: boolean;
   returnTo: string;
 }) {
-  const asNewAgent = tpl.type === "agent";
-  // No roster yet (a brand-new team): only an agent template has somewhere to go.
+  const asTeam = tpl.type === "team";
+  const asNewAgent = tpl.type === "agent" || asTeam;
+  // No roster yet (a brand-new team): only an agent or team template has somewhere to go.
   const reachable = asNewAgent || target !== null;
   const href = installWizardHref({
     type: tpl.type,
@@ -319,7 +324,13 @@ function TemplateRow({
           className="shrink-0"
         >
           <Link to={href}>
-            {asNewAgent ? "Add as agent" : installed ? "Update" : "Install"}
+            {asTeam
+              ? "Add team"
+              : asNewAgent
+                ? "Add as agent"
+                : installed
+                  ? "Update"
+                  : "Install"}
           </Link>
         </Button>
       ) : (

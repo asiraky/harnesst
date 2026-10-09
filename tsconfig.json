@@ -13,7 +13,10 @@
     // The bundled assistant eve project (docs/ASSISTANT.md) is a separate project compiled by
     // `eve build` inside its own image — it imports `eve` (not a harnesst dependency), so the
     // control-plane tsc must not typecheck it.
-    "assistant-template/**/*"
+    "assistant-template/**/*",
+    // Deno Edge Functions require explicit .ts imports; checked by ledger:typecheck.
+    "catalog/ledger/supabase/functions/**/*",
+    "catalog/ledger/hosted/supabase/functions/**/*"
   ],
   "compilerOptions": {
     "lib": ["DOM", "DOM.Iterable", "ES2022"],

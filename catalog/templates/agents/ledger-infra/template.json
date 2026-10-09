@@ -1,0 +1,36 @@
+{
+  "id": "ledger-infra",
+  "type": "agent",
+  "name": "Ledger Infra",
+  "description": "The team\u2019s infrastructure engineer. Owns cloud resources, CI and deployment, creates the team's repositories and connects them to the ledger. The only member whose GitHub App can create repositories and change CI configuration.",
+  "version": "0.2.0",
+  "eve": ">=0.22.0",
+  "subagentCompatible": false,
+  "files": [
+    "agent.ts",
+    "instructions.md"
+  ],
+  "assistantSkill": "assistant-skill.md",
+  "includes": [
+    {
+      "type": "bundle",
+      "id": "ledger"
+    },
+    {
+      "type": "bundle",
+      "id": "github-bundle"
+    },
+    {
+      "type": "skill",
+      "id": "dev-toolchain"
+    },
+    {
+      "type": "bundle",
+      "id": "cloudflare-bundle"
+    },
+    {
+      "type": "skill",
+      "id": "ledger-repo-onboarding"
+    }
+  ]
+}

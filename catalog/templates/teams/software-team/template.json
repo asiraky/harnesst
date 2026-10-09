@@ -1,0 +1,18 @@
+{
+  "id": "software-team",
+  "type": "team",
+  "name": "Software team",
+  "description": "A four-agent software team that works across your GitHub repositories: intake grills requests into specs, the architect designs, the implementer builds, reviews and QAs pull requests, and infra creates repositories, wires CI and deploys to Cloudflare. Work is tracked in a Supabase ledger with May I approval before merge.",
+  "version": "0.1.0",
+  "eve": ">=0.22.0",
+  "subagentCompatible": false,
+  "files": [],
+  "assistantSkill": "assistant-skill.md",
+  "roster": [
+    { "role": "intake", "agent": "ledger-intake", "name": "hermes" },
+    { "role": "architect", "agent": "ledger-architect", "name": "athena" },
+    { "role": "implementer", "agent": "ledger-implementer", "name": "icarus" },
+    { "role": "infra", "agent": "ledger-infra", "name": "atlas" }
+  ],
+  "setup": "Installing the team adds all four members to the team repository in one change and opens the setup wizard, which walks through everything the team needs in order: shared secrets (Cloudflare), the Supabase ledger, publishing, one GitHub App per member (created under your GitHub organization and installed on All repositories), May I approvals and agent wakes. Close it any time; the team's Setup link resumes where you left off.\n\nGitHub access differs by role. Every member's App can read and write code, branches, pull requests and issues (labels, comments, closing). Only infra's App also gets Administration, Workflows, Actions secrets and variables, so infra alone can create repositories and connect them to the ledger. Repositories are created under an organization; GitHub Apps cannot create repositories in a personal account.\n\nWho merges is the repository's choice: the ledger workflow merges an approved head after May I approval, and branch protection decides whether anyone else can.\n\nOnce set up, talk to intake: \"there's a bug in owner/repo: ...\" or \"build me a new app called ...\"."
+}

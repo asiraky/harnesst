@@ -34,7 +34,6 @@ import {
   PageHeader,
   SectionHeader,
   accentChip,
-  repoCrumbs,
 } from "~/components/shell";
 import { CATEGORY_META } from "~/components/resource-category";
 import { Alert, AlertDescription, AlertTitle } from "~/components/ui/alert";
@@ -118,6 +117,7 @@ import type { Route } from "./+types/projects.$projectId";
 
 /** Roster card data for the team landing view. */
 interface MemberSummary {
+  ledgerInstallation?: string;
   name: string;
   model: string | null;
   tools: number;
@@ -349,6 +349,8 @@ export const loader = (args: LoaderFunctionArgs) =>
           source.files["harnesst-lock.json"] ?? null,
           drafts.map((d) => ({ path: d.path, content: d.content })),
         );
+        const usesLedger = lock.installs.some(e => e.secrets?.some(s => s.name === "LEDGER_ACTOR_KEY"));
+        const ledgerInstallation = usesLedger ? (await (await import("~/marketplace/provisioning.server")).getProvisioning(project.id))?.status ?? "pending" : undefined;
         const members =
           view === "team"
             ? await Promise.all(
@@ -372,6 +374,7 @@ export const loader = (args: LoaderFunctionArgs) =>
                     channels: c.channels.length,
                     subagents,
                     secretsMissing: requiredState.missing.length,
+                    ledgerInstallation,
                   };
                 }),
               )
@@ -598,20 +601,13 @@ export default function ProjectDetail({
 
   return (
     <AppShell
-      breadcrumbs={repoCrumbs({
-        projectId: project.id,
-        repoName: project.name,
-        isTeam: view === "member" && teamLayout,
-        agentName: active?.name,
-        subagentPath: segments,
-      })}
+      nav={
+        <AgentNav
+          base={ctx}
+          level={level}
+        />
+      }
     >
-      <AgentNav
-        base={ctx}
-        level={level}
-        roster={roster}
-        activeAgent={memberSegment ?? undefined}
-      />
       {view === "team" ? (
         <PageHeader
           icon={Users}
@@ -925,6 +921,9 @@ function TeamSurface({
 
   return (
     <div className="space-y-6">
+      {members.some(m=>m.ledgerInstallation && m.ledgerInstallation !== "ready") && (
+        <Card><CardContent className="pt-6"><p>Setup isn&apos;t finished. Complete it before using this team.</p><Link className="underline" to={`${base}/setup`}>Continue setup</Link></CardContent></Card>
+      )}
       {showIntro && (
         <Card className="relative border-primary/20 bg-muted/30">
           <Button
@@ -961,28 +960,28 @@ function TeamSurface({
       )}
 
       <div className="grid gap-4 sm:grid-cols-2">
-        {/* The card is not one big link: its subagent rows are links of their own (issue #344),
-            and an anchor can't nest inside an anchor. The member's own link covers the title
-            and the counts, which is everything that means "open this member". */}
+        {/* Stretch the member link over the card; subagent links sit above it so each
+            remains a separate navigation target without nesting anchors. */}
         {members.map((m) => {
           const memberHref = contextPath(projectId, m.name);
           return (
             <Card
               key={m.name}
-              className="h-full transition-colors hover:border-ring/60"
+              className="relative h-full transition-colors hover:ring-ring/60 focus-within:ring-2 focus-within:ring-ring"
             >
               <CardHeader className="pb-3">
-                <div className="flex items-center justify-between gap-2">
-                  <CardTitle className="truncate text-base">
+                <div className="flex min-w-0 flex-col gap-2">
+                  <CardTitle className="min-w-0 break-words text-base">
                     <Link
                       to={memberHref}
                       prefetch="intent"
-                      className="underline-offset-4 hover:underline"
+                      className="inline-flex min-h-11 items-center underline-offset-4 after:absolute after:inset-0 hover:underline focus-visible:outline-none"
+                      aria-label={`Open ${m.name}`}
                     >
                       {m.name}
                     </Link>
                   </CardTitle>
-                  <span className="flex shrink-0 items-center gap-1.5">
+                  <span className="flex min-w-0 flex-wrap items-center gap-1.5">
                     {m.secretsMissing > 0 && (
                       <Badge
                         variant="outline"
@@ -992,14 +991,15 @@ function TeamSurface({
                         {m.secretsMissing === 1 ? "" : "s"} missing
                       </Badge>
                     )}
-                    <Badge variant="secondary" className="font-mono text-xs">
-                      {m.model ?? "no model"}
+                    <Badge variant="secondary" className="max-w-full font-mono text-xs">
+                      <span className="truncate" title={m.model ?? undefined}>
+                        {m.model ?? "no model"}
+                      </span>
                     </Badge>
                   </span>
                 </div>
               </CardHeader>
               <CardContent className="pt-0">
-                <Link to={memberHref} prefetch="intent" className="block">
                 <ul className="flex flex-wrap gap-x-4 gap-y-1 text-sm text-muted-foreground">
                   <li className="flex items-center gap-1.5">
                     <span
@@ -1037,7 +1037,6 @@ function TeamSurface({
                     {m.channels} channel{m.channels === 1 ? "" : "s"}
                   </li>
                 </ul>
-                </Link>
                 {m.subagents.length > 0 && (
                   <div className="mt-3 border-t pt-3">
                     <div className="mb-1.5 flex flex-wrap items-center gap-2">
@@ -1062,7 +1061,7 @@ function TeamSurface({
                             to={subagentContextPath(projectId, m.name, [
                               s.name,
                             ])}
-                            className="shrink-0 font-mono underline-offset-4 hover:underline"
+                            className="relative z-10 inline-flex min-h-11 shrink-0 items-center font-mono underline-offset-4 hover:underline"
                           >
                             {s.name}
                           </Link>

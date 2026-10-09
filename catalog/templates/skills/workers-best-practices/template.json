@@ -1,0 +1,18 @@
+{
+  "id": "workers-best-practices",
+  "type": "skill",
+  "name": "Workers Best Practices",
+  "description": "Cloudflare Workers best practices for production applications. Use when writing, reviewing, or configuring Workers.",
+  "version": "0.1.0",
+  "eve": ">=0.22.0",
+  "subagentCompatible": true,
+  "files": [
+    "skills/workers-best-practices/LICENSE",
+    "skills/workers-best-practices/SKILL.md",
+    "skills/workers-best-practices/VENDORED.md",
+    "skills/workers-best-practices/references/configuration.md",
+    "skills/workers-best-practices/references/platform-apis.md",
+    "skills/workers-best-practices/references/runtime-patterns.md"
+  ],
+  "assistantSkill": "assistant-skill.md"
+}

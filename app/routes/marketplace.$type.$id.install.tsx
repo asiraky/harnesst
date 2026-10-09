@@ -27,6 +27,7 @@ import {
   type LoaderFunctionArgs,
 } from "react-router";
 
+import { ensureProvisioning } from "~/marketplace/provisioning.server";
 import { COPY } from "~/components/secrets-card";
 
 import { TYPE_META, TypeBadge } from "~/components/marketplace-type-badge";
@@ -65,7 +66,6 @@ import { ZOD_PACKAGE, ZOD_VERSION } from "~/eve/agentModule";
 import { subagentRootFor } from "~/eve/parse";
 import { getAgentSource } from "~/github/cached.server";
 import { fetchAgentSource, readAgentFile } from "~/github/repo.server";
-import { contextPath } from "~/lib/paths";
 import {
   catalogProviderEvidence,
   catalogLocator,
@@ -889,10 +889,15 @@ export async function action(args: ActionFunctionArgs) {
       }
     }
 
+    if (template.manifest.provisioning?.includes("supabase-ledger")) {
+      await ensureProvisioning(project.id);
+    }
+    // Every install hands off to the setup wizard, scoped to the agent it landed on: it lists
+    // whatever is still missing (or says setup is complete) and links on to publish.
     const memberName =
-      target.kind === "new-member" ? null : (target.memberName ?? undefined);
+      target.kind === "new-member" ? target.name : target.memberName;
     throw redirect(
-      `${contextPath(project.id, memberName ?? undefined)}/deployment?installed=${encodeURIComponent(id)}`,
+      `/repos/${project.slug}/setup${memberName ? `?member=${encodeURIComponent(memberName)}` : ""}`,
     );
   } catch (error) {
     if (error instanceof Response) throw error;

@@ -1,0 +1,14 @@
+{
+  "include": ["functions/**/*.ts", "../hosted/supabase/functions/**/*.ts"],
+  "compilerOptions": {
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "allowImportingTsExtensions": true,
+    "noEmit": true,
+    "strict": true,
+    "skipLibCheck": true,
+    "paths": {"@mayiapp/sdk/webhook-verifier": ["../node_modules/@mayiapp/sdk/dist/webhook-verifier.d.ts"]}
+  }
+}

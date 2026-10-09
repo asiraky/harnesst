@@ -52,6 +52,9 @@ export default [
   // Artifact publish (#290): an agent files an image it produced. Same bearer story as park, and
   // likewise kept above the :projectId routes so the static segment can't be swallowed.
   route("api/foh/artifacts", "routes/api.foh.artifacts.ts"),
+  // Team artifacts: a teammate lists and fetches what any agent in the repo published. Same
+  // bearer and static-segment placement as the publish route above.
+  route("api/foh/team-artifacts", "routes/api.foh.team-artifacts.ts"),
   // Agent-initiated conversations (#288 3c): the baked notify-user tool posts here. Same
   // bearer auth and the same static-segment placement rule as the park route above.
   route("api/foh/notify", "routes/api.foh.notify.ts"),
@@ -110,10 +113,18 @@ export default [
   // Build — every back-of-house page shares one pathless layout whose loader feeds the sidebar
   // (routes/build.tsx). Resource routes are registered outside it: they render nothing.
   layout("routes/build.tsx", [
+    // The setup wizard: everything an install still needs (secrets, ledger, publish, GitHub Apps,
+    // connections, approvals), derived from current state for one repo.
+    route("repos/:projectId/setup", "routes/projects.$projectId.setup.tsx"),
     route("dashboard", "routes/dashboard.tsx"),
     // Recruit — the marketplace (PRD §7.8, M6). Browse (index.json) + a template detail page.
     route("marketplace", "routes/marketplace.tsx"),
     route("marketplace/:type/:id", "routes/marketplace.$type.$id.tsx"),
+    // Team templates install every roster agent at once — static, so it wins over `:type`.
+    route(
+      "marketplace/team/:id/install",
+      "routes/marketplace.team.$id.install.tsx",
+    ),
     route(
       "marketplace/:type/:id/install",
       "routes/marketplace.$type.$id.install.tsx",

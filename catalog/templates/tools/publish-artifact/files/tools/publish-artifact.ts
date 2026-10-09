@@ -52,30 +52,35 @@ async function readUpload(
 // unknown formats as downloads). A PAGE is agent-authored HTML, so harnesst never serves it
 // same-origin-and-trusted: it opens through URLs whose responses sandbox themselves into an opaque
 // origin (no cookies, no harnesst storage) — the in-app preview, and since issue #370 the stable
-// public `shareUrl` every publish returns, which anyone can open with no sign-in. Inside that
+// public `shareUrl` a background publish returns, which anyone can open with no sign-in. Inside that
 // sandbox the page may use the network: CDN scripts, styles and fonts, and fetch() of its own
 // sibling files, all work.
 //
 // The unit is a NAME, not a file: publishing the same name again appends a VERSION to the same
 // artifact instead of creating a second one, which is what makes the "show me" → "change it" →
-// "show me again" loop read as one thing being refined. In a live conversation the artifact also
-// lands as a card there; from a background run there is no conversation and no card (#370) — the
-// artifact belongs to the agent, reachable through its shareUrl and the repo's Artifacts page.
+// "show me again" loop read as one thing being refined. In a live conversation the artifact lands
+// as a card, and the card is the user's only way in: they are not developers, so the result holds
+// no URL the model could paste instead. From a background run there is no conversation and no card
+// (#370) — the artifact belongs to the agent, reachable through its shareUrl and the repo's
+// Artifacts page.
 //
 // HARNESST_FOH_ARTIFACTS_URL and HARNESST_TEAM_TOKEN are injected at deploy when this tool is
 // installed; both absent means the agent is running somewhere that has no Front of House, which is
 // reported as an ordinary refusal rather than a crash.
 export default defineTool({
   description:
-    "Publish a file from /workspace/home as durable evidence the user can open. Images render, " +
-    "HTML pages open in a sandboxed live preview, PDFs open in a viewer, and any other file — " +
+    "Publish a file from /workspace/home as a card in the conversation, which is how the user " +
+    "opens it: images render on the card, HTML pages open from it in a sandboxed live preview " +
+    "that can pop out to its own browser tab, PDFs open in a viewer, and any other file — " +
     "markdown, CSV, JSON, code or text, audio, video, or anything else — opens in a matching " +
-    "viewer or as a download. Files are capped at 25 MB. To revise something, publish the same " +
-    "file name again — the existing artifact updates to a new version instead of duplicating. " +
-    "Every publish returns a stable public shareUrl anyone can open without signing in — quote " +
-    "it in your reply when the user should share the result. Works from a live conversation (the " +
-    "file also lands as a card there) and from background/scheduled runs (no card; the shareUrl " +
-    "and the repository's Artifacts page are how people reach it).",
+    "viewer or as a download. Point the user to the card — it is their link, so a " +
+    "live-conversation publish returns no URL to pass on. To revise something, publish the same " +
+    "file name again: the card updates to a new version instead of duplicating. Publishing again " +
+    "in a later turn, changed or not, also shows the card at that point in the conversation, so " +
+    "when the user asks to see it again, publish it again. Files are capped at 25 MB. A " +
+    "background or scheduled run has no conversation and so no card: its publish returns a " +
+    "public shareUrl anyone can open without signing in, and that link belongs in what the run " +
+    "reports.",
   inputSchema: z.object({
     path: z
       .string()
@@ -156,11 +161,13 @@ export default defineTool({
             /** Immutable id for this exact published version. */
             artifactVersionId: string;
             kind: string;
-            /** Null for a page: it is reachable only through the preview the user opens. */
+            /** True when it landed as a card in the live conversation — the user's way in. */
+            card: boolean;
+            /** Background runs only, and null for a page: an authenticated app path. */
             url: string | null;
             /**
-             * Stable PUBLIC link to the artifact's newest version — no sign-in needed, safe to
-             * quote in a reply or send to a channel. Null only when sharing was revoked.
+             * Background runs only: stable PUBLIC link to the newest version, no sign-in needed —
+             * what a card-less run reports. Null for a card publish and when sharing was revoked.
              */
             shareUrl: string | null;
             name: string;

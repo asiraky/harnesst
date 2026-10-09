@@ -54,7 +54,6 @@ import {
   AppShell,
   PageHeader,
   SectionHeader,
-  repoCrumbs,
   type NavLevel,
 } from "~/components/shell";
 import { Alert, AlertDescription, AlertTitle } from "~/components/ui/alert";
@@ -173,6 +172,7 @@ import {
   type RequiredSecretComputed,
   type SecretIntentInput,
 } from "~/project/secrets.server";
+import { LEDGER_KEYS } from "~/marketplace/provisioning";
 import { SecretsCard } from "~/components/secrets-card";
 import { SharedSecretsSection } from "~/components/shared-secrets-section";
 import { TeamLinksSection } from "~/components/team-links-section";
@@ -1622,21 +1622,13 @@ export default function Settings({
 
   return (
     <AppShell
-      breadcrumbs={repoCrumbs({
-        projectId: project.slug,
-        repoName: project.name,
-        isTeam: memberSegment !== null,
-        agentName: activeAgent,
-        subagentPath,
-        tail: [{ label: "Settings" }],
-      })}
+      nav={
+        <AgentNav
+          base={base}
+          level={level}
+        />
+      }
     >
-      <AgentNav
-        base={base}
-        level={level}
-        roster={roster}
-        activeAgent={memberSegment ?? undefined}
-      />
       <PageHeader
         icon={Settings2}
         accent="brand"
@@ -1751,6 +1743,10 @@ export default function Settings({
       )}
 
       <div className="space-y-10">
+        {loaderData.requiredSecretNames.includes("LEDGER_ACTOR_KEY") && <Alert>
+          <AlertTitle>Ledger bundle installation</AlertTitle>
+          <AlertDescription>Harnesst supplies the ledger connection and team credentials during installation. <Link className="underline" to={`/repos/${project.slug}/setup`}>Continue setup</Link></AlertDescription>
+        </Alert>}
         {(showMember || nested) && <ModelSection loaderData={loaderData} />}
         {showRepo && isTeam && roster.length > 0 && (
           <section>
@@ -1779,11 +1775,11 @@ export default function Settings({
             activeAgent={activeAgent}
             isTeam={isTeam}
             envs={loaderData.envs.map((e) => ({ id: e.id, name: e.name }))}
-            secrets={loaderData.secrets}
+            secrets={loaderData.secrets.filter(s => !LEDGER_KEYS.includes(s.key))}
             initialEnvId={loaderData.scope.environmentId}
             secretsConfigured={loaderData.secretsConfigured}
             secretsError={loaderData.secretsError}
-            required={loaderData.requiredSecrets.map((r) => ({
+            required={loaderData.requiredSecrets.filter(r => !LEDGER_KEYS.includes(r.name)).map((r) => ({
               ...r,
               sharedExists: loaderData.sharedSecrets.some(
                 (s) => s.key === r.name,

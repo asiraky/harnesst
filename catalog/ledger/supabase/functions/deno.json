@@ -1,0 +1,5 @@
+{
+  "imports": {
+    "@mayiapp/sdk/webhook-verifier": "npm:@mayiapp/sdk@0.3.0/webhook-verifier"
+  }
+}

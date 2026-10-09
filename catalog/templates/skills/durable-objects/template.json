@@ -1,0 +1,18 @@
+{
+  "id": "durable-objects",
+  "type": "skill",
+  "name": "Durable Objects",
+  "description": "Build, debug, or review Cloudflare Durable Objects code for persistent state and coordination.",
+  "version": "0.1.0",
+  "eve": ">=0.22.0",
+  "subagentCompatible": true,
+  "files": [
+    "skills/durable-objects/LICENSE",
+    "skills/durable-objects/SKILL.md",
+    "skills/durable-objects/VENDORED.md",
+    "skills/durable-objects/references/rules.md",
+    "skills/durable-objects/references/testing.md",
+    "skills/durable-objects/references/workers.md"
+  ],
+  "assistantSkill": "assistant-skill.md"
+}

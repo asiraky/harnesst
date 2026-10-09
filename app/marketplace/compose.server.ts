@@ -28,6 +28,7 @@
  *  - sandbox    one merged setup: bootstrap concatenated includes-first then parent-last; env
  *               merged with the parent winning collisions; revalidationKey = the non-empty keys
  *               joined with "|" (includes-first, parent-last).
+ *  - github     App permissions unioned across the tree; write beats read.
  *  - model/eve  the parent's only — an include never dictates the host agent's model or eve range.
  *
  * The resolved `hash` is the PARENT's OWN content hash (own manifest + own files) so it still
@@ -35,10 +36,12 @@
  * content hash. Both use the shared hash rule (hash.server.ts) — never a fork.
  */
 import { CatalogTemplateUnavailableError } from "./catalog-errors";
-import type {
-  AuthScopeGroup,
-  TemplateManifest,
-  TemplateType,
+import {
+  mergeGitHubPermissions,
+  type AuthScopeGroup,
+  type GitHubPermissions,
+  type TemplateManifest,
+  type TemplateType,
 } from "./manifest";
 import { templateContentHash } from "./hash.server";
 import type { CatalogSource, CatalogTemplate } from "~/seams/types";
@@ -341,6 +344,14 @@ async function resolve(
   // stripped so the lock's dependency/secret snapshots are exactly the flattened truth.
   const resolvedManifest: TemplateManifest = { ...manifest };
   delete resolvedManifest.includes;
+  const provisioning = [...new Set([...resolvedIncludes.flatMap(c => c.manifest.provisioning ?? []), ...(manifest.provisioning ?? [])])];
+  if (provisioning.length) resolvedManifest.provisioning = provisioning;
+  // GitHub App permissions union across the tree; write beats read.
+  let github: GitHubPermissions = {};
+  for (const child of resolvedIncludes)
+    github = mergeGitHubPermissions(github, child.manifest.github?.permissions);
+  github = mergeGitHubPermissions(github, manifest.github?.permissions);
+  if (Object.keys(github).length) resolvedManifest.github = { permissions: github };
   resolvedManifest.files = fileList;
   setOrDelete(
     resolvedManifest,

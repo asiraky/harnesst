@@ -1,0 +1,13 @@
+project_id = "harnesst-ledger"
+
+[functions.approval-callback]
+verify_jwt = false
+import_map = "./functions/deno.json"
+
+[functions.approval-dispatch]
+verify_jwt = false
+import_map = "./functions/deno.json"
+
+[functions.approval-oauth]
+verify_jwt = false
+import_map = "./functions/deno.json"

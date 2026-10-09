@@ -28,7 +28,7 @@ import {
 
 import { CodeEditor } from "~/components/code-editor";
 import { FileStateBanner } from "~/components/file-state-banner";
-import { AgentNav, AppShell, PageHeader, repoCrumbs } from "~/components/shell";
+import { AgentNav, AppShell, PageHeader } from "~/components/shell";
 import { Alert, AlertDescription, AlertTitle } from "~/components/ui/alert";
 import { Badge } from "~/components/ui/badge";
 import { Button } from "~/components/ui/button";
@@ -64,7 +64,6 @@ import type { Route } from "./+types/projects.$projectId.edit";
 interface FileEditView {
   project: ConnectedProject;
   path: string;
-  roster: { name: string }[];
   activeAgent: string;
   /** The nested subagent chain this editor is scoped to (empty at a member/repo target). */
   subagentPath: string[];
@@ -139,7 +138,7 @@ export const loader = (args: LoaderFunctionArgs) =>
       // No (valid) target — nothing to edit; back to the agent page, where creation lives.
       if (!requestedPath) throw redirect(contextPath(project.id, paramAgent));
 
-      const { roster, active, isTeam, target } = await resolveRouteTarget(
+      const { active, isTeam, target } = await resolveRouteTarget(
         project,
         args.params,
         memberFromPath(requestedPath),
@@ -171,7 +170,6 @@ export const loader = (args: LoaderFunctionArgs) =>
       return {
         project,
         path,
-        roster: roster.map((a) => ({ name: a.name })),
         activeAgent: active.name,
         subagentPath: subSegments ?? [],
         isTeam,
@@ -250,7 +248,6 @@ function Editor({
   const {
     project,
     path,
-    roster,
     activeAgent,
     subagentPath,
     isTeam,
@@ -299,23 +296,15 @@ function Editor({
 
   return (
     <AppShell
-      breadcrumbs={repoCrumbs({
-        projectId: project.id,
-        repoName: project.name,
-        isTeam,
-        agentName: activeAgent,
-        subagentPath,
-        tail: [{ label: path.split("/").pop() }],
-      })}
+      nav={
+        <AgentNav
+          base={ctx}
+          level={
+            subagentPath.length > 0 ? "subagent" : isTeam ? "member" : "single"
+          }
+        />
+      }
     >
-      <AgentNav
-        base={ctx}
-        level={
-          subagentPath.length > 0 ? "subagent" : isTeam ? "member" : "single"
-        }
-        roster={roster}
-        activeAgent={isTeam ? activeAgent : undefined}
-      />
       <PageHeader
         icon={Pencil}
         accent="brand"

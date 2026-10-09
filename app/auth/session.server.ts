@@ -65,6 +65,8 @@ const SIGNED_OR_BEARER_ENDPOINTS = new Set([
   // with the same delegation bearer. Server-to-server, so there is no browser Origin to check;
   // the route verifies the token itself — listing it here bypasses the CSRF check, not auth.
   "/api/agent/runs",
+  // Repo-backed shared assets (#322): the Asset Library tools POST with the delegation bearer.
+  "/api/assets",
   "/api/connections/token",
   "/api/discord/interactions",
   "/api/discord/send",
@@ -81,10 +83,15 @@ const SIGNED_OR_BEARER_ENDPOINTS = new Set([
   // verifies the token itself — listing it here bypasses the CSRF check, not authentication.
   "/api/foh/artifacts",
   "/api/foh/park",
+  // Team artifacts: the `team-artifacts` tool reads the repo's published artifacts with the same
+  // delegation bearer; the route verifies the token itself.
+  "/api/foh/team-artifacts",
   "/api/gateway/v1/chat/completions",
   "/api/github/webhook",
   "/api/ingest/runs",
   "/api/mcp",
+  // Credential deposit (#364): the Vercel issuer's provision tool POSTs with the delegation bearer.
+  "/api/secrets/deposit",
   "/api/team/ask",
 ]);
 

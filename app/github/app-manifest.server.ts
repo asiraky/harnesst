@@ -26,6 +26,10 @@ import { and, eq, inArray } from "drizzle-orm";
 import { db } from "~/db/client.server";
 import { agents, secretsMetadata } from "~/db/schema";
 import { decodeKey, fingerprint } from "~/seams/oss/secretbox";
+import {
+  mergeGitHubPermissions,
+  type GitHubPermissions,
+} from "~/marketplace/manifest";
 
 /** The eve GitHub channel's route inside a deployed instance (see the channel template). */
 export const GITHUB_CHANNEL_ROUTE = "/eve/v1/github";
@@ -55,6 +59,40 @@ export interface AppManifestInput {
   /** After the user installs the App on repos, GitHub sends them here. */
   setupUrl: string;
   description?: string;
+  /**
+   * Extra permissions the agent's installed templates declare (lock `github.permissions`) — how
+   * the infra agent alone gets repository administration and Actions workflows/secrets/variables.
+   */
+  permissions?: GitHubPermissions;
+}
+
+/** What every agent App gets: read metadata; clone, branch, push, issues, labels, comments, PRs. */
+export const BASE_APP_PERMISSIONS: GitHubPermissions = {
+  contents: "write",
+  issues: "write",
+  pull_requests: "write",
+};
+
+/** The full permission set an agent's App should hold: baseline ∪ template asks. Pure. */
+export function appPermissionsFor(extra?: GitHubPermissions): GitHubPermissions {
+  return mergeGitHubPermissions(BASE_APP_PERMISSIONS, extra);
+}
+
+/**
+ * Permissions `required` asks for that `granted` (an installation's accepted permissions) lacks —
+ * a write requirement is unmet by a read grant. Empty = covered. Pure.
+ */
+export function missingAppPermissions(
+  required: GitHubPermissions,
+  granted: Record<string, string>,
+): string[] {
+  return Object.entries(required)
+    .filter(([name, access]) => {
+      const have = granted[name];
+      return !have || (access === "write" && have !== "write" && have !== "admin");
+    })
+    .map(([name, access]) => `${name}:${access}`)
+    .sort();
 }
 
 /**
@@ -82,9 +120,7 @@ export function buildAppManifest(input: AppManifestInput) {
     public: true,
     default_permissions: {
       metadata: "read",
-      contents: "write",
-      issues: "write",
-      pull_requests: "write",
+      ...appPermissionsFor(input.permissions),
     },
     default_events: [
       "issue_comment",
@@ -278,6 +314,8 @@ export interface AppInstallation {
   repositorySelection: string;
   /** GitHub's settings page for this installation (adjust repos, uninstall). */
   htmlUrl: string;
+  /** Permissions this installation has ACCEPTED (an App permission change needs re-approval). */
+  permissions: Record<string, string>;
 }
 
 function base64UrlJson(value: unknown): string {
@@ -331,8 +369,10 @@ export async function listAppInstallations(
     account: { login?: string; type?: string } | null;
     repository_selection?: string;
     html_url?: string;
+    permissions?: Record<string, string>;
   }>;
   return body.map((i) => ({
+    permissions: i.permissions ?? {},
     id: i.id ?? 0,
     account: i.account?.login ?? "(unknown)",
     accountType: i.account?.type ?? "User",

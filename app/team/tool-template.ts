@@ -227,7 +227,7 @@ export default defineTool({
     "This is fire-and-forget: it does not pause the current run, and it never returns a human " +
     "reply. Use it for non-blocking information a human should see, such as completed work, " +
     "UAT or preview links, status changes, findings, or a blocker that has already been " +
-    "recorded in the durable workflow ledger. The humans cannot see the current conversation, " +
+    "recorded for the team. The humans cannot see the current conversation, " +
     "so make the message self-contained and include all relevant links and context. A human " +
     "may reply later in the new conversation, which starts a fresh run; do not wait for or " +
     "invent that reply. If the current run cannot continue without a human answer, use " +

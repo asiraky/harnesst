@@ -420,7 +420,6 @@ export async function deployRelease(
       lock = overlayLock(lockJson, []);
     }
     const member = isTeamMember && agent ? agent.name : null;
-
     // Generated secrets (issue #163): lock-declared `generated` secrets are minted ONCE per
     // (agent, environment) — 32 random bytes base64url, sealed into secret_values via the normal
     // secrets seam — and reused verbatim on every later deploy. The mint gate is the EXACT
@@ -528,7 +527,8 @@ export async function deployRelease(
     const allowlist = exposed.filter(
       (name) => !isReservedModelEnvName(name) && name in envVars,
     );
-    if (allowlist.length > 0) envVars.HARNESST_SANDBOX_ENV = allowlist.join(",");
+    if (allowlist.length > 0)
+      envVars.HARNESST_SANDBOX_ENV = allowlist.join(",");
 
     // Team delegation (D3): a team member gets the relay coordinates, an HMAC token identifying
     // THIS deployment, and its roster — all harnesst-owned, so stripped from user secrets first (the
@@ -644,6 +644,15 @@ export async function deployRelease(
       envVars.HARNESST_TEAM_TOKEN ??= mintDelegationToken(dep.id);
     }
 
+    // Team artifacts: where the `team-artifacts` tool lists and fetches what any agent in this repo
+    // published. The route re-derives the project from the token's deployment, so the URL grants
+    // nothing beyond the repo the caller already belongs to. Gated on the install like the others.
+    delete envVars.HARNESST_TEAM_ARTIFACTS_URL;
+    if (lock && hasToolInstalled(lock, "team-artifacts", member)) {
+      envVars.HARNESST_TEAM_ARTIFACTS_URL = `${controlPlaneBase}/api/foh/team-artifacts`;
+      envVars.HARNESST_TEAM_TOKEN ??= mintDelegationToken(dep.id);
+    }
+
     // Credential deposit (issue #364): where the Vercel issuer's provision tool drops a minted
     // project-scoped token for a teammate. Gated on the committed lock carrying the vercel-issuer
     // AGENT install for this member — a deposit URL plus a delegation token in any other
@@ -721,7 +730,9 @@ export async function deployRelease(
       // self-managed connector) must not survive into a container whose whole safety story is
       // "the instance holds no vendor credential".
       const capabilityProviderIds = new Set(
-        (grantEnv.HARNESST_CAPABILITY_PROVIDERS ?? "").split(",").filter(Boolean),
+        (grantEnv.HARNESST_CAPABILITY_PROVIDERS ?? "")
+          .split(",")
+          .filter(Boolean),
       );
       for (const def of listProviders()) {
         // Only the providers harnesst actually brokered this deploy — a present <PREFIX>_OAUTH_SCOPES

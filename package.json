@@ -23,7 +23,13 @@
     "smoke:subagent-install": "tsx scripts/smoke-subagent-install.ts",
     "catalog:index": "node catalog/scripts/build-index.mjs",
     "doctor": "npx react-doctor@latest",
-    "email:dev": "email dev --dir app/email/templates --port 8092"
+    "email:dev": "email dev --dir app/email/templates --port 8092",
+    "ledger:up": "docker compose -f catalog/ledger/local/compose.yaml up -d --wait && node catalog/ledger/local/setup.mjs",
+    "ledger:dev": "node catalog/ledger/local/server.mjs",
+    "ledger:down": "docker compose -f catalog/ledger/local/compose.yaml down",
+    "ledger:test": "node --import tsx --test catalog/ledger/tests/*.test.mjs",
+    "ledger:team": "tsx catalog/ledger/local/materialize-team.ts",
+    "ledger:typecheck": "tsc -p catalog/ledger/supabase/tsconfig.json"
   },
   "dependencies": {
     "@balena/dockerignore": "^1.0.2",
@@ -47,6 +53,7 @@
     "drizzle-orm": "^0.45.2",
     "express": "^5.2.1",
     "isbot": "^5",
+    "libsodium-wrappers": "^0.8.4",
     "lucide-react": "^1.23.0",
     "nanoid": "^5.1.16",
     "nodemailer": "^9.0.3",
@@ -74,6 +81,7 @@
     "@react-router/dev": "8.0.0",
     "@tailwindcss/vite": "^4.2.2",
     "@types/express": "^5.0.6",
+    "@types/libsodium-wrappers": "^0.7.14",
     "@types/node": "^22",
     "@types/nodemailer": "^8.0.1",
     "@types/react": "^19.2.14",

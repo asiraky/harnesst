@@ -25,7 +25,7 @@ import {
 
 import { CodeEditor } from "~/components/code-editor";
 import { FileStateBanner } from "~/components/file-state-banner";
-import { AgentNav, AppShell, PageHeader, repoCrumbs } from "~/components/shell";
+import { AgentNav, AppShell, PageHeader } from "~/components/shell";
 import { Alert, AlertDescription, AlertTitle } from "~/components/ui/alert";
 import { Button } from "~/components/ui/button";
 import { requireProject, requireRepo } from "~/project/guard.server";
@@ -59,7 +59,7 @@ export const loader = (args: LoaderFunctionArgs) =>
         const legacy = agentParamRedirect(args.request, project.id);
         if (legacy) throw legacy;
       }
-      const { roster, active, isTeam, target } = await resolveRouteTarget(
+      const { active, isTeam, target } = await resolveRouteTarget(
         project,
         args.params,
       );
@@ -79,7 +79,6 @@ export const loader = (args: LoaderFunctionArgs) =>
       return {
         project,
         path,
-        roster: roster.map((a) => ({ name: a.name })),
         activeAgent: active.name,
         subagentPath: subSegments ?? [],
         isTeam,
@@ -128,7 +127,6 @@ export default function EditInstructions({
   const {
     project,
     path,
-    roster,
     activeAgent,
     subagentPath,
     isTeam,
@@ -149,23 +147,15 @@ export default function EditInstructions({
 
   return (
     <AppShell
-      breadcrumbs={repoCrumbs({
-        projectId: project.id,
-        repoName: project.name,
-        isTeam,
-        agentName: activeAgent,
-        subagentPath,
-        tail: [{ label: "Instructions" }],
-      })}
+      nav={
+        <AgentNav
+          base={ctx}
+          level={
+            subagentPath.length > 0 ? "subagent" : isTeam ? "member" : "single"
+          }
+        />
+      }
     >
-      <AgentNav
-        base={ctx}
-        level={
-          subagentPath.length > 0 ? "subagent" : isTeam ? "member" : "single"
-        }
-        roster={roster}
-        activeAgent={isTeam ? activeAgent : undefined}
-      />
       <PageHeader
         icon={FileText}
         accent="blue"

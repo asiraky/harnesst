@@ -3,7 +3,8 @@
  *   workspace (org) → repository → team member (agents/:name URL level) → page.
  *
  * AppShell renders the Build surface's frame: the shared sidebar (components/app-sidebar.tsx,
- * fed by the `routes/build` layout loader) beside the page column with its breadcrumb trail.
+ * fed by the `routes/build` layout loader) beside the page column. The page's section tabs
+ * (`nav`) render inside the sticky header so they never scroll under it.
  * AgentNav renders the section tabs — a DIFFERENT set per level, because the scopes differ:
  * repo level (team landing) gets the repo-wide surfaces, member level gets the member-scoped
  * ones, and single-agent repos collapse both levels into one merged row.
@@ -17,13 +18,13 @@ import {
   Users,
   type LucideIcon,
 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   Link,
   NavLink,
   useLocation,
-  useNavigate,
   useNavigation,
+  useParams,
   useRouteLoaderData,
 } from "react-router";
 
@@ -32,78 +33,20 @@ import { PublishControl } from "~/components/publish";
 import { WorkspaceTasksIndicator } from "~/components/workspace-tasks";
 import { BrandWordmark } from "~/components/marketing/logo";
 import { Button } from "~/components/ui/button";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "~/components/ui/select";
-import { Separator } from "~/components/ui/separator";
 import { TooltipProvider } from "~/components/ui/tooltip";
-import { contextPath, repoPath, subagentContextPath } from "~/lib/paths";
+import { contextPath, repoPath } from "~/lib/paths";
 import { cn } from "~/lib/utils";
 import type { BuildSidebarData, loader as buildLoader } from "~/routes/build";
 
-/** One level of the hierarchy trail. No `to` == the current page (rendered unlinked). */
-export interface Crumb {
-  label: React.ReactNode;
-  to?: string;
-}
-
-/**
- * Standard trail for repository pages: repo → (team member) → (subagent chain) → page. The last
- * crumb is always unlinked (it's where you are); every ancestor links up a level.
- *
- * A declared subagent (issue #344) contributes TWO crumbs per level — the parent's `Subagents`
- * list and the subagent itself — so the trail reads `ivy → Subagents → researcher` and every
- * hop up the chain is one click.
- */
-export function repoCrumbs(opts: {
-  projectId: string;
-  repoName: string;
-  /** Team repos: the active member (adds a member crumb linking to its overview). */
-  agentName?: string | null;
-  isTeam?: boolean;
-  /** Declared-subagent chain below the member, e.g. ["researcher", "fact-checker"]. */
-  subagentPath?: string[];
-  /** Page-level crumbs after repo/member, e.g. [{ label: "Runs" }]. */
-  tail?: Crumb[];
-}): Crumb[] {
-  const base = `/repos/${opts.projectId}`;
-  const member = opts.isTeam && opts.agentName ? opts.agentName : null;
-  const crumbs: Crumb[] = [{ label: opts.repoName, to: base }];
-  if (member) {
-    crumbs.push({
-      label: member,
-      to: `${base}/agents/${encodeURIComponent(member)}`,
-    });
-  }
-  let parent = contextPath(opts.projectId, member);
-  (opts.subagentPath ?? []).forEach((name, i) => {
-    crumbs.push({ label: "Subagents", to: `${parent}/resources/subagents` });
-    parent = subagentContextPath(
-      opts.projectId,
-      member,
-      (opts.subagentPath ?? []).slice(0, i + 1),
-    );
-    crumbs.push({ label: name, to: parent });
-  });
-  crumbs.push(...(opts.tail ?? []));
-  const last = crumbs[crumbs.length - 1];
-  delete last.to;
-  return crumbs;
-}
-
 export function AppShell({
-  breadcrumbs,
+  nav,
   fullHeight,
   children,
 }: {
   /** Accepted for call-site compatibility; the sidebar's account menu reads the layout's data. */
   userEmail?: string | null;
-  /** Hierarchy trail: workspace → repo → member → …; the "up" navigation. */
-  breadcrumbs?: Crumb[];
+  /** Section tabs (an AgentNav) pinned in the sticky header under the mobile chrome row. */
+  nav?: React.ReactNode;
   /** Chat-style pages: lock the shell to the viewport so children own their scrolling
    * (e.g. a transcript scrolls while the composer stays pinned below it). */
   fullHeight?: boolean;
@@ -115,7 +58,6 @@ export function AppShell({
   // on every committed navigation.
   const [open, setOpen] = useState(false);
   useEffect(() => setOpen(false), [location.key]);
-  const hasCrumbs = !!breadcrumbs && breadcrumbs.length > 0;
 
   return (
     <TooltipProvider>
@@ -163,13 +105,9 @@ export function AppShell({
             fullHeight && "min-h-0 overflow-hidden",
           )}
         >
-          <header className="sticky top-0 z-30 shrink-0 bg-background/80 backdrop-blur">
-            <div
-              className={cn(
-                "flex min-h-12 flex-wrap items-center gap-2 border-b px-4 sm:gap-4 sm:px-6",
-                !hasCrumbs && "md:hidden",
-              )}
-            >
+          <header className="sticky top-0 z-30 shrink-0 bg-background/95 backdrop-blur">
+            {/* Mobile chrome row: drawer toggle + wordmark. The desktop sidebar carries both. */}
+            <div className="flex h-12 items-center gap-2 border-b px-4 md:hidden">
               <Button
                 variant="ghost"
                 size="icon"
@@ -186,10 +124,8 @@ export function AppShell({
               >
                 <BrandWordmark className="h-5" />
               </Link>
-              {breadcrumbs && breadcrumbs.length > 0 && (
-                <Breadcrumbs crumbs={breadcrumbs} />
-              )}
             </div>
+            {nav}
             {/* Strips below the header, both project-scoped and both rendering nothing off a
                 /repos/:id page. Order matters: task progress (issue #142) is what's happening NOW,
                 so it sits above the publish nudge (issue #225 §4.1), which is only ever a
@@ -334,37 +270,6 @@ function NavProgress() {
 }
 
 /** The "up" navigation: each ancestor links to its level; the last crumb is the page. */
-function Breadcrumbs({ crumbs }: { crumbs: Crumb[] }) {
-  return (
-    <nav aria-label="Breadcrumb" className="order-last flex w-full min-w-0 items-center gap-1.5 overflow-x-auto pb-2 text-sm sm:order-none sm:w-auto sm:pb-0">
-      {crumbs.map((crumb) => (
-        <span key={crumbKey(crumb)} className="flex shrink-0 items-center gap-1.5">
-          <span className="text-muted-foreground">/</span>
-          {crumb.to ? (
-            <Link
-              to={crumb.to}
-              prefetch="intent"
-              className="max-w-44 truncate text-muted-foreground transition-colors hover:text-foreground"
-            >
-              {crumb.label}
-            </Link>
-          ) : (
-            <span className="max-w-44 truncate font-medium">{crumb.label}</span>
-          )}
-        </span>
-      ))}
-    </nav>
-  );
-}
-
-function crumbKey(crumb: Crumb): string {
-  if (crumb.to) return crumb.to;
-  if (typeof crumb.label === "string" || typeof crumb.label === "number") {
-    return String(crumb.label);
-  }
-  return "current";
-}
-
 /**
  * Standard section heading: title + badges left, actions right, hairline below. The one
  * pattern for edit affordances on content surfaces — no more buttons floating in card
@@ -483,11 +388,6 @@ export function PageHeader({
   );
 }
 
-/** Minimal roster info the switcher needs (serializable through loaders). */
-export interface RosterMember {
-  name: string;
-}
-
 /** Which level of the hierarchy the current page belongs to (M5.8; subagents in #344). */
 export type NavLevel = "single" | "repo" | "member" | "subagent";
 
@@ -537,42 +437,52 @@ const TABS: Record<NavLevel, { path: string; label: string }[]> = {
 export function AgentNav({
   base,
   level,
-  roster,
-  activeAgent,
   className,
 }: {
   base: string;
   level: NavLevel;
-  /** Member level: the roster for the switcher. */
-  roster?: RosterMember[];
-  /** Member level: the current member (switcher value). */
-  activeAgent?: string;
-  /** Override spacing (chat pages sit the scroll region flush under the separator). */
   className?: string;
 }) {
+  // Callers build `base` from the project id, but the URL may name the project by slug (the
+  // sidebar links that way). Keep the tabs on whichever form the page was reached by, so
+  // NavLink's active match works and navigation doesn't flip the URL shape underfoot.
+  const { projectId } = useParams();
+  const { pathname } = useLocation();
+  const resolvedBase = projectId
+    ? base.replace(/^\/repos\/[^/]+/, `/repos/${projectId}`)
+    : base;
+  // Keep the current tab in view when the strip overflows (narrow screens).
+  const activeRef = useRef<HTMLAnchorElement>(null);
+  useEffect(() => {
+    activeRef.current?.scrollIntoView({ inline: "center", block: "nearest" });
+  }, [pathname]);
   return (
-    <div className={cn("mb-8", className)}>
-      {/* Stack on mobile so the tab nav gets the full viewport width; single row at sm+.
-          On mobile the action controls sit ABOVE the tabs (tabs read best directly over the
-          separator) and the controls group is allowed to wrap. */}
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        {/* Tabs scroll horizontally on narrow screens rather than wrapping/overflowing.
-            Negative margin + padding lets the row bleed to the container edge. The relative
-            wrapper + mobile-only right-edge gradient hints that more tabs scroll into view. */}
-        <div className="relative order-2 min-w-0 sm:order-1">
-          <nav className="-mx-4 flex items-center gap-1 overflow-x-auto px-4 text-sm [scrollbar-width:none] [&::-webkit-scrollbar]:hidden sm:mx-0 sm:px-0">
+    // The hairline is the strip's own bottom border, so it runs the full column width and the
+    // active tab's underline overlaps it (-mb-px) — one continuous tab bar, edge to edge.
+    <div className={cn("border-b", className)}>
+      <div className="mx-auto w-full max-w-5xl px-4 sm:px-6">
+        {/* Tabs scroll horizontally rather than wrap; the wrapper's right-edge fade hints at
+            more tabs on narrow screens. */}
+        <div className="relative min-w-0">
+          <nav
+            aria-label="Sections"
+            className="-mb-px flex items-end overflow-x-auto pr-8 text-sm [scrollbar-width:none] [&::-webkit-scrollbar]:hidden sm:pr-0"
+          >
             {TABS[level].map((item) => (
               <NavLink
                 key={item.label}
-                to={`${base}${item.path}`}
+                to={`${resolvedBase}${item.path}`}
                 end={item.path === ""}
                 prefetch="intent"
+                ref={(el) => {
+                  if (el?.getAttribute("aria-current") === "page") activeRef.current = el;
+                }}
                 className={({ isActive, isPending }) =>
                   cn(
-                    "shrink-0 rounded-md px-3 py-1.5 text-muted-foreground transition-colors hover:text-foreground",
-                    isActive && "bg-accent font-medium text-foreground",
+                    "shrink-0 border-b-2 border-transparent px-3 py-2.5 text-muted-foreground transition-colors hover:text-foreground",
+                    isActive && "border-foreground font-medium text-foreground",
                     // Highlight the destination tab immediately on click (before its loader resolves).
-                    isPending && "bg-accent/60 font-medium text-foreground",
+                    isPending && "border-foreground/40 text-foreground",
                   )
                 }
               >
@@ -584,68 +494,7 @@ export function AgentNav({
               pointer-events-none so it never blocks tapping the last (Settings) tab. */}
           <div className="pointer-events-none absolute inset-y-0 right-0 w-8 bg-gradient-to-l from-background to-transparent sm:hidden" />
         </div>
-        <div className="order-1 flex shrink-0 flex-wrap items-center gap-3 sm:order-2">
-          {(level === "member" || level === "subagent") &&
-            roster &&
-            activeAgent && (
-              <AgentSwitcher roster={roster} activeAgent={activeAgent} />
-            )}
-        </div>
       </div>
-      <Separator className="mt-2" />
-    </div>
-  );
-}
-
-/**
- * Team member picker: swaps the `/agents/<name>` segment, keeping the current tab.
- *
- * A nested subagent context (`…/sub/researcher`) is dropped on the way: the chosen member has
- * its own subagents, and carrying this one's path across would land on a 404 (issue #344). The
- * editor's `?path=` goes with it for the same reason — it names a file inside the agent root you
- * are leaving — while every other search param (tab state, filters) is kept.
- */
-export function switchAgentHref(
-  location: { pathname: string; search: string },
-  name: string,
-): string {
-  const pathname = location.pathname
-    .replace(/\/sub\/[^/]+/, "")
-    .replace(/\/agents\/[^/]+/, `/agents/${encodeURIComponent(name)}`);
-  const params = new URLSearchParams(location.search);
-  // `path` names a file inside the agent root being left — it cannot survive the switch.
-  params.delete("path");
-  const search = params.toString();
-  return `${pathname}${search ? `?${search}` : ""}`;
-}
-
-function AgentSwitcher({
-  roster,
-  activeAgent,
-}: {
-  roster: RosterMember[];
-  activeAgent: string;
-}) {
-  const navigate = useNavigate();
-  const location = useLocation();
-  return (
-    <div className="flex items-center gap-2">
-      <Users className="h-4 w-4 text-muted-foreground" aria-hidden />
-      <Select
-        value={activeAgent}
-        onValueChange={(name) => navigate(switchAgentHref(location, name))}
-      >
-        <SelectTrigger className="h-8 min-w-36 font-mono text-xs" aria-label="Agent">
-          <SelectValue />
-        </SelectTrigger>
-        <SelectContent>
-          {roster.map((m) => (
-            <SelectItem key={m.name} value={m.name} className="font-mono text-xs">
-              {m.name}
-            </SelectItem>
-          ))}
-        </SelectContent>
-      </Select>
     </div>
   );
 }

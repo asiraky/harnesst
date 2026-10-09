@@ -270,9 +270,11 @@ describe("publishArtifact destination", () => {
       name: "chart.png",
       contentType: "image/png",
       byteSize: PNG.length,
-      // Version-scoped: the URL has to keep meaning the same bytes, and an artifact's newest
-      // version does not.
-      url: `/api/foh/${PROJECT}/artifact/art_1/ver_1`,
+      // The user opens it from the card: a link in the result ends up pasted into the reply
+      // instead, and the user on the other end cannot open a sandbox or app-internal URL.
+      card: true,
+      url: null,
+      shareUrl: null,
       artifactVersionId: "ver_1",
       version: 1,
     });
@@ -337,7 +339,15 @@ describe("publishArtifact destination", () => {
       deps,
     );
 
-    expect(result).toMatchObject({ ok: true, name: "chart.png", version: 1 });
+    expect(result).toMatchObject({
+      ok: true,
+      name: "chart.png",
+      version: 1,
+      card: false,
+      // Version-scoped: the URL has to keep meaning the same bytes, and an artifact's newest
+      // version does not.
+      url: `/api/foh/${PROJECT}/artifact/art_1/ver_1`,
+    });
     if (!result.ok) return;
     // The public link is what makes a card-less publish reachable at all.
     expect(result.shareUrl).toMatch(/\/a\/share_1_/);
@@ -471,7 +481,7 @@ describe("publishArtifact destination", () => {
  * assertion, not a routing detail.
  */
 describe("publishArtifact kinds", () => {
-  it("stores a PDF as a versioned document with an authenticated download URL", async () => {
+  it("stores a PDF as a versioned document on the conversation's card", async () => {
     const deploymentId = await seedDeployment();
     const deps = makeDeps({ copy: async () => ({ ok: true, bytes: PDF }) });
 
@@ -493,7 +503,7 @@ describe("publishArtifact kinds", () => {
       contentType: "application/pdf",
       byteSize: PDF.length,
       sha256: createHash("sha256").update(PDF).digest("hex"),
-      url: "/api/foh/proj_1/artifact/art_1/ver_1",
+      card: true,
     });
     expect(deps.rows[0]).toMatchObject({
       kind: "document",
@@ -1193,6 +1203,38 @@ describe("publishArtifact budgets", () => {
     expect(seen[0].since.getTime()).toBe(
       NOW.getTime() - ARTIFACT_BUDGET_WINDOW_MS,
     );
+  });
+
+  it("still shows a file again at the daily limit, but refuses new bytes for it", async () => {
+    const deploymentId = await seedDeployment();
+    let bytes = PNG;
+    const deps = makeDeps({ copy: async () => ({ ok: true, bytes }) });
+
+    await publishArtifact({ deploymentId, path: "artifacts/chart.png" }, deps);
+    deps.usage = async () => ({
+      sessionCount: 1,
+      projectCount: MAX_ARTIFACTS_PER_PROJECT_WINDOW,
+      projectBytes: 0,
+    });
+    // "Show me it again" is answered by republishing; it writes nothing, so the limit on what the
+    // repository stores must not take away the user's way back to the card.
+    const again = await publishArtifact(
+      { deploymentId, path: "artifacts/chart.png" },
+      deps,
+    );
+    expect(again).toMatchObject({ ok: true, updated: false, card: true });
+
+    bytes = Buffer.from([...PNG, 0x05]);
+    const changed = await publishArtifact(
+      { deploymentId, path: "artifacts/chart.png" },
+      deps,
+    );
+    expect(changed.ok).toBe(false);
+    if (changed.ok) return;
+    expect(changed.error).toMatch(/daily limit/i);
+    // The refused bytes never reach the disk and add no version.
+    expect(deps.written.map((w) => w.byteSize)).not.toContain(PNG.length + 1);
+    expect(deps.versions).toHaveLength(1);
   });
 });
 

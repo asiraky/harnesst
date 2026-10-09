@@ -191,9 +191,9 @@ describe("reset model settings actions", () => {
       version: 1,
       installs: [
         {
-          id: "ledger-intake",
+          id: "retired-agent",
           type: "agent",
-          name: "Ledger Intake",
+          name: "Retired Agent",
           version: "1.0.0",
           hash: "installed",
           registry: "fixture",
@@ -206,9 +206,9 @@ describe("reset model settings actions", () => {
     const result = (await load()) as { installs: unknown[] };
     expect(result.installs).toEqual([
       {
-        id: "ledger-intake",
+        id: "retired-agent",
         type: "agent",
-        name: "Ledger Intake",
+        name: "Retired Agent",
         version: "1.0.0",
         member: "ledger",
         subagent: "",
@@ -225,7 +225,7 @@ describe("reset model settings actions", () => {
         {
           intent: "update-install",
           type: "agent",
-          id: "ledger-intake",
+          id: "retired-agent",
           member: "ledger",
         },
       ),

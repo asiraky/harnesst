@@ -36,9 +36,25 @@ const TYPES = [
   "connection",
   "bundle",
   "agent",
+  "team",
 ];
-/** Types a template may `includes`-reference — everything except `agent`. */
-const INCLUDABLE = TYPES.filter((t) => t !== "agent");
+/** Types a template may `includes`-reference — everything except `agent` and `team`. */
+const INCLUDABLE = TYPES.filter((t) => t !== "agent" && t !== "team");
+/** Mirror of manifest.ts's GITHUB_APP_PERMISSIONS. */
+const GITHUB_APP_PERMISSIONS = [
+  "actions",
+  "actions_variables",
+  "administration",
+  "checks",
+  "contents",
+  "deployments",
+  "issues",
+  "pages",
+  "pull_requests",
+  "secrets",
+  "statuses",
+  "workflows",
+];
 const KEBAB = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const SEMVER = /^\d+\.\d+\.\d+$/;
 const UPPER_SNAKE = /^[A-Z][A-Z0-9_]*$/;
@@ -71,12 +87,16 @@ function validateManifest(where, m) {
     fail(where, "subagentCompatible must be a boolean");
   }
 
-  // Only a bundle may ship no files of its own (pure composition — its includes carry them).
+  // Only a bundle or team may ship no files of its own (a bundle's includes carry them; a
+  // team's roster agents do). A team ships none at all.
   if (
     !Array.isArray(m.files) ||
-    (m.files.length === 0 && m.type !== "bundle")
+    (m.files.length === 0 && m.type !== "bundle" && m.type !== "team")
   ) {
-    fail(where, "files must be a non-empty array (only a bundle may be empty)");
+    fail(
+      where,
+      "files must be a non-empty array (only a bundle or team may be empty)",
+    );
   } else {
     for (const p of m.files) {
       const reason = badPath(p);
@@ -90,7 +110,10 @@ function validateManifest(where, m) {
     : null;
   if (
     m.subagentCompatible === true &&
-    (m.type === "agent" || m.type === "channel" || rootOnlyFile)
+    (m.type === "agent" ||
+      m.type === "team" ||
+      m.type === "channel" ||
+      rootOnlyFile)
   ) {
     fail(
       where,
@@ -131,6 +154,57 @@ function validateManifest(where, m) {
     (m.includes?.length ?? 0) === 0
   ) {
     fail(where, "a bundle with no files must include at least one template");
+  }
+
+  if (m.type === "team") {
+    if (Array.isArray(m.files) && m.files.length > 0)
+      fail(where, "a team ships no files — its roster agents carry them");
+    if ((m.includes?.length ?? 0) > 0)
+      fail(where, "a team has no includes — list its agents in roster");
+    if (!Array.isArray(m.roster) || m.roster.length === 0) {
+      fail(
+        where,
+        "a team must declare a non-empty roster of { role, agent, name }",
+      );
+    } else {
+      const roles = new Set();
+      const names = new Set();
+      for (const entry of m.roster) {
+        for (const key of ["role", "agent", "name"])
+          if (!KEBAB.test(entry?.[key] ?? ""))
+            fail(
+              where,
+              `roster ${key} "${entry?.[key]}" is not a kebab-case slug`,
+            );
+        if (roles.has(entry?.role))
+          fail(where, `duplicate roster role "${entry.role}"`);
+        if (names.has(entry?.name))
+          fail(where, `duplicate roster name "${entry.name}"`);
+        roles.add(entry?.role);
+        names.add(entry?.name);
+      }
+    }
+  } else if (m.roster !== undefined) {
+    fail(where, "roster is only valid on a team template");
+  }
+  if (m.github !== undefined) {
+    const perms = m.github?.permissions;
+    if (!perms || typeof perms !== "object" || Array.isArray(perms)) {
+      fail(
+        where,
+        "github must be { permissions: { <permission>: read|write } }",
+      );
+    } else {
+      for (const [name, access] of Object.entries(perms)) {
+        if (!GITHUB_APP_PERMISSIONS.includes(name))
+          fail(
+            where,
+            `github permission "${name}" is not one of ${GITHUB_APP_PERMISSIONS.join(", ")}`,
+          );
+        if (access !== "read" && access !== "write")
+          fail(where, `github permission "${name}" must be read or write`);
+      }
+    }
   }
 
   if (m.dependencies !== undefined) {
@@ -427,6 +501,66 @@ function walkFiles(base) {
   return out;
 }
 
+/**
+ * The hosted ledger migrations and the ledger bundle's copies are generated from
+ * catalog/ledger/NNNN_*.sql by prepare-hosted.mjs. Matched by migration number, each copy must be
+ * byte-identical to its source: the installer applies the hosted copy, not the source.
+ */
+function validateLedgerMigrationCopies() {
+  const ledger = join(ROOT, "ledger");
+  const sources = new Map(
+    readdirSync(ledger)
+      .filter((f) => /^\d{4}_.*\.sql$/.test(f))
+      .map((f) => [f.slice(0, 4), f]),
+  );
+  for (const dir of [
+    join(ledger, "hosted/supabase/migrations"),
+    join(
+      ROOT,
+      "templates/bundles/ledger/files/harnesst/ledger-setup/supabase/migrations",
+    ),
+  ]) {
+    for (const copy of readdirSync(dir).filter((f) => f.endsWith(".sql"))) {
+      const where = relative(ROOT, join(dir, copy));
+      const source = sources.get(copy.slice(10, 14));
+      if (!source) fail(where, "has no catalog/ledger source migration");
+      else if (
+        readFileSync(join(dir, copy), "utf8") !==
+        readFileSync(join(ledger, source), "utf8")
+      )
+        fail(
+          where,
+          `differs from ledger/${source} — run \`node catalog/ledger/prepare-hosted.mjs\``,
+        );
+    }
+  }
+}
+
+/**
+ * The repository-onboarding skill ships the ledger GitHub automation as references the infra agent
+ * installs byte-for-byte into each product repository. Each must equal its catalog/ledger/examples
+ * source.
+ */
+function validateLedgerExampleCopies() {
+  const references = join(
+    ROOT,
+    "templates/skills/ledger-repo-onboarding/files/skills/ledger-repo-onboarding/references",
+  );
+  for (const copy of readdirSync(references)) {
+    const where = relative(ROOT, join(references, copy));
+    const source = join(ROOT, "ledger/examples", copy);
+    let expected;
+    try {
+      expected = readFileSync(source, "utf8");
+    } catch {
+      fail(where, "has no catalog/ledger/examples source");
+      continue;
+    }
+    if (readFileSync(join(references, copy), "utf8") !== expected)
+      fail(where, `differs from ledger/examples/${copy} — copy it again`);
+  }
+}
+
 function main() {
   const templates = loadTemplates();
   const seenIds = new Map(); // id -> where (uniqueness across the whole catalog)
@@ -609,6 +743,13 @@ function main() {
 
   for (const t of templates) {
     checkResolvedFiles(`${t.manifest.type}/${t.manifest.id}`);
+    for (const entry of t.manifest.roster ?? []) {
+      if (!byKey.has(`agent/${entry?.agent}`))
+        fail(
+          `templates/${t.type}s/${t.id}`,
+          `roster agent "${entry?.agent}" is not an agent template in the catalog`,
+        );
+    }
   }
 
   // index.json must exist and match a fresh rebuild exactly (presence, one row each, hashes).
@@ -643,6 +784,9 @@ function main() {
         fail("index.json", `missing ${key} — run \`npm run catalog:index\``);
     }
   }
+
+  validateLedgerMigrationCopies();
+  validateLedgerExampleCopies();
 
   if (errors.length > 0) {
     console.error(`Catalog validation failed (${errors.length} error(s)):`);

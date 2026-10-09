@@ -9,6 +9,38 @@
       "hash": "df5e8338e3e25c5a7259adf90de8e0e4618c21f6"
     },
     {
+      "id": "ledger-architect",
+      "type": "agent",
+      "name": "Ledger Architect",
+      "version": "0.2.0",
+      "description": "The team’s technical designer. For non-trivial issues, call in an engineer, grill them on the technical design, and finalise the spec before breakdown.",
+      "hash": "66a8e5c3de963292584aa45b05c5096fee2a8cd8"
+    },
+    {
+      "id": "ledger-implementer",
+      "type": "agent",
+      "name": "Ledger Implementer",
+      "version": "0.3.0",
+      "description": "The team’s product engineer. Build each issue ticket by ticket on the issue branch, then take the issue PR through QA and review to merge approval. Use GitHub for code and the ledger for work state. Delegate code review to the reviewer subagent and browser QA to the qa subagent; record their findings against the exact head SHA.",
+      "hash": "b377bede56768f6bc80615227866452c7b262030"
+    },
+    {
+      "id": "ledger-infra",
+      "type": "agent",
+      "name": "Ledger Infra",
+      "version": "0.2.0",
+      "description": "The team’s infrastructure engineer. Owns cloud resources, CI and deployment, creates the team's repositories and connects them to the ledger. The only member whose GitHub App can create repositories and change CI configuration.",
+      "hash": "103ea9eb2c8574aaea730533a5033cc61b7e77d9"
+    },
+    {
+      "id": "ledger-intake",
+      "type": "agent",
+      "name": "Ledger Intake",
+      "version": "0.3.0",
+      "description": "The team’s front of house. Grill requesters on requirements, publish the spec as the ledger issue, send non-trivial work to the architect, break issues into tickets, and relay human decisions. Report pending May I approvals to the named human and report when their work is live.",
+      "hash": "25ec44fe19d53fa2eccd9a29f6a7a546f43c461b"
+    },
+    {
       "id": "vercel-issuer",
       "type": "agent",
       "name": "Vercel Issuer",
@@ -17,12 +49,20 @@
       "hash": "4d3765edaa7b4a117fcc174381f284ed4598dbb0"
     },
     {
+      "id": "cloudflare-bundle",
+      "type": "bundle",
+      "name": "Cloudflare",
+      "version": "0.1.1",
+      "description": "Cloudflare product selection, provisioning, development and deployment skills with harnesst credential integration.",
+      "hash": "e50948b60065f7d53a454914e71608956194398e"
+    },
+    {
       "id": "github-bundle",
       "type": "bundle",
       "name": "GitHub",
-      "version": "0.5.3",
+      "version": "0.6.0",
       "description": "Everything an agent needs to work GitHub as itself: the GitHub App channel (its @mention identity and credentials), the gh CLI in its sandbox, and the skill that turns the App's private key into a working token.",
-      "hash": "1a6a02901ad2e44b0b9714dcee8f9b03a3008e49"
+      "hash": "0d3188c02d806e73c112a3ba303acfb981e4d8f2"
     },
     {
       "id": "google-sheets-bundle",
@@ -31,6 +71,14 @@
       "version": "0.2.3",
       "description": "Everything an agent needs to work with Google Sheets: the connector (install → Connect Google → read/write spreadsheets) plus a usage skill teaching A1 notation, read-before-write, the values vs batchUpdate operations, and how to handle transient Google outages. Recommended way to add Sheets.",
       "hash": "cbc689229ac4410c95b4da315a24040bc7773dbc"
+    },
+    {
+      "id": "ledger",
+      "type": "bundle",
+      "name": "Ledger",
+      "version": "0.3.0",
+      "description": "A shared work ledger with authenticated wakes, evidence and human approval gates.",
+      "hash": "b93a984da50f68979d7a22dd8c4d123390f5ef6d"
     },
     {
       "id": "vercel-bundle",
@@ -55,6 +103,14 @@
       "version": "0.7.3",
       "description": "Talk to this agent by @mentioning it in GitHub issue and pull-request comments — a GitHub App with webhook signature verification via eve's githubChannel.",
       "hash": "0bedace00139301eaf44fc9950657c710e8d1ae8"
+    },
+    {
+      "id": "ledger-wake",
+      "type": "channel",
+      "name": "Ledger wake",
+      "version": "0.2.0",
+      "description": "Authenticated ledger delivery: one session per issue lease, heartbeated while it works, released at turn end.",
+      "hash": "e1fbe1344257daa9c0e4ae696f5e130f49ba41a6"
     },
     {
       "id": "agentmail",
@@ -105,20 +161,68 @@
       "hash": "3800be60e2e6e4e19f4486a0d0383d25b3a87449"
     },
     {
+      "id": "agents-sdk",
+      "type": "skill",
+      "name": "Agents Sdk",
+      "version": "0.1.0",
+      "description": "Build, debug, or review Cloudflare Agents SDK applications using the agents package.",
+      "hash": "4e7cc86a8065a73437024291e8e760850e22d9d7"
+    },
+    {
       "id": "building-cloudflare-apps",
       "type": "skill",
       "name": "Building Cloudflare apps",
-      "version": "0.1.1",
+      "version": "0.1.2",
       "description": "How to build a full-stack web app on Cloudflare Workers — a React + Vite SPA with a Worker API backend: choosing the scaffold, project layout, wrangler.jsonc semantics, the SPA-vs-Worker routing rules, the verify workflow, and bindings. Building only; deploying and shipping to a forge are separate skills.",
-      "hash": "e816cba5127a44b0ea1599e227db804e7d9a38d3"
+      "hash": "a1df3a370caea93e14fbf2454f24d2d92b88f343"
+    },
+    {
+      "id": "cloudflare",
+      "type": "skill",
+      "name": "Cloudflare",
+      "version": "0.1.0",
+      "description": "Discover and choose Cloudflare products for apps, APIs, AI agents, storage, networking, and security. Use for architecture and product selection, including when the user describes a need without naming a Cloudflare product; then find the relevant skill or documentation.",
+      "hash": "9622fa76a2a08dfef0ab96df8b3ff11ec240e1a6"
+    },
+    {
+      "id": "cloudflare-email-service",
+      "type": "skill",
+      "name": "Cloudflare Email Service",
+      "version": "0.1.0",
+      "description": "Implement or troubleshoot Cloudflare Email Sending and Email Routing integrations and their delivery configuration.",
+      "hash": "b4c7d3c328cfb726726e8a839b4c0611d6e62237"
+    },
+    {
+      "id": "cloudflare-one",
+      "type": "skill",
+      "name": "Cloudflare One",
+      "version": "0.1.0",
+      "description": "Design, configure, troubleshoot, or review Cloudflare One Zero Trust and SASE deployments. Use cloudflare-one-migrations for migration planning from other vendors.",
+      "hash": "e101f3c8384f54a79ff885a70320b1895f828e6b"
+    },
+    {
+      "id": "cloudflare-one-migrations",
+      "type": "skill",
+      "name": "Cloudflare One Migrations",
+      "version": "0.1.0",
+      "description": "Assess and plan migrations from existing VPN, SWG, or SASE platforms to Cloudflare One, including policy mapping, parity gaps, and rollout.",
+      "hash": "f1eb2d19b37367fa75f5f8fecde1e75acd410b14"
+    },
+    {
+      "id": "codebase-design",
+      "type": "skill",
+      "name": "Codebase Design",
+      "version": "0.1.0",
+      "description": "Shared vocabulary for designing deep modules: interfaces, seams, adapters, depth, leverage and locality, plus deepening and design-it-twice procedures. From mattpocock/skills.",
+      "hash": "f4aefb2aa519b6cd9d105ae829a8b4fb6b3ff1b5"
     },
     {
       "id": "deploying-cloudflare-apps",
       "type": "skill",
       "name": "Deploying Cloudflare apps",
-      "version": "0.1.1",
+      "version": "0.1.2",
       "description": "How to deploy an app to Cloudflare and provision what it needs — wrangler config and deploys, KV/D1/R2/Queues/Pages, dry-runs, and getting deploy credentials into a CI pipeline. Cloudflare only; getting the code and wiring a specific forge's pipeline are separate skills.",
-      "hash": "334882ea2677cd2806338ad18257a9f2c9fc3c10"
+      "hash": "2bd70eeeb11fee3825c7c0034ab3965e3393c406"
     },
     {
       "id": "deploying-vercel-apps",
@@ -132,17 +236,25 @@
       "id": "dev-toolchain",
       "type": "skill",
       "name": "Developer toolchain",
-      "version": "0.1.1",
+      "version": "0.1.2",
       "description": "A broad developer toolchain preinstalled in the agent's sandbox — git, gh, jq, ripgrep, build tools, python3, pnpm/yarn, and friends — plus a skill inventorying what's there. A deliberate superset: install once, stop apt-getting per session.",
-      "hash": "b6e59380731c722c56cd13455dcde7f48fb058fe"
+      "hash": "6458392812b8ac408a2faff4df73523e7bd3ee7f"
+    },
+    {
+      "id": "durable-objects",
+      "type": "skill",
+      "name": "Durable Objects",
+      "version": "0.1.0",
+      "description": "Build, debug, or review Cloudflare Durable Objects code for persistent state and coordination.",
+      "hash": "3b3d865a0d1e2ced56f911c1c9951c6d9ed7a0d2"
     },
     {
       "id": "github-app-auth",
       "type": "skill",
       "name": "GitHub App auth",
-      "version": "0.3.3",
+      "version": "0.4.0",
       "description": "Exchange the agent's GitHub App private key for a short-lived installation token (GH_TOKEN) and commit as the App's bot identity, with gh and git preinstalled in the sandbox — the credential mechanics every GitHub-using agent needs, and nothing else.",
-      "hash": "a477a7f8f88e99778a28c666bcf837ca74b5ab74"
+      "hash": "a9d80119afcce976a03385dfc1f8dd42f628872c"
     },
     {
       "id": "google-sheets-skill",
@@ -169,12 +281,100 @@
       "hash": "2ce7115a0c6dc28821f0d9636141f9e2d66b04c0"
     },
     {
+      "id": "ledger-repo-onboarding",
+      "type": "skill",
+      "name": "Ledger repository onboarding",
+      "version": "0.1.0",
+      "description": "Create organization repositories and connect any repository to the team ledger with gh: Actions secrets, the ledger workflow and helper, and the Cloudflare deploy workflow. For the team's infra agent.",
+      "hash": "2ec82759ebc72788a797b9cfd936fc4ed4c861b8"
+    },
+    {
+      "id": "nextjs-on-cloudflare",
+      "type": "skill",
+      "name": "Nextjs On Cloudflare",
+      "version": "0.1.0",
+      "description": "Build, migrate, and deploy Next.js apps on Cloudflare Workers with vinext. Use when starting a Next.js project on Cloudflare, moving an existing app to Workers, choosing between vinext and OpenNext, or setting up vinext for Workers. For setup, migration, or deployment, install vinext's upstream skills with `npx skills add cloudflare/vinext` if missing, then read and follow the applicable skill and docs.",
+      "hash": "3310ed24e17d724c9db9fc964357151bec3a9094"
+    },
+    {
       "id": "reviewing-a-pull-request",
       "type": "skill",
       "name": "Reviewing a pull request",
       "version": "0.2.1",
       "description": "Two-axis PR review from a local checkout — standards (repo conventions plus a code-smell baseline) and spec (does it do what the issue asked) — delivered as one ranked review.",
       "hash": "46bb2ed88f7a10b49ed3aedeaf24459c6067a27f"
+    },
+    {
+      "id": "sandbox-migrate-to-next",
+      "type": "skill",
+      "name": "Sandbox Migrate To Next",
+      "version": "0.1.0",
+      "description": "Migrate Cloudflare Sandbox apps from stable @cloudflare/sandbox to @cloudflare/sandbox@next (SDK 1.0 preview). Use sandbox-next for apps already on the preview.",
+      "hash": "469d9be0463dc5cd52a174931048e7f7b93217a0"
+    },
+    {
+      "id": "sandbox-next",
+      "type": "skill",
+      "name": "Sandbox Next",
+      "version": "0.1.0",
+      "description": "Build or maintain Cloudflare Sandbox apps on @cloudflare/sandbox@next (SDK 1.0 preview). Use sandbox-migrate-to-next when porting a stable app.",
+      "hash": "fd17e58373880ece3fadd0ac4d335fd76795a6c7"
+    },
+    {
+      "id": "sandbox-stable",
+      "type": "skill",
+      "name": "Sandbox Stable",
+      "version": "0.1.0",
+      "description": "Build or maintain Cloudflare Sandbox apps on the stable @cloudflare/sandbox package. Use sandbox-next for preview apps and sandbox-migrate-to-next for stable-to-preview migrations.",
+      "hash": "b85b87ea2572b2f3a34d1b6786f5b1bfa8c9014b"
+    },
+    {
+      "id": "turnstile-spin",
+      "type": "skill",
+      "name": "Turnstile Spin",
+      "version": "0.1.0",
+      "description": "Set up, repair, or migrate to Cloudflare Turnstile bot verification in an existing frontend and backend, including server-side Siteverify.",
+      "hash": "fe24a0b71d2d9b5e97857e228aab13f78454496e"
+    },
+    {
+      "id": "using-the-ledger",
+      "type": "skill",
+      "name": "Using The Ledger",
+      "version": "0.2.0",
+      "description": "Use when a ledger wake arrives or before recording evidence, handing code to infra for a preview, moving work, resolving a block, or relaying human approval.",
+      "hash": "4b70f517eacfae35de327cbcf9fe461f7e3d3e38"
+    },
+    {
+      "id": "web-perf",
+      "type": "skill",
+      "name": "Web Perf",
+      "version": "0.1.0",
+      "description": "Audit, diagnose, or optimize website loading and interaction performance, Core Web Vitals, and Lighthouse performance scores.",
+      "hash": "8063e8ab4634054c97f3146791359c9058bce131"
+    },
+    {
+      "id": "workers-best-practices",
+      "type": "skill",
+      "name": "Workers Best Practices",
+      "version": "0.1.0",
+      "description": "Cloudflare Workers best practices for production applications. Use when writing, reviewing, or configuring Workers.",
+      "hash": "3fe1ef2d7869d67b1fe95da683525ecfd2f096b9"
+    },
+    {
+      "id": "wrangler",
+      "type": "skill",
+      "name": "Wrangler",
+      "version": "0.1.0",
+      "description": "Run or troubleshoot Wrangler CLI commands and configure Worker projects for local development, deployment, and Cloudflare resource management.",
+      "hash": "b523ad2b033386e66e05eb97a657964666e9e0f4"
+    },
+    {
+      "id": "software-team",
+      "type": "team",
+      "name": "Software team",
+      "version": "0.1.0",
+      "description": "A four-agent software team that works across your GitHub repositories: intake grills requests into specs, the architect designs, the implementer builds, reviews and QAs pull requests, and infra creates repositories, wires CI and deploys to Cloudflare. Work is tracked in a Supabase ledger with May I approval before merge.",
+      "hash": "119d863838bf56b5366d23d8a8baf9edfc5db0b7"
     },
     {
       "id": "asset-library",
@@ -209,12 +409,28 @@
       "hash": "a6cf90eed5571dee61fdba86667e69149cd4f13f"
     },
     {
+      "id": "ledger-tools",
+      "type": "tool",
+      "name": "Ledger tools",
+      "version": "0.4.0",
+      "description": "Read and move team work through database-enforced stages, evidence and human gates.",
+      "hash": "602e449c93d9324920c64bd0dc0ba339b804f0c1"
+    },
+    {
       "id": "publish-artifact",
       "type": "tool",
       "name": "Publish Artifact",
-      "version": "0.6.0",
-      "description": "Publish a file from the agent's home directory as durable, versioned evidence — into the live Front of House conversation as a card, or from a background run with no conversation at all. Images render as cards, PDFs open in a viewer, HTML pages open in a sandboxed live preview (CDN scripts, styles and fonts allowed), and any other file — markdown, CSV, JSON, code, text, audio, video — opens in a matching viewer or as a download. Every publish returns a stable public share URL anyone can open without signing in. harnesst copies the bytes without sending them through model context; publishing the same name again updates the artifact in place as a new version.",
-      "hash": "8a6423851b620d88729df0e060959b274cdeab27"
+      "version": "0.7.0",
+      "description": "Publish a file from the agent's home directory as durable, versioned evidence — into the live Front of House conversation as a card the user opens it from, or from a background run with no conversation at all, which returns a stable public share URL anyone can open without signing in. Images render as cards, PDFs open in a viewer, HTML pages open in a sandboxed live preview (CDN scripts, styles and fonts allowed), and any other file — markdown, CSV, JSON, code, text, audio, video — opens in a matching viewer or as a download. harnesst copies the bytes without sending them through model context; publishing the same name again updates the artifact in place as a new version, and shows its card again when it is a later turn.",
+      "hash": "adcf7a3b9828ef30bd8fd40cd854c1d5755511b5"
+    },
+    {
+      "id": "team-artifacts",
+      "type": "tool",
+      "name": "Team Artifacts",
+      "version": "0.1.0",
+      "description": "List and fetch the artifacts any agent in this repository published (pages, images, documents, files), so one agent can build on another's prototype, chart or report.",
+      "hash": "cba60ea6838436570a53756d1e4ca2fa7ec1e2ba"
     },
     {
       "id": "vercel-cli",

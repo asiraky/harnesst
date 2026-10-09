@@ -1,0 +1,295 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Ledger · Team playground</title>
+    <style>
+      :root {
+        font-family: system-ui;
+        color: #223830;
+        background: #f5f5ef;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+      }
+      header {
+        padding: 24px 4vw;
+        background: #183e33;
+        color: white;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+      }
+      h1 {
+        margin: 0;
+        font-size: 26px;
+        letter-spacing: -1px;
+      }
+      h2 {
+        font-size: 20px;
+      }
+      p {
+        line-height: 1.5;
+      }
+      .tag {
+        font-size: 12px;
+        text-transform: uppercase;
+        letter-spacing: 1px;
+        color: #a9d1bb;
+      }
+      main {
+        padding: 24px 4vw;
+        max-width: 1600px;
+        margin: auto;
+      }
+      .notice {
+        padding: 14px;
+        background: #e5ecdd;
+        border: 1px solid #cad8bc;
+        border-radius: 8px;
+        margin-bottom: 22px;
+      }
+      .layout {
+        display: grid;
+        grid-template-columns: 320px 1fr;
+        gap: 24px;
+      }
+      .panel {
+        background: white;
+        border: 1px solid #dce0d6;
+        padding: 22px;
+        border-radius: 12px;
+        margin-bottom: 18px;
+      }
+      input,
+      select,
+      textarea,
+      button {
+        font: inherit;
+        padding: 10px;
+        border-radius: 6px;
+        border: 1px solid #b9c8bc;
+      }
+      input,
+      select,
+      textarea {
+        width: 100%;
+        margin: 6px 0 14px;
+      }
+      textarea {
+        min-height: 90px;
+      }
+      button {
+        background: #205943;
+        color: white;
+        cursor: pointer;
+        margin: 4px 5px 4px 0;
+      }
+      button.secondary {
+        background: #eff4ec;
+        color: #205943;
+      }
+      button:disabled {
+        opacity: 0.5;
+        cursor: wait;
+      }
+      label {
+        font-size: 13px;
+        font-weight: 600;
+      }
+      .item {
+        display: block;
+        text-align: left;
+        width: 100%;
+        background: #f5f7f1;
+        color: #203b2d;
+        padding: 14px;
+        margin-bottom: 10px;
+      }
+      .item.active {
+        border: 2px solid #205943;
+      }
+      .stage {
+        font-size: 12px;
+        background: #e3ebdd;
+        border-radius: 20px;
+        padding: 3px 9px;
+        display: inline-block;
+      }
+      small {
+        color: #617568;
+        overflow-wrap: anywhere;
+      }
+      .row {
+        display: flex;
+        gap: 12px;
+        align-items: center;
+      }
+      .row > * {
+        flex: 1;
+      }
+      .actions {
+        border-top: 1px solid #eee;
+        padding-top: 16px;
+      }
+      pre {
+        font-size: 12px;
+        white-space: pre-wrap;
+        overflow-wrap: anywhere;
+        max-height: 420px;
+        overflow: auto;
+        background: #f4f6f0;
+        padding: 16px;
+      }
+      details {
+        margin: 14px 0;
+      }
+      summary {
+        cursor: pointer;
+        font-weight: 600;
+      }
+      .error {
+        background: #fae0d9;
+        color: #7b2317;
+        padding: 12px;
+        white-space: pre-wrap;
+      }
+      .timeline {
+        border-left: 2px solid #cbd8c8;
+        padding-left: 16px;
+      }
+      .event {
+        margin: 14px 0;
+      }
+      .gate {
+        display: block;
+        padding: 12px;
+        background: #e4f0e4;
+        color: #175134;
+        margin: 8px 0;
+        border-radius: 6px;
+      }
+      #status:empty {
+        display: none;
+      }
+      @media (max-width: 800px) {
+        .layout {
+          grid-template-columns: 1fr;
+        }
+        header {
+          align-items: start;
+          gap: 20px;
+        }
+        .row {
+          display: block;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <div>
+        <div class="tag">Harnesst / local prototype</div>
+        <h1>Ledger team playground</h1>
+      </div>
+      <div>Intake → Build → Approve → Ship</div>
+    </header>
+    <main>
+      <div id="notice" class="notice"></div>
+      <div id="status" role="alert"></div>
+      <div class="layout">
+        <aside>
+          <section class="panel">
+            <h2>Create work</h2>
+            <form id="create">
+              <label
+                >Title<input
+                  name="title"
+                  required
+                  value="Add a welcome page" /></label
+              ><label
+                >Kind<select name="kind">
+                  <option>feature</option>
+                  <option>bug</option>
+                  <option>infra</option>
+                  <option>plan</option>
+                </select></label
+              ><label
+                >Problem<textarea name="problem">
+Visitors need a clear welcome and next step.</textarea></label
+              ><label
+                >Acceptance criteria · one per line<textarea name="criteria">
+Show a welcome heading
+Show a working Get started link</textarea></label
+              ><button>Create item</button>
+            </form>
+          </section>
+          <section class="panel">
+            <h2>Work items</h2>
+            <div id="items"></div>
+          </section>
+          <section class="panel">
+            <details>
+              <summary>Connect real agents</summary>
+              <p>
+                Install the ledger bundle and paste credentials from the local
+                actors file. Register each deployed agent's wake URL here. This
+                replaces its simulated inbox.
+              </p>
+              <form id="connect">
+                <select name="role">
+                  <option>intake</option>
+                  <option>infra</option>
+                  <option>implementer</option></select
+                ><input
+                  name="url"
+                  type="url"
+                  placeholder="https://agent/eve/v1/ledger/wake"
+                  required
+                /><button>Connect</button>
+              </form>
+              <small
+                >The local API must also be reachable from the agent container;
+                see README.</small
+              >
+            </details>
+          </section>
+        </aside>
+        <article>
+          <section class="panel">
+            <div class="row">
+              <h2>Inspect & act</h2>
+              <label
+                >Acting as<select id="role">
+                  <option>intake</option>
+                  <option>infra</option>
+                  <option>implementer</option>
+                  <option>github</option>
+                </select></label
+              >
+            </div>
+            <div id="detail"><p>Create or select an item to begin.</p></div>
+          </section>
+          <section class="panel">
+            <div class="row">
+              <h2>Wake delivery</h2>
+              <button type="button" id="refresh" class="secondary">
+                Refresh
+              </button>
+            </div>
+            <small
+              >Real outbox, claims and leases. Simulated inboxes claim wakes;
+              you perform the agent's actions above.</small
+            >
+            <div id="outbox"></div>
+          </section>
+        </article>
+      </div>
+    </main>
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>

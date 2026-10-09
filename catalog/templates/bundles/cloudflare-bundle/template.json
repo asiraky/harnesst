@@ -1,0 +1,78 @@
+{
+  "id": "cloudflare-bundle",
+  "type": "bundle",
+  "name": "Cloudflare",
+  "description": "Cloudflare product selection, provisioning, development and deployment skills with harnesst credential integration.",
+  "version": "0.1.1",
+  "eve": ">=0.22.0",
+  "subagentCompatible": false,
+  "files": [],
+  "assistantSkill": "assistant-skill.md",
+  "includes": [
+    {
+      "type": "skill",
+      "id": "cloudflare"
+    },
+    {
+      "type": "skill",
+      "id": "wrangler"
+    },
+    {
+      "type": "skill",
+      "id": "workers-best-practices"
+    },
+    {
+      "type": "skill",
+      "id": "durable-objects"
+    },
+    {
+      "type": "skill",
+      "id": "agents-sdk"
+    },
+    {
+      "type": "skill",
+      "id": "nextjs-on-cloudflare"
+    },
+    {
+      "type": "skill",
+      "id": "sandbox-stable"
+    },
+    {
+      "type": "skill",
+      "id": "sandbox-next"
+    },
+    {
+      "type": "skill",
+      "id": "sandbox-migrate-to-next"
+    },
+    {
+      "type": "skill",
+      "id": "cloudflare-email-service"
+    },
+    {
+      "type": "skill",
+      "id": "cloudflare-one"
+    },
+    {
+      "type": "skill",
+      "id": "cloudflare-one-migrations"
+    },
+    {
+      "type": "skill",
+      "id": "turnstile-spin"
+    },
+    {
+      "type": "skill",
+      "id": "web-perf"
+    },
+    {
+      "type": "skill",
+      "id": "building-cloudflare-apps"
+    },
+    {
+      "type": "skill",
+      "id": "deploying-cloudflare-apps"
+    }
+  ],
+  "setup": "Install this Cloudflare bundle onto the member responsible for infrastructure and CI. Ledger Infra already includes it, GitHub and the developer toolchain. It installs all fourteen Cloudflare skills from PLAN-TEAM plus the building/deploying Cloudflare apps skills and Wrangler. Supabase/ledger is a separate bundle.\n\nAuthenticate in that member\u2019s Settings \u2192 Secrets: save CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_TOKEN, keeping Expose to sandbox enabled. Get the account ID from the Cloudflare dashboard. Create the token under My Profile \u2192 API Tokens \u2192 Create Token \u2192 Edit Cloudflare Workers, scoped to your account. Add KV/D1/R2/etc permissions only for products the app needs. Complete Workers & Pages first-use setup in Cloudflare. No Cloudflare MCP connection is required.\n\nConnect a model and complete Connect GitHub on the member\u2019s Deployment tab for the product repository, then deploy/redeploy. Ask the agent to run wrangler whoami, inspect the product repository, and prepare its CI and deployment configuration. For Ledger Infra, give this work to intake so it becomes an infra item. Approve the resource/cost plan when asked. A successful CLI check confirms authentication; only a successful deployed URL confirms deployment.\n\nDetailed account/key instructions: LEDGER-SETUP.md in the prepared team repository."
+}

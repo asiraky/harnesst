@@ -21,5 +21,7 @@ CLAUDE.local.md
 # Unattended work-issue runs write their outcome here (see the work-issue skill)
 RESULT.json
 
+# Ledger prototype credentials and local generated team
+/catalog/ledger/.local/
 # Local artifact + chat-upload store (HARNESST_ARTIFACTS_DIR default)
 /.artifacts/

@@ -1,0 +1,4 @@
+node_modules/
+
+# Supabase CLI local metadata
+**/.temp/

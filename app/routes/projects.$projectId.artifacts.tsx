@@ -27,7 +27,7 @@ import {
 import { ArtifactPanel } from "~/components/artifacts/artifact-panel";
 import { ConfirmDialog } from "~/components/confirm-dialog";
 import { RelativeTime } from "~/components/localized-values";
-import { AgentNav, AppShell, PageHeader, repoCrumbs } from "~/components/shell";
+import { AgentNav, AppShell, PageHeader } from "~/components/shell";
 import { Alert, AlertDescription, AlertTitle } from "~/components/ui/alert";
 import { Button } from "~/components/ui/button";
 import {
@@ -69,14 +69,10 @@ export const loader = (args: LoaderFunctionArgs) =>
       const project = await requireProject(auth, args.params.projectId, {
         request: args.request,
       });
-      const [artifacts, roster] = await Promise.all([
-        listProjectArtifacts(project.id),
-        listAgents(project.id),
-      ]);
+      const artifacts = await listProjectArtifacts(project.id);
       return {
         project: { id: project.id, name: project.name },
         isTeam: project.layout === "team",
-        roster: roster.map((agent) => ({ name: agent.name })),
         artifacts: artifacts.map((artifact) => ({
           // What the panel opens: the same card data a conversation's transcript carries, so the
           // panel cannot tell (or care) which surface it was opened from. Its share link is the
@@ -152,7 +148,7 @@ export default function ProjectArtifactsPage({
   loaderData,
   actionData,
 }: Route.ComponentProps) {
-  const { project, isTeam, roster, artifacts } = loaderData;
+  const { project, isTeam, artifacts } = loaderData;
   const submit = useSubmit();
   const navigation = useNavigation();
   const busy = navigation.state !== "idle";
@@ -164,18 +160,13 @@ export default function ProjectArtifactsPage({
 
   return (
     <AppShell
-      breadcrumbs={repoCrumbs({
-        projectId: project.id,
-        repoName: project.name,
-        isTeam,
-        tail: [{ label: "Artifacts" }],
-      })}
+      nav={
+        <AgentNav
+          base={contextPath(project.id, null)}
+          level={isTeam ? "repo" : "single"}
+        />
+      }
     >
-      <AgentNav
-        base={contextPath(project.id, null)}
-        level={isTeam ? "repo" : "single"}
-        roster={roster}
-      />
       <PageHeader
         title="Published artifacts"
         description="Everything this repository's agents have published — including files published by background runs, which appear only here. Each artifact's public link opens its newest version for anyone holding the URL, with no sign-in; revoke a link to kill it, or rotate it to invalidate every copy in the wild."

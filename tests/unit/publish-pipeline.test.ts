@@ -788,6 +788,45 @@ describe("runPublish — CAS conflict on the commit", () => {
 });
 
 describe("runPublish — §2.8 environment resolution", () => {
+  it("a first member install can pass environment resolution before roster sync", async () => {
+    store.seedProject({
+      id: PROJECT,
+      orgId: "org_1",
+      layout: "team",
+      repoOwner: "acme",
+      repoName: "team",
+      repoInstallationId: "inst_1",
+      defaultBranch: "main",
+    });
+    await stageDrafts({ "agents/intake/agent/agent.ts": "export default {};" });
+    const task = await seedTask();
+    const deps = makeDeps({
+      listRepoPaths: vi.fn().mockResolvedValue(["agents/README.md"]),
+      checkBuild: vi
+        .fn()
+        .mockResolvedValue({
+          ok: false,
+          error: "stop after environment resolution",
+        }),
+    });
+    await runPublish(payload(task.id), deps, store);
+    expect((await stepStatuses(task.id)).check).toBe("succeeded");
+    expect(deps.checkBuild).toHaveBeenCalled();
+    expect((await store.projects.findById(PROJECT))?.liveEnvironmentName).toBe(
+      "default",
+    );
+  });
+
+  it("a team with members but no environments still fails before building", async () => {
+    seedTeam({ envNames: [] });
+    await stageDrafts({ "agents/ivy/agent/agent.ts": "export default {};" });
+    const task = await seedTask();
+    const deps = makeDeps();
+    await runPublish(payload(task.id), deps, store);
+    expect((await stepStatuses(task.id)).check).toBe("failed");
+    expect(deps.checkBuild).not.toHaveBeenCalled();
+  });
+
   it("a single env auto-resolves and persists as the live environment", async () => {
     seedTeam({ envNames: ["production"] });
     await stageDrafts({ "agents/ivy/agent/agent.ts": "export default {};" });

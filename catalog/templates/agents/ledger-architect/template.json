@@ -1,0 +1,37 @@
+{
+  "id": "ledger-architect",
+  "type": "agent",
+  "name": "Ledger Architect",
+  "description": "The team\u2019s technical designer. For non-trivial issues, call in an engineer, grill them on the technical design, and finalise the spec before breakdown.",
+  "version": "0.2.0",
+  "eve": ">=0.22.0",
+  "subagentCompatible": false,
+  "files": [
+    "agent.ts",
+    "instructions.md",
+    "subagents/researcher/agent.ts",
+    "subagents/researcher/instructions.md",
+    "subagents/researcher/sandbox/sandbox.ts",
+    "subagents/researcher/skills/dev-toolchain.md",
+    "subagents/researcher/skills/github-app-auth.md"
+  ],
+  "assistantSkill": "assistant-skill.md",
+  "includes": [
+    {
+      "type": "bundle",
+      "id": "ledger"
+    },
+    {
+      "type": "bundle",
+      "id": "github-bundle"
+    },
+    {
+      "type": "skill",
+      "id": "dev-toolchain"
+    },
+    {
+      "type": "skill",
+      "id": "codebase-design"
+    }
+  ]
+}

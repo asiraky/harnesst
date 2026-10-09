@@ -365,8 +365,11 @@ async function resolveLiveEnvironment(
   requested: string | null,
   deps: PublishPipelineDeps,
   store: DataStore,
+  installingFirstMember = false,
 ): Promise<string> {
   const names = await deps.listTeamEnvNames(project.id, store);
+  // Empty teams gain default environments when their first published roster is synced.
+  if (names.length === 0 && installingFirstMember) names.push("default");
   if (project.liveEnvironmentName && names.includes(project.liveEnvironmentName)) {
     return project.liveEnvironmentName;
   }
@@ -803,6 +806,9 @@ export async function runPublish(
           payload.envName ?? null,
           deps,
           store,
+          connected.layout === "team" &&
+            !agents.some((agent) => agent.kind === "member") &&
+            files.some((file) => file.content !== null && /^agents\/[^/]+\/agent\/agent\.ts$/.test(file.path)),
         );
       }
     } catch (error) {

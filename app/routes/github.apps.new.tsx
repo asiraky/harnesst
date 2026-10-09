@@ -41,6 +41,13 @@ import { envIngressUrl, isLocalOrigin, publicOrigin } from "~/lib/ingress";
 import { contextPath } from "~/lib/paths";
 import { noindexMeta } from "~/lib/seo";
 import { requireProject } from "~/project/guard.server";
+import { safeReturnTo } from "~/auth/return-to";
+import { listDrafts } from "~/drafts/drafts.server";
+import { getAgentSource } from "~/github/cached.server";
+import { appPermissionsFor } from "~/github/app-manifest.server";
+import { githubPermissionsForMember, overlayLock } from "~/marketplace/lock";
+import { resolveSyncedAgentContext } from "~/project/agent-context.server";
+import { requireRepo } from "~/project/guard.server";
 import type { Route } from "./+types/github.apps.new";
 
 interface GitHubAppNewData {
@@ -55,6 +62,8 @@ interface GitHubAppNewData {
     webhookUrl: string;
     envName: string;
     localOrigin: boolean;
+    /** `name:access` for every permission the App will request — baseline plus template asks. */
+    permissions: string[];
   } | null;
 }
 
@@ -66,8 +75,11 @@ export const loader = (args: LoaderFunctionArgs) =>
       const projectId = url.searchParams.get("project") ?? "";
       const agentName = url.searchParams.get("agent") ?? "";
       const envId = url.searchParams.get("env");
+      // The setup wizard sends people here and wants them back after GitHub's install step.
+      const rawReturnTo = url.searchParams.get("returnTo");
+      const returnTo = rawReturnTo ? safeReturnTo(rawReturnTo, "") || null : null;
 
-      const project = await requireProject(auth, projectId);
+      const project = requireRepo(await requireProject(auth, projectId));
 
       const roster = (await listAgents(project.id)).filter(
         (a) => a.kind === "member",
@@ -98,6 +110,28 @@ export const loader = (args: LoaderFunctionArgs) =>
       const origin = publicOrigin(args.request);
       const memberSegment = roster.length > 1 ? agent.name : null;
       const deploymentUrl = `${origin}${contextPath(project.id, memberSegment)}/deployment`;
+      // The templates installed on this agent decide what its App may do (e.g. only infra gets
+      // repository administration and Actions secrets) — read from the effective lock.
+      const [source, drafts] = await Promise.all([
+        getAgentSource(project.repoInstallationId, {
+          owner: project.repoOwner,
+          repo: project.repoName,
+        }),
+        listDrafts(project.id),
+      ]);
+      const { isTeam } = await resolveSyncedAgentContext(
+        project.id,
+        agent.name,
+        source.paths,
+      );
+      const lock = overlayLock(
+        source.files["harnesst-lock.json"] ?? null,
+        drafts.map((d) => ({ path: d.path, content: d.content })),
+      );
+      const extraPermissions = githubPermissionsForMember(
+        lock,
+        isTeam ? agent.name : null,
+      );
       const webhookUrl = envIngressUrl(origin, env.id, GITHUB_CHANNEL_ROUTE);
 
       // Bind the round-trip to this user + session and record a single-use nonce, mirroring the
@@ -126,17 +160,21 @@ export const loader = (args: LoaderFunctionArgs) =>
         homepageUrl: deploymentUrl,
         webhookUrl,
         redirectUrl: `${origin}/github/apps/callback`,
-        setupUrl: deploymentUrl,
+        setupUrl: returnTo ? `${origin}${returnTo}` : deploymentUrl,
+        permissions: extraPermissions,
         description: `${agent.name} — a harnesst agent. @mention it in issues and pull-request comments.`,
       };
       const manifest = buildAppManifest(manifestInput);
 
       return {
         error: null,
-        backUrl: `${contextPath(project.id, memberSegment)}/deployment`,
+        backUrl: returnTo ?? `${contextPath(project.id, memberSegment)}/deployment`,
         agentName: agent.name,
         projectName: project.name,
         form: {
+          permissions: Object.entries(appPermissionsFor(extraPermissions))
+            .map(([name, access]) => `${name}:${access}`)
+            .sort(),
           manifestJson: JSON.stringify(manifest),
           state,
           appName: manifest.name,
@@ -221,10 +259,24 @@ export default function GitHubAppNew({ loaderData }: Route.ComponentProps) {
                 </code>
               </p>
               <p className="text-muted-foreground">
-                Permissions: issues &amp; pull requests (read/write, the
-                conversation), contents (read/write, so the agent can branch and
-                push), metadata (read). Events: issue comments and pull-request
-                review comments.
+                Permissions:{" "}
+                {form.permissions.map((p, i) => (
+                  <span key={p}>
+                    {i > 0 && ", "}
+                    <code>{p}</code>
+                  </span>
+                ))}
+                , metadata:read. Contents, issues and pull requests let the
+                agent clone, branch, push, open PRs and work issues; anything
+                more comes from the templates installed on {agentName}. Events:
+                issues, issue comments, pull requests and pull-request review
+                comments.
+              </p>
+              <p className="text-muted-foreground">
+                For a team, create the App under your GitHub organization and
+                install it on <strong>All repositories</strong>, so the agent
+                can work every repository in the org — including ones the
+                team creates later.
               </p>
             </div>
 

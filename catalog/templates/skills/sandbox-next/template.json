@@ -1,0 +1,17 @@
+{
+  "id": "sandbox-next",
+  "type": "skill",
+  "name": "Sandbox Next",
+  "description": "Build or maintain Cloudflare Sandbox apps on @cloudflare/sandbox@next (SDK 1.0 preview). Use sandbox-migrate-to-next when porting a stable app.",
+  "version": "0.1.0",
+  "eve": ">=0.22.0",
+  "subagentCompatible": true,
+  "files": [
+    "skills/sandbox-next/LICENSE",
+    "skills/sandbox-next/SKILL.md",
+    "skills/sandbox-next/VENDORED.md",
+    "skills/sandbox-next/references/api-quick-ref.md",
+    "skills/sandbox-next/references/examples.md"
+  ],
+  "assistantSkill": "assistant-skill.md"
+}

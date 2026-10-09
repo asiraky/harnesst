@@ -163,17 +163,17 @@ export async function commitToDefaultBranch(
       f.content !== null,
   );
   let deletes = input.files.filter((f) => f.content === null);
-  const [blobs, headCommit] = await Promise.all([
-    Promise.all(
-      writes.map((f) =>
-        octokit.rest.git.createBlob({
-          owner,
-          repo,
-          content: Buffer.from(f.content).toString("base64"),
-          encoding: "base64",
-        }),
-      ),
-    ),
+  // Text can travel in the tree request itself. A catalog install can contain hundreds of
+  // files; creating a blob per text file needlessly hits GitHub's write throttling.
+  const [writeEntries, headCommit] = await Promise.all([
+    Promise.all(writes.map(async (f) => {
+      const entry = { path: f.path, mode: "100644" as const, type: "blob" as const };
+      if (typeof f.content === "string") return { ...entry, content: f.content };
+      const blob = await octokit.rest.git.createBlob({
+        owner, repo, content: f.content.toString("base64"), encoding: "base64",
+      });
+      return { ...entry, sha: blob.data.sha };
+    })),
     octokit.rest.git.getCommit({ owner, repo, commit_sha: input.expectedHeadSha }),
   ]);
   if (deletes.length > 0) {
@@ -201,12 +201,7 @@ export async function commitToDefaultBranch(
     repo,
     base_tree: headCommit.data.tree.sha,
     tree: [
-      ...writes.map((f, i) => ({
-        path: f.path,
-        mode: "100644" as const,
-        type: "blob" as const,
-        sha: blobs[i].data.sha,
-      })),
+      ...writeEntries,
       // sha: null in a tree entry removes the path from the base tree.
       ...deletes.map((f) => ({
         path: f.path,
