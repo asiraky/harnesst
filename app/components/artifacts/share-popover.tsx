@@ -9,7 +9,7 @@
  * call. That is also why they are two separate buttons.
  */
 import { Check, Copy, Share2 } from "lucide-react";
-import { useState } from "react";
+import { useState, useSyncExternalStore } from "react";
 
 import { useCopy } from "~/components/chat/clipboard";
 import { Button } from "~/components/ui/button";
@@ -21,8 +21,8 @@ import {
 
 /**
  * The share link as an absolute URL against `origin` — loader data carries it app-relative
- * (`/a/<token>`). Callers pass `window.location.origin` from a click or from content that only
- * renders once opened, so no render the server also does depends on the window.
+ * (`/a/<token>`). Callers pass `window.location.origin` from a click or from `usePageOrigin`, so no
+ * render the server also does depends on the window.
  */
 export function absoluteShareUrl(shareUrl: string, origin: string): string {
   try {
@@ -30,6 +30,17 @@ export function absoluteShareUrl(shareUrl: string, origin: string): string {
   } catch {
     return shareUrl;
   }
+}
+
+const noSubscription = () => () => {};
+
+/** This page's origin; null on the server, where there is no window. */
+function usePageOrigin(): string | null {
+  return useSyncExternalStore(
+    noSubscription,
+    () => window.location.origin,
+    () => null,
+  );
 }
 
 /** Whether the system share sheet exists. Called only from the opened popover, never on the server. */
@@ -61,6 +72,10 @@ export function SharePopover({
       <PopoverContent
         align="end"
         className="flex w-[min(20rem,calc(100vw-1rem))] flex-col gap-3 p-3"
+        // Copying on a plain-HTTP origin (no `navigator.clipboard`) goes through a textarea the
+        // clipboard helper focuses on <body>, outside this layer; that focus move must not count
+        // as leaving the popover. A click outside still closes it.
+        onFocusOutside={(event) => event.preventDefault()}
       >
         {shareUrl ? (
           <ShareLink shareUrl={shareUrl} title={title} isPage={isPage} />
@@ -75,7 +90,7 @@ export function SharePopover({
   );
 }
 
-/** The open popover's body. Rendered only once opened — by a click — so it may read the window. */
+/** The open popover's body. */
 function ShareLink({
   shareUrl,
   title,
@@ -86,7 +101,8 @@ function ShareLink({
   isPage: boolean;
 }) {
   const { copy, copied } = useCopy();
-  const url = absoluteShareUrl(shareUrl, window.location.origin);
+  const origin = usePageOrigin();
+  const url = origin ? absoluteShareUrl(shareUrl, origin) : shareUrl;
   const native = canShareNatively();
 
   return (
