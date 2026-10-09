@@ -153,10 +153,12 @@ export function assertProductionAuthEnvironment(
 /**
  * Extra origins Better Auth trusts in development, beyond BETTER_AUTH_URL itself.
  *
- * The tailnet dev hostname (`app.harnesst.test:<port>`, resolved to this box) serves the same
- * dev server as localhost, but Better Auth rejects any POST whose Origin isn't a trusted one —
- * "Invalid origin" on the sign-in form. Trust every `*.harnesst.test` origin on the dev port.
- * Production never gets this: its origin is exactly BETTER_AUTH_URL.
+ * One dev server answers on several hosts: its tailnet names (`app.harnesst.test:<port>`, a
+ * worktree's `app--<dir>.harnesst.test:<port>`, all resolved to this box) and loopback. `npm run
+ * dev` points BETTER_AUTH_URL at the tailnet name (scripts/dev-origin.mjs), and Better Auth
+ * rejects any POST whose Origin isn't trusted — "Invalid origin" on the sign-in form — so trust
+ * every `*.harnesst.test` origin and loopback on the dev port. Production never gets this: its
+ * origin is exactly BETTER_AUTH_URL.
  */
 export function devTrustedOrigins(
   env: { BETTER_AUTH_URL?: string; NODE_ENV?: string } = process.env,
@@ -169,13 +171,18 @@ export function devTrustedOrigins(
   } catch {
     return [];
   }
-  return [`http://*.harnesst.test:${port}`];
+  return [
+    `http://*.harnesst.test:${port}`,
+    `http://localhost:${port}`,
+    `http://127.0.0.1:${port}`,
+  ];
 }
 
 /** Match the same development host/port policy used by Better Auth. */
 export function isDevTrustedOrigin(origin: string): boolean {
   const url = new URL(origin);
   return devTrustedOrigins().some((pattern) => {
+    if (!pattern.includes("*.")) return url.origin === pattern;
     const trusted = new URL(pattern.replace("*.", ""));
     return (
       url.protocol === trusted.protocol &&

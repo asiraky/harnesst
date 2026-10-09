@@ -31,6 +31,21 @@ export const TYPE_META: Record<
   connection: { label: "Connection", icon: Plug, accent: "cyan" },
 };
 
+/**
+ * Presentation order for type filters and grouped sections — a product ordering (most recruited
+ * first), distinct from `TEMPLATE_TYPES` (the manifest/registry order). Any type absent here would
+ * be dropped from the UI, so it lists all of them.
+ */
+export const DISPLAY_ORDER: TemplateType[] = [
+  "agent",
+  "bundle",
+  "skill",
+  "channel",
+  "tool",
+  "subagent",
+  "connection",
+];
+
 /** A coloured icon + label chip marking a template's type (matches the catalog + detail + install). */
 export function TypeBadge({ type }: { type: TemplateType }) {
   const meta = TYPE_META[type];

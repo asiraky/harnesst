@@ -39,6 +39,7 @@ import {
   TooltipTrigger,
 } from "~/components/ui/tooltip";
 import { contextPath } from "~/lib/paths";
+import { copyText } from "~/components/chat/clipboard";
 
 const MASK = "••••••••";
 
@@ -148,8 +149,11 @@ function SharedRow({
             className="size-7"
             aria-label={`Copy secret name ${row.key}`}
             onClick={() => {
-              void navigator.clipboard?.writeText(row.key);
-              onFlash(COPY.copyNameToast);
+              void copyText(row.key).then((ok) =>
+                onFlash(
+                  ok ? COPY.copyNameToast : "Couldn't copy to the clipboard.",
+                ),
+              );
             }}
           >
             <Copy className="size-3.5" />
@@ -191,8 +195,13 @@ function SharedRow({
                   type="button"
                   className="font-mono underline-offset-4 hover:underline"
                   onClick={() => {
-                    void navigator.clipboard?.writeText(row.fingerprint!);
-                    onFlash("Fingerprint copied.");
+                    void copyText(row.fingerprint!).then((ok) =>
+                      onFlash(
+                        ok
+                          ? "Fingerprint copied."
+                          : "Couldn't copy to the clipboard.",
+                      ),
+                    );
                   }}
                 >
                   fp {row.fingerprint.slice(0, 6)}
