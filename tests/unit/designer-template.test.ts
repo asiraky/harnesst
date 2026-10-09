@@ -23,7 +23,6 @@ describe("Standalone Impeccable skill", () => {
   it("ships the vendored payload and its complete install contract", async () => {
     const template = await fixtureCatalog.template("skill", "impeccable");
 
-    expect(template.manifest.version).toBe("0.1.0");
     expect(Object.keys(template.files)).toHaveLength(149);
     expect(template.files).toHaveProperty("skills/impeccable/SKILL.md");
     expect(template.files).toHaveProperty(

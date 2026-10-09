@@ -42,7 +42,6 @@ const routes = [
   ...[
     "deployment",
     "settings",
-    "playground",
     "runs",
     "artifacts",
     "assistant",

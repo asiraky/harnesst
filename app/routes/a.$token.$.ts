@@ -17,11 +17,17 @@
  * query, so half the page would silently un-pin; the stable link serves the newest version only.
  *
  * SERVING SAFETY is the preview route's, wholesale. Page bytes go out with the same
- * self-sandboxing CSP (`artifactPreviewHeaders`), and when `PREVIEW_ORIGIN` is configured the app
- * origin refuses to serve any of this itself — the redirect below moves the whole family onto the
- * sandbox origin, which `previewHostAppRedirect` knows to leave there (`isPublicSharePath`).
- * Single files keep the cookie route's disposition rule: raster images inline, SVG and PDF as
- * attachment, so nothing agent-authored ever executes same-origin.
+ * self-sandboxing CSP (`artifactPreviewHeaders`), the same root-relative URL rewriting and the same
+ * bridge (`artifactPageBody`), and when `PREVIEW_ORIGIN` is configured the app origin refuses to
+ * serve any of this itself — the redirect below moves the whole family onto the sandbox origin,
+ * which `previewHostAppRedirect` knows to leave there (`isPublicSharePath`). `/a/<token>` with no
+ * trailing path redirects to the entry document, so the page's RELATIVE URLs resolve under the
+ * token rather than one level up at `/a/`.
+ *
+ * Single files follow the cookie route's `artifactServePolicy`: images, audio, video and PDF inline
+ * as themselves (PDF without a sandbox CSP, which Chrome's viewer cannot render under); SVG inline
+ * but sandboxed; every text format as sandboxed `text/plain`; anything else, or `?download=1`, as an
+ * attachment. Nothing agent-authored ever executes with an origin. `Range` is honoured throughout.
  *
  * Every failure — unknown or revoked token, a version that is not this artifact's, a member not in
  * the bundle, missing bytes — is the same 404, because distinguishing them would tell a guesser
@@ -29,12 +35,17 @@
  */
 import { data, type LoaderFunctionArgs } from "react-router";
 
+import { artifactBytesResponse, artifactEtag } from "~/foh/artifact-http";
 import {
-  artifactRendersInline,
+  artifactServePolicy,
   normalizeBundleRelPath,
   safeArtifactFileName,
 } from "~/foh/artifact-media";
-import { artifactPreviewHeaders } from "~/foh/artifact-preview.server";
+import {
+  artifactPageBody,
+  artifactPreviewHeaders,
+} from "~/foh/artifact-preview.server";
+import { artifactSiteRoot } from "~/foh/artifact-urls";
 import {
   findArtifactByShareToken,
   findArtifactFile,
@@ -45,15 +56,6 @@ import {
 import { previewHostRedirect } from "~/lib/preview-origin.server";
 
 const notFound = () => data("Not found", { status: 404 });
-
-/** A Node Buffer as a `BodyInit` — a VIEW over the same memory, not a copy (see preview route). */
-function bodyOf(bytes: Buffer): Uint8Array<ArrayBuffer> {
-  return new Uint8Array(
-    bytes.buffer as ArrayBuffer,
-    bytes.byteOffset,
-    bytes.length,
-  );
-}
 
 export async function loader({ params, request }: LoaderFunctionArgs) {
   // With PREVIEW_ORIGIN configured the app origin serves none of this: the bounce happens before
@@ -69,27 +71,54 @@ export async function loader({ params, request }: LoaderFunctionArgs) {
     // not exist for pages.
     const version = await latestArtifactVersion(artifact.id);
     if (!version || !version.entryPath) throw notFound();
-    // An empty splat is the entry document, so `/a/<token>` opens the page and its relative URLs
-    // resolve to `/a/<token>/<member>` — every subresource authenticating with the same token.
-    const relPath = normalizeBundleRelPath(params["*"] || version.entryPath);
+    const token = params.token ?? "";
+    // An empty splat is the entry document — but served AT `/a/<token>` its relative URLs would
+    // resolve against `/a/`, dropping the token. Redirect to the entry's own path so every
+    // subresource resolves to `/a/<token>/<member>` and authenticates with the same token.
+    if (!params["*"]) {
+      const entry = version.entryPath
+        .split("/")
+        .map(encodeURIComponent)
+        .join("/");
+      return new Response(null, {
+        status: 302,
+        headers: {
+          Location: `/a/${token}/${entry}`,
+          "Cache-Control": "no-store",
+          "Referrer-Policy": "no-referrer",
+        },
+      });
+    }
+    const relPath = normalizeBundleRelPath(params["*"]);
     if (!relPath) throw notFound();
     const file = await findArtifactFile({ versionId: version.id, relPath });
     if (!file) throw notFound();
     const bytes = await readArtifactBytes(file.storagePath);
     if (!bytes) throw notFound();
 
+    const body = artifactPageBody({
+      bytes,
+      contentType: file.contentType,
+      siteRoot: artifactSiteRoot(`/a/${token}`, version.entryPath),
+    });
     const headers = artifactPreviewHeaders({
       contentType: file.contentType,
-      byteSize: bytes.length,
+      byteSize: body.length,
       requestUrl: request.url,
     });
     // `private` says "per-user response", which this is not — but the operative half, `no-store`,
     // is shared: a cached copy would outlive revocation.
     headers.set("Cache-Control", "no-store");
-    return new Response(bodyOf(bytes), { headers });
+    return artifactBytesResponse({
+      request,
+      bytes: body,
+      headers,
+      // A rewritten body embeds the token, so the stored bytes' hash does not identify it.
+      etag: body === bytes ? artifactEtag(file.sha256) : null,
+    });
   }
 
-  // Single file (image or PDF document). A subpath under a single-file token names nothing.
+  // Single file (image, PDF document or file). A subpath under a single-file token names nothing.
   if (params["*"]) throw notFound();
 
   // `?v=` pins an exact retained version; constrained to THIS artifact, so a version id from
@@ -97,27 +126,37 @@ export async function loader({ params, request }: LoaderFunctionArgs) {
   // decided their bytes are not openable.
   const requested = new URL(request.url).searchParams.get("v");
   const version = requested
-    ? await findArtifactVersion({ artifactId: artifact.id, versionId: requested })
+    ? await findArtifactVersion({
+        artifactId: artifact.id,
+        versionId: requested,
+      })
     : await latestArtifactVersion(artifact.id);
   if (!version) throw notFound();
 
   const bytes = await readArtifactBytes(version.storagePath);
   if (!bytes) throw notFound();
 
-  const inline =
-    artifact.kind === "image" && artifactRendersInline(version.contentType);
-  return new Response(bodyOf(bytes), {
-    headers: {
-      "Content-Type": version.contentType,
-      "Content-Length": String(bytes.length),
-      // The cookie route's rule, kept deliberately on the public door: raster images render, SVG
-      // (script-capable on navigation) and PDF download. `sandbox` CSP as belt to that braces —
-      // even a mis-stored type renders with no origin and no script.
-      "Content-Disposition": `${inline ? "inline" : "attachment"}; filename="${safeArtifactFileName(artifact.name)}"`,
-      "Content-Security-Policy": "sandbox; default-src 'none'",
-      "X-Content-Type-Options": "nosniff",
-      "Referrer-Policy": "no-referrer",
-      "Cache-Control": "no-store",
-    },
+  const url = new URL(request.url);
+  const policy = artifactServePolicy({
+    name: artifact.name,
+    contentType: version.contentType,
+    download: url.searchParams.get("download") === "1",
+  });
+  const headers = new Headers({
+    "Content-Type": policy.contentType,
+    "Content-Disposition": `${policy.disposition}; filename="${safeArtifactFileName(artifact.name)}"`,
+    "X-Content-Type-Options": "nosniff",
+    "Referrer-Policy": "no-referrer",
+    "Cache-Control": "no-store",
+  });
+  // `sandbox` on everything the policy marks — SVG, text, attachments — so even a mis-stored type
+  // renders with no origin and no script. Not on a PDF (Chrome's viewer renders blank under it) or
+  // media; those carry no CSP of their own and the session middleware denies framing them.
+  if (policy.sandbox) headers.set("Content-Security-Policy", "sandbox");
+  return artifactBytesResponse({
+    request,
+    bytes,
+    headers,
+    etag: artifactEtag(version.sha256),
   });
 }

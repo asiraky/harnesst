@@ -1,7 +1,7 @@
 /**
- * Assistant streaming turn (resource route, action only). Project-level sibling of the playground
+ * Assistant streaming turn (resource route, action only). Project-level sibling of the FOH
  * stream route: the Assistant page POSTs a message here and reads back the same NDJSON turn
- * stream. Differences from the playground route: the target is the project's built-in assistant
+ * stream. Differences from the FOH route: the target is the project's built-in assistant
  * instance (`ensureAssistantInstance`, not a user deployment), the tenancy guard is project-level
  * (no agent param), and runs are recorded on the "assistant" channel. The disconnect-safe drain
  * itself is the shared `streamTurnResponse` helper.

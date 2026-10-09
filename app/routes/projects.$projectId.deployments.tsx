@@ -204,6 +204,8 @@ interface DeploymentData {
   project: ConnectedProject;
   roster: { name: string }[];
   activeAgent: string;
+  /** The active agent's id — Chat (`/t/:slug/:agentId`) keys agents by id. Empty in repo view. */
+  activeAgentId: string;
   isTeam: boolean;
   level: NavLevel;
   view: "repo" | "member";
@@ -481,6 +483,7 @@ export const loader = (args: LoaderFunctionArgs) =>
           project,
           roster: roster.map((a) => ({ name: a.name })),
           activeAgent: active?.name ?? "",
+          activeAgentId: active?.id ?? "",
           isTeam,
           level,
           view,
@@ -756,6 +759,7 @@ export const loader = (args: LoaderFunctionArgs) =>
         project,
         roster: roster.map((a) => ({ name: a.name })),
         activeAgent: active.name,
+        activeAgentId: active.id,
         isTeam,
         level,
         view,
@@ -1308,10 +1312,11 @@ export default function Deployment({
 /* ────────────────────────────── member view ────────────────────────────── */
 
 function MemberView({ loaderData }: { loaderData: LoaderData }) {
-  const { project, releases, envs, activeAgent, isTeam, canAct } = loaderData;
-  // Where "open" on a running deployment points: the agent's playground, not the instance's
-  // internal URL (a 127.0.0.1:<port> that's unreachable from a browser).
-  const playgroundPath = `${contextPath(project.id, isTeam ? activeAgent : null)}/playground`;
+  const { project, releases, envs, activeAgent, activeAgentId, canAct } =
+    loaderData;
+  // Where "chat" on a running deployment points: the agent's conversations in Chat, not the
+  // instance's internal URL (a 127.0.0.1:<port> that's unreachable from a browser).
+  const chatPath = `/t/${encodeURIComponent(project.slug)}/${encodeURIComponent(activeAgentId)}`;
 
   return (
     <>
@@ -1319,7 +1324,7 @@ function MemberView({ loaderData }: { loaderData: LoaderData }) {
         envs={envs}
         canAct={canAct}
         releases={releases}
-        playgroundPath={playgroundPath}
+        chatPath={chatPath}
       />
       <VersionHistory
         releases={releases}
@@ -2090,12 +2095,12 @@ function EnvironmentsCard({
   envs,
   canAct,
   releases,
-  playgroundPath,
+  chatPath,
 }: {
   envs: EnvState[];
   canAct: boolean;
   releases: ReleaseRow[];
-  playgroundPath: string;
+  chatPath: string;
 }) {
   const fetcher = useFetcher<typeof action>();
   const busy = fetcher.state !== "idle";
@@ -2171,13 +2176,13 @@ function EnvironmentsCard({
                       </span>
                       {/* `url` isn't the link target (it's an instance-internal address) — its
                           presence is the "there's a reachable instance to talk to" signal gating
-                          the playground link. */}
+                          the Chat link. */}
                       {running.url && (
                         <Link
-                          to={playgroundPath}
+                          to={chatPath}
                           className="underline underline-offset-4"
                         >
-                          open
+                          chat
                         </Link>
                       )}
                     </>

@@ -792,7 +792,8 @@ two-source-of-truth reconciliation problem.
   `?agent=` links and retired tab URLs 301 into the hierarchy. Tab rows per context:
   single-agent = Overview · Deployment · Playground · Runs · Assistant · Settings; team
   landing = Agents · Deployment · Playground · Settings; team member = Overview ·
-  Deployment · Runs · Assistant · Settings (+ member switcher).
+  Deployment · Runs · Assistant · Settings (+ member switcher). (The Playground tab was later
+  removed: talking to an agent moved to Chat, front of house.)
 - **Deployment tab** = Changes + Versions merged into the pipeline story: staged changes
   (the member's drafts + shared ones, badged) → change requests (repo-wide, labeled) →
   environments → version history. Team repos additionally get a repo-level Deployment
@@ -1087,6 +1088,9 @@ two-source-of-truth reconciliation problem.
   (commit `7da694e`.)
 
 **Milestone 8.5 — Playground: chat surface + human-in-the-loop (shipped)**
+
+> The Back-of-House Playground has since been removed; Chat (front of house) replaced it and runs
+> on the same session plumbing (`app/playground/`, `playground_sessions`).
 
 - Playground sessions are stored as **Eve cursors** (`71a8c5f`) and stream live, recorded as runs
   in observability (`c8ac0dc`). The playground/assistant became a **ChatGPT-style chat surface**

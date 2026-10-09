@@ -1,18 +1,23 @@
 /**
- * Mints a preview capability for one page-bundle artifact (#291). Resource route, action only.
+ * Opens one artifact in the panel: mints a preview capability for a page bundle (#291), and answers
+ * the version list for every kind. Resource route, action only.
  *
  * A POST rather than a loader for the reason `api.foh.read.ts` states: `prefetch="intent"` runs
  * loaders on hover, and minting a bearer capability is a side effect that must happen when the user
- * actually opens the card. This is the ONE place the full cookie-authenticated authorization runs —
- * org/team scope (`requireFohProject`) and then the per-conversation visibility check — and the
- * token it returns is a 10-minute, artifact-and-viewer-bound restatement of that decision.
+ * actually opens the card. This is the ONE place the full cookie-authenticated authorization runs
+ * for a page — org/team scope (`requireFohProject`) and then the per-conversation visibility check —
+ * and the token it returns is an hour-long, artifact-and-viewer-bound restatement of that decision.
  *
- * Everything unauthorized is a 404, matching the image route: an out-of-scope repo, a nonexistent
- * artifact id, someone else's conversation and an image (which has no preview) are indistinguishable.
+ * Everything unauthorized is a 404, matching the raw route: an out-of-scope repo, a nonexistent
+ * artifact id and someone else's conversation are indistinguishable.
  *
  * It is also where the panel LEARNS about versions (#292): the response carries the list, because
  * the panel's state is deliberately local — the session page revalidates every two seconds and a
- * preview driven by loader data would be torn down on each poll.
+ * preview driven by loader data would be torn down on each poll. Since the panel opens every kind,
+ * a single file gets the same answer with `url` and `expiresAt` null: its bytes are served by the
+ * cookie-authenticated raw and source routes, so there is no capability to mint — but its versions
+ * are listed under the same authorization, rather than through a second endpoint that would have to
+ * repeat it.
  */
 import { data, type ActionFunctionArgs } from "react-router";
 
@@ -30,27 +35,34 @@ import { getFohSessionForViewer } from "~/playground/sessions.server";
 
 export async function action(args: ActionFunctionArgs) {
   const auth = await getSessionAuth(args);
-  if (!auth.user) throw data({ ok: false, error: "Not found" }, { status: 404 });
+  if (!auth.user)
+    throw data({ ok: false, error: "Not found" }, { status: 404 });
   const access = await requireFohProject(auth, args.params.projectId);
 
   const form = await args.request.formData();
   const artifactId = String(form.get("artifactId") ?? "");
   const artifact = artifactId
-    ? await findProjectArtifact({ id: artifactId, projectId: access.project.id })
+    ? await findProjectArtifact({
+        id: artifactId,
+        projectId: access.project.id,
+      })
     : null;
-  if (!artifact || artifact.kind !== "html") {
+  if (!artifact) {
     throw data({ ok: false, error: "Not found" }, { status: 404 });
   }
 
   // Visibility is the CONVERSATION's, not the repo's: FOH sessions are per-creator confidential,
   // so repo scope alone would let one member preview another's page. A session-less artifact
-  // (#370) sits in no conversation — repo access is the whole check.
+  // (#370) sits in no conversation — repo access is the whole check. Back of house sees every
+  // conversation, archived ones included (it owns the archived shelf, and its Artifacts page lists
+  // their artifacts), which is the same rule `requireArtifactAccess` applies to the raw route.
   if (artifact.sessionId) {
     const session = await getFohSessionForViewer({
       id: artifact.sessionId,
       projectId: access.project.id,
       viewerId: auth.user.id,
       includeAll: access.backOfHouse,
+      includeArchived: access.backOfHouse,
     });
     if (!session)
       throw data({ ok: false, error: "Not found" }, { status: 404 });
@@ -64,6 +76,26 @@ export async function action(args: ActionFunctionArgs) {
   const selected = requested
     ? versions.find((version) => version.id === requested)
     : versions[0];
+  const versionList = versions.map((version) => ({
+    id: version.id,
+    version: version.versionNumber,
+    byteSize: version.byteSize,
+    createdAt: version.createdAt.toISOString(),
+  }));
+
+  // A single file: no capability, just the versions (see the module comment).
+  if (artifact.kind !== "html") {
+    if (!selected)
+      throw data({ ok: false, error: "Not found" }, { status: 404 });
+    return data({
+      ok: true as const,
+      url: null,
+      expiresAt: null,
+      versionId: selected.id,
+      versions: versionList,
+    });
+  }
+
   // Every version of an html artifact has an entry, because `recordArtifact` refuses to append a
   // version of the other kind (the check `publishArtifact` makes before the copy cannot hold that
   // on its own). The guard stays as this door's own: a card no version answers is a 404, never a
@@ -87,13 +119,8 @@ export async function action(args: ActionFunctionArgs) {
     url: artifactPreviewUrl(minted.token, artifact.id, selected.entryPath),
     expiresAt: minted.expiresAt,
     // Echoed so the panel's re-mint pins the version the user is LOOKING at: re-resolving "newest"
-    // every ten minutes would swap a user parked on v1 to v3 with no interaction at all.
+    // on every re-mint would swap a user parked on v1 to v3 with no interaction at all.
     versionId: selected.id,
-    versions: versions.map((version) => ({
-      id: version.id,
-      version: version.versionNumber,
-      byteSize: version.byteSize,
-      createdAt: version.createdAt.toISOString(),
-    })),
+    versions: versionList,
   });
 }

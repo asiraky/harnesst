@@ -1,10 +1,10 @@
 /**
- * Parse the playground composer's model/effort form fields into a validated selection.
+ * Parse a chat send's model/effort form fields (the FOH stream route) into a validated selection.
  *
  * Effort only means anything attached to a model selection — the signed directive embeds it
  * next to the model id, and a deployed fallback already carries its own effort. An effort sent
  * without a model (older clients echo the agent's default effort) is therefore dropped, not
- * rejected: rejecting it broke every send from a playground whose agent had a saved effort.
+ * rejected: rejecting it broke every send from a conversation whose agent had a saved effort.
  */
 import { isReasoningEffort, type ReasoningEffort } from "~/models/reasoning";
 

@@ -1,6 +1,6 @@
 /**
- * FOH stop (resource route, action only) — the playground stop path rebound to FOH sessions
- * (D20 copy). Same eve-cancel discipline (#73: only ask the deployment that RAN the turn,
+ * FOH stop (resource route, action only) — the since-removed Playground's stop path rebound to
+ * FOH sessions (D20 copy). Same eve-cancel discipline (#73: only ask the deployment that RAN the turn,
  * never a replacement instance) + the local drain abort; additionally resolves the session's
  * pending inbox items — a deliberate stop moots any parked question, and the stop-wins guards
  * mean nothing else could clear them afterwards.

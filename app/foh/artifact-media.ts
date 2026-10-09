@@ -1,32 +1,55 @@
 /**
  * Artifact media rules (issues #290, #291) — the judgements that decide whether an agent's publish
- * is accepted, all pure so they unit-test with no docker, no disk and no database.
+ * is accepted, and how its bytes are typed and served. All pure, so they unit-test with no docker,
+ * no disk and no database.
  *
- * WHAT MAY BE PUBLISHED: a path inside the agent's own home volume, and either bytes that ARE one
- * of four image formats, a PDF document, or a small static PAGE BUNDLE (an `index.html` plus
- * css/js/font/image siblings). For a single file the content type is SNIFFED, never taken from the request: the agent
- * names a file, so a claimed `image/png` on an HTML payload would turn the image serving route —
- * same-origin, cookie-authenticated — into stored XSS against the operator's own session.
+ * WHAT MAY BE PUBLISHED: a path inside the agent's own home volume, holding either an image, a PDF
+ * document, a small static PAGE BUNDLE (an `index.html` plus its css/js/font/image siblings), or —
+ * since the `file` kind — ANY other file, which is stored and offered for download or for one of the
+ * text/data/media viewers (`artifact-viewer.ts`).
  *
- * A bundle cannot work that way, because HTML, CSS and JS have no magic bytes at all: there is
- * nothing to sniff and every heuristic is guessable around. So the bundle rules invert the
- * compensating control instead of pretending to sniff — the member's EXTENSION picks its type from
- * a closed allowlist, and the bytes are only ever served by the preview route, whose response
- * carries `Content-Security-Policy: sandbox allow-scripts; …` (see `artifact-preview.server.ts`).
- * Header-level `sandbox` survives a top-level navigation, which is what makes serving
- * agent-authored HTML from harnesst's own origin safe; the image route refuses bundle rows
- * outright. Image members are still cross-checked against the sniff — an extension allowlist is a
- * weaker claim than magic bytes, so where magic exists it is required to agree.
+ * What makes accepting anything safe is that the SERVING decision no longer trusts the type to be
+ * inert. Every single-file response is built by `artifactServePolicy` from the stored content type:
+ * raster images, audio and video go out as themselves; PDFs inline for the browser's own viewer;
+ * SVG inline under a header `sandbox` CSP (no script, even on a top-level navigation); every text
+ * format — markdown, CSV, JSON, code, and HTML that arrived as a single `file` — as
+ * `text/plain; charset=utf-8`; anything else as an attachment. All of it with `nosniff`. No door
+ * the cookie reaches ever sends agent-authored bytes as `text/html`.
  *
- * Client+server safe: no node builtins, no server imports (the serving route and the FOH card
- * both read `ARTIFACT_INLINE_TYPES`).
+ * TYPING. An `image` or `document` publish is still SNIFFED and refused when the bytes disagree —
+ * those kinds promise a renderable picture or PDF, and the sniff keeps that promise honest. A `file`
+ * is typed by its EXTENSION first (`artifactMediaTypeFromName`) with the sniff as fallback: sniffing
+ * cannot tell markdown from plain text or CSV from anything, and it gets some things actively wrong
+ * (a TypeScript `.ts` sniffs as `video/mp2t`). Because serving keys off the stored type rather than
+ * trusting it, a lying extension can only produce a broken preview, never active content.
+ *
+ * A bundle's HTML, CSS and JS have no magic bytes at all, so its members take their type from the
+ * extension against a closed allowlist, and the bytes are only ever served by the preview and share
+ * routes, whose responses carry `Content-Security-Policy: sandbox allow-scripts …` (see
+ * `artifact-preview.server.ts`). Header-level `sandbox` survives a top-level navigation, which is
+ * what makes serving agent-authored HTML safe; the cookie route refuses bundle rows outright. Image
+ * members are still cross-checked against the sniff — an extension allowlist is a weaker claim than
+ * magic bytes, so where magic exists it is required to agree.
+ *
+ * Client+server safe: no node builtins, no server imports.
  */
+import {
+  artifactExtensionOf,
+  ARTIFACT_INERT_IMAGE_TYPES,
+  artifactIsTextMedia,
+  artifactMediaEssence,
+  artifactReadsText,
+  ARTIFACT_TEXT_EXTENSIONS,
+  artifactViewerFor,
+} from "~/foh/artifact-viewer";
+import { truncateUtf8 } from "~/foh/artifact-source";
 
-/** Hard ceiling on one artifact. Matches the edge's `client_max_body_size 25m` (nginx-harnesst.conf). */
+/**
+ * Hard ceiling on one artifact (a single file, or a bundle's total). A publish whose bytes ride in
+ * the request body base64-encodes them, which the edge's `client_max_body_size 40m`
+ * (nginx-harnesst.conf) still admits at this size.
+ */
 export const ARTIFACT_MAX_BYTES = 25 * 1024 * 1024;
-
-/** PDF upload ceiling for a document published from an isolated subagent sandbox. */
-export const ARTIFACT_DOCUMENT_MAX_BYTES = 4 * 1024 * 1024;
 
 /**
  * The only directory tree an agent may publish out of: its own persistent home, which the
@@ -36,11 +59,13 @@ export const ARTIFACT_DOCUMENT_MAX_BYTES = 4 * 1024 * 1024;
  */
 export const ARTIFACT_HOME_ROOT = "/workspace/home";
 
-/** The image formats a single-file publish may be. Ordered by how they are sniffed below. */
+/** The image formats an `image` publish may be. Ordered by how they are sniffed below. */
 export const ARTIFACT_CONTENT_TYPES = [
   "image/png",
   "image/jpeg",
   "image/webp",
+  "image/gif",
+  "image/avif",
   "image/svg+xml",
 ] as const;
 
@@ -52,25 +77,12 @@ export type ArtifactDocumentContentType =
   (typeof ARTIFACT_DOCUMENT_CONTENT_TYPES)[number];
 
 /**
- * Types the IMAGE serving route hands over for inline rendering. SVG is deliberately absent: it
- * renders safely inside an `<img>` (scripts never run in an image context) but a DIRECT navigation
- * to the URL would execute them same-origin. That route serves no CSP of its own, so SVG ships with
- * a download disposition instead, which navigations honour and image loads ignore. (The bundle
- * preview route does own its CSP — see `artifact-preview.server.ts` — which is precisely why it is
- * the only route allowed to serve a bundle's bytes.)
- */
-export const ARTIFACT_INLINE_TYPES: readonly string[] = [
-  "image/png",
-  "image/jpeg",
-  "image/webp",
-];
-
-/**
  * What a published artifact IS, and the row's `kind` column. `image` and `document` are single
- * sniffed files served by the cookie-authenticated artifact route; `html` is a page bundle served
- * only through the sandboxed, token-authenticated preview route.
+ * sniffed files, `file` is a single file of any type (typed by extension), all three served by the
+ * cookie-authenticated artifact route under `artifactServePolicy`; `html` is a page bundle served
+ * only through the sandboxed, token-authenticated preview and share routes.
  */
-export const ARTIFACT_KINDS = ["image", "html", "document"] as const;
+export const ARTIFACT_KINDS = ["image", "html", "document", "file"] as const;
 export type ArtifactKind = (typeof ARTIFACT_KINDS)[number];
 
 /** Most files a page bundle may hold. A page, not a site — see the byte cap above for the rest. */
@@ -80,38 +92,142 @@ export const ARTIFACT_BUNDLE_MAX_FILES = 40;
 export const ARTIFACT_BUNDLE_ENTRY = "index.html";
 
 /**
- * The closed allowlist of bundle member types, keyed by lowercase extension. Deliberately small:
- * everything here is a STATIC asset a rendered page needs, and nothing here is a container format
- * that could carry another (no zip, no pdf, no video). An unlisted extension is refused rather than
- * skipped — silently dropping a font or a stylesheet would show the user a page that renders wrong
- * for no visible reason, and the agent owns the directory it asked us to publish.
- *
- * `json` and `map` are here so a data file or a build's sourcemap sitting next to the page does not
- * refuse the whole publish — NOT because a page can read them at runtime. The preview serves
- * `connect-src 'none'`, so `fetch()`/XHR of a sibling never resolves; a sourcemap is fetched by
- * devtools, which is not subject to the page's CSP, and that is the only use `map` has here. The
- * tool description and the assistant skill therefore tell agents to INLINE their data.
+ * Media types by extension for a `file` publish — the formats whose type a viewer or a browser
+ * actually cares about. Code and plain-text extensions not listed resolve to `text/plain` (see
+ * `artifactMediaTypeFromName`). Stored WITHOUT a charset: the serving policy adds one where it
+ * sends text.
  */
-const BUNDLE_MEMBER_TYPES: Readonly<Record<string, string>> = {
+const FILE_MEDIA_TYPES = {
+  md: "text/markdown",
+  markdown: "text/markdown",
+  mdx: "text/markdown",
+  csv: "text/csv",
+  tsv: "text/tab-separated-values",
+  json: "application/json",
+  geojson: "application/geo+json",
+  jsonl: "application/x-ndjson",
+  ndjson: "application/x-ndjson",
+  webmanifest: "application/manifest+json",
+  yaml: "application/yaml",
+  yml: "application/yaml",
+  toml: "application/toml",
+  xml: "application/xml",
+  txt: "text/plain",
+  log: "text/plain",
   html: "text/html",
   htm: "text/html",
+  xhtml: "application/xhtml+xml",
   css: "text/css",
   js: "text/javascript",
   mjs: "text/javascript",
-  json: "application/json",
-  map: "application/json",
+  cjs: "text/javascript",
+  ts: "text/x-typescript",
+  tsx: "text/x-typescript",
+  go: "text/x-go",
+  py: "text/x-python",
+  sh: "text/x-shellscript",
+  sql: "text/x-sql",
   svg: "image/svg+xml",
   png: "image/png",
   jpg: "image/jpeg",
   jpeg: "image/jpeg",
+  gif: "image/gif",
   webp: "image/webp",
+  avif: "image/avif",
+  bmp: "image/bmp",
+  ico: "image/x-icon",
+  pdf: "application/pdf",
+  mp3: "audio/mpeg",
+  wav: "audio/wav",
+  ogg: "audio/ogg",
+  oga: "audio/ogg",
+  opus: "audio/ogg",
+  m4a: "audio/mp4",
+  aac: "audio/aac",
+  flac: "audio/flac",
+  weba: "audio/webm",
+  mp4: "video/mp4",
+  m4v: "video/mp4",
+  webm: "video/webm",
+  mov: "video/quicktime",
+  ogv: "video/ogg",
+  zip: "application/zip",
+  gz: "application/gzip",
+  tar: "application/x-tar",
+  docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  pptx: "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+  wasm: "application/wasm",
+} as const satisfies Record<string, string>;
+
+type FileExtension = keyof typeof FILE_MEDIA_TYPES;
+
+/**
+ * The closed allowlist of bundle member types, keyed by lowercase extension: the static assets a
+ * rendered page plausibly loads — markup, styles, scripts, fonts, images, small media, data files
+ * and wasm. Executables, archives and other container formats (zip, pdf, exe, sh) stay off it; an
+ * unlisted extension is refused rather than skipped, because silently dropping a font or a
+ * stylesheet would show the user a page that renders wrong for no visible reason, and the agent
+ * owns the directory it asked us to publish.
+ *
+ * Data files (`json`, `csv`, `md`, `txt`) are here because a page may now READ them: the preview's
+ * CSP no longer closes `connect-src`, and its responses carry `Access-Control-Allow-Origin: *` so
+ * the sandbox's opaque origin can `fetch('./data.json')` a sibling (see `artifact-preview.server.ts`).
+ *
+ * The list names extensions only; their types are the ones a lone `file` publish gets
+ * (`FILE_MEDIA_TYPES`), so the two can never disagree about what a `.js` is.
+ */
+const BUNDLE_MEMBER_EXTENSIONS: readonly FileExtension[] = [
+  "html",
+  "htm",
+  "css",
+  "js",
+  "mjs",
+  "cjs",
+  "json",
+  "webmanifest",
+  "txt",
+  "md",
+  "csv",
+  "tsv",
+  "svg",
+  "png",
+  "jpg",
+  "jpeg",
+  "webp",
+  "gif",
+  "avif",
+  "ico",
+  "mp3",
+  "wav",
+  "ogg",
+  "m4a",
+  "mp4",
+  "webm",
+  "wasm",
+];
+
+/** Bundle member types a lone `file` publish has no entry for: source maps and web fonts. */
+const BUNDLE_ONLY_TYPES: Readonly<Record<string, string>> = {
+  map: "application/json",
   woff2: "font/woff2",
   woff: "font/woff",
+  ttf: "font/ttf",
+  otf: "font/otf",
 };
 
+const BUNDLE_MEMBER_TYPES: ReadonlyMap<string, string> = new Map([
+  ...BUNDLE_MEMBER_EXTENSIONS.map((ext): [string, string] => [
+    ext,
+    FILE_MEDIA_TYPES[ext],
+  ]),
+  ...Object.entries(BUNDLE_ONLY_TYPES),
+]);
+
 /** Extensions an agent may publish inside a bundle, for the refusal message. */
-export const ARTIFACT_BUNDLE_EXTENSIONS: readonly string[] =
-  Object.keys(BUNDLE_MEMBER_TYPES);
+export const ARTIFACT_BUNDLE_EXTENSIONS: readonly string[] = [
+  ...BUNDLE_MEMBER_TYPES.keys(),
+];
 
 /** Longest single path segment inside a bundle, and the deepest a bundle may nest. */
 const MAX_SEGMENT_LENGTH = 100;
@@ -143,10 +259,7 @@ export function normalizeBundleRelPath(raw: unknown): string | null {
 
 /** The content type a bundle member's extension declares, or null when it is not on the list. */
 export function bundleMemberContentType(relPath: string): string | null {
-  const name = relPath.slice(relPath.lastIndexOf("/") + 1);
-  const dot = name.lastIndexOf(".");
-  if (dot <= 0) return null;
-  return BUNDLE_MEMBER_TYPES[name.slice(dot + 1).toLowerCase()] ?? null;
+  return BUNDLE_MEMBER_TYPES.get(artifactExtensionOf(relPath)) ?? null;
 }
 
 export interface BundleMember {
@@ -189,10 +302,14 @@ export function pickBundleEntry(relPaths: readonly string[]): string | null {
   return pages.length === 1 ? pages[0] : null;
 }
 
+/** Extensions a kind-less publish treats as an `image` (and so sniffs as one). */
+const IMAGE_NAME = /\.(png|jpe?g|webp|gif|avif|svg)$/i;
+
 /**
  * Which kind of artifact a publish is. `kind` from the agent decides when it says anything;
- * otherwise the name does, so an agent that publishes `report.html` without reading the tool
- * description gets the bundle path instead of "that is not an image". Null = refuse.
+ * otherwise the name does — `.html` a page, `.pdf` a document, an image extension an image, and
+ * ANYTHING ELSE a `file`. (Before the `file` kind existed the fallback was "image", which turned
+ * every CSV into "that is not a PNG".) Null = an unknown kind word; refuse.
  */
 export function artifactKindFor(
   raw: unknown,
@@ -201,7 +318,8 @@ export function artifactKindFor(
   if (raw === null || raw === undefined || raw === "") {
     if (/\.html?$/i.test(name)) return "html";
     if (/\.pdf$/i.test(name)) return "document";
-    return "image";
+    if (IMAGE_NAME.test(name)) return "image";
+    return "file";
   }
   if (typeof raw !== "string") return null;
   return (ARTIFACT_KINDS as readonly string[]).includes(raw)
@@ -231,7 +349,10 @@ export const ARTIFACT_PREVIEW_IFRAME_ALLOW = [
 
 /** `charset` for the text types a bundle serves — without it a UTF-8 page renders as mojibake. */
 export function artifactCharsetType(contentType: string): string {
-  return contentType.startsWith("text/") || contentType === "application/json"
+  if (contentType.includes(";")) return contentType;
+  return contentType.startsWith("text/") ||
+    contentType === "application/json" ||
+    contentType.endsWith("+json")
     ? `${contentType}; charset=utf-8`
     : contentType;
 }
@@ -290,11 +411,36 @@ function tagAt(bytes: Uint8Array, offset: number): string {
   return String.fromCharCode(...bytes.slice(offset, offset + 4));
 }
 
+/** The `ftyp` box an ISO-BMFF file (MP4, MOV, M4A, AVIF, HEIC) opens with, or null. */
+function isoBrands(
+  bytes: Uint8Array,
+): { major: string; brands: string[] } | null {
+  if (bytes.length < 12 || tagAt(bytes, 4) !== "ftyp") return null;
+  const boxSize =
+    ((bytes[0] << 24) | (bytes[1] << 16) | (bytes[2] << 8) | bytes[3]) >>> 0;
+  const end = Math.min(bytes.length, Math.max(boxSize, 12), 256);
+  const brands: string[] = [];
+  for (let offset = 16; offset + 4 <= end; offset += 4) {
+    brands.push(tagAt(bytes, offset));
+  }
+  return { major: tagAt(bytes, 8), brands };
+}
+
+function isAvif(bytes: Uint8Array): boolean {
+  const iso = isoBrands(bytes);
+  if (!iso) return false;
+  if (iso.major === "avif" || iso.major === "avis") return true;
+  return (
+    (iso.major === "mif1" || iso.major === "msf1") &&
+    iso.brands.some((brand) => brand === "avif" || brand === "avis")
+  );
+}
+
 /**
- * The content type the BYTES are, or null when they are not a supported image. PNG/JPEG/WebP have
- * unambiguous magic; SVG is XML, so it is recognised by a root `<svg` element near the head of the
- * document and only when the file also claims to be one by name — a text file that merely contains
- * an `<svg` snippet is not an image.
+ * The content type the BYTES are, or null when they are not a supported image. PNG, JPEG, WebP,
+ * GIF and AVIF have unambiguous magic; SVG is XML, so it is recognised by a root `<svg` element
+ * near the head of the document and only when the file also claims to be one by name — a text file
+ * that merely contains an `<svg` snippet is not an image.
  */
 export function sniffArtifactContentType(
   bytes: Uint8Array,
@@ -311,12 +457,17 @@ export function sniffArtifactContentType(
   ) {
     return "image/webp";
   }
+  if (bytes.length >= 6) {
+    const head = String.fromCharCode(...bytes.slice(0, 6));
+    if (head === "GIF87a" || head === "GIF89a") return "image/gif";
+  }
+  if (isAvif(bytes)) return "image/avif";
   if (name.toLowerCase().endsWith(".svg")) {
     // Read only the head: an SVG's root element is at the top, after an optional BOM, XML
     // declaration, doctype or comments, and scanning megabytes for it buys nothing.
     const head = new TextDecoder("utf-8", { fatal: false })
       .decode(bytes.slice(0, 4096))
-      .replace(/^﻿/, "")
+      .replace(/^\uFEFF/, "")
       .trimStart();
     if (
       /^(<\?xml[\s\S]*?\?>|<!--[\s\S]*?-->|<!DOCTYPE[^>]*>|\s)*<svg[\s>]/i.test(
@@ -331,8 +482,7 @@ export function sniffArtifactContentType(
 
 /**
  * A document type read from the bytes rather than its extension. A PDF header is the only format
- * admitted; the serving route sends documents as downloads, so no document-authored active content
- * executes in harnesst's origin.
+ * admitted for the `document` kind; anything else is a `file`.
  */
 export function sniffArtifactDocumentContentType(
   bytes: Uint8Array,
@@ -342,9 +492,188 @@ export function sniffArtifactDocumentContentType(
     : null;
 }
 
-/** Whether the serving route may render these bytes inline (see `ARTIFACT_INLINE_TYPES`). */
-export function artifactRendersInline(contentType: string): boolean {
-  return ARTIFACT_INLINE_TYPES.includes(contentType);
+/** The media type a file's NAME declares, or null when the extension is not one harnesst knows. */
+export function artifactMediaTypeFromName(name: string): string | null {
+  const ext = artifactExtensionOf(name);
+  if (!ext) {
+    // `Dockerfile`, `Makefile`: named for what they are, read as text.
+    const base = name.slice(name.lastIndexOf("/") + 1).toLowerCase();
+    return base === "dockerfile" || base === "makefile" ? "text/plain" : null;
+  }
+  if (Object.hasOwn(FILE_MEDIA_TYPES, ext)) {
+    return FILE_MEDIA_TYPES[ext as FileExtension];
+  }
+  return ARTIFACT_TEXT_EXTENSIONS.has(ext) ? "text/plain" : null;
+}
+
+/**
+ * The media type the BYTES are, beyond the image/PDF sniffs: the common audio/video containers and
+ * archives, then "decodes as UTF-8 with no NUL in the head" for text. Null = unrecognised binary.
+ */
+export function sniffArtifactFileContentType(
+  bytes: Uint8Array,
+  name: string,
+): string | null {
+  const image = sniffArtifactContentType(bytes, name);
+  if (image) return image;
+  if (sniffArtifactDocumentContentType(bytes)) return "application/pdf";
+  const iso = isoBrands(bytes);
+  if (iso) {
+    if (iso.major === "qt  ") return "video/quicktime";
+    if (iso.major.startsWith("M4A")) return "audio/mp4";
+    return "video/mp4";
+  }
+  if (startsWith(bytes, [0x1a, 0x45, 0xdf, 0xa3])) return "video/webm";
+  if (tagAt(bytes, 0) === "OggS") return "audio/ogg";
+  if (tagAt(bytes, 0) === "fLaC") return "audio/flac";
+  if (
+    bytes.length >= 12 &&
+    tagAt(bytes, 0) === "RIFF" &&
+    tagAt(bytes, 8) === "WAVE"
+  ) {
+    return "audio/wav";
+  }
+  if (
+    startsWith(bytes, [0x49, 0x44, 0x33]) ||
+    (bytes.length >= 2 && bytes[0] === 0xff && (bytes[1] & 0xe0) === 0xe0)
+  ) {
+    return "audio/mpeg";
+  }
+  if (startsWith(bytes, [0x50, 0x4b, 0x03, 0x04])) return "application/zip";
+  if (startsWith(bytes, [0x1f, 0x8b])) return "application/gzip";
+  return looksLikeText(bytes) ? "text/plain" : null;
+}
+
+/** UTF-8 with no NUL in the first 8 KiB — the usual "is this text" test. An empty file is text. */
+function looksLikeText(bytes: Uint8Array): boolean {
+  // Cut at a character boundary so a multi-byte sequence split at 8 KiB is not "invalid".
+  const head = truncateUtf8(bytes, 8192).bytes;
+  if (head.includes(0)) return false;
+  try {
+    new TextDecoder("utf-8", { fatal: true }).decode(head);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * The content type stored for a `file` publish: the name's declared type first (a sniff cannot
+ * tell markdown from CSV, and calls a `.ts` file an MPEG transport stream), the sniff when the
+ * name says nothing, `application/octet-stream` when neither does. Never refuses — any file may
+ * be a `file`; `artifactServePolicy` is what keeps an unrecognised one from rendering.
+ */
+export function resolveArtifactFileContentType(
+  name: string,
+  bytes: Uint8Array,
+): string {
+  return (
+    artifactMediaTypeFromName(name) ??
+    sniffArtifactFileContentType(bytes, name) ??
+    "application/octet-stream"
+  );
+}
+
+export interface ArtifactServePolicy {
+  /** `inline` renders in the browser (or an `<img>`/`<video>`/`<iframe>`); `attachment` downloads. */
+  disposition: "inline" | "attachment";
+  /** The `Content-Type` to SEND — not always the stored one (text goes out as `text/plain`). */
+  contentType: string;
+  /**
+   * Whether the response must carry a `sandbox` CSP. True for everything that is not a raster,
+   * a PDF or audio/video: a document that could be active content (SVG, a misnamed HTML) runs no
+   * script and gets an opaque origin even when opened as a top-level page.
+   */
+  sandbox: boolean;
+  /**
+   * Whether the app itself may FRAME the response (the panel's PDF viewer). Only a PDF needs to be
+   * embedded as a document; everything else is shown via an element or fetched as text.
+   */
+  embeddable: boolean;
+}
+
+/**
+ * How a single stored file goes out on the wire — the one decision both the cookie route and the
+ * public share route make, pure so the matrix is unit-tested.
+ *
+ *   - `download` → an attachment, whatever it is.
+ *   - PDF → inline, NO sandbox CSP (Chrome's built-in viewer renders a blank page under one), and
+ *     embeddable by the app. A PDF's own scripting runs inside the browser's PDF viewer, not
+ *     against the page origin — the same call Omniplex makes.
+ *   - Inert raster images → inline, as themselves.
+ *   - Audio/video → inline, as themselves, no CSP (a media document does not need one, and some
+ *     engines treat a sandboxed media document as an error page).
+ *   - SVG → inline as `image/svg+xml` but sandboxed: an `<img>` never runs its script anyway, and a
+ *     direct navigation to it now runs none either.
+ *   - Text a viewer reads (markdown, CSV, JSON, code, a single-file HTML) → `text/plain;
+ *     charset=utf-8`, sandboxed. The viewers fetch it and render it themselves; the browser never
+ *     gets to interpret it as markup.
+ *   - Anything else → an attachment.
+ */
+export function artifactServePolicy(input: {
+  name: string;
+  contentType: string;
+  download?: boolean;
+}): ArtifactServePolicy {
+  const stored =
+    artifactMediaEssence(input.contentType) || "application/octet-stream";
+  if (input.download) {
+    return {
+      disposition: "attachment",
+      contentType: stored,
+      sandbox: true,
+      embeddable: false,
+    };
+  }
+  if (stored === "application/pdf") {
+    return {
+      disposition: "inline",
+      contentType: stored,
+      sandbox: false,
+      embeddable: true,
+    };
+  }
+  if (ARTIFACT_INERT_IMAGE_TYPES.has(stored)) {
+    return {
+      disposition: "inline",
+      contentType: stored,
+      sandbox: false,
+      embeddable: false,
+    };
+  }
+  if (stored.startsWith("audio/") || stored.startsWith("video/")) {
+    return {
+      disposition: "inline",
+      contentType: stored,
+      sandbox: false,
+      embeddable: false,
+    };
+  }
+  if (stored === "image/svg+xml") {
+    return {
+      disposition: "inline",
+      contentType: stored,
+      sandbox: true,
+      embeddable: false,
+    };
+  }
+  if (
+    artifactIsTextMedia(stored) ||
+    artifactReadsText(artifactViewerFor(input.name, stored))
+  ) {
+    return {
+      disposition: "inline",
+      contentType: "text/plain; charset=utf-8",
+      sandbox: true,
+      embeddable: false,
+    };
+  }
+  return {
+    disposition: "attachment",
+    contentType: stored,
+    sandbox: true,
+    embeddable: false,
+  };
 }
 
 /** A quoted `filename` for a disposition header — never the raw agent-supplied name. */
@@ -356,13 +685,13 @@ export function safeArtifactFileName(name: string): string {
 /** Whether this kind may use the cookie-authenticated single-file serving route. */
 export function artifactIsSingleFileKind(
   kind: string,
-): kind is "image" | "document" {
-  return kind === "image" || kind === "document";
+): kind is "image" | "document" | "file" {
+  return kind === "image" || kind === "document" || kind === "file";
 }
 
 /**
  * The app path that serves one single-file artifact's bytes. Cookie-authenticated, same-origin;
- * documents use an attachment disposition rather than rendering inside harnesst.
+ * what the response renders as is `artifactServePolicy`'s call.
  *
  * The VERSION belongs in the path (#292) rather than being left to default: an artifact's bytes
  * change when the agent republishes the name, and the response is served `immutable` — a URL that
@@ -376,6 +705,36 @@ export function artifactUrl(
 ): string {
   const base = `/api/foh/${projectId}/artifact/${artifactId}`;
   return versionId ? `${base}/${versionId}` : base;
+}
+
+/**
+ * `artifactUrl` with the download switch: `?download=1` makes the route answer with an attachment
+ * disposition whatever the type. Accepts the same row-ish ids the entries carry.
+ */
+export function artifactRawUrl(
+  projectId: string,
+  artifactId: string,
+  versionId?: string | null,
+  options: { download?: boolean } = {},
+): string {
+  const url = artifactUrl(projectId, artifactId, versionId);
+  return options.download ? `${url}?download=1` : url;
+}
+
+/**
+ * The app path of an artifact's SOURCE (`api.foh.artifact-source.ts`): without `path` the JSON file
+ * listing of a version, with it one file's text (capped, `text/plain`). Works for every kind — a
+ * bundle's members and a single file's one member alike.
+ */
+export function artifactSourceUrl(
+  projectId: string,
+  artifactId: string,
+  versionId?: string | null,
+  path?: string | null,
+): string {
+  const base = `/api/foh/${projectId}/artifact/${artifactId}/source`;
+  const url = versionId ? `${base}/${versionId}` : base;
+  return path ? `${url}?path=${encodeURIComponent(path)}` : url;
 }
 
 /**

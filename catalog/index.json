@@ -164,9 +164,9 @@
       "id": "impeccable",
       "type": "skill",
       "name": "Impeccable",
-      "version": "0.1.0",
+      "version": "0.1.1",
       "description": "A comprehensive frontend design skill for creating, critiquing, refining, and quality-checking polished interfaces inside harnesst/eve agents.",
-      "hash": "f4a9940ea582c031b4001aec51673f30055a282e"
+      "hash": "2ce7115a0c6dc28821f0d9636141f9e2d66b04c0"
     },
     {
       "id": "reviewing-a-pull-request",
@@ -212,9 +212,9 @@
       "id": "publish-artifact",
       "type": "tool",
       "name": "Publish Artifact",
-      "version": "0.5.0",
-      "description": "Publish a file from the agent's home directory as durable, versioned evidence — into the live Front of House conversation as a card, or from a background run with no conversation at all. Images render as cards, PDF documents receive download links, and static HTML pages open in a sandboxed preview. Every publish returns a stable public share URL anyone can open without signing in. harnesst copies the bytes without sending them through model context; publishing the same name again updates the artifact in place as a new version.",
-      "hash": "4b762ea731eff68096fc9a470e68f56259d4f964"
+      "version": "0.6.0",
+      "description": "Publish a file from the agent's home directory as durable, versioned evidence — into the live Front of House conversation as a card, or from a background run with no conversation at all. Images render as cards, PDFs open in a viewer, HTML pages open in a sandboxed live preview (CDN scripts, styles and fonts allowed), and any other file — markdown, CSV, JSON, code, text, audio, video — opens in a matching viewer or as a download. Every publish returns a stable public share URL anyone can open without signing in. harnesst copies the bytes without sending them through model context; publishing the same name again updates the artifact in place as a new version.",
+      "hash": "8a6423851b620d88729df0e060959b274cdeab27"
     },
     {
       "id": "vercel-cli",

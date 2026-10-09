@@ -21,7 +21,7 @@ const memberRoute = (tail: string, file: string, id: string) =>
  * level and one under the repo level, mirroring `memberRoute`; `sub` is a static segment, so
  * ranking against the dynamic siblings is unambiguous. `params.subPath` distinguishes at runtime,
  * and only the pages a subagent can actually serve are registered — there is no nested
- * playground, deployment or runs tab to click into a dead end.
+ * deployment or runs tab to click into a dead end.
  */
 const subagentRoutes = (tail: string, file: string, id: string) => [
   route(`repos/:projectId/sub/:subPath${tail}`, file, { id: `sub-${id}` }),
@@ -66,6 +66,13 @@ export default [
   route(
     "api/foh/:projectId/artifact/:artifactId/:versionId?",
     "routes/api.foh.artifact.ts",
+  ),
+  // An artifact's source text / file listing for the panel's source view — same auth as the raw
+  // route, always `text/plain` or JSON. The static `source` segment outranks the raw route's
+  // dynamic `:versionId`, and version ids are 12-char nanoids, never the word `source`.
+  route(
+    "api/foh/:projectId/artifact/:artifactId/source/:versionId?",
+    "routes/api.foh.artifact-source.ts",
   ),
   // The bytes behind a file the user attached to a chat message — the conversation's own
   // visibility applies, out-of-scope is 404, content-addressed so immutable.
@@ -157,13 +164,12 @@ export default [
       "routes/projects.$projectId.settings.tsx",
       "settings",
     ),
-    route(
-      "repos/:projectId/playground",
-      "routes/projects.$projectId.playground.tsx",
-    ),
+    // The Playground is gone: talking to an agent happens in Chat (front of house). Old
+    // bookmarks land on that agent's Chat page instead of a 404.
+    route("repos/:projectId/playground", "routes/legacy.playground.tsx"),
     memberRoute(
       "/playground",
-      "routes/projects.$projectId.playground.tsx",
+      "routes/legacy.playground.tsx",
       "member-playground",
     ),
     // Archived FOH conversations (#278) — repo-scoped, back-of-house only, and deliberately NOT a
@@ -305,17 +311,7 @@ export default [
   ]),
   // Build-side resource routes (JSON/streams/webhooks) — outside the layout: nothing to render.
   route("api/workspaces", "routes/api.workspaces.tsx"),
-  // Playground streaming turn: the page POSTs here and reads an NDJSON stream of the turn.
-  // Single registration — team-member selection travels as a form field, not a URL param.
-  route(
-    "api/repos/:projectId/playground/stream",
-    "routes/api.projects.$projectId.playground.stream.ts",
-  ),
-  route(
-    "api/repos/:projectId/playground/stop",
-    "routes/api.projects.$projectId.playground.stop.ts",
-  ),
-  // Assistant streaming turn (project-level sibling of the playground stream).
+  // Assistant streaming turn: the page POSTs here and reads an NDJSON stream of the turn.
   route(
     "api/repos/:projectId/assistant/stream",
     "routes/api.projects.$projectId.assistant.stream.ts",

@@ -182,8 +182,8 @@ describe("artifact preview tokens", () => {
 });
 
 describe("nextPreviewRemintDelayMs", () => {
-  it("re-mints a minute before expiry", () => {
-    expect(nextPreviewRemintDelayMs(NOW + 600_000, NOW)).toBe(540_000);
+  it("re-mints five minutes before expiry", () => {
+    expect(nextPreviewRemintDelayMs(NOW + 3_600_000, NOW)).toBe(3_300_000);
   });
 
   it("never returns a delay short enough to become a mint loop", () => {

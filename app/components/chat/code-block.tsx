@@ -54,11 +54,26 @@ export function languageFromClassName(className: unknown): string | null {
 
 // ---- highlighter ---------------------------------------------------------------------------
 
+export type HighlightToken = {
+  content: string;
+  htmlStyle?: Record<string, string>;
+};
+
 type Highlighter = {
   codeToHtml: (
     code: string,
     opts: { lang: string; themes: { light: string; dark: string } },
   ) => string;
+  /** Per-line tokens; `grammarState` continues a file highlighted in chunks (the artifact code view). */
+  codeToTokens: (
+    code: string,
+    opts: {
+      lang: string;
+      themes: { light: string; dark: string };
+      grammarState?: unknown;
+      tokenizeMaxLineLength?: number;
+    },
+  ) => { tokens: HighlightToken[][]; grammarState?: unknown };
   loadLanguage: (lang: string) => Promise<void>;
   getLoadedLanguages: () => string[];
 };
@@ -66,7 +81,8 @@ type Highlighter = {
 let highlighterPromise: Promise<{ h: Highlighter; bundled: Set<string> }> | null =
   null;
 
-function getHighlighter() {
+/** The shared lazy shiki instance — one per page, also used by the artifact code view. */
+export function getHighlighter() {
   highlighterPromise ??= import("shiki/bundle/web").then(async (mod) => {
     const h = (await mod.createHighlighter({
       themes: ["github-light", "github-dark"],
