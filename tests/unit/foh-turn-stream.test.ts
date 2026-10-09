@@ -31,6 +31,7 @@ const mocks = vi.hoisted(() => ({
   clearSessionHandles: vi.fn(async () => {}),
   bindSuccessorSessionHandles: vi.fn(async () => {}),
   touchPlaygroundSessionTurn: vi.fn(async () => {}),
+  markSessionReadLatest: vi.fn(async () => {}),
 }));
 
 vi.mock("~/agent/talk.server", () => ({
@@ -53,6 +54,9 @@ vi.mock("~/foh/inbox.server", () => ({
   resolveInboxForSession: mocks.resolveInboxForSession,
   sessionHasPendingInboxRequests: mocks.sessionHasPendingInboxRequests,
   recordInboxFinished: mocks.recordInboxFinished,
+}));
+vi.mock("~/foh/reads.server", () => ({
+  markSessionReadLatest: mocks.markSessionReadLatest,
 }));
 vi.mock("~/observability/record.server", () => ({
   externalRunId: (sessionId: string, turnId: string) =>
@@ -1101,5 +1105,127 @@ describe("streamTurnResponse — heartbeat while a turn is quiet", () => {
       mocks.touchPlaygroundSessionTurn.mockResolvedValue(undefined);
       vi.useRealTimers();
     }
+  });
+});
+
+describe("streamTurnResponse — the watching viewer's read mark", () => {
+  const completed: TalkEvent[] = [
+    { kind: "session", sessionId: "sess_ext", continuationToken: "tok_1" },
+    { kind: "turn", turnId: "turn_1" },
+    { kind: "done", result: result({ reply: "All done." }) },
+  ];
+
+  function start(
+    over: {
+      viewerId?: string | null;
+      channel?: string;
+      surface?: PlaygroundSession["surface"];
+    } = {},
+  ) {
+    return streamTurnResponse({
+      projectId: "proj_1",
+      target: TARGET,
+      session: session(over.surface ? { surface: over.surface } : {}),
+      message: "do the thing",
+      channel: over.channel ?? "foh",
+      title: null,
+      viewerId: over.viewerId === undefined ? "user_1" : over.viewerId,
+    });
+  }
+
+  it("marks read for the viewer after the terminal writes once they received done", async () => {
+    script(completed);
+    const order: string[] = [];
+    mocks.savePlaygroundSessionCursor.mockImplementationOnce(async () => {
+      order.push("cursor");
+    });
+    mocks.recordInboxFinished.mockImplementationOnce(async () => {
+      order.push("finished");
+      return { id: "inb_fin" };
+    });
+    mocks.markSessionReadLatest.mockImplementationOnce(async () => {
+      order.push("read");
+    });
+
+    await readAll(start());
+
+    expect(mocks.markSessionReadLatest).toHaveBeenCalledWith("ps_1", "user_1");
+    expect(order).toEqual(["cursor", "finished", "read"]);
+  });
+
+  it("still marks read when the viewer leaves after done but before the drain settles", async () => {
+    let releaseSettle!: () => void;
+    const settleGate = new Promise<void>((resolve) => {
+      releaseSettle = resolve;
+    });
+    script(completed);
+    mocks.savePlaygroundSessionCursor.mockImplementationOnce(() => settleGate);
+
+    const reader = start().body!.getReader();
+    const decoder = new TextDecoder();
+    let text = "";
+    while (!text.includes('"type":"done"')) {
+      const { value } = await reader.read();
+      text += decoder.decode(value, { stream: true });
+    }
+    await reader.cancel();
+    releaseSettle();
+
+    await vi.waitFor(() =>
+      expect(mocks.markSessionReadLatest).toHaveBeenCalledWith(
+        "ps_1",
+        "user_1",
+      ),
+    );
+  });
+
+  it("leaves the turn unread when the viewer left before done", async () => {
+    let releaseDone!: () => void;
+    const doneGate = new Promise<void>((resolve) => {
+      releaseDone = resolve;
+    });
+    mocks.streamTurn.mockImplementation(async function* () {
+      yield completed[0];
+      yield completed[1];
+      await doneGate;
+      yield completed[2];
+    });
+
+    const reader = start().body!.getReader();
+    await reader.read();
+    await reader.cancel();
+    releaseDone();
+
+    await vi.waitFor(() => expect(mocks.recordTurnFinish).toHaveBeenCalled());
+    expect(mocks.recordInboxFinished).toHaveBeenCalled();
+    expect(mocks.markSessionReadLatest).not.toHaveBeenCalled();
+  });
+
+  it("marks nothing when no viewer is attached to the turn", async () => {
+    script(completed);
+
+    await readAll(start({ viewerId: null }));
+
+    expect(mocks.markSessionReadLatest).not.toHaveBeenCalled();
+  });
+
+  it("marks nothing outside Front of House", async () => {
+    script(completed);
+
+    await readAll(start({ channel: "assistant", surface: "assistant" }));
+
+    expect(mocks.markSessionReadLatest).not.toHaveBeenCalled();
+  });
+
+  it("a failing read mark never breaks the drain", async () => {
+    script(completed);
+    mocks.markSessionReadLatest.mockRejectedValueOnce(new Error("db down"));
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    const events = await readAll(start());
+
+    expect(events.at(-1)).toMatchObject({ type: "done", ok: true });
+    expect(mocks.recordTurnFinish).toHaveBeenCalled();
+    errors.mockRestore();
   });
 });

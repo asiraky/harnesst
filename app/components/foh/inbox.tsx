@@ -31,6 +31,7 @@ import { cn } from "~/lib/utils";
 import type { InboxViewItem } from "~/foh/inbox.server";
 import {
   inboxItemsForOpenSession,
+  openSessionInboxKey,
   titleWithInboxCount,
 } from "~/foh/unread";
 
@@ -47,10 +48,29 @@ export function InboxIndicator() {
   const openSessionId =
     useMatch("/t/:projectId/:agentId/s/:sessionId")?.params.sessionId ?? null;
 
-  const items = inboxItemsForOpenSession(
-    fetcher.data?.items ?? [],
-    openSessionId,
-  );
+  const allItems = fetcher.data?.items ?? [];
+  const items = inboxItemsForOpenSession(allItems, openSessionId);
+
+  // Hidden is not acknowledged: an item for the open conversation that is still pending after
+  // its page's read mark settled was filed after that mark, and nothing on the page will fire
+  // another. Acknowledge it here so it doesn't surface in the bell the moment the viewer leaves.
+  // Waits for the page's own mark (same key as foh.session) so opening a conversation posts once.
+  const sessionRead = useFetcher({ key: "foh-session-read" });
+  const healRead = useFetcher({ key: "foh-inbox-read" });
+  const { submit: submitHealRead } = healRead;
+  const openInbox = openSessionInboxKey(allItems, openSessionId);
+  const sessionReadIdle = sessionRead.state === "idle";
+  const healKey = openInbox && sessionReadIdle ? openInbox.key : null;
+  const healTarget = useRef(openInbox);
+  healTarget.current = openInbox;
+  useEffect(() => {
+    const target = healTarget.current;
+    if (!healKey || !target) return;
+    submitHealRead(
+      { playgroundSessionId: target.sessionId },
+      { method: "post", action: `/api/foh/${target.projectId}/read` },
+    );
+  }, [healKey, submitHealRead]);
   const count = items.length;
   const anyPending = count > 0;
 

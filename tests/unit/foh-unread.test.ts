@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 
 import {
   inboxItemsForOpenSession,
+  needsYouCount,
+  openSessionInboxKey,
   suppressOpenSessionUnread,
   titleWithInboxCount,
 } from "~/foh/unread";
@@ -46,5 +48,30 @@ describe("FOH visible unread state", () => {
       "Session · harnesst",
     );
     expect(titleWithInboxCount("harnesst", 100)).toBe("(99+) harnesst");
+  });
+
+  it("leaves the open conversation out of the sidebar needs-you count", () => {
+    const ids = ["open", "other", "open", "third"];
+    expect(needsYouCount(ids, "open")).toBe(2);
+    expect(needsYouCount(ids, null)).toBe(4);
+    expect(needsYouCount(["open"], "open")).toBe(0);
+  });
+
+  it("keys the open conversation's pending items so a new one calls for a read mark", () => {
+    const items = [
+      { id: "b", sessionId: "open", projectId: "proj_1" },
+      { id: "x", sessionId: "other", projectId: "proj_1" },
+      { id: "a", sessionId: "open", projectId: "proj_1" },
+    ];
+
+    expect(openSessionInboxKey(items, "open")).toEqual({
+      key: "a,b",
+      projectId: "proj_1",
+      sessionId: "open",
+    });
+    // Order-independent, so a poll that returns the same items doesn't fire a second mark.
+    expect(openSessionInboxKey([...items].reverse(), "open")?.key).toBe("a,b");
+    expect(openSessionInboxKey(items, "none")).toBeNull();
+    expect(openSessionInboxKey(items, null)).toBeNull();
   });
 });

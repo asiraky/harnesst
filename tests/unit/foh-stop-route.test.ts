@@ -14,6 +14,7 @@ const mocks = vi.hoisted(() => ({
   liveTargets: vi.fn(),
   cancelActiveTurn: vi.fn(),
   resolveInboxForSession: vi.fn(),
+  markSessionReadLatest: vi.fn(async () => {}),
 }));
 
 vi.mock("~/auth/session.server", () => ({
@@ -36,6 +37,10 @@ vi.mock("~/chat/turn-stream.server", () => ({
 }));
 vi.mock("~/foh/inbox.server", () => ({
   resolveInboxForSession: mocks.resolveInboxForSession,
+}));
+
+vi.mock("~/foh/reads.server", () => ({
+  markSessionReadLatest: mocks.markSessionReadLatest,
 }));
 
 import { action } from "~/routes/api.foh.stop";
@@ -116,5 +121,32 @@ describe("POST /api/foh/:projectId/stop", () => {
 
     expectStoppedLocally();
     expect(result).toMatchObject({ ok: true, eveStopped: false });
+  });
+
+  it("marks the stopper's own stop read once the stop has moved lastEventAt", async () => {
+    fetchMock.mockResolvedValue(new Response(null, { status: 200 }));
+    const order: string[] = [];
+    mocks.markPlaygroundSessionStopped.mockImplementation(async () => {
+      order.push("stopped");
+    });
+    mocks.markSessionReadLatest.mockImplementation(async () => {
+      order.push("read");
+    });
+
+    await action(actionArgs());
+
+    expect(mocks.markSessionReadLatest).toHaveBeenCalledWith("ps_1", "user_1");
+    expect(order).toEqual(["stopped", "read"]);
+  });
+
+  it("still reports the stop when the read mark fails", async () => {
+    fetchMock.mockResolvedValue(new Response(null, { status: 200 }));
+    mocks.markSessionReadLatest.mockRejectedValueOnce(new Error("db down"));
+    vi.spyOn(console, "error").mockImplementation(() => {});
+
+    const result = await action(actionArgs());
+
+    expectStoppedLocally();
+    expect(result).toMatchObject({ ok: true, eveStopped: true });
   });
 });

@@ -30,8 +30,12 @@ export interface FohSidebarAgent {
   id: string;
   name: string;
   presence: AgentPresence;
-  /** Pending question/approval items for this agent, visible to the viewer. */
-  needsYou: number;
+  /**
+   * The session of each pending question/approval item for this agent visible to the viewer —
+   * one entry per item. Ids rather than a count so the shell can leave out the conversation the
+   * viewer has open, as the bell and session list do.
+   */
+  needsYouSessionIds: string[];
 }
 
 export interface FohSidebarTeam {
@@ -130,11 +134,13 @@ export async function loadFohSidebar(
   // the flyout won't show is the worst of both: a needs-you dot with nothing behind it.
   const pending = await withoutArchivedSessions(allPending, deps);
 
-  const needsYouByAgent = new Map<string, number>();
+  const needsYouByAgent = new Map<string, string[]>();
   for (const item of pending) {
     if (item.kind !== "question" && item.kind !== "approval") continue;
     if (!item.agentId) continue;
-    needsYouByAgent.set(item.agentId, (needsYouByAgent.get(item.agentId) ?? 0) + 1);
+    const sessionIds = needsYouByAgent.get(item.agentId) ?? [];
+    sessionIds.push(item.sessionId);
+    needsYouByAgent.set(item.agentId, sessionIds);
   }
 
   return {
@@ -148,7 +154,7 @@ export async function loadFohSidebar(
         id: agent.id,
         name: agent.name,
         presence: presence.get(agent.id) ?? "idle",
-        needsYou: needsYouByAgent.get(agent.id) ?? 0,
+        needsYouSessionIds: needsYouByAgent.get(agent.id) ?? [],
       })),
     })),
     inboxCount: pending.length,

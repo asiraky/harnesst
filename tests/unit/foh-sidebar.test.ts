@@ -157,9 +157,9 @@ describe("loadFohSidebar", () => {
         })),
     });
     const agents = Object.fromEntries(
-      sidebar.teams[0].agents.map((a) => [a.name, a.needsYou]),
+      sidebar.teams[0].agents.map((a) => [a.name, [...a.needsYouSessionIds].sort()]),
     );
-    expect(agents).toEqual({ ivy: 2, sam: 0 });
+    expect(agents).toEqual({ ivy: ["s1", "s2"], sam: [] });
     expect(sidebar.inboxCount).toBe(3);
   });
 });

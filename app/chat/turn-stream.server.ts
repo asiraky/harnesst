@@ -41,6 +41,7 @@ import {
   resolveInboxForSession,
   sessionHasPendingInboxRequests,
 } from "~/foh/inbox.server";
+import { markSessionReadLatest } from "~/foh/reads.server";
 import { finalizeDelegationOnResume } from "~/team/resume.server";
 import {
   bindSuccessorSessionHandles,
@@ -213,6 +214,13 @@ export function streamTurnResponse(input: {
    * the row bound to the predecessor, so a retry re-runs the succession with nothing lost.
    */
   succession?: boolean;
+  /**
+   * FOH: the signed-in user reading this response. When the stream delivers `done` to them, the
+   * drain marks the conversation read for them after its terminal writes (cursor save, `finished`
+   * item) — those land after the reply is already on their screen, and nothing else would
+   * acknowledge them if the viewer leaves before the page's own read mark round-trips.
+   */
+  viewerId?: string | null;
 }): Response {
   const {
     projectId,
@@ -250,13 +258,20 @@ export function streamTurnResponse(input: {
   const startedAt = new Date();
   const encoder = new TextEncoder();
 
+  // Set when the reader cancels (navigation away, closed tab) or an enqueue fails.
+  let clientGone = false;
+  // The viewer received the turn's `done` while still attached — they watched it to the end.
+  let doneDelivered = false;
   const stream = new ReadableStream<Uint8Array>({
+    cancel() {
+      clientGone = true;
+    },
     start(controller) {
-      let clientGone = false;
       const send = (event: Record<string, unknown>) => {
         if (clientGone) return;
         try {
           controller.enqueue(encoder.encode(JSON.stringify(event) + "\n"));
+          if (event.type === "done") doneDelivered = true;
         } catch {
           clientGone = true;
         }
@@ -745,6 +760,16 @@ export function streamTurnResponse(input: {
                 } catch (e) {
                   console.error(`${tag} foh delegation finalize failed`, e);
                 }
+              }
+            }
+            // The viewer watched this turn to `done`, but the cursor save and `finished` item
+            // above were written after it reached them. Mark read now so leaving before the
+            // page's own read mark lands doesn't leave their own conversation unread.
+            if (isFoh && !notDelivered && input.viewerId && doneDelivered) {
+              try {
+                await markSessionReadLatest(activeSession.id, input.viewerId);
+              } catch (e) {
+                console.error(`${tag} foh viewer read mark failed`, e);
               }
             }
             // (`turnId` is always null on a `notDelivered` result — there was no turn to
