@@ -28,9 +28,9 @@ import {
 import { ARTIFACT_MAX_BYTES } from "~/foh/artifact-media";
 import { verifyDelegationToken } from "~/team/token.server";
 
-const MAX_DOCUMENT_BYTES = ARTIFACT_MAX_BYTES;
-const MAX_DOCUMENT_BASE64_CHARS = Math.ceil(MAX_DOCUMENT_BYTES / 3) * 4;
-const MAX_REQUEST_BYTES = MAX_DOCUMENT_BASE64_CHARS + 16 * 1024;
+const MAX_CONTENT_BYTES = ARTIFACT_MAX_BYTES;
+const MAX_CONTENT_BASE64_CHARS = Math.ceil(MAX_CONTENT_BYTES / 3) * 4;
+const MAX_REQUEST_BYTES = MAX_CONTENT_BASE64_CHARS + 16 * 1024;
 /** Bodies at or under this are small enough to read outside a copy slot (a path-only publish). */
 const SMALL_REQUEST_BYTES = 64 * 1024;
 
@@ -67,13 +67,13 @@ async function readBoundedJson(
   }
 }
 
-function decodeDocument(value: string): Buffer | null {
-  if (value.length > MAX_DOCUMENT_BASE64_CHARS) return null;
+function decodeContent(value: string): Buffer | null {
+  if (value.length > MAX_CONTENT_BASE64_CHARS) return null;
   if (!/^[A-Za-z0-9+/]*={0,2}$/u.test(value) || value.length % 4 === 1) {
     return null;
   }
   const bytes = Buffer.from(value, "base64");
-  if (bytes.length > MAX_DOCUMENT_BYTES) return null;
+  if (bytes.length > MAX_CONTENT_BYTES) return null;
   return bytes.toString("base64").replace(/=+$/u, "") ===
     value.replace(/=+$/u, "")
     ? bytes
@@ -102,12 +102,11 @@ export function artifactPublishFields(body: Record<string, unknown>):
   const raw = body.contentBase64;
   let suppliedBytes: Buffer | undefined;
   if (raw !== undefined && raw !== null) {
-    const decoded = typeof raw === "string" ? decodeDocument(raw) : null;
+    const decoded = typeof raw === "string" ? decodeContent(raw) : null;
     if (!decoded) {
       return {
         ok: false,
-        error:
-          "contentBase64 is not a valid base64 payload within the 25 MB artifact limit.",
+        error: `contentBase64 is not a valid base64 payload within the ${MAX_CONTENT_BYTES / (1024 * 1024)} MB artifact limit.`,
       };
     }
     suppliedBytes = decoded;
