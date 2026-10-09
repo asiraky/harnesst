@@ -12,7 +12,9 @@ import {
   artifactCharsetType,
   artifactIsSingleFileKind,
   artifactKindFor,
-  artifactRendersInline,
+  artifactMediaTypeFromName,
+  artifactServePolicy,
+  resolveArtifactFileContentType,
   bundleMemberContentType,
   normalizeBundleRelPath,
   pickBundleEntry,
@@ -20,6 +22,7 @@ import {
   resolveBundleMember,
   sniffArtifactContentType,
   sniffArtifactDocumentContentType,
+  sniffArtifactFileContentType,
 } from "~/foh/artifact-media";
 
 const png = (extra: number[] = []) =>
@@ -125,7 +128,7 @@ describe("sniffArtifactContentType", () => {
     expect(sniffArtifactContentType(bytesOf("<svg/>"), "chart.png")).toBeNull();
   });
 
-  it("refuses anything that is not one of the four image formats", () => {
+  it("refuses anything that is not a known image format", () => {
     expect(
       sniffArtifactContentType(bytesOf("<html>hi</html>"), "page.html"),
     ).toBeNull();
@@ -279,7 +282,8 @@ describe("artifactKindFor", () => {
 
   it("falls back to the extension when the agent says nothing", () => {
     expect(artifactKindFor(undefined, "chart.png")).toBe("image");
-    expect(artifactKindFor(null, "site")).toBe("image");
+    expect(artifactKindFor(null, "site")).toBe("file");
+    expect(artifactKindFor(undefined, "notes.md")).toBe("file");
     expect(artifactKindFor("", "report.html")).toBe("html");
     expect(artifactKindFor(undefined, "report.HTM")).toBe("html");
     expect(artifactKindFor(undefined, "invoice.PDF")).toBe("document");
@@ -304,9 +308,203 @@ describe("artifactCharsetType", () => {
 });
 
 describe("single-file serving", () => {
-  it("serves documents through the authenticated file route but forces them to download", () => {
+  it("serves single files through the authenticated file route, never a page", () => {
     expect(artifactIsSingleFileKind("document")).toBe(true);
+    expect(artifactIsSingleFileKind("file")).toBe(true);
     expect(artifactIsSingleFileKind("html")).toBe(false);
-    expect(artifactRendersInline("application/pdf")).toBe(false);
+  });
+});
+
+/** An ISO-BMFF `ftyp` box: size, "ftyp", major brand, minor version, compatible brands. */
+const ftyp = (major: string, ...brands: string[]) => {
+  const text = major + "\0\0\0\0" + brands.join("");
+  const size = 8 + text.length;
+  return new Uint8Array([0, 0, 0, size, ...bytesOf("ftyp"), ...bytesOf(text)]);
+};
+
+describe("GIF and AVIF images", () => {
+  it("recognises both by their own bytes", () => {
+    expect(sniffArtifactContentType(bytesOf("GIF89a\x01"), "a.gif")).toBe(
+      "image/gif",
+    );
+    expect(sniffArtifactContentType(bytesOf("GIF87a"), "a.gif")).toBe(
+      "image/gif",
+    );
+    expect(sniffArtifactContentType(ftyp("avif", "mif1"), "a.avif")).toBe(
+      "image/avif",
+    );
+    // A HEIF container is only AVIF when it lists the brand.
+    expect(
+      sniffArtifactContentType(ftyp("mif1", "mif1", "avif"), "a.avif"),
+    ).toBe("image/avif");
+    expect(
+      sniffArtifactContentType(ftyp("mif1", "mif1", "heic"), "a.avif"),
+    ).toBeNull();
+    // An MP4 shares the container but is not an image.
+    expect(sniffArtifactContentType(ftyp("isom", "mp41"), "a.avif")).toBeNull();
+  });
+});
+
+describe("file content types", () => {
+  it("trusts the name first, so text formats a sniff cannot tell apart keep their type", () => {
+    const text = bytesOf("a,b\n1,2\n");
+    expect(resolveArtifactFileContentType("data.csv", text)).toBe("text/csv");
+    expect(resolveArtifactFileContentType("notes.MD", text)).toBe(
+      "text/markdown",
+    );
+    // A sniff would call `.ts` an MPEG transport stream; the name says it is code.
+    expect(resolveArtifactFileContentType("src/app.ts", text)).toBe(
+      "text/x-typescript",
+    );
+    expect(resolveArtifactFileContentType("main.rs", text)).toBe("text/plain");
+    expect(resolveArtifactFileContentType("Dockerfile", text)).toBe(
+      "text/plain",
+    );
+  });
+
+  it("falls back to the bytes when the name says nothing, then to an opaque download", () => {
+    expect(resolveArtifactFileContentType("chart", png())).toBe("image/png");
+    expect(resolveArtifactFileContentType("README", bytesOf("hello"))).toBe(
+      "text/plain",
+    );
+    expect(
+      resolveArtifactFileContentType("blob", new Uint8Array([0, 1, 2, 0xff])),
+    ).toBe("application/octet-stream");
+    expect(resolveArtifactFileContentType("x.unknownext", bytesOf("hi"))).toBe(
+      "text/plain",
+    );
+  });
+
+  it("sniffs the common media containers and archives", () => {
+    expect(sniffArtifactFileContentType(ftyp("isom", "mp41"), "v")).toBe(
+      "video/mp4",
+    );
+    expect(sniffArtifactFileContentType(ftyp("qt  "), "v")).toBe(
+      "video/quicktime",
+    );
+    expect(sniffArtifactFileContentType(ftyp("M4A "), "a")).toBe("audio/mp4");
+    expect(sniffArtifactFileContentType(bytesOf("OggS\0"), "a")).toBe(
+      "audio/ogg",
+    );
+    expect(sniffArtifactFileContentType(bytesOf("ID3\x03"), "a")).toBe(
+      "audio/mpeg",
+    );
+    expect(
+      sniffArtifactFileContentType(bytesOf("RIFF\0\0\0\0WAVEfmt "), "a"),
+    ).toBe("audio/wav");
+    expect(
+      sniffArtifactFileContentType(new Uint8Array([0x50, 0x4b, 3, 4]), "z"),
+    ).toBe("application/zip");
+    expect(sniffArtifactFileContentType(bytesOf("%PDF-1.4"), "d")).toBe(
+      "application/pdf",
+    );
+  });
+
+  it("does not call a file text when it holds a NUL or invalid UTF-8", () => {
+    expect(sniffArtifactFileContentType(bytesOf("a\0b"), "f")).toBeNull();
+    expect(
+      sniffArtifactFileContentType(new Uint8Array([0x61, 0xc3, 0x28]), "f"),
+    ).toBeNull();
+    // A multi-byte character split at the sniff window is still text.
+    const long = new Uint8Array([...bytesOf("a".repeat(8191)), 0xc3, 0xa9]);
+    expect(sniffArtifactFileContentType(long, "f")).toBe("text/plain");
+  });
+
+  it("knows a name's type only when it knows the extension", () => {
+    expect(artifactMediaTypeFromName("dir/clip.WEBM")).toBe("video/webm");
+    expect(artifactMediaTypeFromName("Makefile")).toBe("text/plain");
+    expect(artifactMediaTypeFromName("archive.xyz")).toBeNull();
+    expect(artifactMediaTypeFromName(".env")).toBeNull();
+  });
+});
+
+describe("artifactServePolicy", () => {
+  const policy = (name: string, contentType: string, download = false) =>
+    artifactServePolicy({ name, contentType, download });
+
+  it("renders inert rasters and media inline as themselves", () => {
+    for (const [name, type] of [
+      ["a.png", "image/png"],
+      ["a.gif", "image/gif"],
+      ["a.avif", "image/avif"],
+      ["a.mp4", "video/mp4"],
+      ["a.mp3", "audio/mpeg"],
+    ]) {
+      expect(policy(name, type)).toEqual({
+        disposition: "inline",
+        contentType: type,
+        sandbox: false,
+        embeddable: false,
+      });
+    }
+  });
+
+  it("lets the app frame a PDF, and only a PDF", () => {
+    expect(policy("a.pdf", "application/pdf")).toMatchObject({
+      disposition: "inline",
+      sandbox: false,
+      embeddable: true,
+    });
+  });
+
+  it("sandboxes an SVG even inline, since a direct visit could otherwise run its script", () => {
+    expect(policy("a.svg", "image/svg+xml")).toMatchObject({
+      disposition: "inline",
+      contentType: "image/svg+xml",
+      sandbox: true,
+    });
+  });
+
+  it("sends anything readable as plain text, so markup in it never renders", () => {
+    for (const [name, type] of [
+      ["page.html", "text/html"],
+      ["notes.md", "text/markdown"],
+      ["data.json", "application/json"],
+      ["feed.xml", "application/xml"],
+      ["main.go", "text/x-go"],
+      ["data.csv", "text/csv; charset=utf-8"],
+    ]) {
+      const result = policy(name, type);
+      expect(result.disposition).toBe("inline");
+      expect(result.sandbox).toBe(true);
+      expect(result.contentType).toMatch(/^text\/plain;/);
+    }
+  });
+
+  it("downloads anything else, and anything at all when asked to", () => {
+    expect(policy("a.zip", "application/zip")).toMatchObject({
+      disposition: "attachment",
+      sandbox: true,
+    });
+    expect(policy("a", "")).toMatchObject({
+      disposition: "attachment",
+      contentType: "application/octet-stream",
+    });
+    expect(policy("a.png", "image/png", true)).toMatchObject({
+      disposition: "attachment",
+      contentType: "image/png",
+      sandbox: true,
+      embeddable: false,
+    });
+  });
+});
+
+describe("bundle member types", () => {
+  it("admits the assets and data a page loads, and refuses executables and archives", () => {
+    for (const name of [
+      "a.gif",
+      "a.avif",
+      "data.json",
+      "data.csv",
+      "font.ttf",
+      "clip.mp4",
+      "app.wasm",
+      "app.cjs",
+    ]) {
+      expect(bundleMemberContentType(name)).not.toBeNull();
+    }
+    for (const name of ["setup.exe", "run.sh", "site.zip", "doc.pdf", "x"]) {
+      expect(bundleMemberContentType(name)).toBeNull();
+    }
   });
 });

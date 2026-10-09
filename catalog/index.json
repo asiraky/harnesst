@@ -212,9 +212,9 @@
       "id": "publish-artifact",
       "type": "tool",
       "name": "Publish Artifact",
-      "version": "0.5.0",
-      "description": "Publish a file from the agent's home directory as durable, versioned evidence — into the live Front of House conversation as a card, or from a background run with no conversation at all. Images render as cards, PDF documents receive download links, and static HTML pages open in a sandboxed preview. Every publish returns a stable public share URL anyone can open without signing in. harnesst copies the bytes without sending them through model context; publishing the same name again updates the artifact in place as a new version.",
-      "hash": "4b762ea731eff68096fc9a470e68f56259d4f964"
+      "version": "0.6.0",
+      "description": "Publish a file from the agent's home directory as durable, versioned evidence — into the live Front of House conversation as a card, or from a background run with no conversation at all. Images render as cards, PDFs open in a viewer, HTML pages open in a sandboxed live preview (CDN scripts, styles and fonts allowed), and any other file — markdown, CSV, JSON, code, text, audio, video — opens in a matching viewer or as a download. Every publish returns a stable public share URL anyone can open without signing in. harnesst copies the bytes without sending them through model context; publishing the same name again updates the artifact in place as a new version.",
+      "hash": "bc648865a42c004447a697f2556455c03de60042"
     },
     {
       "id": "vercel-cli",

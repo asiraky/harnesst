@@ -1,7 +1,15 @@
 /**
  * Artifact publish endpoint (#290, #291). The `publish-artifact` tool POSTs here with
  * `Authorization: Bearer <HARNESST_TEAM_TOKEN>`. Images/pages are copied from the root agent's
- * volume; a PDF from an isolated subagent arrives as bounded base64 in the private tool request.
+ * volume; a PDF `document` or any `file` arrives as bounded base64 in the private tool request (the
+ * tool reads it from its own, possibly subagent, sandbox — one `docker cp` cannot reach).
+ *
+ * BODY SIZE. The supplied-bytes cap is the artifact cap (25 MB), so a request is up to ~33.4 MiB of
+ * base64 plus framing — under the edge's `client_max_body_size 40m`. Buffering that is the same
+ * heap cost as a `docker cp`, so a body that may be large (no `Content-Length`, or one over 64 KiB)
+ * is read and published inside one of the same copy slots (`withArtifactCopySlot`), and refused as
+ * busy when none is free. A slot-held publish never takes a second slot: a supplied-bytes publish
+ * does not copy.
  * Transport shell only — the same division as
  * `routes/api.foh.park.ts`: the token authenticates the CALLER DEPLOYMENT and nothing else, a bad
  * token is the only 401, malformed JSON or a missing path is a 400, and every business outcome the
@@ -14,6 +22,7 @@ import { data, type ActionFunctionArgs } from "react-router";
 import {
   defaultPublishArtifactDeps,
   publishArtifact,
+  withArtifactCopySlot,
 } from "~/foh/artifacts.server";
 import { ARTIFACT_DOCUMENT_MAX_BYTES } from "~/foh/artifact-media";
 import { verifyDelegationToken } from "~/team/token.server";
@@ -21,6 +30,8 @@ import { verifyDelegationToken } from "~/team/token.server";
 const MAX_DOCUMENT_BYTES = ARTIFACT_DOCUMENT_MAX_BYTES;
 const MAX_DOCUMENT_BASE64_CHARS = Math.ceil(MAX_DOCUMENT_BYTES / 3) * 4;
 const MAX_REQUEST_BYTES = MAX_DOCUMENT_BASE64_CHARS + 16 * 1024;
+/** Bodies at or under this are small enough to read outside a copy slot (a path-only publish). */
+const SMALL_REQUEST_BYTES = 64 * 1024;
 
 async function readBoundedJson(
   request: Request,
@@ -77,6 +88,25 @@ export async function action({ request }: ActionFunctionArgs) {
   if (!deploymentId)
     throw data({ ok: false, error: "unauthorized" }, { status: 401 });
 
+  const declared = Number(request.headers.get("content-length"));
+  const small =
+    request.headers.has("content-length") &&
+    Number.isFinite(declared) &&
+    declared <= SMALL_REQUEST_BYTES;
+  if (small) return publish(request, deploymentId);
+  const slot = await withArtifactCopySlot(() => publish(request, deploymentId));
+  if (!slot.ok) {
+    await request.body?.cancel().catch(() => undefined);
+    return data({
+      ok: false,
+      error:
+        "harnesst is already copying as many files as it can at once. Try publishing again in a moment.",
+    });
+  }
+  return slot.value;
+}
+
+async function publish(request: Request, deploymentId: string) {
   const parsed = await readBoundedJson(request);
   if (!parsed.ok)
     throw data({ ok: false, error: parsed.error }, { status: 400 });
@@ -85,7 +115,7 @@ export async function action({ request }: ActionFunctionArgs) {
   const path = typeof body.path === "string" ? body.path : "";
   const title = typeof body.title === "string" ? body.title : null;
   const kind = typeof body.kind === "string" ? body.kind : null;
-  const decodedDocument = body.contentBase64
+  const decoded = body.contentBase64
     ? decodeDocument(body.contentBase64)
     : undefined;
   if (!path) {
@@ -94,19 +124,20 @@ export async function action({ request }: ActionFunctionArgs) {
       { status: 400 },
     );
   }
-  if (body.contentBase64 && !decodedDocument) {
+  if (body.contentBase64 && !decoded) {
     throw data(
       {
         ok: false,
-        error: "contentBase64 is not a valid PDF-sized base64 payload.",
+        error:
+          "contentBase64 is not a valid base64 payload within the 25 MB artifact limit.",
       },
       { status: 400 },
     );
   }
-  const documentBytes = decodedDocument ?? undefined;
+  const suppliedBytes = decoded ?? undefined;
 
   const result = await publishArtifact(
-    { deploymentId, path, title, kind, documentBytes },
+    { deploymentId, path, title, kind, suppliedBytes },
     defaultPublishArtifactDeps(),
   );
   return data(result);

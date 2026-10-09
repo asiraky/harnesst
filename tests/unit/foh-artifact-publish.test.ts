@@ -429,7 +429,7 @@ describe("publishArtifact destination", () => {
         deploymentId,
         path: "artifacts/report.pdf",
         kind: "document",
-        documentBytes: PDF,
+        suppliedBytes: PDF,
       },
       deps,
     );
@@ -481,7 +481,7 @@ describe("publishArtifact kinds", () => {
         path: "artifacts/mail/invoice.pdf",
         kind: "document",
         title: "Supplier invoice",
-        documentBytes: PDF,
+        suppliedBytes: PDF,
       },
       deps,
     );
@@ -513,7 +513,7 @@ describe("publishArtifact kinds", () => {
         deploymentId,
         path: "artifacts/invoice.pdf",
         kind: "document",
-        documentBytes: notPdf,
+        suppliedBytes: notPdf,
       },
       deps,
     );
@@ -536,14 +536,14 @@ describe("publishArtifact kinds", () => {
         deploymentId,
         path: "artifacts/invoice.pdf",
         kind: "document",
-        documentBytes: oversized,
+        suppliedBytes: oversized,
       },
       deps,
     );
 
     expect(result).toMatchObject({ ok: false });
     if (result.ok) return;
-    expect(result.error).toMatch(/capped at 4 MiB/i);
+    expect(result.error).toMatch(/capped at 25 MB/i);
     expect(deps.written).toHaveLength(0);
     expect(deps.rows).toHaveLength(0);
   });
@@ -654,6 +654,78 @@ describe("publishArtifact kinds", () => {
     expect(image.rows[0]).toMatchObject({ kind: "image", entryPath: null });
   });
 
+  it("publishes any other file as kind file, typed by its name, from a copy or request bytes", async () => {
+    const deploymentId = await seedDeployment();
+    const notes = Buffer.from("# Notes\n");
+    const copied = makeDeps({ copy: async () => ({ ok: true, bytes: notes }) });
+    const supplied = makeDeps();
+    const blob = Buffer.from([0x00, 0x01, 0x02, 0xff]);
+
+    const fromCopy = await publishArtifact(
+      { deploymentId, path: "artifacts/notes.md" },
+      copied,
+    );
+    const fromBody = await publishArtifact(
+      {
+        deploymentId,
+        path: "artifacts/model.bin",
+        kind: "file",
+        suppliedBytes: blob,
+      },
+      supplied,
+    );
+
+    expect(fromCopy).toMatchObject({
+      ok: true,
+      kind: "file",
+      contentType: "text/markdown",
+    });
+    expect(copied.copies).toHaveLength(1);
+    expect(copied.rows[0]).toMatchObject({ kind: "file", entryPath: null });
+    // Unrecognised bytes are still published — as an opaque download.
+    expect(fromBody).toMatchObject({
+      ok: true,
+      kind: "file",
+      contentType: "application/octet-stream",
+    });
+    expect(supplied.copies).toHaveLength(0);
+  });
+
+  it("refuses non-image bytes from the image door but points the agent at kind file", async () => {
+    const deploymentId = await seedDeployment();
+    const deps = makeDeps({
+      copy: async () => ({ ok: true, bytes: Buffer.from("just text") }),
+    });
+
+    const result = await publishArtifact(
+      { deploymentId, path: "artifacts/chart.png", kind: "image" },
+      deps,
+    );
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error).toMatch(/kind "file"/);
+    expect(deps.rows).toHaveLength(0);
+  });
+
+  it("refuses request bytes on an image or page publish", async () => {
+    const deploymentId = await seedDeployment();
+    const deps = makeDeps();
+
+    const result = await publishArtifact(
+      {
+        deploymentId,
+        path: "artifacts/chart.png",
+        kind: "image",
+        suppliedBytes: PNG,
+      },
+      deps,
+    );
+
+    expect(result.ok).toBe(false);
+    expect(deps.rows).toHaveLength(0);
+  });
+
   it("refuses a kind it does not publish before reading a byte", async () => {
     const deploymentId = await seedDeployment();
     const deps = makeDeps();
@@ -665,7 +737,9 @@ describe("publishArtifact kinds", () => {
 
     expect(result.ok).toBe(false);
     if (result.ok) return;
-    expect(result.error).toMatch(/images, PDF documents and HTML pages/i);
+    expect(result.error).toMatch(
+      /images, PDF documents, HTML pages and other files/i,
+    );
     expect(deps.copies).toHaveLength(0);
   });
 
@@ -927,7 +1001,7 @@ describe("publishArtifact versions", () => {
         deploymentId,
         path: "artifacts/invoice.pdf",
         kind: "document",
-        documentBytes: PDF,
+        suppliedBytes: PDF,
       },
       deps,
     );
