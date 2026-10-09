@@ -66,19 +66,58 @@ async function readBoundedJson(
   }
 }
 
-function decodeDocument(value: unknown): Buffer | null {
-  if (typeof value !== "string" || value.length > MAX_DOCUMENT_BASE64_CHARS) {
-    return null;
-  }
+function decodeDocument(value: string): Buffer | null {
+  if (value.length > MAX_DOCUMENT_BASE64_CHARS) return null;
   if (!/^[A-Za-z0-9+/]*={0,2}$/u.test(value) || value.length % 4 === 1) {
     return null;
   }
   const bytes = Buffer.from(value, "base64");
-  if (bytes.length === 0 || bytes.length > MAX_DOCUMENT_BYTES) return null;
+  if (bytes.length > MAX_DOCUMENT_BYTES) return null;
   return bytes.toString("base64").replace(/=+$/u, "") ===
     value.replace(/=+$/u, "")
     ? bytes
     : null;
+}
+
+/**
+ * The publish request's fields, from its parsed JSON body. `contentBase64` is PRESENT whenever it
+ * is a string — `""` included, which is how the tool sends an empty file. Treating `""` as absent
+ * would turn the publish into a path-only one, and harnesst would copy whatever sits at that path
+ * in the ROOT agent's sandbox: for a subagent, a different file or none at all. Empty bytes are
+ * then judged like any others (an empty `file` publishes; an empty PDF fails its sniff).
+ */
+export function artifactPublishFields(body: Record<string, unknown>):
+  | {
+      ok: true;
+      path: string;
+      title: string | null;
+      kind: string | null;
+      suppliedBytes: Buffer | undefined;
+    }
+  | { ok: false; error: string } {
+  const path = typeof body.path === "string" ? body.path : "";
+  if (!path)
+    return { ok: false, error: "Send the path of the file to publish." };
+  const raw = body.contentBase64;
+  let suppliedBytes: Buffer | undefined;
+  if (raw !== undefined && raw !== null) {
+    const decoded = typeof raw === "string" ? decodeDocument(raw) : null;
+    if (!decoded) {
+      return {
+        ok: false,
+        error:
+          "contentBase64 is not a valid base64 payload within the 25 MB artifact limit.",
+      };
+    }
+    suppliedBytes = decoded;
+  }
+  return {
+    ok: true,
+    path,
+    title: typeof body.title === "string" ? body.title : null,
+    kind: typeof body.kind === "string" ? body.kind : null,
+    suppliedBytes,
+  };
 }
 
 export async function action({ request }: ActionFunctionArgs) {
@@ -93,8 +132,11 @@ export async function action({ request }: ActionFunctionArgs) {
     request.headers.has("content-length") &&
     Number.isFinite(declared) &&
     declared <= SMALL_REQUEST_BYTES;
-  if (small) return publish(request, deploymentId);
-  const slot = await withArtifactCopySlot(() => publish(request, deploymentId));
+  if (small) return publish(await readFields(request), deploymentId);
+
+  const slot = await withArtifactCopySlot(async () =>
+    publish(await readFields(request), deploymentId),
+  );
   if (!slot.ok) {
     await request.body?.cancel().catch(() => undefined);
     return data({
@@ -106,38 +148,31 @@ export async function action({ request }: ActionFunctionArgs) {
   return slot.value;
 }
 
-async function publish(request: Request, deploymentId: string) {
+type PublishFields = Extract<
+  ReturnType<typeof artifactPublishFields>,
+  { ok: true }
+>;
+
+/** The request's fields, or the 400 a malformed body earns. */
+async function readFields(request: Request): Promise<PublishFields> {
   const parsed = await readBoundedJson(request);
   if (!parsed.ok)
     throw data({ ok: false, error: parsed.error }, { status: 400 });
-  const body = parsed.body;
+  const fields = artifactPublishFields(parsed.body);
+  if (!fields.ok)
+    throw data({ ok: false, error: fields.error }, { status: 400 });
+  return fields;
+}
 
-  const path = typeof body.path === "string" ? body.path : "";
-  const title = typeof body.title === "string" ? body.title : null;
-  const kind = typeof body.kind === "string" ? body.kind : null;
-  const decoded = body.contentBase64
-    ? decodeDocument(body.contentBase64)
-    : undefined;
-  if (!path) {
-    throw data(
-      { ok: false, error: "Send the path of the file to publish." },
-      { status: 400 },
-    );
-  }
-  if (body.contentBase64 && !decoded) {
-    throw data(
-      {
-        ok: false,
-        error:
-          "contentBase64 is not a valid base64 payload within the 25 MB artifact limit.",
-      },
-      { status: 400 },
-    );
-  }
-  const suppliedBytes = decoded ?? undefined;
-
+async function publish(fields: PublishFields, deploymentId: string) {
   const result = await publishArtifact(
-    { deploymentId, path, title, kind, suppliedBytes },
+    {
+      deploymentId,
+      path: fields.path,
+      title: fields.title,
+      kind: fields.kind,
+      suppliedBytes: fields.suppliedBytes,
+    },
     defaultPublishArtifactDeps(),
   );
   return data(result);

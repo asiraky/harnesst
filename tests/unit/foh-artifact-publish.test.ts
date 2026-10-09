@@ -525,6 +525,28 @@ describe("publishArtifact kinds", () => {
     expect(deps.rows).toHaveLength(0);
   });
 
+  it("publishes an empty file as a file, and refuses an empty PDF without copying", async () => {
+    const deploymentId = await seedDeployment();
+    const file = makeDeps();
+    const document = makeDeps();
+    const empty = Buffer.alloc(0);
+
+    const asFile = await publishArtifact(
+      { deploymentId, path: "artifacts/empty.txt", kind: "file", suppliedBytes: empty },
+      file,
+    );
+    const asDocument = await publishArtifact(
+      { deploymentId, path: "artifacts/empty.pdf", kind: "document", suppliedBytes: empty },
+      document,
+    );
+
+    expect(asFile).toMatchObject({ ok: true, kind: "file", byteSize: 0 });
+    expect(file.copies).toHaveLength(0);
+    expect(asDocument.ok).toBe(false);
+    expect(document.copies).toHaveLength(0);
+    expect(document.rows).toHaveLength(0);
+  });
+
   it("refuses a PDF over the document upload limit before storing bytes", async () => {
     const deploymentId = await seedDeployment();
     const deps = makeDeps();
