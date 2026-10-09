@@ -760,6 +760,10 @@ export default function Playground({ loaderData }: Route.ComponentProps) {
         );
       }
 
+      const stopped = (await res.json().catch(() => null)) as {
+        eveStopped?: boolean;
+        detail?: string;
+      } | null;
       streamAbortRef.current?.abort();
       setLive((prev) =>
         prev
@@ -773,6 +777,10 @@ export default function Playground({ loaderData }: Route.ComponentProps) {
       );
       await revalidator.revalidate();
       setLive(null);
+      // Eve didn't confirm the cancel: harnesst detached, but the agent may still be working.
+      if (stopped?.eveStopped === false && stopped.detail) {
+        setSendError(stopped.detail);
+      }
     } catch (error) {
       // The request itself failed — the turn may still be live, so let the stream
       // keep flowing normally instead of swallowing its events as a stop.

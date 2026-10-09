@@ -1161,6 +1161,34 @@ export async function claimPlaygroundSessionForTurn(input: {
   return row ?? null;
 }
 
+/**
+ * The drain's heartbeat: "this turn is still being watched". Every freshness check on a running
+ * row (stale-claim takeover, abandoned-turn settle, the artifact publish destination) reads
+ * `updatedAt` against TURN_IDLE_TIMEOUT_MS, and progress saves bump it only when eve sends an
+ * event. A turn can be silent for longer than that while still working (eve emits nothing while
+ * the model writes a long tool call), so the drain also touches the row on a timer. Touches only
+ * `updatedAt` — `lastEventAt` stays the time of the last real event — and only a row this drain
+ * still holds and that is still running, so it never revives a stopped or settled row.
+ */
+export async function touchPlaygroundSessionTurn(input: {
+  id: string;
+  /** Fencing token: when set, a superseded drain's heartbeat writes nothing. */
+  claimId?: string;
+}): Promise<void> {
+  await db
+    .update(playgroundSessions)
+    .set({ updatedAt: new Date() })
+    .where(
+      and(
+        eq(playgroundSessions.id, input.id),
+        eq(playgroundSessions.status, "running"),
+        input.claimId
+          ? eq(playgroundSessions.turnClaimId, input.claimId)
+          : undefined,
+      ),
+    );
+}
+
 export async function savePlaygroundSessionProgress(input: {
   id: string;
   target: Target;

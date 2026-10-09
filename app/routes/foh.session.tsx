@@ -838,6 +838,10 @@ export default function FohSession({ loaderData }: Route.ComponentProps) {
             : null) ?? `Stop failed (${res.status}).`,
         );
       }
+      const stopped = (await res.json().catch(() => null)) as {
+        eveStopped?: boolean;
+        detail?: string;
+      } | null;
       streamAbortRef.current?.abort();
       setLive((prev) =>
         prev
@@ -846,6 +850,10 @@ export default function FohSession({ loaderData }: Route.ComponentProps) {
       );
       await revalidator.revalidate();
       setLive(null);
+      // Eve didn't confirm the cancel: harnesst detached, but the agent may still be working.
+      if (stopped?.eveStopped === false && stopped.detail) {
+        setSendError(stopped.detail);
+      }
     } catch (error) {
       stopRequestedRef.current = false;
       setSendError((error as Error).message);

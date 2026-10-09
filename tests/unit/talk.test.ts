@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import type { TurnResult } from "~/agent/talk.server";
-import { resumeTurnStream, sendTurn } from "~/agent/talk.server";
+import type { TalkEvent, TurnResult } from "~/agent/talk.server";
+import { resumeTurnStream, sendTurn, streamTurn } from "~/agent/talk.server";
 
 function streamResponse(events: unknown[]): Response {
   const encoder = new TextEncoder();
@@ -510,4 +510,455 @@ describe("structured connection recovery from runtime failures", () => {
       expect(result.modelId).toBeNull();
     },
   );
+});
+
+describe("streamTurn following a lost stream", () => {
+  const BASE = "https://agent.example.test";
+
+  /** Routes the turn's POST, stream reads and health probes to per-kind handlers. */
+  function fakeEve(handlers: {
+    stream: (startIndex: number) => Response | Promise<Response>;
+    health?: () => Response | Promise<Response>;
+  }) {
+    const streamStarts: number[] = [];
+    const fetchMock = vi.fn<typeof fetch>(async (url, init) => {
+      const u = new URL(String(url));
+      if (init?.method === "POST") {
+        return new Response(JSON.stringify({ continuationToken: "tok_1" }), {
+          status: 202,
+          headers: {
+            "content-type": "application/json",
+            "x-eve-session-id": "sess_1",
+          },
+        });
+      }
+      if (u.pathname.endsWith("/health")) {
+        return handlers.health ? handlers.health() : new Response("ok");
+      }
+      const startIndex = Number(u.searchParams.get("startIndex") ?? 0);
+      streamStarts.push(startIndex);
+      return handlers.stream(startIndex);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    return { fetchMock, streamStarts };
+  }
+
+  /** A fake clock whose sleeps advance it, so give-up deadlines pass instantly. */
+  function fakeClock() {
+    let t = 1_000_000;
+    return {
+      now: () => t,
+      sleep: async (ms: number) => {
+        t += ms;
+      },
+      advance: (ms: number) => {
+        t += ms;
+      },
+    };
+  }
+
+  async function run(
+    policy: Parameters<typeof streamTurn>[0]["follow"],
+    signal?: AbortSignal,
+    message = "hi",
+  ) {
+    const events: TalkEvent[] = [];
+    for await (const event of streamTurn({
+      baseUrl: BASE,
+      message,
+      follow: policy,
+      signal,
+    })) {
+      events.push(event);
+    }
+    const done = events.at(-1);
+    if (done?.kind !== "done") throw new Error("no done event");
+    return { events, result: done.result };
+  }
+
+  it("reattaches at the cursor and settles the turn as one, with nothing from the first stream lost", async () => {
+    const at = new Date().toISOString();
+    const { streamStarts } = fakeEve({
+      stream: (startIndex) =>
+        startIndex === 0
+          ? // The first stream drops mid-turn: a message done, a tool call requested, no end.
+            streamResponse([
+              {
+                type: "message.received",
+                data: { message: "hi", turnId: "t1" },
+                meta: { at },
+              },
+              {
+                type: "message.completed",
+                data: { turnId: "t1", message: "Part one" },
+                meta: { at },
+              },
+              {
+                type: "step.started",
+                data: { turnId: "t1", sequence: 1 },
+                meta: { at },
+              },
+              {
+                type: "actions.requested",
+                data: {
+                  turnId: "t1",
+                  sequence: 1,
+                  actions: [
+                    {
+                      toolName: "write_file",
+                      callId: "c1",
+                      input: { path: "a" },
+                    },
+                  ],
+                },
+                meta: { at },
+              },
+            ])
+          : streamResponse([
+              {
+                type: "step.completed",
+                data: { turnId: "t1", sequence: 1 },
+                meta: { at },
+              },
+              {
+                type: "message.appended",
+                data: { turnId: "t1", messageSoFar: "Part t" },
+                meta: { at },
+              },
+              {
+                type: "message.completed",
+                data: { turnId: "t1", message: "Part two" },
+                meta: { at },
+              },
+              { type: "turn.completed", data: { turnId: "t1" }, meta: { at } },
+            ]),
+    });
+
+    const clock = fakeClock();
+    const { events, result } = await run({
+      sliceMs: 1_000,
+      maxSilenceMs: 60_000,
+      unreachableMs: 60_000,
+      ...clock,
+    });
+
+    expect(streamStarts).toEqual([0, 4]);
+    expect(result.streamLost).toBeUndefined();
+    expect(result).toMatchObject({
+      ok: true,
+      turnId: "t1",
+      reply: "Part one\n\nPart two",
+      streamIndex: 8,
+      messages: [
+        { afterStepIndex: 0, text: "Part one" },
+        { afterStepIndex: 1, text: "Part two" },
+      ],
+    });
+    // The step that started before the drop keeps the tool call it made.
+    expect(result.steps).toHaveLength(1);
+    expect(result.steps[0]).toMatchObject({ toolName: "write_file" });
+    // Live text after the reconnect still carries the earlier message.
+    const texts = events.flatMap((e) => (e.kind === "text" ? [e.text] : []));
+    expect(texts).toContain("Part one\n\nPart t");
+    expect(events.filter((e) => e.kind === "done")).toHaveLength(1);
+  });
+
+  it("without a follow policy, reports the lost stream as before", async () => {
+    const at = new Date().toISOString();
+    const { streamStarts } = fakeEve({
+      stream: () =>
+        streamResponse([
+          {
+            type: "message.received",
+            data: { message: "hi", turnId: "t1" },
+            meta: { at },
+          },
+        ]),
+    });
+    const { result } = await run(null);
+    expect(streamStarts).toEqual([0]);
+    expect(result).toMatchObject({ ok: false, streamLost: true, turnId: "t1" });
+  });
+
+  it("stops following when the stream moved on without ever showing our message", async () => {
+    const at = new Date().toISOString();
+    let reads = 0;
+    const { streamStarts } = fakeEve({
+      stream: () =>
+        ++reads === 1
+          ? // Someone else's turn, never ours: the echo didn't match.
+            streamResponse([
+              {
+                type: "message.received",
+                data: { message: "other", turnId: "t9" },
+                meta: { at },
+              },
+            ])
+          : reads > 2
+            ? streamResponse([])
+            : streamResponse([
+                {
+                  type: "message.completed",
+                  data: { turnId: "t9", message: "Not yours" },
+                  meta: { at },
+                },
+                {
+                  type: "turn.completed",
+                  data: { turnId: "t9" },
+                  meta: { at },
+                },
+              ]),
+    });
+    const { result } = await run({
+      sliceMs: 1_000,
+      maxSilenceMs: 60_000,
+      unreachableMs: 60_000,
+      ...fakeClock(),
+    });
+    expect(streamStarts).toEqual([0]);
+    expect(result).toMatchObject({ ok: false, streamLost: true, turnId: null });
+    expect(result.reply ?? "").not.toContain("Not yours");
+  });
+
+  it("keeps matching our message across reconnects until it appears, without adopting another turn", async () => {
+    const at = new Date().toISOString();
+    let reads = 0;
+    const { streamStarts } = fakeEve({
+      stream: () =>
+        ++reads !== 2
+          ? streamResponse([]) // nothing yet (or, past the turn, nothing more)
+          : streamResponse([
+              {
+                type: "message.received",
+                data: { message: "other", turnId: "t9" },
+                meta: { at },
+              },
+              {
+                type: "message.completed",
+                data: { turnId: "t9", message: "Not yours" },
+                meta: { at },
+              },
+              {
+                type: "message.received",
+                data: { message: "hi", turnId: "t1" },
+                meta: { at },
+              },
+              {
+                type: "message.completed",
+                data: { turnId: "t1", message: "Yours" },
+                meta: { at },
+              },
+              { type: "turn.completed", data: { turnId: "t1" }, meta: { at } },
+            ]),
+    });
+    const { result } = await run({
+      sliceMs: 1_000,
+      maxSilenceMs: 60_000,
+      unreachableMs: 60_000,
+      ...fakeClock(),
+    });
+    expect(streamStarts).toEqual([0, 0]);
+    expect(result).toMatchObject({ ok: true, turnId: "t1", reply: "Yours" });
+  });
+
+  it("resolves a dynamic model from the sent message when session.started arrives after a reconnect", async () => {
+    const at = new Date().toISOString();
+    const message = "<!-- harnesst:model openai/gpt-5.1 -->\n\nhi";
+    fakeEve({
+      stream: (startIndex) =>
+        startIndex === 0
+          ? streamResponse([
+              {
+                type: "message.received",
+                data: { message, turnId: "t1" },
+                meta: { at },
+              },
+            ])
+          : streamResponse([
+              {
+                type: "session.started",
+                data: {
+                  turnId: "t1",
+                  runtime: { modelId: "dynamic:anthropic/claude-sonnet-5" },
+                },
+                meta: { at },
+              },
+              {
+                type: "message.completed",
+                data: { turnId: "t1", message: "ok" },
+                meta: { at },
+              },
+              { type: "turn.completed", data: { turnId: "t1" }, meta: { at } },
+            ]),
+    });
+    const { events, result } = await run(
+      {
+        sliceMs: 1_000,
+        maxSilenceMs: 60_000,
+        unreachableMs: 60_000,
+        ...fakeClock(),
+      },
+      undefined,
+      message,
+    );
+    expect(result.ok).toBe(true);
+    expect(events).toContainEqual({ kind: "model", modelId: "openai/gpt-5.1" });
+  });
+
+  it("keeps waiting through silence while the instance answers, then gives up at the silence cap", async () => {
+    const at = new Date().toISOString();
+    const { streamStarts } = fakeEve({
+      stream: (startIndex) =>
+        startIndex === 0
+          ? streamResponse([
+              {
+                type: "message.received",
+                data: { message: "hi", turnId: "t1" },
+                meta: { at },
+              },
+            ])
+          : streamResponse([]),
+    });
+    const clock = fakeClock();
+    const { result } = await run({
+      sliceMs: 1_000,
+      maxSilenceMs: 10 * 60_000,
+      unreachableMs: 60_000,
+      ...clock,
+    });
+    // Many silent reattaches, all at the same cursor, before giving up.
+    expect(streamStarts.length).toBeGreaterThan(5);
+    expect(new Set(streamStarts.slice(1))).toEqual(new Set([1]));
+    expect(result.ok).toBe(false);
+    expect(result.streamLost).toBe(true);
+    expect(result.error).toMatch(/sent nothing for 10 minutes/);
+  });
+
+  it("gives up once the instance has been unreachable for the whole budget", async () => {
+    const at = new Date().toISOString();
+    fakeEve({
+      stream: (startIndex) => {
+        if (startIndex === 0)
+          return streamResponse([
+            {
+              type: "message.received",
+              data: { message: "hi", turnId: "t1" },
+              meta: { at },
+            },
+          ]);
+        throw new TypeError("fetch failed: ECONNREFUSED");
+      },
+      health: () => {
+        throw new TypeError("fetch failed: ECONNREFUSED");
+      },
+    });
+    const clock = fakeClock();
+    const { result } = await run({
+      sliceMs: 1_000,
+      maxSilenceMs: 60 * 60_000,
+      unreachableMs: 3 * 60_000,
+      ...clock,
+    });
+    expect(result.ok).toBe(false);
+    expect(result.error).toMatch(/stopped answering/);
+  });
+
+  it("a healthy check in between restarts the unreachable budget", async () => {
+    const at = new Date().toISOString();
+    /** Elapsed fake time until giving up, with health answering only on call `upOnCall`. */
+    async function outage(upOnCall: number | null) {
+      let healthCalls = 0;
+      fakeEve({
+        stream: (startIndex) => {
+          if (startIndex === 0)
+            return streamResponse([
+              {
+                type: "message.received",
+                data: { message: "hi", turnId: "t1" },
+                meta: { at },
+              },
+            ]);
+          throw new TypeError("fetch failed");
+        },
+        health: () => {
+          healthCalls += 1;
+          if (healthCalls === upOnCall) return new Response("ok");
+          throw new TypeError("fetch failed");
+        },
+      });
+      const clock = fakeClock();
+      const startedAt = clock.now();
+      const { result } = await run({
+        sliceMs: 1_000,
+        maxSilenceMs: 60 * 60_000,
+        unreachableMs: 3 * 60_000,
+        ...clock,
+      });
+      expect(result.error).toMatch(/stopped answering/);
+      return clock.now() - startedAt;
+    }
+    const uninterrupted = await outage(null);
+    const interrupted = await outage(6);
+    expect(interrupted).toBeGreaterThan(uninterrupted);
+  });
+
+  it("stops following when eve refuses the stream (the session is gone)", async () => {
+    const at = new Date().toISOString();
+    const { streamStarts } = fakeEve({
+      stream: (startIndex) =>
+        startIndex === 0
+          ? streamResponse([
+              {
+                type: "message.received",
+                data: { message: "hi", turnId: "t1" },
+                meta: { at },
+              },
+            ])
+          : new Response("not found", { status: 404 }),
+    });
+    const { result } = await run({
+      sliceMs: 1_000,
+      maxSilenceMs: 60 * 60_000,
+      unreachableMs: 3 * 60_000,
+      ...fakeClock(),
+    });
+    expect(streamStarts).toEqual([0, 1]);
+    expect(result.ok).toBe(false);
+    expect(result.error).toMatch(/404/);
+  });
+
+  it("a stop between reconnects ends the turn as stopped, not lost", async () => {
+    const at = new Date().toISOString();
+    fakeEve({
+      stream: (startIndex) => {
+        if (startIndex === 0)
+          return streamResponse([
+            {
+              type: "message.received",
+              data: { message: "hi", turnId: "t1" },
+              meta: { at },
+            },
+          ]);
+        throw new TypeError("fetch failed");
+      },
+    });
+    const controller = new AbortController();
+    const clock = fakeClock();
+    const { result } = await run(
+      {
+        sliceMs: 1_000,
+        maxSilenceMs: 60 * 60_000,
+        unreachableMs: 3 * 60_000,
+        now: clock.now,
+        sleep: async (ms) => {
+          clock.advance(ms);
+          controller.abort();
+        },
+      },
+      controller.signal,
+    );
+    expect(result.ok).toBe(false);
+    expect(result.streamLost).toBeUndefined();
+    expect(result.error).toMatch(/stopped/);
+  });
 });

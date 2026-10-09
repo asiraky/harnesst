@@ -65,14 +65,14 @@ export async function action(args: ActionFunctionArgs) {
             : "The deployment that ran this turn is gone — harnesst settled the conversation without contacting its replacement.",
         };
 
-  if (!eveCancel.ok) {
-    throw data(
-      {
-        error: eveCancel.detail,
-      },
-      { status: eveCancel.unsupported ? 501 : 502 },
-    );
-  }
+  // Stop always ends harnesst's side of the turn. When eve didn't confirm the cancel, the
+  // drain would otherwise keep following a turn that may never answer (a restarted instance
+  // hangs on the session) with the conversation stuck as running. The agent may still finish
+  // in the background; the caller is told so.
+  const eveStopped = eveCancel.ok;
+  const detail = eveCancel.ok
+    ? eveCancel.detail
+    : `${eveCancel.detail} harnesst stopped waiting, but the agent may still finish this turn in the background.`;
 
   const localCanceled = cancelActiveTurn(session.id);
   if (!localCanceled && session.externalSessionId && target) {
@@ -89,7 +89,8 @@ export async function action(args: ActionFunctionArgs) {
   return {
     ok: true as const,
     localCanceled,
-    detail: eveCancel.detail,
+    eveStopped,
+    detail,
   };
 }
 
@@ -123,8 +124,7 @@ async function cancelEveTurn(input: {
     return {
       ok: false,
       unsupported: true,
-      detail:
-        "This Eve deployment does not expose turn cancellation yet. harnesst did not detach from the running turn.",
+      detail: "This Eve deployment does not expose turn cancellation.",
     };
   }
   const text = await res.text().catch(() => "");

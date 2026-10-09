@@ -30,10 +30,12 @@ const mocks = vi.hoisted(() => ({
   finalizeDelegationOnResume: vi.fn(async () => {}),
   clearSessionHandles: vi.fn(async () => {}),
   bindSuccessorSessionHandles: vi.fn(async () => {}),
+  touchPlaygroundSessionTurn: vi.fn(async () => {}),
 }));
 
 vi.mock("~/agent/talk.server", () => ({
   streamTurn: mocks.streamTurn,
+  DEFAULT_TURN_FOLLOW: {},
 }));
 vi.mock("~/playground/sessions.server", () => ({
   savePlaygroundSessionProgress: mocks.savePlaygroundSessionProgress,
@@ -43,6 +45,7 @@ vi.mock("~/playground/sessions.server", () => ({
   releaseRefusedTurnClaim: mocks.releaseRefusedTurnClaim,
   clearSessionHandles: mocks.clearSessionHandles,
   bindSuccessorSessionHandles: mocks.bindSuccessorSessionHandles,
+  touchPlaygroundSessionTurn: mocks.touchPlaygroundSessionTurn,
 }));
 vi.mock("~/foh/inbox.server", () => ({
   beginFohTurn: mocks.beginFohTurn,
@@ -1027,5 +1030,76 @@ describe("streamTurnResponse — channel-homed delivery", () => {
     expect(events.at(-1)).toMatchObject({ type: "done" });
     expect(mocks.savePlaygroundSessionCursor).toHaveBeenCalled();
     error.mockRestore();
+  });
+});
+
+describe("streamTurnResponse — heartbeat while a turn is quiet", () => {
+  it("keeps the claimed row fresh while the turn runs and stops once it settles", async () => {
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+    try {
+      let finish!: () => void;
+      const quiet = new Promise<void>((resolve) => {
+        finish = resolve;
+      });
+      mocks.streamTurn.mockImplementation(async function* () {
+        yield { kind: "session", sessionId: "sess_ext", continuationToken: "tok_1" };
+        await quiet; // eve says nothing for a long while
+        yield { kind: "done", result: result({ reply: "done" }) };
+      });
+
+      const res = streamTurnResponse({
+        projectId: "proj_1",
+        target: TARGET,
+        session: session(),
+        message: "do the thing",
+        channel: "foh",
+        title: null,
+        claimId: "claim_1",
+      });
+      const drained = readAll(res);
+
+      await vi.advanceTimersByTimeAsync(3 * 60_000);
+      expect(mocks.touchPlaygroundSessionTurn).toHaveBeenCalledTimes(3);
+      expect(mocks.touchPlaygroundSessionTurn).toHaveBeenCalledWith({
+        id: "ps_1",
+        claimId: "claim_1",
+      });
+
+      finish();
+      await drained;
+      mocks.touchPlaygroundSessionTurn.mockClear();
+      await vi.advanceTimersByTimeAsync(5 * 60_000);
+      expect(mocks.touchPlaygroundSessionTurn).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("a failing heartbeat write never breaks the drain", async () => {
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+    try {
+      mocks.touchPlaygroundSessionTurn.mockRejectedValue(new Error("db down"));
+      let finish!: () => void;
+      const quiet = new Promise<void>((resolve) => {
+        finish = resolve;
+      });
+      mocks.streamTurn.mockImplementation(async function* () {
+        yield { kind: "session", sessionId: "sess_ext", continuationToken: "tok_1" };
+        await quiet;
+        yield { kind: "done", result: result({ reply: "done" }) };
+      });
+      const drained = run({ session: session(), channel: "foh" });
+      await vi.advanceTimersByTimeAsync(2 * 60_000);
+      finish();
+      const events = await drained;
+      expect(events.at(-1)).toMatchObject({ type: "done", ok: true });
+      expect(mocks.savePlaygroundSessionCursor).toHaveBeenCalledWith(
+        expect.objectContaining({ status: "waiting" }),
+      );
+    } finally {
+      mocks.touchPlaygroundSessionTurn.mockReset();
+      mocks.touchPlaygroundSessionTurn.mockResolvedValue(undefined);
+      vi.useRealTimers();
+    }
   });
 });

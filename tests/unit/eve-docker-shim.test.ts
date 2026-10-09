@@ -11,9 +11,11 @@ import { spawnSync } from "node:child_process";
 import {
   chmodSync,
   existsSync,
+  mkdirSync,
   mkdtempSync,
   readFileSync,
   rmSync,
+  statSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -133,6 +135,28 @@ describe("eve-docker shim", () => {
     expect(got.slice(5)).toEqual(SESSION_RUN.slice(1));
     expect(existsSync(path.join(dir, "sessions", "sess1"))).toBe(true);
     expect(existsSync(path.join(dir, "shared"))).toBe(true);
+  });
+
+  it("leaves both mount roots writable by the unprivileged sandbox user, repairing existing ones", () => {
+    const sessionDir = path.join(dir, "sessions", "sess-perm");
+    const sharedDir = path.join(dir, "shared");
+    // Directories created by an earlier run as root, with the default 0755.
+    mkdirSync(sessionDir, { recursive: true, mode: 0o755 });
+    mkdirSync(sharedDir, { recursive: true, mode: 0o755 });
+    chmodSync(sessionDir, 0o755);
+    chmodSync(sharedDir, 0o755);
+
+    runShim(
+      SESSION_RUN.map((arg) => (arg === "sess1" ? "sess-perm" : arg)),
+      {
+        HARNESST_HOME_VOLUME: "harnesst-home-x",
+        HARNESST_HOME_ROOT: dir,
+        HARNESST_SESSION_WORKSPACES: "1",
+      },
+    );
+
+    expect(statSync(sessionDir).mode & 0o777).toBe(0o777);
+    expect(statSync(sharedDir).mode & 0o777).toBe(0o777);
   });
 
   it("fails closed when an isolated session has no safe container identity", () => {

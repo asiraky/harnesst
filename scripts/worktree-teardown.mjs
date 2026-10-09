@@ -102,14 +102,6 @@ function parseEnvFile(text) {
   return out;
 }
 
-function quoteArgv(argv) {
-  return argv
-    .map((a) =>
-      /[^A-Za-z0-9_\-./=]/.test(a) ? `'${a.replace(/'/g, "'\\''")}'` : a,
-    )
-    .join(" ");
-}
-
 /**
  * Preflight: confirm the shared Postgres container is running. Teardown must
  * not abort on a stopped container (the user may have already removed their

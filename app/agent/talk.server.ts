@@ -480,6 +480,12 @@ export async function* streamTurn(input: {
    * hours as long as Eve keeps producing events.
    */
   timeoutMs?: number;
+  /**
+   * Keep watching when the stream gives out mid-turn instead of reporting an unknown outcome.
+   * Without it a lost stream ends the drain with `streamLost` (the old behavior, still what
+   * callers with their own reattach want). See `followDrain`.
+   */
+  follow?: TurnFollowPolicy | null;
 }): AsyncGenerator<TalkEvent> {
   const base = input.baseUrl.replace(/\/+$/, "");
   const timeoutMs = input.timeoutMs ?? 90_000;
@@ -686,17 +692,236 @@ export async function* streamTurn(input: {
   yield { kind: "session", sessionId, continuationToken };
 
   // 2. Read the event stream until the turn settles.
-  yield* drainTurnStream({
-    base,
-    sessionId,
-    continuationToken,
-    startIndex: streamIndex,
-    matchMessage: summarizeUserContent(input.message),
-    postedAt,
-    initialTurnId: null,
-    signal: input.signal,
-    timeoutMs,
+  yield* followDrain(
+    {
+      base,
+      sessionId,
+      continuationToken,
+      startIndex: streamIndex,
+      matchMessage: summarizeUserContent(input.message),
+      postedAt,
+      initialTurnId: null,
+      signal: input.signal,
+      timeoutMs,
+    },
+    input.follow ?? null,
+  );
+}
+
+/**
+ * How long `followDrain` keeps watching a turn whose stream gave out. Eve sends nothing while the
+ * model writes a tool call's input, so a turn can be silent for many minutes and still be working;
+ * silence alone is not failure. What does end the watch: the instance stops answering its health
+ * check, or the turn stays silent for so long that it is more likely stuck than busy.
+ */
+export interface TurnFollowPolicy {
+  /** Budget for each reattach request, both before eve answers and between its events. */
+  sliceMs: number;
+  /** Give up after this long with no stream events at all. */
+  maxSilenceMs: number;
+  /** Give up after the instance's health check has failed for this long without a break. */
+  unreachableMs: number;
+  /** Test seams. */
+  now?: () => number;
+  sleep?: (ms: number, signal?: AbortSignal | null) => Promise<void>;
+}
+
+export const DEFAULT_TURN_FOLLOW: TurnFollowPolicy = {
+  sliceMs: 60_000,
+  maxSilenceMs: 60 * 60_000,
+  unreachableMs: 3 * 60_000,
+};
+
+/**
+ * State one drain builds up while reading a turn. A reattach slice continues from the previous
+ * slice's state rather than a blank one, so the turn's steps, messages and reply accumulate across
+ * stream reconnects exactly as if the stream had never dropped.
+ */
+interface DrainCarry {
+  steps: TurnStep[];
+  messages: { afterStepIndex: number; text: string }[];
+  completedMessages: string[];
+  inputRequests: ChatInputRequest[];
+  reasoning: ReasoningAccumulator;
+  lastTextSent: string | null;
+  reply: string | null;
+  lastStepFailure: string | null;
+  errorModelId: string | null;
+  modelId: string | null;
+  stepStarts: Map<number, number>;
+  actionsBySeq: Map<number, TurnAction[]>;
+  actionByCallId: Map<string, TurnAction>;
+  /** The HTTP status the latest slice's stream request got; null when it never got one. */
+  streamStatus: number | null;
+}
+
+function newDrainCarry(): DrainCarry {
+  return {
+    steps: [],
+    messages: [],
+    completedMessages: [],
+    inputRequests: [],
+    reasoning: new ReasoningAccumulator(),
+    lastTextSent: null,
+    reply: null,
+    lastStepFailure: null,
+    errorModelId: null,
+    modelId: null,
+    stepStarts: new Map(),
+    actionsBySeq: new Map(),
+    actionByCallId: new Map(),
+    streamStatus: null,
+  };
+}
+
+type DrainInput = Parameters<typeof drainTurnStream>[0];
+
+function abortableSleep(
+  ms: number,
+  signal?: AbortSignal | null,
+): Promise<void> {
+  return new Promise((resolve) => {
+    if (signal?.aborted) return resolve();
+    const done = () => {
+      clearTimeout(timer);
+      signal?.removeEventListener("abort", done);
+      resolve();
+    };
+    const timer = setTimeout(done, ms);
+    signal?.addEventListener("abort", done, { once: true });
   });
+}
+
+async function instanceAnswers(
+  base: string,
+  signal?: AbortSignal | null,
+): Promise<boolean> {
+  try {
+    const timeout = AbortSignal.timeout(5_000);
+    const res = await fetch(`${base}/eve/v1/health`, {
+      signal: signal ? AbortSignal.any([signal, timeout]) : timeout,
+    });
+    await res.body?.cancel().catch(() => {});
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
+/** A stream status that reattaching cannot fix: the session is gone or the request is refused. */
+function streamRefused(status: number | null): boolean {
+  return (
+    status !== null &&
+    status >= 400 &&
+    status < 500 &&
+    status !== 408 &&
+    status !== 429
+  );
+}
+
+/**
+ * Drain a turn and, with a `policy`, keep following it when the stream is lost: reopen eve's
+ * durable stream at the cursor, as the turn's id, and carry on accumulating into the same state.
+ * Only the final `done` is yielded, so a caller sees one uninterrupted turn. Without a policy this
+ * is exactly `drainTurnStream`.
+ */
+async function* followDrain(
+  first: DrainInput,
+  policy: TurnFollowPolicy | null,
+): AsyncGenerator<TalkEvent> {
+  const carry = first.carry ?? newDrainCarry();
+  const now = policy?.now ?? Date.now;
+  const sleep = policy?.sleep ?? abortableSleep;
+  const signal = first.signal;
+  let slice: DrainInput = { ...first, carry };
+  let lastEventAt = now();
+  let unreachableSince: number | null = null;
+  let backoffMs = 1_000;
+  for (;;) {
+    const sliceStartedAt = now();
+    let progressed = false;
+    let result: TurnResult | null = null;
+    for await (const event of drainTurnStream(slice)) {
+      if (event.kind === "done") {
+        result = event.result;
+        break;
+      }
+      if (event.kind === "progress") {
+        progressed = true;
+        lastEventAt = now();
+      }
+      yield event;
+    }
+    if (!result) return; // unreachable: every drain ends with `done`
+    if (!policy || !result.streamLost || streamRefused(carry.streamStatus)) {
+      yield { kind: "done", result };
+      return;
+    }
+    // The stream moved past the cursor but never showed our message, so the turn can't be told
+    // apart from any other: following would wait on, or adopt, a turn that isn't ours.
+    if (result.turnId === null && result.streamIndex > slice.startIndex) {
+      yield { kind: "done", result };
+      return;
+    }
+    const giveUp = (error: string): TalkEvent => ({
+      kind: "done",
+      result: { ...result, error },
+    });
+    if (progressed) {
+      unreachableSince = null;
+      backoffMs = 1_000;
+    } else {
+      const t = now();
+      if (await instanceAnswers(first.base, signal)) unreachableSince = null;
+      else unreachableSince ??= t;
+      if (
+        unreachableSince !== null &&
+        t - unreachableSince >= policy.unreachableMs
+      ) {
+        yield giveUp(
+          `The agent stopped answering: its health check has failed for ${Math.round((t - unreachableSince) / 60_000)} minutes.`,
+        );
+        return;
+      }
+      // A slice that failed at once (connection refused) would otherwise spin.
+      if (t - sliceStartedAt < 5_000) {
+        await sleep(backoffMs, signal);
+        backoffMs = Math.min(backoffMs * 2, 15_000);
+      }
+    }
+    if (now() - lastEventAt >= policy.maxSilenceMs) {
+      yield giveUp(
+        `The agent has sent nothing for ${Math.round((now() - lastEventAt) / 60_000)} minutes, so harnesst stopped waiting. It may still be working; reopen this conversation later to see.`,
+      );
+      return;
+    }
+    if (signal?.aborted) {
+      // Stopped between slices: same outcome as a stop mid-read.
+      const { streamLost: _lost, ...rest } = result;
+      yield {
+        kind: "done",
+        result: {
+          ...rest,
+          ok: false,
+          error: "Couldn't read the reply stream: Turn was stopped.",
+        },
+      };
+      return;
+    }
+    // Until our message is seen, keep matching it; after that, follow the turn by its id.
+    const identified = result.turnId !== null;
+    slice = {
+      ...first,
+      carry,
+      startIndex: result.streamIndex,
+      matchMessage: identified ? null : first.matchMessage,
+      postedAt: identified ? 0 : first.postedAt,
+      initialTurnId: result.turnId,
+      modelText: first.matchMessage,
+      timeoutMs: policy.sliceMs,
+      connectTimeoutMs: policy.sliceMs,
+    };
+  }
 }
 
 /**
@@ -725,6 +950,11 @@ async function* drainTurnStream(input: {
   postedAt: number;
   /** Reattach path: the turn id harnesst already observed, when it observed one. */
   initialTurnId: string | null;
+  /**
+   * The sent message, when `matchMessage` is null because a follow slice already knows the turn:
+   * a dynamic model is still resolved against it if no earlier slice saw `session.started`.
+   */
+  modelText?: string | null;
   signal?: AbortSignal | null;
   timeoutMs: number;
   /**
@@ -734,26 +964,30 @@ async function* drainTurnStream(input: {
    * a cursor eve has events for, so it keeps its unbounded connect and its behavior is unchanged.
    */
   connectTimeoutMs?: number;
+  /** A reattach slice's starting state: what the previous slices of this turn built up. */
+  carry?: DrainCarry;
 }): AsyncGenerator<TalkEvent> {
   const { base, sessionId, continuationToken, timeoutMs, postedAt } = input;
+  const carry = input.carry ?? newDrainCarry();
+  carry.streamStatus = null;
   let streamIndex = input.startIndex;
   // With no message to match, turn identity comes from the id we were given — or, when the
   // stream dropped before harnesst ever saw `message.received`, from the first turn past the
   // cursor. Nothing else sends to a delegated peer session, so that turn is ours.
   const adoptAnyTurn = input.matchMessage === null;
-  const steps: TurnStep[] = [];
+  const steps = carry.steps;
   // A turn can interleave several assistant messages with tool steps — keep them all, each
   // tagged with the step count at completion time so the transcript can reconstruct order.
-  const messages: { afterStepIndex: number; text: string }[] = [];
-  const completedMessages: string[] = [];
-  const inputRequests: ChatInputRequest[] = [];
-  let lastTextSent: string | null = null;
-  const reasoning = new ReasoningAccumulator();
-  let reply: string | null = null;
+  const messages = carry.messages;
+  const completedMessages = carry.completedMessages;
+  const inputRequests = carry.inputRequests;
+  let lastTextSent = carry.lastTextSent;
+  const reasoning = carry.reasoning;
+  let reply = carry.reply;
   let error: string | null = null;
-  let lastStepFailure: string | null = null;
-  let errorModelId: string | null = null;
-  let modelId: string | null = null;
+  let lastStepFailure = carry.lastStepFailure;
+  let errorModelId = carry.errorModelId;
+  let modelId = carry.modelId;
   let ourTurnId: string | null = input.initialTurnId;
   let turnAnnounced = false;
   // #267: set when the turn's outcome is unknown because the transport gave out — see
@@ -821,6 +1055,7 @@ async function* drainTurnStream(input: {
     } finally {
       if (connectTimer) clearTimeout(connectTimer);
     }
+    carry.streamStatus = res.status;
     if (!res.ok || !res.body) {
       throw new Error(`stream returned ${res.status}`);
     }
@@ -831,10 +1066,10 @@ async function* drainTurnStream(input: {
     // step.started timestamps by sequence, to compute durations at step.completed.
     // NOTE: eve's stepIndex stays 0 for the whole turn; `sequence` is the real per-step
     // counter — key on it (falling back to stepIndex on older instances).
-    const stepStarts = new Map<number, number>();
+    const stepStarts = carry.stepStarts;
     // Tool calls per sequence, correlated request → result by callId (attached to the step).
-    const actionsBySeq = new Map<number, TurnAction[]>();
-    const actionByCallId = new Map<string, TurnAction>();
+    const actionsBySeq = carry.actionsBySeq;
+    const actionByCallId = carry.actionByCallId;
 
     while (!settled) {
       const { done, value } = await readWithIdleTimeout(reader);
@@ -886,12 +1121,15 @@ async function* drainTurnStream(input: {
         switch (type) {
           case "session.started": {
             const runtime = data.runtime as Record<string, unknown> | undefined;
+            // A reattach slice has no sent message to resolve a dynamic model against; the
+            // model an earlier slice of this turn resolved stays.
+            if (input.matchMessage === null && modelId !== null) break;
             if (runtime && typeof runtime.modelId === "string") {
               // Dynamic-model agents report `dynamic:<fallback id>` — resolve to the model that
               // actually serves this turn (the sent message's directive, else the fallback).
               modelId = effectiveModelId(
                 runtime.modelId,
-                input.matchMessage ?? "",
+                input.matchMessage ?? input.modelText ?? "",
               );
               yield { kind: "model", modelId };
             }
@@ -1135,6 +1373,13 @@ async function* drainTurnStream(input: {
     reader?.cancel().catch(() => {});
   }
 
+  Object.assign(carry, {
+    lastTextSent,
+    reply,
+    lastStepFailure,
+    errorModelId,
+    modelId,
+  });
   const normalized = normalizeReply(reply);
   yield {
     kind: "done",
