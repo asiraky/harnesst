@@ -24,6 +24,7 @@ import {
   type LoaderFunctionArgs,
 } from "react-router";
 
+import { MarketplaceInstallDialog } from "~/components/marketplace-install-dialog";
 import { NewResourceDialog } from "~/components/new-resource-dialog";
 import { usePublishHref } from "~/components/publish";
 import { EmptyTeamState } from "~/components/empty-team-state";
@@ -103,7 +104,13 @@ import {
 } from "~/project/config-target.server";
 import { agentRequiredSecretState } from "~/project/secrets.server";
 import { overlayLock } from "~/marketplace/lock";
-import { requireProject, requireRepo } from "~/project/guard.server";
+import {
+  requireProject,
+  requireProjectAccess,
+  requireRepo,
+} from "~/project/guard.server";
+import { isWorkspaceAdmin } from "~/auth/workspace.server";
+import { encodeMemberSelection } from "~/marketplace/targets";
 import { isGithubReauthorizationError } from "~/github/installations.server";
 import type { Project } from "~/db/queries.server";
 import { noindexMeta } from "~/lib/seo";
@@ -148,6 +155,11 @@ interface TargetView {
 
 interface ProjectView {
   project: Project;
+  /**
+   * The viewer may install marketplace templates here — the marketplace is a workspace-admin
+   * surface, and this page already requires write on the repo.
+   */
+  canInstall: boolean;
   roster: { name: string }[];
   active: Pick<Agent, "name" | "root"> | null;
   isTeam: boolean;
@@ -200,9 +212,14 @@ export const loader = (args: LoaderFunctionArgs) =>
   sessionLoader(
     args,
     async ({ auth }): Promise<ProjectView> => {
-      const project = await requireProject(auth, args.params.projectId, {
-        request: args.request,
-      });
+      const access = await requireProjectAccess(
+        auth,
+        args.params.projectId,
+        "write",
+        { request: args.request },
+      );
+      const project = access.project;
+      const canInstall = isWorkspaceAdmin(access.active.member.role);
 
       if (
         !project.repoInstallationId ||
@@ -211,6 +228,7 @@ export const loader = (args: LoaderFunctionArgs) =>
       ) {
         return {
           project,
+          canInstall: false,
           roster: [],
           active: null,
           isTeam: false,
@@ -405,6 +423,7 @@ export const loader = (args: LoaderFunctionArgs) =>
 
         return {
           project,
+          canInstall,
           roster: roster.map((a) => ({ name: a.name })),
           active: active ? { name: active.name, root: active.root } : null,
           isTeam,
@@ -424,6 +443,7 @@ export const loader = (args: LoaderFunctionArgs) =>
         if (error instanceof Response) throw error;
         return {
           project,
+          canInstall: false,
           roster: [],
           active: null,
           isTeam: false,
@@ -519,6 +539,7 @@ export default function ProjectDetail({
 }: Route.ComponentProps) {
   const {
     project,
+    canInstall,
     roster,
     active,
     isTeam,
@@ -553,6 +574,16 @@ export default function ProjectDetail({
   const memberCtx = contextPath(project.id, memberSegment);
   const isSubagent = target?.kind === "subagent";
   const subagentName = segments[segments.length - 1] ?? "";
+  // In-place marketplace install (agent, subagent and team pages). The target is the page's own
+  // agent in the wizard's `?member=` format; the team page lets the user pick one instead.
+  const installAction = (installTarget: string | null) =>
+    canInstall ? (
+      <MarketplaceInstallDialog
+        projectId={project.id}
+        target={installTarget}
+        returnTo={ctx}
+      />
+    ) : null;
 
   const repoLine =
     project.repoOwner && project.repoName ? (
@@ -592,7 +623,12 @@ export default function ProjectDetail({
             </span>
           }
           description={repoLine}
-          actions={<AddMemberDialog />}
+          actions={
+            <>
+              {installAction(null)}
+              <AddMemberDialog />
+            </>
+          }
         />
       ) : isSubagent && target ? (
         <PageHeader
@@ -648,6 +684,9 @@ export default function ProjectDetail({
               </span>
             </span>
           }
+          actions={installAction(
+            encodeMemberSelection(target.member, segments.join("/")),
+          )}
         />
       ) : (
         <PageHeader
@@ -669,6 +708,9 @@ export default function ProjectDetail({
             ) : (
               repoLine
             )
+          }
+          actions={
+            active && !error ? installAction(encodeMemberSelection(active.name)) : null
           }
         />
       )}
