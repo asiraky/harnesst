@@ -13,6 +13,7 @@ from (values
   ('intake',public.ledger_mint_actor('intake','agent','Intake')),
   ('infra',public.ledger_mint_actor('infra','agent','Infra')),
   ('implementer',public.ledger_mint_actor('implementer','agent','Implementer')),
+  ('architect',public.ledger_mint_actor('architect','agent','Architect')),
   ('github',public.ledger_mint_actor('github','system','GitHub'))
 ) as minted(role,result);
 commit;

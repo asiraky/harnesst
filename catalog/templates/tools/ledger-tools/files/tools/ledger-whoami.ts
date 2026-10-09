@@ -5,5 +5,5 @@ export default defineTool({
   description:
     "Read your ledger actor identity, role and registered wake URL. Takes no item or version.",
   inputSchema: z.object({}),
-  execute: (input) => ledgerRpc("whoami", input),
+  execute: (input, ctx) => ledgerRpc("whoami", input, ctx),
 });

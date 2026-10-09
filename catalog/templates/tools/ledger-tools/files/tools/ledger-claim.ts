@@ -7,5 +7,5 @@ export default defineTool({
   inputSchema: z.object({
     outbox_id: z.string().uuid(),
   }),
-  execute: (input) => ledgerRpc("claim", input),
+  execute: (input, ctx) => ledgerRpc("claim", input, ctx),
 });

@@ -8,5 +8,5 @@ export default defineTool({
     outbox_id: z.string().uuid(),
     note: z.string().min(1),
   }),
-  execute: (input) => ledgerRpc("complete_wake", input),
+  execute: (input, ctx) => ledgerRpc("complete_wake", input, ctx),
 });

@@ -39,22 +39,68 @@ const backend = async (op, args = {}) => {
 const agent = async (role, op, args = {}) => {
   const [row] = await db.begin(async (tx) => {
     await tx`set local role anon`;
-    return tx`select ${tx("public.ledger_" + op)}(${actors[role].actor_key},${tx.json(args)}) as result`;
+    return tx`select ${tx("public.ledger_" + op)}(${actors[role].actor_key},${tx.json({ session_id: "test-" + role, ...args })}) as result`;
   });
   return row.result;
 };
+const step = async (role, op, item, args = {}) =>
+  agent(role, op, { item_id: item.id, expected_version: item.version, ...args });
+// Carries an item in build through QA and review to the merge-approval gate on `head`.
+async function toMergeApproval(item, head) {
+  item = await step("implementer", "set_head", item, {
+    head_sha: head,
+    observed_at: new Date().toISOString(),
+  });
+  item = await step("implementer", "attach", item, {
+    type: "pr",
+    value: "https://example.test/pr/" + item.id,
+  });
+  item = await step("implementer", "attach", item, {
+    type: "preview_url",
+    value: "https://example.test/preview/" + head,
+    binding: head,
+  });
+  item = await step("implementer", "transition", item, { to_stage: "qa" });
+  item = await step("implementer", "evidence", item, {
+    type: "qa_passed",
+    binding: head,
+    payload: {},
+  });
+  item = await step("implementer", "transition", item, { to_stage: "review" });
+  item = await step("implementer", "evidence", item, {
+    type: "review_approved",
+    binding: head,
+    payload: {},
+  });
+  return step("implementer", "transition", item, {
+    to_stage: "merge-approval",
+  });
+}
 async function gate() {
   let item = await agent("intake", "create_item", {
     project_id: project.id,
-    kind: "plan",
+    kind: "feature",
     title: "Approval test",
-    spec: { problem: "Test", proposed_children: [] },
+    spec: { problem: "Test" },
   });
-  item = await agent("intake", "transition", {
-    item_id: item.id,
-    expected_version: item.version,
-    to_stage: "arch-review",
+  item = await step("intake", "transition", item, { to_stage: "breakdown" });
+  let ticket = await agent("intake", "create_item", {
+    project_id: project.id,
+    kind: "ticket",
+    title: "Only slice",
+    spec: { body: "Slice" },
+    parent_id: item.id,
   });
+  item = await step("intake", "transition", await agent("intake", "get_item", { item_id: item.id }), { to_stage: "build" });
+  ticket = await step("github", "set_head", ticket, {
+    head_sha: "c".repeat(40),
+    observed_at: new Date().toISOString(),
+  });
+  await step("github", "transition", ticket, {
+    to_stage: "merged",
+    binding: ticket.head_sha,
+  });
+  item = await toMergeApproval(item, "a".repeat(40));
   const [request] =
     await db`select * from ledger.approval_requests where item_id=${item.id}`;
   request.review_body = reviewBody(request.action, request.supersedes_remote_id);
@@ -134,7 +180,7 @@ before(async () => {
       "0004_mayi_approvals.sql",
       "0005_hosted_authorization.sql",
       "0006_oauth_recovery.sql",
-      "0007_scoped_oauth_writes.sql", "0008_review_content.sql",
+      "0007_scoped_oauth_writes.sql", "0008_review_content.sql", "0009_tickets.sql", "0010_leases.sql",
     ])
       await connection.unsafe(
         await readFile(new URL("../" + file, import.meta.url), "utf8"),
@@ -145,6 +191,7 @@ before(async () => {
   for (const [role, kind] of [
     ["intake", "agent"],
     ["implementer", "agent"],
+    ["github", "system"],
     ["engineer", "human"],
     ["requester", "human"],
   ]) {
@@ -200,7 +247,7 @@ test("agent cannot invoke old approval API, private decision function or trusted
     agent("intake", "transition", {
       item_id: item.id,
       expected_version: item.version,
-      to_stage: "approved",
+      to_stage: "ready-to-merge",
     }),
     /gate stage/,
   );
@@ -212,7 +259,7 @@ test("agent cannot invoke old approval API, private decision function or trusted
     /permission denied/,
   );
 });
-test("verified callback advances once and repeated delivery does not spawn duplicate children", async () => {
+test("verified callback advances once and repeated delivery applies one decision", async () => {
   const { request, item } = await gate();
   const e = event(request);
   const handler = callbackHandler(backend, config, mockFetch(request, e));
@@ -220,7 +267,7 @@ test("verified callback advances once and repeated delivery does not spawn dupli
   assert.equal((await handler(await signed(e))).status, 200);
   assert.equal(
     (await agent("intake", "get_item", { item_id: item.id })).stage,
-    "approved",
+    "ready-to-merge",
   );
   const [count] =
     await db`select count(*)::int as n from ledger.gates where item_id=${item.id}`;
@@ -306,14 +353,12 @@ test("forged signature, altered body, inconsistent approver and action are rejec
     await db`select approver_id from ledger.approval_events where event_id=${otherHuman.id}`;
   assert.equal(audit.approver_id, "OtherUserAbc");
 });
-test("old approval cannot advance a changed spec; denial returns to triage", async () => {
+test("old approval cannot advance a changed head; denial returns to build", async () => {
   const { request, item } = await gate();
   const e = event(request);
-  await agent("intake", "update_spec", {
-    item_id: item.id,
-    expected_version: item.version,
-    spec: { problem: "changed" },
-    note: "change",
+  await step("github", "set_head", item, {
+    head_sha: "b".repeat(40),
+    observed_at: new Date().toISOString(),
   });
   const response = await callbackHandler(
     backend,
@@ -324,7 +369,7 @@ test("old approval cannot advance a changed spec; denial returns to triage", asy
   assert.equal((await response.json()).stale, true);
   assert.equal(
     (await agent("intake", "get_item", { item_id: item.id })).stage,
-    "triage",
+    "qa",
   );
   const other = await gate();
   const denied = event(other.request, "denied");
@@ -340,7 +385,7 @@ test("old approval cannot advance a changed spec; denial returns to triage", asy
   );
   assert.equal(
     (await agent("intake", "get_item", { item_id: other.item.id })).stage,
-    "triage",
+    "build",
   );
 });
 test("concurrent duplicate callbacks create one gate event", async () => {
@@ -439,7 +484,7 @@ test("decision made before expiry can arrive late; decisions made after expiry c
   );
   assert.equal(
     (await agent("intake", "get_item", { item_id: first.item.id })).stage,
-    "approved",
+    "ready-to-merge",
   );
   const second = await gate();
   await db`update ledger.approval_requests set expires_at=now()-interval '1 minute' where id=${second.request.id}`;
@@ -459,17 +504,18 @@ test("decision made before expiry can arrive late; decisions made after expiry c
   );
   assert.equal(
     (await agent("intake", "get_item", { item_id: second.item.id })).stage,
-    "arch-review",
+    "merge-approval",
   );
 });
-test("artifact edits and new head at spec gate invalidate the exact approval snapshot", async () => {
+test("artifact edits and new head at the gate invalidate the exact approval snapshot", async () => {
   const { request, item } = await gate();
   const e = event(request);
   await agent("implementer", "attach", {
     item_id: item.id,
     expected_version: item.version,
-    type: "pr",
-    value: "https://example.test/pr/1",
+    type: "preview_url",
+    value: "https://example.test/preview/rebuilt",
+    binding: item.head_sha,
   });
   const changed = await agent("intake", "get_item", { item_id: item.id });
   assert.ok(changed.gate_epoch > item.gate_epoch);
@@ -488,14 +534,15 @@ test("artifact edits and new head at spec gate invalidate the exact approval sna
   const same = await agent("implementer", "attach", {
     item_id: item.id,
     expected_version: changed.version,
-    type: "pr",
-    value: "https://example.test/pr/1",
+    type: "preview_url",
+    value: "https://example.test/preview/rebuilt",
+    binding: item.head_sha,
   });
   assert.equal(same.gate_epoch, changed.gate_epoch);
   await agent("implementer", "set_head", {
     item_id: item.id,
     expected_version: same.version,
-    head_sha: "a".repeat(40),
+    head_sha: "b".repeat(40),
     observed_at: new Date().toISOString(),
   });
   assert.ok(
@@ -522,7 +569,7 @@ test("approval and next agent wake roll back together if wake insertion fails", 
     );
     assert.equal(
       (await agent("intake", "get_item", { item_id: item.id })).stage,
-      "arch-review",
+      "merge-approval",
     );
     const [count] =
       await db`select count(*)::int as n from ledger.gates where item_id=${item.id}`;
@@ -580,7 +627,7 @@ test("dispatcher reconciles a human decision after callback retries are exhauste
   assert.equal(await dispatch(backend, mockFetch(request, e)), 0);
   assert.equal(
     (await agent("intake", "get_item", { item_id: item.id })).stage,
-    "approved",
+    "ready-to-merge",
   );
   // A subsequently replayed signed callback cannot apply a second transition.
   assert.equal(
@@ -948,18 +995,16 @@ test('requested changes preserve feedback and link the revised approval to the d
     decisionOutcome:'CHANGES_REQUESTED',decisionComment:'Use a separate preview Worker.'})));
   assert.equal((await handler(await signed(e))).status,200);
   let changed=await agent('intake','get_item',{item_id:item.id});
-  assert.equal(changed.stage,'triage');
+  assert.equal(changed.stage,'build');
   assert.equal(changed.events.find(x=>x.kind==='rework').payload.feedback,'Use a separate preview Worker.');
   const [record]=await db`select feedback,decision_outcome from ledger.approval_events where request_id=${request.id}`;
   assert.equal(record.decision_outcome,'CHANGES_REQUESTED');
   assert.equal(record.feedback,'Use a separate preview Worker.');
-  changed=await agent('intake','update_spec',{item_id:item.id,expected_version:changed.version,
-    note:'Address the requested preview isolation',spec:{problem:'Revised: isolate preview deployment',proposed_children:[]}});
-  changed=await agent('intake','transition',{item_id:item.id,expected_version:changed.version,to_stage:'arch-review'});
+  changed=await toMergeApproval(changed,'d'.repeat(40));
   const [revision]=await db`select * from ledger.approval_requests where item_id=${item.id} and epoch=${changed.gate_epoch}`;
   assert.equal(revision.supersedes_remote_id,e.approvalId);
   assert.equal(revision.status,'pending');
-  assert.equal(changed.stage,'arch-review');
+  assert.equal(changed.stage,'merge-approval');
 });
 
 test('changed document, missing digest and wrong receipt digest cannot approve work', async () => {
@@ -967,7 +1012,7 @@ test('changed document, missing digest and wrong receipt digest cannot approve w
     r=>({...r,receipt:'test.'+Buffer.from(JSON.stringify({review_digest:'0'.repeat(64)})).toString('base64url')+'.test'})]) {
     const {request,item}=await gate(),e=event(request);
     assert.notEqual((await callbackHandler(backend,config,mockFetch(request,e,mutate))(await signed(e))).status,200);
-    assert.equal((await agent('intake','get_item',{item_id:item.id})).stage,'arch-review');
+    assert.equal((await agent('intake','get_item',{item_id:item.id})).stage,'merge-approval');
   }
 });
 

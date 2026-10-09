@@ -1,5 +1,5 @@
 {
-  "version": 1,
+  "version": 2,
   "human_proxy": "intake",
   "artifacts": {
     "by": [
@@ -15,25 +15,25 @@
           "id": "triage",
           "owner": "intake",
           "next": {
-            "plan-review": {},
+            "design": {},
             "infra": {},
-            "build": {}
+            "breakdown": {}
           }
         },
         {
-          "id": "plan-review",
-          "gate": {
-            "role": "engineer",
-            "on": "spec_version"
-          },
-          "on_approve": "build",
-          "on_reject": "triage"
+          "id": "design",
+          "owner": "architect",
+          "next": {
+            "breakdown": {},
+            "infra": {},
+            "triage": {}
+          }
         },
         {
           "id": "infra",
           "owner": "infra",
           "next": {
-            "infra-approval": {
+            "breakdown": {
               "requires": [
                 "infra_provisioned"
               ]
@@ -48,19 +48,20 @@
           }
         },
         {
-          "id": "infra-approval",
-          "gate": {
-            "role": "engineer",
-            "on": "spec_version"
-          },
-          "on_approve": "build",
-          "on_reject": "infra"
+          "id": "breakdown",
+          "owner": "intake",
+          "next": {
+            "build": {
+              "requires_tickets": true
+            }
+          }
         },
         {
           "id": "build",
           "owner": "implementer",
           "next": {
             "qa": {
+              "requires_tickets_closed": true,
               "requires_artifact": [
                 "pr",
                 "preview_url"
@@ -72,7 +73,7 @@
           "id": "qa",
           "owner": "implementer",
           "next": {
-            "uat": {
+            "review": {
               "requires": [
                 "qa_passed"
               ],
@@ -95,15 +96,6 @@
               ]
             }
           }
-        },
-        {
-          "id": "uat",
-          "gate": {
-            "role": "requester",
-            "on": "head_sha"
-          },
-          "on_approve": "review",
-          "on_reject": "build"
         },
         {
           "id": "review",
@@ -171,25 +163,25 @@
           "id": "triage",
           "owner": "intake",
           "next": {
-            "plan-review": {},
+            "design": {},
             "infra": {},
-            "build": {}
+            "breakdown": {}
           }
         },
         {
-          "id": "plan-review",
-          "gate": {
-            "role": "engineer",
-            "on": "spec_version"
-          },
-          "on_approve": "build",
-          "on_reject": "triage"
+          "id": "design",
+          "owner": "architect",
+          "next": {
+            "breakdown": {},
+            "infra": {},
+            "triage": {}
+          }
         },
         {
           "id": "infra",
           "owner": "infra",
           "next": {
-            "infra-approval": {
+            "breakdown": {
               "requires": [
                 "infra_provisioned"
               ]
@@ -204,19 +196,20 @@
           }
         },
         {
-          "id": "infra-approval",
-          "gate": {
-            "role": "engineer",
-            "on": "spec_version"
-          },
-          "on_approve": "build",
-          "on_reject": "infra"
+          "id": "breakdown",
+          "owner": "intake",
+          "next": {
+            "build": {
+              "requires_tickets": true
+            }
+          }
         },
         {
           "id": "build",
           "owner": "implementer",
           "next": {
             "qa": {
+              "requires_tickets_closed": true,
               "requires_artifact": [
                 "pr",
                 "preview_url"
@@ -228,7 +221,7 @@
           "id": "qa",
           "owner": "implementer",
           "next": {
-            "uat": {
+            "review": {
               "requires": [
                 "qa_passed"
               ],
@@ -251,15 +244,6 @@
               ]
             }
           }
-        },
-        {
-          "id": "uat",
-          "gate": {
-            "role": "requester",
-            "on": "head_sha"
-          },
-          "on_approve": "review",
-          "on_reject": "build"
         },
         {
           "id": "review",
@@ -320,30 +304,20 @@
         }
       ]
     },
-    "plan": {
+    "ticket": {
       "stages": [
         {
-          "id": "triage",
-          "owner": "intake",
+          "id": "open",
+          "owner": "github",
           "next": {
-            "arch-review": {}
+            "merged": {}
           }
         },
         {
-          "id": "arch-review",
-          "gate": {
-            "role": "engineer",
-            "on": "spec_version"
-          },
-          "on_approve": "approved",
-          "on_reject": "triage"
-        },
-        {
-          "id": "approved",
-          "owner": "system",
+          "id": "merged",
+          "owner": "github",
           "next": {},
-          "terminal": true,
-          "on_enter": "spawn_children"
+          "terminal": true
         }
       ]
     },
@@ -360,7 +334,7 @@
           "id": "infra",
           "owner": "infra",
           "next": {
-            "infra-approval": {
+            "done": {
               "requires": [
                 "infra_provisioned"
               ]
@@ -373,15 +347,6 @@
               ]
             }
           }
-        },
-        {
-          "id": "infra-approval",
-          "gate": {
-            "role": "engineer",
-            "on": "spec_version"
-          },
-          "on_approve": "done",
-          "on_reject": "infra"
         },
         {
           "id": "done",

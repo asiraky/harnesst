@@ -1,37 +1,27 @@
 import { timingSafeEqual } from "node:crypto";
 import { defineChannel, POST } from "eve/channels";
 import { ledgerRpc } from "../lib/ledger.js";
-import { startLeaseHeartbeat } from "../lib/ledger-lease.js";
+import { createLeaseKeeper } from "../lib/ledger-lease.js";
+// claimToken is the issue lease this session holds; the ledger refuses writes from any other session.
 type LedgerState = { itemId: string; outboxId: string; claimToken: string };
-const heartbeats = new Map<string, { stop: () => void }>();
-function stopHeartbeat(state: LedgerState): void {
-  heartbeats.get(state.claimToken)?.stop();
-  heartbeats.delete(state.claimToken);
-}
-function beginHeartbeat(state: LedgerState): void {
-  if (!state.claimToken || heartbeats.has(state.claimToken)) return;
-  const heartbeat = startLeaseHeartbeat(async () => {
-    const result = await ledgerRpc("renew_claim", {
-      outbox_id: state.outboxId,
-      claim_token: state.claimToken,
-    });
-    if (result.ok && !result.data?.renewed) heartbeats.delete(state.claimToken);
-    return result as { ok: boolean; data?: { renewed?: boolean } };
-  });
-  heartbeats.set(state.claimToken, heartbeat);
-}
+type Channel = { state: LedgerState };
+type Ctx = { session?: { id?: string } } | undefined;
+const leases = createLeaseKeeper(ledgerRpc);
+const release = (_event: unknown, channel: Channel) =>
+  leases.release(channel.state.claimToken);
 export default defineChannel({
   context: (state: LedgerState) => ({ state }),
   state: { itemId: "", outboxId: "", claimToken: "" },
   events: {
-    "turn.started": (_event: unknown, channel: { state: LedgerState }) =>
-      beginHeartbeat(channel.state),
-    "turn.completed": (_event: unknown, channel: { state: LedgerState }) =>
-      stopHeartbeat(channel.state),
-    "turn.failed": (_event: unknown, channel: { state: LedgerState }) =>
-      stopHeartbeat(channel.state),
-    "session.failed": (_event: unknown, channel: { state: LedgerState }) =>
-      stopHeartbeat(channel.state),
+    // Also restarts the heartbeat when eve resumes the run after a process restart.
+    "turn.started": (_event: unknown, channel: Channel, ctx: Ctx) =>
+      leases.hold(channel.state.claimToken, ctx?.session?.id),
+    "turn.completed": release,
+    "turn.failed": release,
+    "session.failed": release,
+    // Parked: stop renewing. If it resumes before expiry nothing changed; otherwise a wake takes over.
+    "session.waiting": (_event: unknown, channel: Channel) =>
+      leases.drop(channel.state.claimToken),
   },
   routes: [
     POST("/eve/v1/ledger/wake", async (request, { send }) => {
@@ -62,13 +52,17 @@ export default defineChannel({
       if (!claim.ok) return Response.json(claim, { status: 503 });
       if (claim.data.already_claimed || claim.data.gone)
         return Response.json({ ok: true, skipped: true });
+      // Another session holds this issue: the ledger redelivers when it is released or expires.
+      if (claim.data.deferred)
+        return Response.json({ ok: true, deferred: true, until: claim.data.until });
       const item = claim.data.item;
+      const token: string = claim.data.lease_token ?? claim.data.claim_token;
       const state: LedgerState = {
         itemId: item.id,
         outboxId: body.outbox_id,
-        claimToken: claim.data.claim_token,
+        claimToken: token,
       };
-      beginHeartbeat(state);
+      await leases.hold(token);
       try {
         const session = await send(
           {
@@ -76,15 +70,21 @@ export default defineChannel({
           },
           {
             auth: null,
-            continuationToken: "ledger:" + body.outbox_id,
+            // No human watches a wake session; human questions go through ledger-block.
+            // Task mode hides ask_question from this session and its subagents, and fails a
+            // turn that would wait for input so the lease lapses and the ledger redelivers.
+            mode: "task",
+            // One session per lease grant: a redelivery after takeover never resumes the old session.
+            continuationToken: `ledger:${body.outbox_id}:${claim.data.fence ?? 0}`,
             state,
           },
         );
+        await leases.hold(token, session.id);
         return Response.json({ ok: true, sessionId: session.id });
       } catch {
-        stopHeartbeat(state);
+        await leases.release(token);
         return Response.json(
-          { error: "dispatch failed; lease will expire for redelivery" },
+          { error: "dispatch failed; the ledger redelivers this wake" },
           { status: 503 },
         );
       }

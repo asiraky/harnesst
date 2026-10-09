@@ -17,5 +17,5 @@ export default defineTool({
     binding: z.string(),
     payload: z.record(z.string(), z.unknown()),
   }),
-  execute: (input) => ledgerRpc("evidence", input),
+  execute: (input, ctx) => ledgerRpc("evidence", input, ctx),
 });

@@ -20,5 +20,5 @@ export default defineTool({
       .describe("Current head SHA, required for GitHub system transitions."),
     note: z.string().optional(),
   }),
-  execute: (input) => ledgerRpc("transition", input),
+  execute: (input, ctx) => ledgerRpc("transition", input, ctx),
 });

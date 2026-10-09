@@ -154,7 +154,7 @@ export async function startProvisioning(input: {
     LEDGER_ROLES.some(
       (r) => !/^[a-z][a-z0-9-]*$/.test(input.members[r] ?? ""),
     ) ||
-    new Set(Object.values(input.members)).size !== 3
+    new Set(Object.values(input.members)).size !== LEDGER_ROLES.length
   )
     throw new Error("Choose a different team member for each ledger role.");
   const names = new Set((await listAgents(input.projectId)).map((a) => a.name));
@@ -164,26 +164,30 @@ export async function startProvisioning(input: {
   }
   if (LEDGER_ROLES.some((r) => !names.has(input.members[r])))
     throw new Error(
-      "Install all three team members first, then select their exact names.",
+      "Install every team member first, then select their exact names.",
     );
   if (
     state.members &&
-    LEDGER_ROLES.some((r) => state.members![r] !== input.members[r])
+    // Roles added after an installation are assigned on their first retry.
+    LEDGER_ROLES.some(
+      (r) =>
+        state.members![r] !== undefined &&
+        state.members![r] !== input.members[r],
+    )
   )
     throw new Error(
       "Role assignments are bound to this installation and cannot be changed on retry.",
     );
-  const actors =
-    state.actors ??
-    Object.fromEntries(
-      [...LEDGER_ROLES, "github"].map((r) => [
-        r,
-        {
-          actorKey: randomBytes(32).toString("hex"),
-          wakeToken: randomBytes(32).toString("hex"),
-        },
-      ]),
-    );
+  // Keep existing credentials; mint only roles this installation has not seen.
+  const actors = Object.fromEntries(
+    [...LEDGER_ROLES, "github"].map((r) => [
+      r,
+      state.actors?.[r] ?? {
+        actorKey: randomBytes(32).toString("hex"),
+        wakeToken: randomBytes(32).toString("hex"),
+      },
+    ]),
+  );
   // Serialize submissions before enqueueing; the worker resumes persisted steps after a restart.
   await db.transaction(async (tx) => {
     await tx.execute(
@@ -268,7 +272,9 @@ export async function runLedgerProvisioning(projectId: string) {
       "20260917000005_hosted_authorization.sql",
       "20260917000006_oauth_recovery.sql",
       "20260917000007_scoped_oauth_writes.sql",
-    "20260917000008_review_content.sql",
+      "20260917000008_review_content.sql",
+      "20260917000009_tickets.sql",
+      "20260917000010_leases.sql",
     ]) {
       step = `Install database (${file.slice(0, 14)})`;
       await update(projectId, { step });

@@ -93,7 +93,13 @@ app.post("/api/rpc", async (req, res) => {
     const { role, op, args = {} } = req.body;
     if (!actors[role]?.actor_key)
       throw Error("Choose an agent or GitHub actor");
-    res.json(await rpc(op, actors[role].actor_key, args));
+    // The playground acts as one session per role, so it holds that role's issue leases.
+    res.json(
+      await rpc(op, actors[role].actor_key, {
+        session_id: "playground-" + role,
+        ...args,
+      }),
+    );
   } catch (error) {
     res.status(400).json({ error: error.message });
   }
@@ -101,7 +107,7 @@ app.post("/api/rpc", async (req, res) => {
 app.post("/api/connect", async (req, res) => {
   try {
     const { role, url } = req.body;
-    if (!["intake", "infra", "implementer"].includes(role))
+    if (!["intake", "infra", "implementer", "architect"].includes(role))
       throw Error("Unknown agent");
     await rpc("set_wake_url", actors[role].actor_key, { url });
     res.json({ ok: true });
@@ -124,7 +130,7 @@ app.post("/mock/:role/eve/v1/ledger/wake", async (req, res) => {
 app.use((error, _req, res, _next) => {
   res.status(500).json({ error: error.message });
 });
-for (const role of ["intake", "infra", "implementer"]) {
+for (const role of ["intake", "infra", "implementer", "architect"]) {
   const me = await rpc("whoami", actors[role].actor_key);
   if (!me.wake_url)
     await rpc("set_wake_url", actors[role].actor_key, {

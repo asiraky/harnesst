@@ -2,8 +2,8 @@
   "id": "ledger-wake",
   "type": "channel",
   "name": "Ledger wake",
-  "description": "Authenticated, claimed ledger delivery starts one agent turn per live lease.",
-  "version": "0.1.0",
+  "description": "Authenticated ledger delivery: one session per issue lease, heartbeated while it works, released at turn end.",
+  "version": "0.2.0",
   "eve": ">=0.22.0",
   "subagentCompatible": false,
   "files": [

@@ -17,5 +17,5 @@ export default defineTool({
     value: z.string().min(1),
     binding: z.string().optional(),
   }),
-  execute: (input) => ledgerRpc("attach", input),
+  execute: (input, ctx) => ledgerRpc("attach", input, ctx),
 });

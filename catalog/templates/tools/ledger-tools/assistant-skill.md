@@ -8,7 +8,7 @@ The runtime files belong to the selected member. A ledger bundle includes tools,
 
 ## Setup
 
-The operator runbook is `catalog/ledger/README.md` in the harnesst source. For a local trial run `npm run ledger:up` then `npm run ledger:dev`; the playground is http://localhost:55430. Actors are in ignored `catalog/ledger/.local/actors.json`. `npm run ledger:team` composes all three members and both subagents.
+The operator runbook is `catalog/ledger/README.md` in the harnesst source. For a local trial run `npm run ledger:up` then `npm run ledger:dev`; the playground is http://localhost:55430. Actors are in ignored `catalog/ledger/.local/actors.json`. `npm run ledger:team` composes all four members and their subagents.
 
 For manual hosted setup, follow the Ledger bundle’s LEDGER-SETUP.md. The bundle ships Supabase migrations, approval-dispatch and approval-callback functions. May I authentication and human role mappings are configured by the operator; agent credentials cannot administer approvals.
 
@@ -18,9 +18,9 @@ Add this grounding if the member does not already have it: “Work arrives from 
 
 ## Workflow and recovery
 
-The workflow assigns triage to intake, infra to infra and build/QA/review to implementer. Gate entry queues a May I request automatically. The human reviews and decides in May I; a signed callback applies the decision in Supabase and wakes the next role. Intake reports the approval status from ledger-get-item and completes the notification wake. A chat reply cannot approve a gate.
+The workflow assigns triage and breakdown to intake, design to architect, infra to infra and build/QA/review to implementer. The only gate is merge-approval on the parent issue; entering it queues a May I request automatically. The human reviews and decides in May I; a signed callback applies the decision in Supabase and wakes the next role. Intake reports the approval status from ledger-get-item and completes the notification wake. A chat reply cannot approve a gate.
 
-Requirements belong to each next edge. Human approval moves merge work to ready-to-merge; the GitHub adapter alone confirms merged and deployed. Child items spawn from an approved plan's proposed_children, each with a stable key, kind, title and spec. Changes to a spec reset pre-code work to triage; a new SHA resets downstream review and invalidates old evidence and previews.
+Requirements belong to each next edge. Human approval moves merge work to ready-to-merge; the GitHub adapter alone confirms merged and deployed. Tickets are sub-issues intake creates during breakdown; GitHub closes each one when its PR merges into the parent issue branch, and build cannot hand to QA while any are open. A spec edit by anyone other than the current stage owner restarts pre-code work at triage; a new SHA resets downstream review and invalidates old evidence and previews.
 
 A workflow change is a new workflows row with version+1, making the old version inactive and the new one active in the same transaction. In-flight items keep their pinned version. Update roles and stage requirements in the workflow rather than copying rules into prompts. One actor per role in this prototype; re-minting rotates that role's keys.
 

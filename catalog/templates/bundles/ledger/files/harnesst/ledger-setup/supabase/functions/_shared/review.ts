@@ -8,7 +8,7 @@ export function reviewBody(action: Json, supersedesApprovalId: string | null = n
   const sections = [
     `# ${title}`,
     `## Decision requested\nReview the proposed ${String(input.stage).replaceAll('-', ' ')}. Approval moves this work to **${input.approve_to}**. Requesting changes returns it to **${input.reject_to}**.`,
-    `## Problem\n${text(spec.problem) || 'No problem description supplied.'}`,
+    text(spec.body) ? `## Specification\n${text(spec.body)}` : `## Problem\n${text(spec.problem) || 'No problem description supplied.'}`,
   ];
   if (text(spec.review_markdown)) sections.push('## Engineering review\n' + text(spec.review_markdown));
   for (const [key, label] of Object.entries({decisions:'Proposal and rationale',acceptance_criteria:'Acceptance criteria',out_of_scope:'Out of scope',open_questions:'Open questions'})) {

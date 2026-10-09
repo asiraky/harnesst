@@ -23,7 +23,7 @@ The label is `HARNESST — TEAM_NAME`. Separate environments should use distinct
 
 `LEDGER_SETUP_TOKEN` authorizes only installation status and beginning authorization. `LEDGER_DISPATCH_TOKEN` authorizes scheduled dispatch. Neither is entered by users or given to agents. Supabase provides the functions' service-role credential. All privileged database RPCs are denied to public, anon and authenticated roles.
 
-For backend updates, regenerate assets using `node catalog/ledger/prepare-hosted.mjs`. Preserve migration checksums: migrations 1–4 were previously deployed; migration 5 removes manual identity mappings and adds hosted authorization; migrations 6–7 preserve grants during reconnect and scope writes for Supabase REST protection. The installation Management API applies journaled migrations and deploys the bundled functions. Do not replay original schema creation on an existing database.
+For backend updates, regenerate assets using `node catalog/ledger/prepare-hosted.mjs`. Preserve migration checksums: migrations 1–4 were previously deployed; migration 5 removes manual identity mappings and adds hosted authorization; migrations 6–7 preserve grants during reconnect and scope writes for Supabase REST protection; migration 8 adds review content; migration 9 adds tickets and the architect design stage and moves projects on the previous default workflow to a new version. Migration 10 adds single-writer leases: only the session holding an issue's lease can change it. Apply it together with the Ledger bundle 0.2.0 tools and wake channel; older tools are refused with LEASE_REQUIRED. The installation Management API applies journaled migrations and deploys the bundled functions. Do not replay original schema creation on an existing database.
 
 ## Agent wakes and testing
 
@@ -31,7 +31,7 @@ Configure the ordinary `HARNESST_PUBLIC_ORIGIN` on the HARNESST host before depl
 
 Publish the updated Ledger tools and skills to all team members: the removed decision tool must not remain in their deployed bundle.
 
-Ask intake to create a plan and move it to architecture review. A May I request should appear within a minute. Approve there; the ledger should advance once and queue the next agent. Repeat with a denial. Change the specification while a request is pending; deciding the old request must not advance the changed item.
+Take a feature through breakdown and build until the implementer moves it to merge approval. A May I request should appear within a minute. Approve there; the ledger should advance once and queue the next agent. Repeat with a denial. Push a new commit while a request is pending; deciding the old request must not advance the changed item.
 
 ## Failure and recovery
 
@@ -66,7 +66,7 @@ commit;
 
 For grant replacement, temporarily unschedule `ledger-approval-dispatch`, reissue affected gates, run the OAuth helper, then restore the schedule. Inspect May I for any request whose submission outcome was uncertain. Replacement never imports an old approval as a new decision.
 
-Each gate has one fixed approval destination shown in the request. For feature work that needs infrastructure first, intake chooses the triage → infra transition before requesting plan approval; approval cannot secretly select an alternate route.
+Each gate has one fixed approval destination shown in the request; approval cannot secretly select an alternate route.
 
 ## Exceptional connection recovery
 

@@ -17,5 +17,5 @@ export default defineTool({
     question: z.string().min(1),
     options: z.array(z.string()).optional(),
   }),
-  execute: (input) => ledgerRpc("block", input),
+  execute: (input, ctx) => ledgerRpc("block", input, ctx),
 });

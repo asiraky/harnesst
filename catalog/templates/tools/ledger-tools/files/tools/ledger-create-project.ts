@@ -14,5 +14,5 @@ export default defineTool({
       .optional()
       .describe("Operator-approved template name; defaults to default."),
   }),
-  execute: (input) => ledgerRpc("create_project", input),
+  execute: (input, ctx) => ledgerRpc("create_project", input, ctx),
 });

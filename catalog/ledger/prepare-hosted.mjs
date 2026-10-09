@@ -30,6 +30,8 @@ for (const [source, destination] of [
     "supabase/migrations/20260917000007_scoped_oauth_writes.sql",
   ],
   ["0008_review_content.sql", "supabase/migrations/20260917000008_review_content.sql"],
+  ["0009_tickets.sql", "supabase/migrations/20260917000009_tickets.sql"],
+  ["0010_leases.sql", "supabase/migrations/20260917000010_leases.sql"],
   ["supabase/config.toml", "supabase/config.toml"],
   ["0003_workflow.sql", "supabase/migrations/20260917000003_workflow.sql"],
   [

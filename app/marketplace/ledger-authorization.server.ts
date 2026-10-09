@@ -45,6 +45,8 @@ export async function prepareLedgerAuthorization(projectId: string) {
     "20260917000006_oauth_recovery.sql",
     "20260917000007_scoped_oauth_writes.sql",
     "20260917000008_review_content.sql",
+    "20260917000009_tickets.sql",
+    "20260917000010_leases.sql",
   ]) {
     const source = await readFile(
       `catalog/ledger/hosted/supabase/migrations/${file}`,

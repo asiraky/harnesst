@@ -7,5 +7,5 @@ export default defineTool({
   inputSchema: z.object({
     project_id: z.string().uuid(),
   }),
-  execute: (input) => ledgerRpc("get_project", input),
+  execute: (input, ctx) => ledgerRpc("get_project", input, ctx),
 });

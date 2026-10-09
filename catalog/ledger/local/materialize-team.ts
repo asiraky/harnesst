@@ -16,7 +16,7 @@ const basePackageJson = JSON.stringify({
   type: "module",
   dependencies: { eve: "^0.22.0" },
 });
-for (const role of ["intake", "infra", "implementer"]) {
+for (const role of ["intake", "infra", "implementer", "architect"]) {
   let packageJson = basePackageJson;
   const template = await resolveTemplate(
     fixtureCatalog,

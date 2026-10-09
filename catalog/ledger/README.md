@@ -22,7 +22,7 @@ The diagnostic UI cannot approve gates. Human decisions use May I and the Supaba
 
 ## Real team in harnesst
 
-The catalog now contains **Ledger Intake**, **Ledger Infra**, **Ledger Implementer**, **Ledger**, and **Cloudflare**. Use this checkout's fixture catalog when testing unreleased templates. Install the three agent templates into a team; implementer contains QA and reviewer subagents. All bundles and skills can also be installed independently using the matrix from PLAN-TEAM.
+The catalog now contains **Ledger Intake**, **Ledger Architect**, **Ledger Infra**, **Ledger Implementer**, **Ledger**, and **Cloudflare**. Use this checkout's fixture catalog when testing unreleased templates. Install the four agent templates into a team; intake and architect contain a researcher subagent, intake contains the planner, and implementer contains QA and reviewer subagents. All bundles and skills can also be installed independently using the matrix from PLAN-TEAM.
 
 For inspectable local output, run:
 
@@ -45,7 +45,7 @@ On Linux, add `host.docker.internal:host-gateway` to the agent container's hosts
 
 Configure normal model credentials and, for real product work, the GitHub App and scoped Cloudflare credentials through harnesst. Set the ledger project's `repo` and docs to your test product repository. Greet each deployed member once: its first ledger tool call compares `EVE_PUBLIC_ORIGIN` to its stored wake URL and registers the current endpoint. Alternatively use **Connect real agents** in the playground. The delivery worker must be able to reach that URL.
 
-Give each member a 15-minute harnesst schedule: “Read ledger-list-items with mine=true. Inspect unfinished items with no activity in the last hour; resume only work allowed by the ledger.” Schedules are harnesst configuration, not a marketplace template type. The intake, infra and implementer templates already contain the role instructions and ledger grounding.
+Give each member a 15-minute harnesst schedule: “Read ledger-list-items with mine=true. Inspect unfinished items with no activity in the last hour; resume only work allowed by the ledger.” Schedules are harnesst configuration, not a marketplace template type. The intake, architect, infra and implementer templates already contain the role instructions and ledger grounding.
 
 Real GitHub and Cloudflare calls require your test repository/account credentials. The no-credentials playground does not claim to have run real agents or deployed a product.
 
@@ -57,7 +57,7 @@ Follow [TEAM-SETUP.md](TEAM-SETUP.md) for migrations, functions, OAuth, cron and
 
 Copy `examples/ledger.yml` into the **product** repo's `.github/workflows/ledger.yml` and `examples/github-ledger.mjs` into `.github/scripts/ledger.mjs`. Add `LEDGER_URL`, `LEDGER_ANON_KEY`, and the **github system actor's** `LEDGER_ACTOR_KEY` as repository secrets.
 
-The workflow runs only trusted default-branch code with its secrets; it never checks out PR code. Same-repository branches use `ledger/<uuid>-<slug>`. PR events record head/branch/PR artifacts. The scheduled/manual job merges only `ready-to-merge` items for this repository, compares the live PR head to the approved SHA, passes that SHA to GitHub's merge API, and records the confirmed merge. Branch protections still apply. Your production deploy pipeline must run from the confirmed merge or be explicitly dispatched: merges made using `GITHUB_TOKEN` do not reliably start other Actions workflows.
+The workflow runs only trusted default-branch code with its secrets; it never checks out PR code. Same-repository branches use `ledger/<uuid>-<slug>`: the parent issue branch targets the default branch and each ticket branch targets its parent issue branch. PR events record head/branch/PR artifacts. A merged ticket PR closes the ticket only when its base is the parent issue branch. The scheduled/manual job merges only `ready-to-merge` items for this repository, compares the live PR head to the approved SHA, passes that SHA to GitHub's merge API, and records the confirmed merge. Branch protections still apply. Your production deploy pipeline must run from the confirmed merge or be explicitly dispatched: merges made using `GITHUB_TOKEN` do not reliably start other Actions workflows.
 
 The product's preview/production pipeline should create a GitHub Deployment with this payload:
 
@@ -71,13 +71,26 @@ The infra agent owns provisioning and adapting the product's build/deploy workfl
 
 ## Contracts and intentional plan corrections
 
+- `triage` and `breakdown` are owned by intake, `design` by the architect. Intake sends non-trivial work to design and trivial work straight to breakdown; breakdown needs at least one ticket and build cannot hand to QA while tickets are open. The only human gate is `merge-approval` on the parent issue.
 - `triage` is owned by intake. Workflow `next` is a destination-to-requirements map; returning to build does not require a pass. Workflow structure is checked by SQL, rather than claiming a SQL CHECK runs Zod.
-- Items currently use one PR and a fixed iteration; revise the specification or head SHA to invalidate earlier evidence. Multiple PR iterations are reserved for future work.
+- Each parent issue has one PR from its issue branch; each ticket has its own PR into that branch. A new head SHA on the parent invalidates earlier evidence.
 - Human merge approval moves to `ready-to-merge`; only GitHub confirms `merged`, and deployment evidence is required for `deployed`.
 - All item mutations use explicit versions, including artifacts/head updates. Tools never share an implicit version cache across concurrent turns. Head observations older than the current timestamp are harmless no-ops.
-- Live agent turns renew their 30-minute claim every minute using a fenced claim token; completion/failure stops renewal. Claimed wakes suppress concurrent duplicates until lease expiry. They do **not** make external side effects exactly once. Work resumes against existing artifacts after crashes. Notification wakes have a separate completion RPC.
-- Plan children are atomic and keyed, but cross-item dependencies are recorded in the specification and enforced by keeping dependent work in triage or blocking it. There is no automatic dependency scheduler.
+- One writer per issue and role. Every agent write carries its eve session id; the ledger accepts it only from the session holding that issue's lease (tickets share their parent's). A free lease goes to the first writing session or the wake channel's claim; a wake for leased work waits and is redelivered when the holder releases at turn end or its lease expires. The channel renews every minute from a process timer, so long silent model work keeps the lease; expiry (10 minutes by default, `lease_ttl_seconds`) only happens when the process stops renewing. Until another session takes over, the old one may continue. A wake session that was taken over gets `LEASE_LOST` and is refused on that issue for good; a chat session only waits for the issue to be free. Leases do **not** stop a session pushing to GitHub; external side effects are still not exactly-once. Notification wakes have a separate completion RPC.
+- Tickets record `blocked_by` sibling tickets. The implementer works them in dependency order; there is no automatic scheduler.
 - The Cloudflare bundle vendors all fourteen upstream skills with license and commit provenance. Wrangler uses harnesst's credential path. MCP OAuth remains optional and is not added to core.
 - Migrations, workflow, May I functions, local harness and GitHub examples live here; marketplace bundles materialize only agent runtime files.
 
 To update vendored skills, check out the desired `cloudflare/skills` revision and run `node catalog/ledger/vendor-cloudflare.mjs /path/to/checkout`, review changes, bump affected template/bundle versions, and run `npm run catalog:index && npm run catalog:validate`.
+
+## Skill sources
+
+The agents' Skill sections come from https://github.com/mattpocock/skills at commit `c55ee46073ed923f86ce59a5eb3b6d895095d1b7` (MIT). The text is kept as upstream wrote it, except lines about how a skill is invoked (slash commands, the Skill tool, `/setup-matt-pocock-skills`, sub-agents, the tracker). Those lines name the HARNESST mechanism instead: an instructions section, `load_skill`, a named subagent or the ledger.
+
+| Agent | Skills |
+| --- | --- |
+| Intake | grill-with-docs, grilling, domain-modeling (with CONTEXT-FORMAT and ADR-FORMAT), to-spec |
+| Intake planner subagent | to-tickets, without step 4 (nobody approves the breakdown) |
+| Architect | the same as intake, plus the `codebase-design` skill template, which is unmodified |
+| Implementer | implement, tdd (with tests.md and mocking.md), plus `codebase-design` |
+| Implementer reviewer subagent | code-review; its standards and spec leaves are generic and briefed by the reviewer |

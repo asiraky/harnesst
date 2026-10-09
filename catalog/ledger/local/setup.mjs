@@ -22,7 +22,7 @@ try {
   } catch {}
   if (actors) {
     try {
-      for (const role of ["intake", "infra", "implementer", "github"])
+      for (const role of ["intake", "infra", "implementer", "architect", "github"])
         await rpc("whoami", actors[role].actor_key);
     } catch {
       actors = null;
@@ -34,6 +34,7 @@ try {
       ["intake", "agent", null],
       ["infra", "agent", null],
       ["implementer", "agent", null],
+      ["architect", "agent", null],
       ["github", "system", null],
       ["engineer", "human", "engineer@example.test"],
       ["requester", "human", "requester@example.test"],
@@ -75,6 +76,8 @@ try {
     await readFile(new URL("0007_scoped_oauth_writes.sql", root), "utf8"),
   );
   await sql.unsafe(await readFile(new URL("0008_review_content.sql", root), "utf8"));
+  await sql.unsafe(await readFile(new URL("0009_tickets.sql", root), "utf8"));
+  await sql.unsafe(await readFile(new URL("0010_leases.sql", root), "utf8"));
   const workflow = JSON.parse(
     await readFile(new URL("workflow.json", root), "utf8"),
   );

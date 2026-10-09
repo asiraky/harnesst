@@ -25,7 +25,8 @@ function reviewBody(action, supersedesApprovalId = null) {
     `# ${title}`,
     `## Decision requested
 Review the proposed ${String(input.stage).replaceAll("-", " ")}. Approval moves this work to **${input.approve_to}**. Requesting changes returns it to **${input.reject_to}**.`,
-    `## Problem
+    text(spec.body) ? `## Specification
+${text(spec.body)}` : `## Problem
 ${text(spec.problem) || "No problem description supplied."}`
   ];
   if (text(spec.review_markdown)) sections.push("## Engineering review\n" + text(spec.review_markdown));

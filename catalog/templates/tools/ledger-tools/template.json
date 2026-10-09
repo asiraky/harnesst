@@ -3,7 +3,7 @@
   "type": "tool",
   "name": "Ledger tools",
   "description": "Read and move team work through database-enforced stages, evidence and human gates.",
-  "version": "0.2.0",
+  "version": "0.4.0",
   "eve": ">=0.22.0",
   "subagentCompatible": true,
   "files": [

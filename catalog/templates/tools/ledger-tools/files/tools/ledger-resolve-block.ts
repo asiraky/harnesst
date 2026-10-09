@@ -15,5 +15,5 @@ export default defineTool({
       ),
     answer: z.string().min(1),
   }),
-  execute: (input) => ledgerRpc("resolve_block", input),
+  execute: (input, ctx) => ledgerRpc("resolve_block", input, ctx),
 });

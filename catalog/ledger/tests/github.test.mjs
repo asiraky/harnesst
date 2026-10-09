@@ -197,3 +197,28 @@ test("deployment dispatch rejects a successful deployment of a different merge c
     'repository_dispatch',f.deps), /does not match/);
   assert.equal(f.item.stage,'merged');
 });
+
+test("a merged ticket PR closes the ticket only when it lands on the parent issue branch", async () => {
+  const parent = "b0000000-0000-0000-0000-000000000002";
+  const merged = (base) => ({
+    pull_request: {
+      number: 7,
+      merged: true,
+      head: { ref: `ledger/${id}-slice`, sha, repo: { full_name: repo } },
+      base: { ref: base },
+    },
+  });
+  const f = fixture("open");
+  Object.assign(f.item, { kind: "ticket", parent_id: parent });
+  await assert.rejects(
+    handleGitHubEvent(merged("main"), "pull_request_target", f.deps),
+    /parent issue branch/,
+  );
+  assert.equal(f.item.stage, "open");
+  await handleGitHubEvent(
+    merged(`ledger/${parent}-issue`),
+    "pull_request_target",
+    f.deps,
+  );
+  assert.equal(f.item.stage, "merged");
+});

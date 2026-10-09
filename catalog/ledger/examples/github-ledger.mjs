@@ -97,6 +97,18 @@ export async function handleGitHubEvent(event, eventName, { rpc, gh, repo }) {
         item = await mutate("attach", item, { type: "pr", value: pr.html_url });
         await mutate("attach", item, { type: "branch", value: pr.head.ref });
       } else if (
+        item.kind === "ticket" &&
+        item.stage === "open" &&
+        item.head_sha === pr.head.sha
+      ) {
+        // A ticket closes only when its PR lands on its parent issue's branch.
+        if (idFromBranch(pr.base?.ref) !== item.parent_id)
+          throw Error("Ticket PR must target its parent issue branch");
+        await mutate("transition", item, {
+          to_stage: "merged",
+          note: `GitHub confirmed ticket PR ${pr.number} merged into ${pr.base.ref}`,
+        });
+      } else if (
         item.stage === "ready-to-merge" &&
         item.head_sha === pr.head.sha
       ) {

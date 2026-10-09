@@ -16,5 +16,5 @@ export default defineTool({
     head_sha: z.string().regex(/^[0-9a-f]{40}$/),
     observed_at: z.string().datetime(),
   }),
-  execute: (input) => ledgerRpc("set_head", input),
+  execute: (input, ctx) => ledgerRpc("set_head", input, ctx),
 });
