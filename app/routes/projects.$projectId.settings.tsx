@@ -1745,7 +1745,7 @@ export default function Settings({
       <div className="space-y-10">
         {loaderData.requiredSecretNames.includes("LEDGER_ACTOR_KEY") && <Alert>
           <AlertTitle>Ledger bundle installation</AlertTitle>
-          <AlertDescription>Harnesst supplies the ledger connection and team credentials during installation. <Link className="underline" to={`/repos/${project.slug}/installation`}>Continue installation</Link></AlertDescription>
+          <AlertDescription>Harnesst supplies the ledger connection and team credentials during installation. <Link className="underline" to={`/repos/${project.slug}/setup`}>Continue setup</Link></AlertDescription>
         </Alert>}
         {(showMember || nested) && <ModelSection loaderData={loaderData} />}
         {showRepo && isTeam && roster.length > 0 && (

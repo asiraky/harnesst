@@ -113,14 +113,18 @@ export default [
   // Build — every back-of-house page shares one pathless layout whose loader feeds the sidebar
   // (routes/build.tsx). Resource routes are registered outside it: they render nothing.
   layout("routes/build.tsx", [
-    route(
-      "repos/:projectId/installation",
-      "routes/projects.$projectId.installation.tsx",
-    ),
+    // The setup wizard: everything an install still needs (secrets, ledger, publish, GitHub Apps,
+    // connections, approvals), derived from current state for one repo.
+    route("repos/:projectId/setup", "routes/projects.$projectId.setup.tsx"),
     route("dashboard", "routes/dashboard.tsx"),
     // Recruit — the marketplace (PRD §7.8, M6). Browse (index.json) + a template detail page.
     route("marketplace", "routes/marketplace.tsx"),
     route("marketplace/:type/:id", "routes/marketplace.$type.$id.tsx"),
+    // Team templates install every roster agent at once — static, so it wins over `:type`.
+    route(
+      "marketplace/team/:id/install",
+      "routes/marketplace.team.$id.install.tsx",
+    ),
     route(
       "marketplace/:type/:id/install",
       "routes/marketplace.$type.$id.install.tsx",

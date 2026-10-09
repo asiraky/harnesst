@@ -4,11 +4,15 @@ HARNESST runs agents and manages installation. Supabase stores the ledger, OAuth
 
 ## Installation
 
-Use a dedicated Supabase project with Data API enabled. On the team's HARNESST installation page, authorize Supabase and install the ledger. Then click **Connect May I**. HARNESST installs the approval functions and scheduler using that temporary Supabase authorization, then removes the authorization after the first successful May I connection. A separate encrypted installation credential allows subsequent connection management; it is never injected into agents.
+Use a dedicated Supabase project with Data API enabled. In the team's HARNESST setup wizard (it opens right after the team is installed, and from the team's Setup link), authorize Supabase and install the ledger. Then click **Connect May I**. HARNESST installs the approval functions and scheduler using that temporary Supabase authorization, then removes the authorization after the first successful May I connection. A separate encrypted installation credential allows subsequent connection management; it is never injected into agents.
 
 May I opens in another tab. Sign in and authorize the intended workspace. Close the confirmation tab and click **Check connection** in HARNESST. No workspace IDs, human IDs, API keys or operator OAuth script are required. May I's workspace policy determines who can approve. The ledger records the deciding human and verifies signatures, the authoritative approval, immutable action and current gate revision.
 
 May I must support the agreed `label`, `connection` and token-response `agent_id` contract. A missing identity fails explicitly; it never silently creates a replacement connection for an existing installation.
+
+## Product repositories
+
+The ledger holds one project per product repository and the team works across all of them. No repository is chosen at installation. Intake registers a project when a requester first names a repository; infra connects that repository to the ledger with `gh` (the `ledger.yml` workflow and helper plus the `LEDGER_URL`, `LEDGER_ANON_KEY` and GitHub-actor `LEDGER_ACTOR_KEY` Actions secrets), using the ledger-repo-onboarding skill. Only infra's GitHub App can write workflows and Actions secrets, and only infra holds the GitHub actor key.
 
 ## Fixed addresses and credentials
 
@@ -27,7 +31,7 @@ For backend updates, regenerate assets using `node catalog/ledger/prepare-hosted
 
 ## Agent wakes and testing
 
-Configure the ordinary `HARNESST_PUBLIC_ORIGIN` on the HARNESST host before deploying agents. Production uses a stable HTTPS origin; local dev uses a tunnel. Register each deployed channel URL with `ledger_set_wake_url`. The existing installation page can still register and verify these wake targets. May I callbacks always go directly to Supabase, including during local HARNESST testing.
+Configure the ordinary `HARNESST_PUBLIC_ORIGIN` on the HARNESST host before deploying agents. Production uses a stable HTTPS origin; local dev uses a tunnel. Register each deployed channel URL with `ledger_set_wake_url`. The setup wizard registers and verifies these wake targets. May I callbacks always go directly to Supabase, including during local HARNESST testing.
 
 Publish the updated Ledger tools and skills to all team members: the removed decision tool must not remain in their deployed bundle.
 

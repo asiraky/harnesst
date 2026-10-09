@@ -1,13 +1,13 @@
 -- Run once in Supabase SQL Editor after migrations. Save the results privately.
--- Replace these emails if requester and engineer are different people.
+-- Replace ENGINEER_EMAIL and REQUESTER_EMAIL first (they can be the same person).
 begin;
 do $$ begin
   if exists(select 1 from ledger.actors) then
     raise exception 'Actors already exist. Initial setup refused to rotate existing keys.';
   end if;
 end $$;
-select public.ledger_mint_actor('engineer','human','Engineer','asiraky@gmail.com');
-select public.ledger_mint_actor('requester','human','Requester','asiraky@gmail.com');
+select public.ledger_mint_actor('engineer','human','Engineer','ENGINEER_EMAIL');
+select public.ledger_mint_actor('requester','human','Requester','REQUESTER_EMAIL');
 select role, result->>'actor_key' as actor_key, result->>'wake_token' as wake_token
 from (values
   ('intake',public.ledger_mint_actor('intake','agent','Intake')),

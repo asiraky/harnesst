@@ -3,7 +3,7 @@
   "type": "agent",
   "name": "Ledger Intake",
   "description": "The team\u2019s front of house. Grill requesters on requirements, publish the spec as the ledger issue, send non-trivial work to the architect, break issues into tickets, and relay human decisions. Report pending May I approvals to the named human and report when their work is live.",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "eve": ">=0.22.0",
   "subagentCompatible": false,
   "files": [
@@ -33,6 +33,10 @@
     {
       "type": "skill",
       "id": "dev-toolchain"
+    },
+    {
+      "type": "tool",
+      "id": "team-artifacts"
     }
   ]
 }

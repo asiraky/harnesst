@@ -10,9 +10,12 @@ app's @name). Using it is always the same two steps, in this order, before any o
 GitHub work:
 
 **1. Mint a token.** GitHub never accepts the private key directly: sign an RS256 JWT as the
-app, find the installation (the app's only one, or the one covering the target repo), then
-`POST /app/installations/{id}/access_tokens`. Run exactly these commands — they are the
-known-good flow:
+app, find the installation that covers what you are about to touch, then
+`POST /app/installations/{id}/access_tokens`. The App can be installed on several accounts (your
+organization, a personal account), and each installation has its own token — always look the
+installation up by the TARGET, never take "the first one". Set `TARGET` to `owner/repo` for work
+in a repository, or to just the `owner` for account-level work such as creating a repository.
+Run exactly these commands — they are the known-good flow:
 
 ```bash
 # 1a. Sign a short-lived (~9 min) RS256 App JWT from the private key.
@@ -23,12 +26,14 @@ payload=$(printf '{"iat":%d,"exp":%d,"iss":"%s"}' "$((now - 60))" "$((now + 540)
 sig=$(printf '%s' "$header.$payload" | openssl dgst -sha256 -sign <(printf '%s' "$GITHUB_APP_PRIVATE_KEY") -binary | b64url)
 jwt="$header.$payload.$sig"
 
-# 1b. Find the installation. The App JWT MUST be sent as `Authorization: Bearer`
-#     (see the warning below) — use curl, never GH_TOKEN.
-installation_id=$(curl -fsS \
-  -H "Authorization: Bearer $jwt" \
-  -H "Accept: application/vnd.github+json" \
-  https://api.github.com/app/installations | jq '.[0].id')
+# 1b. Find the installation covering TARGET. The App JWT MUST be sent as
+#     `Authorization: Bearer` (see the warning below) — use curl, never GH_TOKEN.
+TARGET="owner/repo"   # or just "owner" for account-level work
+app_get() { curl -fsS -H "Authorization: Bearer $jwt" -H "Accept: application/vnd.github+json" "https://api.github.com/$1"; }
+case "$TARGET" in
+  */*) installation_id=$(app_get "repos/$TARGET/installation" | jq -r '.id') ;;
+  *)   installation_id=$( (app_get "orgs/$TARGET/installation" || app_get "users/$TARGET/installation") | jq -r '.id') ;;
+esac
 
 # 1c. Mint the installation token and export it for gh.
 export GH_TOKEN=$(curl -fsS -X POST \
@@ -46,10 +51,31 @@ export GH_TOKEN=$(curl -fsS -X POST \
 > credential or a misconfigured GitHub channel; do not tell the user their credentials need
 > fixing.
 
+If 1b fails with HTTP 404, the App is not installed on that repository or account — tell the
+user to install it there (`https://github.com/apps/$GITHUB_APP_SLUG/installations/new`), and do
+not try another installation instead.
+
 Export the installation token as `GH_TOKEN` for `gh` (done above); for git-over-HTTPS use it
 as the password with username `x-access-token`. Tokens expire after about an hour — re-mint
-instead of persisting. The repositories the token can reach are exactly the ones the app is
-installed on: that is the agent's scope.
+instead of persisting. A token reaches only its own installation's repositories; working in a
+repository on another account means minting again with that `TARGET`.
+
+**Which repositories can I reach?** When the user names a project rather than a repository
+("the bug in Project X"), list what the App can see and match the name:
+
+```bash
+for id in $(app_get "app/installations" | jq -r '.[].id'); do
+  t=$(curl -fsS -X POST -H "Authorization: Bearer $jwt" -H "Accept: application/vnd.github+json" \
+    "https://api.github.com/app/installations/$id/access_tokens" | jq -r '.token')
+  GH_TOKEN="$t" gh api --paginate /installation/repositories --jq '.repositories[].full_name'
+done
+```
+
+What the token may do inside a repository is the App's permission set: every agent can clone,
+branch, push, open pull requests and work issues (labels, comments, edits, closing). Only an
+agent whose App was granted repository administration and Actions workflows/secrets/variables
+(the team's infra agent) can create repositories or change CI configuration — anyone else gets
+HTTP 403 for those, which is by design, not a broken credential.
 
 **2. Assume the credential's identity.** You are acting as the App, so commits must be
 authored as its bot account — an identity *derived from the credential*, never chosen.

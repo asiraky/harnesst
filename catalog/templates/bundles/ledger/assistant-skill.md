@@ -8,7 +8,7 @@ The runtime files belong to the selected member. A ledger bundle includes tools,
 
 ## Setup
 
-Complete the Marketplace installation flow at `/repos/<project>/installation`. Harnesst applies database migrations, generates credentials and registers deployed wake URLs. Follow LEDGER-SETUP.md for the manual May I backend deployment and authorization. The installer accepts Supabase operator authorization separately from the publishable runtime key; operator credentials never enter agent secrets. Missing setup is an installation prerequisite, not an agent task.
+Complete the setup wizard at `/repos/<project>/setup`. Harnesst applies database migrations, generates credentials and registers deployed wake URLs. Follow LEDGER-SETUP.md for the manual May I backend deployment and authorization. The installer accepts Supabase operator authorization separately from the publishable runtime key; operator credentials never enter agent secrets. Missing setup is an installation prerequisite, not an agent task.
 
 May I serves approval pages. Signed decisions go directly to the Supabase approval-callback function. A public HTTPS harnesst address is needed only for agent wakes. GitHub webhooks are optional for manual tests. Product repository automation is installed through the same installation page, which writes the GitHub system actor directly into encrypted Actions secrets.
 

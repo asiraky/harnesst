@@ -4,6 +4,7 @@ import {
   Package,
   Plug,
   Sparkles,
+  Users,
   Workflow,
   Wrench,
   type LucideIcon,
@@ -22,6 +23,7 @@ export const TYPE_META: Record<
   TemplateType,
   { label: string; icon: LucideIcon; accent: Accent }
 > = {
+  team: { label: "Team", icon: Users, accent: "indigo" },
   agent: { label: "Agent", icon: Bot, accent: "violet" },
   bundle: { label: "Bundle", icon: Package, accent: "rose" },
   tool: { label: "Tool", icon: Wrench, accent: "blue" },
@@ -37,6 +39,7 @@ export const TYPE_META: Record<
  * be dropped from the UI, so it lists all of them.
  */
 export const DISPLAY_ORDER: TemplateType[] = [
+  "team",
   "agent",
   "bundle",
   "skill",

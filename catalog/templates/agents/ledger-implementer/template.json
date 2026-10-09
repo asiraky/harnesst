@@ -3,7 +3,7 @@
   "type": "agent",
   "name": "Ledger Implementer",
   "description": "The team\u2019s product engineer. Build each issue ticket by ticket on the issue branch, then take the issue PR through QA and review to merge approval. Use GitHub for code and the ledger for work state. Delegate code review to the reviewer subagent and browser QA to the qa subagent; record their findings against the exact head SHA.",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "eve": ">=0.22.0",
   "subagentCompatible": false,
   "files": [

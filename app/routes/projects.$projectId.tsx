@@ -922,7 +922,7 @@ function TeamSurface({
   return (
     <div className="space-y-6">
       {members.some(m=>m.ledgerInstallation && m.ledgerInstallation !== "ready") && (
-        <Card><CardContent className="pt-6"><p>Ledger bundle installation is pending. Complete setup before using this team.</p><Link className="underline" to={`${base}/installation`}>Continue installation</Link></CardContent></Card>
+        <Card><CardContent className="pt-6"><p>Setup isn&apos;t finished. Complete it before using this team.</p><Link className="underline" to={`${base}/setup`}>Continue setup</Link></CardContent></Card>
       )}
       {showIntro && (
         <Card className="relative border-primary/20 bg-muted/30">

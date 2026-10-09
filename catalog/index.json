@@ -12,33 +12,33 @@
       "id": "ledger-architect",
       "type": "agent",
       "name": "Ledger Architect",
-      "version": "0.1.0",
+      "version": "0.2.0",
       "description": "The team’s technical designer. For non-trivial issues, call in an engineer, grill them on the technical design, and finalise the spec before breakdown.",
-      "hash": "35831dc3ea1282f8f94b6c2773c4f51fed73a8bf"
+      "hash": "66a8e5c3de963292584aa45b05c5096fee2a8cd8"
     },
     {
       "id": "ledger-implementer",
       "type": "agent",
       "name": "Ledger Implementer",
-      "version": "0.2.1",
+      "version": "0.3.0",
       "description": "The team’s product engineer. Build each issue ticket by ticket on the issue branch, then take the issue PR through QA and review to merge approval. Use GitHub for code and the ledger for work state. Delegate code review to the reviewer subagent and browser QA to the qa subagent; record their findings against the exact head SHA.",
-      "hash": "79b3696c2d486f534c14f864eca448b3ad2c5cca"
+      "hash": "b377bede56768f6bc80615227866452c7b262030"
     },
     {
       "id": "ledger-infra",
       "type": "agent",
       "name": "Ledger Infra",
-      "version": "0.1.1",
-      "description": "The team’s infrastructure engineer. Own cloud resources, CI, credentials and deployment configuration. Discover the target product and conventions through the ledger; work through the installed Cloudflare and GitHub tools. Record provisioning results on the item.",
-      "hash": "553037e8bb0a0bd59cf21421ac84f079194e3b1c"
+      "version": "0.2.0",
+      "description": "The team’s infrastructure engineer. Owns cloud resources, CI and deployment, creates the team's repositories and connects them to the ledger. The only member whose GitHub App can create repositories and change CI configuration.",
+      "hash": "103ea9eb2c8574aaea730533a5033cc61b7e77d9"
     },
     {
       "id": "ledger-intake",
       "type": "agent",
       "name": "Ledger Intake",
-      "version": "0.2.0",
+      "version": "0.3.0",
       "description": "The team’s front of house. Grill requesters on requirements, publish the spec as the ledger issue, send non-trivial work to the architect, break issues into tickets, and relay human decisions. Report pending May I approvals to the named human and report when their work is live.",
-      "hash": "17d7a081de8fe424d4782aba580c955e5b28022e"
+      "hash": "25ec44fe19d53fa2eccd9a29f6a7a546f43c461b"
     },
     {
       "id": "vercel-issuer",
@@ -60,9 +60,9 @@
       "id": "github-bundle",
       "type": "bundle",
       "name": "GitHub",
-      "version": "0.5.3",
+      "version": "0.6.0",
       "description": "Everything an agent needs to work GitHub as itself: the GitHub App channel (its @mention identity and credentials), the gh CLI in its sandbox, and the skill that turns the App's private key into a working token.",
-      "hash": "1a6a02901ad2e44b0b9714dcee8f9b03a3008e49"
+      "hash": "0d3188c02d806e73c112a3ba303acfb981e4d8f2"
     },
     {
       "id": "google-sheets-bundle",
@@ -76,9 +76,9 @@
       "id": "ledger",
       "type": "bundle",
       "name": "Ledger",
-      "version": "0.2.0",
+      "version": "0.3.0",
       "description": "A shared work ledger with authenticated wakes, evidence and human approval gates.",
-      "hash": "275dd70f584750c399d0eec7273f8674b12b0040"
+      "hash": "b93a984da50f68979d7a22dd8c4d123390f5ef6d"
     },
     {
       "id": "vercel-bundle",
@@ -252,9 +252,9 @@
       "id": "github-app-auth",
       "type": "skill",
       "name": "GitHub App auth",
-      "version": "0.3.4",
+      "version": "0.4.0",
       "description": "Exchange the agent's GitHub App private key for a short-lived installation token (GH_TOKEN) and commit as the App's bot identity, with gh and git preinstalled in the sandbox — the credential mechanics every GitHub-using agent needs, and nothing else.",
-      "hash": "708d88422b50b2068974770fa0257af34bbd6c77"
+      "hash": "a9d80119afcce976a03385dfc1f8dd42f628872c"
     },
     {
       "id": "google-sheets-skill",
@@ -279,6 +279,14 @@
       "version": "0.1.1",
       "description": "A comprehensive frontend design skill for creating, critiquing, refining, and quality-checking polished interfaces inside harnesst/eve agents.",
       "hash": "2ce7115a0c6dc28821f0d9636141f9e2d66b04c0"
+    },
+    {
+      "id": "ledger-repo-onboarding",
+      "type": "skill",
+      "name": "Ledger repository onboarding",
+      "version": "0.1.0",
+      "description": "Create organization repositories and connect any repository to the team ledger with gh: Actions secrets, the ledger workflow and helper, and the Cloudflare deploy workflow. For the team's infra agent.",
+      "hash": "2ec82759ebc72788a797b9cfd936fc4ed4c861b8"
     },
     {
       "id": "nextjs-on-cloudflare",
@@ -359,6 +367,14 @@
       "version": "0.1.0",
       "description": "Run or troubleshoot Wrangler CLI commands and configure Worker projects for local development, deployment, and Cloudflare resource management.",
       "hash": "b523ad2b033386e66e05eb97a657964666e9e0f4"
+    },
+    {
+      "id": "software-team",
+      "type": "team",
+      "name": "Software team",
+      "version": "0.1.0",
+      "description": "A four-agent software team that works across your GitHub repositories: intake grills requests into specs, the architect designs, the implementer builds, reviews and QAs pull requests, and infra creates repositories, wires CI and deploys to Cloudflare. Work is tracked in a Supabase ledger with May I approval before merge.",
+      "hash": "119d863838bf56b5366d23d8a8baf9edfc5db0b7"
     },
     {
       "id": "asset-library",

@@ -274,18 +274,29 @@ export async function runLedgerProvisioning(projectId: string) {
     const agents = await listAgents(projectId);
     for (const role of LEDGER_ROLES) {
       const agent = agents.find((a) => a.name === state.members![role]);
-      const values = {
+      const values: Record<string, string> = {
         LEDGER_URL: `https://${ref}.supabase.co`,
         LEDGER_ANON_KEY: state.publishableKey,
         LEDGER_ACTOR_KEY: state.actors[role].actorKey,
         LEDGER_WAKE_TOKEN: state.actors[role].wakeToken,
       };
+      // Infra onboards each product repository with `gh` from its sandbox: it writes the
+      // repository's Actions secrets (LEDGER_URL, LEDGER_ANON_KEY and the GitHub actor's key),
+      // so infra alone holds the GitHub actor key and sees those three in its shell. Infra's
+      // App can already edit workflows and secrets on those repositories, so this widens nothing.
+      const sandbox = new Set<string>();
+      if (role === "infra") {
+        values.LEDGER_GITHUB_ACTOR_KEY = state.actors.github.actorKey;
+        for (const key of ["LEDGER_URL", "LEDGER_ANON_KEY", "LEDGER_GITHUB_ACTOR_KEY"])
+          sandbox.add(key);
+      }
       for (const [key, value] of Object.entries(values)) {
+        const sandboxExposed = sandbox.has(key);
         if (agent) {
           await getRuntime().secrets.set(
             { projectId, agentId: agent.id, environmentId: null, key },
             value,
-            { sandboxExposed: false },
+            { sandboxExposed },
           );
           // Generated installation credentials own every environment; remove stale overrides.
           for (const environment of await listAgentEnvironments(agent.id))
@@ -302,7 +313,7 @@ export async function runLedgerProvisioning(projectId: string) {
             key,
             sealed: seal(decodeKey(process.env.HARNESST_SECRETS_KEY), value),
             fingerprint: createHash("sha256").update(value).digest("hex"),
-            sandboxExposed: false,
+            sandboxExposed,
             attachShared: false,
             createdBy: null,
           });

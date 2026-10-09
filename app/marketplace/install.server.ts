@@ -1102,6 +1102,7 @@ export function planInstall(ctx: PlanContext): InstallPlan {
       ? { includes: template.includes }
       : {}),
     ...(manifest.provisioning ? { provisioning: manifest.provisioning } : {}),
+    ...(manifest.github ? { github: manifest.github } : {}),
     // Snapshot required secrets so Settings can render "required by template" forever (§4.5).
     ...(manifest.secrets && manifest.secrets.length > 0
       ? {
