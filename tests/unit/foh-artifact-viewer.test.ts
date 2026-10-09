@@ -61,6 +61,16 @@ describe("artifactViewerFor", () => {
       }),
     ).toBe("markdown");
   });
+
+  it("opens an html file published as a plain file as text, not a page", () => {
+    expect(
+      artifactViewerForArtifact({
+        kind: "file",
+        name: "report.html",
+        contentType: "text/html",
+      }),
+    ).toBe("text");
+  });
 });
 
 describe("viewer modes", () => {

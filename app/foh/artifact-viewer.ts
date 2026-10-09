@@ -261,6 +261,8 @@ export function artifactViewerFor(
 /**
  * The viewer for a whole artifact row. A page bundle is always a page — its `name` is the
  * directory (or file) the agent published, which may carry no extension or a misleading one.
+ * Only the page kind renders as a page: an `.html` the agent published as a plain file has no
+ * preview token or mini browser behind it, so it opens as text.
  */
 export function artifactViewerForArtifact(input: {
   kind: string;
@@ -268,7 +270,8 @@ export function artifactViewerForArtifact(input: {
   contentType: string;
 }): ArtifactViewer {
   if (input.kind === "html") return "html";
-  return artifactViewerFor(input.name, input.contentType);
+  const viewer = artifactViewerFor(input.name, input.contentType);
+  return viewer === "html" ? "text" : viewer;
 }
 
 /** Whether a viewer has a rendered form and a source form to flip between. */
