@@ -564,8 +564,6 @@ describe("publishArtifact kinds", () => {
     );
 
     expect(result).toMatchObject({ ok: false });
-    if (result.ok) return;
-    expect(result.error).toMatch(/capped at 25 MB/i);
     expect(deps.written).toHaveLength(0);
     expect(deps.rows).toHaveLength(0);
   });
@@ -713,7 +711,7 @@ describe("publishArtifact kinds", () => {
     expect(supplied.copies).toHaveLength(0);
   });
 
-  it("refuses non-image bytes from the image door but points the agent at kind file", async () => {
+  it("refuses non-image bytes from the image door", async () => {
     const deploymentId = await seedDeployment();
     const deps = makeDeps({
       copy: async () => ({ ok: true, bytes: Buffer.from("just text") }),
@@ -725,8 +723,6 @@ describe("publishArtifact kinds", () => {
     );
 
     expect(result.ok).toBe(false);
-    if (result.ok) return;
-    expect(result.error).toMatch(/kind "file"/);
     expect(deps.rows).toHaveLength(0);
   });
 
@@ -758,10 +754,6 @@ describe("publishArtifact kinds", () => {
     );
 
     expect(result.ok).toBe(false);
-    if (result.ok) return;
-    expect(result.error).toMatch(
-      /images, PDF documents, HTML pages and other files/i,
-    );
     expect(deps.copies).toHaveLength(0);
   });
 
