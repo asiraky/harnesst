@@ -66,6 +66,7 @@ import { CodeBlock, languageFromClassName } from "./chat/code-block";
 import { formatBytes, loadIntoComposer } from "./chat/composer";
 import { LightboxHost, openLightbox } from "./chat/lightbox";
 import { artifactBadge } from "./artifacts/artifact-type";
+import { SharePopover } from "./artifacts/share-popover";
 import { TypeBadge } from "./artifacts/type-badge";
 import { useAutoScroll } from "./chat/use-auto-scroll";
 
@@ -1250,6 +1251,11 @@ function OptionFields({ fields }: { fields: ChatInputOptionField[] }) {
  * `onOpen` absent means this surface has no panel. The tile then opens the bytes in a new tab
  * instead (`url`, or the share link for a page) rather than sitting there disabled; with neither it
  * is just a picture of what was published.
+ *
+ * With a public link (`shareUrl`), the card also carries the panel's Share popover. It sits BESIDE
+ * the card's open action, never inside it — a button inside a button is invalid markup and would
+ * open the panel on every share click — and stops its clicks (the popover's portalled ones
+ * included, which bubble through the React tree) at its own wrapper.
  */
 export function ArtifactCard({
   artifact,
@@ -1271,6 +1277,16 @@ export function ArtifactCard({
         v{artifact.version}
       </span>
     ) : null;
+
+  const share = artifact.shareUrl ? (
+    <span className="shrink-0" onClick={(event) => event.stopPropagation()}>
+      <SharePopover
+        shareUrl={artifact.shareUrl}
+        title={label}
+        isPage={artifact.kind === "html"}
+      />
+    </span>
+  ) : null;
 
   if (artifact.kind === "image" && artifact.url) {
     const src = artifact.url;
@@ -1305,6 +1321,7 @@ export function ArtifactCard({
               Open
             </button>
           )}
+          {share && <span className="-my-1.5 font-sans">{share}</span>}
         </figcaption>
       </figure>
     );
@@ -1336,37 +1353,50 @@ export function ArtifactCard({
       )}
     </>
   );
+  // The card is a box holding its open action (button, link, or nothing) and, beside it, Share.
   const shape =
-    "group/tile flex w-full max-w-[95%] items-center gap-3 rounded-xl border border-border bg-card p-2.5 text-left shadow-sm sm:max-w-sm";
+    "flex w-full max-w-[95%] items-center rounded-xl border border-border bg-card shadow-sm transition-colors sm:max-w-sm";
+  const action =
+    "group/tile flex min-w-0 flex-1 items-center gap-3 rounded-xl p-2.5 text-left";
   const interactive =
-    "cursor-pointer transition-colors outline-none hover:bg-muted/50 focus-visible:ring-2 focus-visible:ring-ring";
+    "cursor-pointer outline-none focus-visible:ring-2 focus-visible:ring-ring";
+  const hover = "has-[[data-card-action]:hover]:bg-muted/50";
 
+  let main: React.ReactNode;
   if (onOpen) {
-    return (
+    main = (
       <button
         type="button"
+        data-card-action
         onClick={() => onOpen(artifact)}
-        className={cn(shape, interactive)}
+        className={cn(action, interactive)}
         aria-label={`Open ${label}`}
       >
         {body}
       </button>
     );
-  }
-  if (href) {
-    return (
+  } else if (href) {
+    main = (
       <a
         href={href}
         target="_blank"
         rel="noopener noreferrer"
-        className={cn(shape, interactive)}
+        data-card-action
+        className={cn(action, interactive)}
         aria-label={`Open ${label} in a new tab`}
       >
         {body}
       </a>
     );
+  } else {
+    main = <div className={action}>{body}</div>;
   }
-  return <div className={shape}>{body}</div>;
+  return (
+    <div className={cn(shape, (onOpen || href) && hover)}>
+      {main}
+      {share && <span className="pr-2">{share}</span>}
+    </div>
+  );
 }
 
 /** Typing indicator shown while the assistant turn is in flight — dots, not prose, so it
