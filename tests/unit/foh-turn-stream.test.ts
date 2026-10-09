@@ -1117,7 +1117,7 @@ describe("streamTurnResponse — the watching viewer's read mark", () => {
 
   function start(
     over: {
-      viewerId?: string | null;
+      viewerId?: string;
       channel?: string;
       surface?: PlaygroundSession["surface"];
     } = {},
@@ -1129,7 +1129,7 @@ describe("streamTurnResponse — the watching viewer's read mark", () => {
       message: "do the thing",
       channel: over.channel ?? "foh",
       title: null,
-      viewerId: over.viewerId === undefined ? "user_1" : over.viewerId,
+      viewerId: "viewerId" in over ? over.viewerId : "user_1",
     });
   }
 
@@ -1204,7 +1204,7 @@ describe("streamTurnResponse — the watching viewer's read mark", () => {
   it("marks nothing when no viewer is attached to the turn", async () => {
     script(completed);
 
-    await readAll(start({ viewerId: null }));
+    await readAll(start({ viewerId: undefined }));
 
     expect(mocks.markSessionReadLatest).not.toHaveBeenCalled();
   });

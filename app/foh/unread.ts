@@ -37,12 +37,19 @@ export function needsYouCount(
 }
 
 /**
- * The open conversation's pending inbox items, as a stable key — null when there are none.
- * The bell polls on its own clock, so it can see an item filed after the session page's read
- * mark (a `finished` item written just after the cursor save it acknowledged). Nothing on the
- * page would acknowledge that one, so the bell does: a new key means a read mark is due.
+ * Fetcher key of the session page's read mark. The bell watches the same fetcher so its catch-up
+ * mark for late items holds off while the page's own is in flight.
  */
-export function openSessionInboxKey(
+export const SESSION_READ_FETCHER_KEY = "foh-session-read";
+
+/**
+ * Where to post a catch-up read mark for the open conversation's pending inbox items, with a
+ * stable `key` over their ids — null when there are none. The bell polls on its own clock, so it
+ * can see an item filed after the session page's read mark (a `finished` item written just after
+ * the cursor save it acknowledged). Nothing on the page would acknowledge that one, so the bell
+ * does: a new key means a read mark is due.
+ */
+export function openSessionLateReadTarget(
   items: ReadonlyArray<{ id: string; sessionId: string; projectId: string }>,
   openSessionId: string | null,
 ): { key: string; projectId: string; sessionId: string } | null {

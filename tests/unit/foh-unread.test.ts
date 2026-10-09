@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   inboxItemsForOpenSession,
   needsYouCount,
-  openSessionInboxKey,
+  openSessionLateReadTarget,
   suppressOpenSessionUnread,
   titleWithInboxCount,
 } from "~/foh/unread";
@@ -64,14 +64,14 @@ describe("FOH visible unread state", () => {
       { id: "a", sessionId: "open", projectId: "proj_1" },
     ];
 
-    expect(openSessionInboxKey(items, "open")).toEqual({
+    expect(openSessionLateReadTarget(items, "open")).toEqual({
       key: "a,b",
       projectId: "proj_1",
       sessionId: "open",
     });
     // Order-independent, so a poll that returns the same items doesn't fire a second mark.
-    expect(openSessionInboxKey([...items].reverse(), "open")?.key).toBe("a,b");
-    expect(openSessionInboxKey(items, "none")).toBeNull();
-    expect(openSessionInboxKey(items, null)).toBeNull();
+    expect(openSessionLateReadTarget([...items].reverse(), "open")?.key).toBe("a,b");
+    expect(openSessionLateReadTarget(items, "none")).toBeNull();
+    expect(openSessionLateReadTarget(items, null)).toBeNull();
   });
 });

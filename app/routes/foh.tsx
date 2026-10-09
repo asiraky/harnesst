@@ -19,7 +19,6 @@ import {
   NavLink,
   Outlet,
   useLocation,
-  useMatch,
   type LoaderFunctionArgs,
 } from "react-router";
 
@@ -32,6 +31,7 @@ import {
 import { AppSidebar } from "~/components/app-sidebar";
 import { InboxIndicator } from "~/components/foh/inbox";
 import { PresenceDot } from "~/components/foh/presence-dot";
+import { useOpenSessionId } from "~/components/foh/use-open-session-id";
 import { MarketingLanding } from "~/components/marketing/landing";
 import { loadFohSidebar } from "~/foh/sidebar.server";
 import { needsYouCount } from "~/foh/unread";
@@ -112,8 +112,7 @@ function FohShell({ data }: { data: ShellData }) {
   const atHome = useLocation().pathname === "/";
   // The open conversation is acknowledged by its page; its items leave the sidebar count now,
   // matching the bell and session list, rather than after the read mark and a revalidation.
-  const openSessionId =
-    useMatch("/t/:projectId/:agentId/s/:sessionId")?.params.sessionId ?? null;
+  const openSessionId = useOpenSessionId();
   // The toggle only needs to translate URLs for repos the viewer can enter Build for.
   const repos: SurfaceRepo[] = teams
     .filter((team) => team.role === "write")

@@ -13,13 +13,10 @@ import {
   ShieldQuestion,
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
-import {
-  useFetcher,
-  useMatch,
-  useNavigate,
-} from "react-router";
+import { useFetcher, useNavigate } from "react-router";
 
 import { FohRelativeTime } from "~/components/foh/relative-time";
+import { useOpenSessionId } from "~/components/foh/use-open-session-id";
 import { Button } from "~/components/ui/button";
 import {
   Popover,
@@ -31,12 +28,14 @@ import { cn } from "~/lib/utils";
 import type { InboxViewItem } from "~/foh/inbox.server";
 import {
   inboxItemsForOpenSession,
-  openSessionInboxKey,
+  openSessionLateReadTarget,
+  SESSION_READ_FETCHER_KEY,
   titleWithInboxCount,
 } from "~/foh/unread";
 
 const ACTIVE_POLL_MS = 3000;
 const IDLE_POLL_MS = 10000;
+const LATE_READ_DELAY_MS = 1500;
 
 export function InboxIndicator() {
   const fetcher = useFetcher<{ items: InboxViewItem[]; count: number }>({
@@ -45,8 +44,7 @@ export function InboxIndicator() {
   const { load } = fetcher;
   const navigate = useNavigate();
   const [open, setOpen] = useState(false);
-  const openSessionId =
-    useMatch("/t/:projectId/:agentId/s/:sessionId")?.params.sessionId ?? null;
+  const openSessionId = useOpenSessionId();
 
   const allItems = fetcher.data?.items ?? [];
   const items = inboxItemsForOpenSession(allItems, openSessionId);
@@ -54,23 +52,26 @@ export function InboxIndicator() {
   // Hidden is not acknowledged: an item for the open conversation that is still pending after
   // its page's read mark settled was filed after that mark, and nothing on the page will fire
   // another. Acknowledge it here so it doesn't surface in the bell the moment the viewer leaves.
-  // Waits for the page's own mark (same key as foh.session) so opening a conversation posts once.
-  const sessionRead = useFetcher({ key: "foh-session-read" });
-  const healRead = useFetcher({ key: "foh-inbox-read" });
-  const { submit: submitHealRead } = healRead;
-  const openInbox = openSessionInboxKey(allItems, openSessionId);
-  const sessionReadIdle = sessionRead.state === "idle";
-  const healKey = openInbox && sessionReadIdle ? openInbox.key : null;
-  const healTarget = useRef(openInbox);
-  healTarget.current = openInbox;
+  // The page's own mark comes first: the delay lets it start (opening a conversation the bell
+  // already lists), and once it settles the router reloads this fetcher, which drops the items
+  // and cancels the timer. Only items still listed after that get a catch-up post.
+  const sessionRead = useFetcher({ key: SESSION_READ_FETCHER_KEY });
+  const { submit: submitLateRead } = useFetcher({ key: "foh-inbox-late-read" });
+  const lateTarget = openSessionLateReadTarget(allItems, openSessionId);
+  const lateKey =
+    lateTarget && sessionRead.state === "idle" ? lateTarget.key : null;
+  const lateProjectId = lateTarget?.projectId;
+  const lateSessionId = lateTarget?.sessionId;
   useEffect(() => {
-    const target = healTarget.current;
-    if (!healKey || !target) return;
-    submitHealRead(
-      { playgroundSessionId: target.sessionId },
-      { method: "post", action: `/api/foh/${target.projectId}/read` },
-    );
-  }, [healKey, submitHealRead]);
+    if (!lateKey || !lateProjectId || !lateSessionId) return;
+    const timer = window.setTimeout(() => {
+      submitLateRead(
+        { playgroundSessionId: lateSessionId },
+        { method: "post", action: `/api/foh/${lateProjectId}/read` },
+      );
+    }, LATE_READ_DELAY_MS);
+    return () => window.clearTimeout(timer);
+  }, [lateKey, lateProjectId, lateSessionId, submitLateRead]);
   const count = items.length;
   const anyPending = count > 0;
 

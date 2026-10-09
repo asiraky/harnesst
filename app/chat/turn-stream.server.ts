@@ -220,7 +220,7 @@ export function streamTurnResponse(input: {
    * item) — those land after the reply is already on their screen, and nothing else would
    * acknowledge them if the viewer leaves before the page's own read mark round-trips.
    */
-  viewerId?: string | null;
+  viewerId?: string;
 }): Response {
   const {
     projectId,
