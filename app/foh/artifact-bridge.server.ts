@@ -30,6 +30,12 @@ import {
  * Plain ES5 on purpose — it runs before the page's own code, in whatever browser opened a share
  * link, and must never be the thing that throws. Every hook is wrapped so a hostile or broken page
  * can at worst make the bridge go quiet.
+ *
+ * The `error` listener CAPTURES. A `<script>`, `<link>` or `<img>` that fails to load fires a
+ * non-bubbling `error` at the element, which only a capture-phase listener on `window` sees — and a
+ * page whose CDN script 404s is exactly the one someone opens the console to debug. A script's own
+ * uncaught error is dispatched at `window` itself, where the same listener runs once (at target),
+ * so the one listener tells the two apart by target instead of a second listener double-reporting.
  */
 const BRIDGE_SCRIPT = `<script>(function(){
 var S=${JSON.stringify(ARTIFACT_BRIDGE_SOURCE)},MAXC=${ARTIFACT_BRIDGE_MAX_ARG_CHARS},MAXA=${ARTIFACT_BRIDGE_MAX_ARGS};
@@ -46,7 +52,7 @@ addEventListener("load",loc);addEventListener("popstate",loc);addEventListener("
 function fmt(a){if(typeof a==="string")return a;if(a instanceof Error)return a.stack||String(a);try{var j=JSON.stringify(a);return j===undefined?String(a):j}catch(e){return String(a)}}
 function args(list){var out=[];for(var i=0;i<list.length&&i<MAXA;i++)out.push(cap(fmt(list[i])));return out}
 ["log","info","warn","error","debug"].forEach(function(l){var o=console[l];console[l]=function(){try{send({type:"console",level:l,args:args(arguments)})}catch(e){}if(o)return o.apply(console,arguments)}});
-addEventListener("error",function(e){send({type:"console",level:"error",args:[cap(String(e.message)+(e.filename?" ("+scrub(String(e.filename))+":"+e.lineno+")":""))]})});
+addEventListener("error",function(e){var t=e.target;if(t&&t!==window&&t.nodeType===1){send({type:"console",level:"error",args:[cap("Failed to load <"+String(t.tagName).toLowerCase()+"> "+(t.currentSrc||t.src||t.href||""))]});return}send({type:"console",level:"error",args:[cap(String(e.message)+(e.filename?" ("+scrub(String(e.filename))+":"+e.lineno+")":""))]})},true);
 addEventListener("unhandledrejection",function(e){send({type:"console",level:"error",args:[cap("Unhandled rejection: "+fmt(e.reason))]})});
 addEventListener("message",function(e){if(e.source!==P||!e.data||e.data.source!==S||e.data.type!=="nav")return;if(e.data.dir==="back")history.back();else if(e.data.dir==="forward")history.forward()});
 })();</script>`;

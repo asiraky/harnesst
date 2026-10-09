@@ -21,7 +21,9 @@ function scriptOf(doc: string): string {
   return match[1];
 }
 
-type Listener = (event: Record<string, unknown>) => void;
+type Listener = ((event: Record<string, unknown>) => void) & {
+  capture?: boolean;
+};
 
 /** Run the bridge in a fake window at `pathname`, framed by a parent unless `framed` is false. */
 function runBridge(pathname: string, framed = true) {
@@ -51,8 +53,10 @@ function runBridge(pathname: string, framed = true) {
       error: () => {},
       debug: () => {},
     },
-    addEventListener: (type: string, fn: Listener) => {
-      (listeners[type] ??= []).push(fn);
+    addEventListener: (type: string, fn: Listener, capture?: unknown) => {
+      const listener: Listener = (event) => fn(event);
+      listener.capture = capture === true;
+      (listeners[type] ??= []).push(listener);
     },
   };
   // An opaque origin: touching storage throws.
@@ -73,7 +77,12 @@ function runBridge(pathname: string, framed = true) {
   );
   const fire = (type: string, event: Record<string, unknown> = {}) =>
     (listeners[type] ?? []).forEach((fn) => fn(event));
-  return { win, context, posted, fire, history, logged, parent };
+  /** An event that does not bubble, fired at an element: `window` only hears it while capturing. */
+  const fireAtElement = (type: string, event: Record<string, unknown>) =>
+    (listeners[type] ?? [])
+      .filter((fn) => fn.capture)
+      .forEach((fn) => fn(event));
+  return { win, context, posted, fire, fireAtElement, history, logged, parent };
 }
 
 describe("bridge script", () => {
@@ -120,6 +129,42 @@ describe("bridge script", () => {
       },
     ]);
     expect(logged).toHaveLength(1);
+    expect(posted.every(isArtifactBridgeMessage)).toBe(true);
+  });
+
+  it("reports a script error once, and a resource that failed to load as an error", () => {
+    const { win, posted, fire, fireAtElement } = runBridge("/a/tok/index.html");
+    fire("error", {
+      target: win,
+      message: "boom",
+      filename: "https://preview.example/a/tok/app.js",
+      lineno: 3,
+    });
+    fireAtElement("error", {
+      target: {
+        nodeType: 1,
+        tagName: "SCRIPT",
+        src: "https://preview.example/a/tok/missing.js",
+      },
+    });
+    fireAtElement("error", {
+      target: {
+        nodeType: 1,
+        tagName: "IMG",
+        src: "https://cdn.example/a.png",
+        currentSrc: "https://cdn.example/a@2x.png",
+      },
+    });
+    fireAtElement("error", {
+      target: { nodeType: 1, tagName: "LINK", href: "https://cdn.example/x.css" },
+    });
+
+    expect(posted.map((m) => [m.level, ...(m.args as string[])])).toEqual([
+      ["error", "boom (/app.js:3)"],
+      ["error", "Failed to load <script> /missing.js"],
+      ["error", "Failed to load <img> https://cdn.example/a@2x.png"],
+      ["error", "Failed to load <link> https://cdn.example/x.css"],
+    ]);
     expect(posted.every(isArtifactBridgeMessage)).toBe(true);
   });
 
