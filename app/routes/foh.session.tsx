@@ -1,7 +1,7 @@
 /**
  * FOH session view (D14: /t/:projectId/:agentId/s/:sessionId) — the right pane: one
- * conversation with a team member. A deliberate COPY of the playground page's loader
- * pipeline (wake → reconcile → settle → eve render) and client machinery (LiveTurn
+ * conversation with a team member. Began as a deliberate COPY of the since-removed Playground
+ * page's loader pipeline (wake → reconcile → settle → eve render) and client machinery (LiveTurn
  * reducer, NDJSON send/stop, 2s reconnect poll, newest-entry-only onAnswer) per D20 — the
  * regression criterion outweighs DRY.
  *
@@ -54,7 +54,8 @@ import {
 } from "~/components/chat/live-attachments";
 import { toast } from "sonner";
 import { CodeBlock } from "~/components/chat/code-block";
-import { PreviewPanel } from "~/components/artifact-preview-panel";
+import { ArtifactPanel } from "~/components/artifacts/artifact-panel";
+import { useArtifactPanelOutlet } from "~/components/artifacts/panel-outlet";
 import { FohPaneError } from "~/components/foh/pane-error";
 import { SessionStatusDot } from "~/components/foh/session-list";
 import { TurnError } from "~/components/turn-error";
@@ -62,6 +63,7 @@ import { Button } from "~/components/ui/button";
 import { sessionLoader } from "~/auth/session.server";
 import { newestTurnEntry } from "~/foh/artifact-entries";
 import { useArtifactPreview } from "~/foh/use-artifact-preview";
+import { cn } from "~/lib/utils";
 import { requireFohProject } from "~/foh/guard.server";
 import { channelLabelFor } from "~/foh/channel-resume";
 import { archivedOpenSessionShouldRevalidate } from "~/foh/archive-revalidation";
@@ -446,7 +448,30 @@ export default function FohSession({ loaderData }: Route.ComponentProps) {
   }>({ batchKey: "", items: [] });
   // Panel state is LOCAL, never loader data: this page revalidates every 2s while a turn runs (and
   // the shell every 10s), and a preview driven by loader data would be torn down on each poll.
-  const preview = useArtifactPreview({ projectId, sessionId });
+  // The transcript's cards are passed in only so a republish can move the open panel to the new
+  // version (the hook decides when that is wanted); the session id closes it on a switch.
+  const transcriptArtifacts = useMemo(
+    () =>
+      entries.flatMap((entry) =>
+        entry.role === "artifact" && entry.artifact ? [entry.artifact] : [],
+      ),
+    [entries],
+  );
+  const preview = useArtifactPreview({
+    projectId,
+    resetKey: sessionId,
+    artifacts: transcriptArtifacts,
+  });
+  const [panelMaximised, setPanelMaximised] = useState(false);
+  const panelOpen = preview.artifact !== null;
+  useEffect(() => {
+    if (!panelOpen) setPanelMaximised(false);
+  }, [panelOpen]);
+  const { setArtifactPanelOpen } = useArtifactPanelOutlet();
+  useEffect(() => {
+    setArtifactPanelOpen(panelOpen);
+    return () => setArtifactPanelOpen(false);
+  }, [panelOpen, setArtifactPanelOpen]);
   const streamAbortRef = useRef<AbortController | null>(null);
   const stopRequestedRef = useRef(false);
   // The session on screen, readable from inside a long-lived send() closure (issue #221
@@ -865,7 +890,15 @@ export default function FohSession({ loaderData }: Route.ComponentProps) {
     // foh.agent.tsx), so the preview pane below becomes a real fourth pane at xl rather than
     // something layered over the conversation.
     <>
-      <section className="flex min-w-0 flex-1 flex-col">
+      <section
+        className={cn(
+          "flex min-w-0 flex-1 flex-col",
+          // Maximised, the docked panel takes the conversation's place. `xl:` only — the same
+          // breakpoint the panel docks at — so a window narrowed past it gets the conversation
+          // back under the sheet rather than a blank pane.
+          panelOpen && panelMaximised && "xl:hidden",
+        )}
+      >
         <header className="flex h-14 shrink-0 items-center gap-2 border-b px-4">
           <Button
             asChild
@@ -944,9 +977,9 @@ export default function FohSession({ loaderData }: Route.ComponentProps) {
                 at={e.at}
               />
             ) : e.role === "artifact" ? (
-              // A published image (#290) or page (#291) is not the reply — it sits under the turn
-              // that made it as its own card, and carries no answer/retry affordances. A page card
-              // opens the sandboxed preview panel; an image card ignores `onOpen`.
+              // A published artifact is not the reply — it sits under the turn that made it as its
+              // own card, and carries no answer/retry affordances. Every card opens the artifact
+              // panel; an image also keeps its inline render and lightbox.
               e.artifact && (
                 <ArtifactCard
                   key={e.id}
@@ -1071,23 +1104,12 @@ export default function FohSession({ loaderData }: Route.ComponentProps) {
         </div>
       </section>
 
-      {preview.artifact && (
-        <PreviewPanel
-          title={preview.artifact.title?.trim() || preview.artifact.name}
-          subtitle={
-            preview.artifact.title?.trim() ? preview.artifact.name : null
-          }
-          src={preview.src}
-          error={preview.error}
-          versions={preview.versions.map((version) => ({
-            id: version.id,
-            label: `v${version.version} · ${previewVersionTime(version.createdAt)}`,
-          }))}
-          selectedVersionId={preview.selectedVersionId}
-          onSelectVersion={preview.selectVersion}
-          onClose={preview.close}
-        />
-      )}
+      <ArtifactPanel
+        preview={preview}
+        projectId={projectId}
+        maximised={panelMaximised}
+        onMaximisedChange={setPanelMaximised}
+      />
     </>
   );
 }
@@ -1115,20 +1137,6 @@ export function ErrorBoundary({ error }: Route.ErrorBoundaryProps) {
       backLabel="Sessions"
     />
   );
-}
-
-/**
- * When a version was published, for the picker. A time for today's, a date for anything older —
- * a refine loop makes several versions inside one conversation, so "14:32" is what distinguishes
- * them, while a card reopened next week needs the day.
- */
-function previewVersionTime(iso: string): string {
-  const at = new Date(iso);
-  if (Number.isNaN(at.getTime())) return "";
-  const today = new Date();
-  return at.toDateString() === today.toDateString()
-    ? at.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
-    : at.toLocaleDateString([], { month: "short", day: "numeric" });
 }
 
 function statusLabel(status: "working" | "needs_you" | "done" | "error") {

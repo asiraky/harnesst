@@ -16,10 +16,10 @@ const EXPECTED_LABELS: Record<
   "single" | "repo" | "member" | "subagent",
   string[]
 > = {
-  single: ["Overview", "Deployment", "Playground", "Runs", "Assistant", "Settings"],
+  single: ["Overview", "Deployment", "Runs", "Assistant", "Settings"],
   repo: ["Agents", "Deployment", "Assistant", "Settings"],
-  member: ["Overview", "Deployment", "Playground", "Runs", "Settings"],
-  // A declared subagent deploys with its member and has no playground/runs of its own.
+  member: ["Overview", "Deployment", "Runs", "Settings"],
+  // A declared subagent deploys with its member and has no runs of its own.
   subagent: ["Overview", "Settings"],
 };
 
@@ -74,7 +74,7 @@ describe("AgentNav", () => {
     for (const label of EXPECTED_LABELS.subagent) {
       expect(html).toContain(`>${label}</a>`);
     }
-    for (const label of ["Deployment", "Playground", "Runs", "Assistant"]) {
+    for (const label of ["Deployment", "Runs", "Assistant"]) {
       expect(html).not.toContain(`>${label}</a>`);
     }
     expect(html).toMatch(

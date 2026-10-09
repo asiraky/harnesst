@@ -529,7 +529,10 @@ export async function artifactUsage(input: {
     .where(
       input.sessionId
         ? eq(artifacts.sessionId, input.sessionId)
-        : and(eq(artifacts.agentId, input.agentId), isNull(artifacts.sessionId)),
+        : and(
+            eq(artifacts.agentId, input.agentId),
+            isNull(artifacts.sessionId),
+          ),
     );
   const [project] = await db
     .select({ value: count(), bytes: sum(artifactVersions.byteSize) })
@@ -616,6 +619,17 @@ export async function findArtifactFile(input: {
   return row ?? null;
 }
 
+/** Every member of one bundle version, path-ordered — the source view's file list. */
+export async function listArtifactFiles(
+  versionId: string,
+): Promise<ArtifactFile[]> {
+  return db
+    .select()
+    .from(artifactFiles)
+    .where(eq(artifactFiles.versionId, versionId))
+    .orderBy(artifactFiles.relPath);
+}
+
 /**
  * One artifact by its public share token (#370). The token IS the entire authorization on the
  * public route — no cookie, no session — which is exactly why the lookup takes nothing else: there
@@ -692,9 +706,10 @@ export async function listProjectArtifacts(
     .select({
       ...getTableColumns(artifacts),
       // Coalesce guards the (should-be-impossible) artifact with zero surviving versions.
-      lastPublishedAt: sql`coalesce(${lastPublishedAt}, ${artifacts.createdAt})`.mapWith(
-        artifactVersions.createdAt,
-      ),
+      lastPublishedAt:
+        sql`coalesce(${lastPublishedAt}, ${artifacts.createdAt})`.mapWith(
+          artifactVersions.createdAt,
+        ),
     })
     .from(artifacts)
     .where(eq(artifacts.projectId, projectId))

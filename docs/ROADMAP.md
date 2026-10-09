@@ -87,7 +87,8 @@ source of truth; harnesst is a projection and a control plane over it.
 - ✅ **M8.4** — Secrets management rework (fetcher CRUD, fingerprints, install-time values,
   required-by-template surfacing, project-level shared secrets).
 - ✅ **M8.5** — Playground: ChatGPT-style chat surface + human-in-the-loop (ask-question and tool
-  approvals); sessions stored as eve cursors, streamed live, recorded as runs.
+  approvals); sessions stored as eve cursors, streamed live, recorded as runs. (The Playground
+  was later removed in favour of Chat, front of house.)
 
 ### Launch readiness — M9 (current)
 

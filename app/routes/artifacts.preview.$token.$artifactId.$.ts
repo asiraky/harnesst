@@ -10,7 +10,7 @@
  *
  * The token is not, however, the whole AUTHORIZATION. Each request re-derives the artifact and
  * re-runs the per-conversation visibility check for the user the token was minted for, so access
- * revoked inside the 10-minute window stops working. What the token carries rather than re-derives
+ * revoked inside the token's lifetime stops working. What the token carries rather than re-derives
  * is the repo-scope decision (`projectId` + back-of-house), because that needs org/team membership
  * and therefore a cookie this route deliberately does not have.
  *
@@ -18,14 +18,21 @@
  * not this artifact's or has been pruned, an image, a path that is not in the bundle, bytes missing
  * from the store — is the same 404. See
  * `artifact-preview.server.ts` for the response header set and why each directive is load-bearing.
+ *
+ * HTML and CSS members are served REWRITTEN (`artifactPageBody`): root-relative URLs point at the
+ * bundle's own site root under this token, and every HTML document gets the panel bridge injected.
+ * `Range` is honoured, so a video member can seek.
  */
 import { data, type LoaderFunctionArgs } from "react-router";
 
+import { artifactBytesResponse, artifactEtag } from "~/foh/artifact-http";
 import { normalizeBundleRelPath } from "~/foh/artifact-media";
 import {
+  artifactPageBody,
   artifactPreviewHeaders,
   verifyArtifactPreviewToken,
 } from "~/foh/artifact-preview.server";
+import { artifactSiteRoot } from "~/foh/artifact-urls";
 import {
   findArtifactById,
   findArtifactFile,
@@ -75,6 +82,8 @@ export async function loader({ params, request }: LoaderFunctionArgs) {
       projectId: artifact.projectId,
       viewerId: claim.userId,
       includeAll: claim.backOfHouse,
+      // Same rule as the mint: back of house previews archived conversations' pages too.
+      includeArchived: claim.backOfHouse,
     });
     if (!session) throw notFound();
   }
@@ -90,21 +99,23 @@ export async function loader({ params, request }: LoaderFunctionArgs) {
   const bytes = await readArtifactBytes(file.storagePath);
   if (!bytes) throw notFound();
 
-  // A Node Buffer is not a `BodyInit` as far as the DOM lib is concerned. The three-argument
-  // constructor is the one that makes a VIEW over the same memory — `new Uint8Array(buffer)` on a
-  // Buffer takes the typed-array-copy overload and would duplicate up to 25 MB per subresource.
-  // The cast is what tells TypeScript this is not a SharedArrayBuffer, which `fs` never returns;
-  // the offset and length are what keep the view to THIS file's bytes when Buffer pooled them.
-  const body = new Uint8Array(
-    bytes.buffer as ArrayBuffer,
-    bytes.byteOffset,
-    bytes.length,
-  );
-  return new Response(body, {
+  const body = artifactPageBody({
+    bytes,
+    contentType: file.contentType,
+    siteRoot: artifactSiteRoot(
+      `/artifacts/preview/${params.token ?? ""}/${artifactId}`,
+      version.entryPath,
+    ),
+  });
+  return artifactBytesResponse({
+    request,
+    bytes: body,
     headers: artifactPreviewHeaders({
       contentType: file.contentType,
-      byteSize: bytes.length,
+      byteSize: body.length,
       requestUrl: request.url,
     }),
+    // A rewritten body embeds this token, so the stored bytes' hash does not identify it.
+    etag: body === bytes ? artifactEtag(file.sha256) : null,
   });
 }

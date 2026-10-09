@@ -63,7 +63,7 @@ import type { Agent } from "~/data/ports";
 import { invalidateAgentEnvironments } from "~/deploy/env-reconcile.server";
 import { stageDeletions, stageDraft, listDrafts } from "~/drafts/drafts.server";
 import { ZOD_PACKAGE, ZOD_VERSION } from "~/eve/agentModule";
-import { subagentDirNames, subagentRootFor } from "~/eve/parse";
+import { subagentRootFor } from "~/eve/parse";
 import { getAgentSource } from "~/github/cached.server";
 import { fetchAgentSource, readAgentFile } from "~/github/repo.server";
 import { contextPath } from "~/lib/paths";
@@ -88,6 +88,12 @@ import {
   resolveTemplate,
   type ResolvedInclude,
 } from "~/marketplace/compose.server";
+import {
+  declaredSubagentPaths,
+  decodeMemberSelection,
+  encodeMemberSelection,
+} from "~/marketplace/targets";
+import { safeReturnTo } from "~/auth/return-to";
 import {
   findAppCredentialConflict,
   listAppCredentialRows,
@@ -136,43 +142,6 @@ async function activeWorkspaceDefaultModel(orgId: string) {
     (await ownsWorkspaceModelReference(orgId, selection.model))
     ? selection
     : { model: null, effort: null };
-}
-
-/**
- * Separator between a member name and its `/`-joined subagent path in a picker option's value and
- * in the `?member=` param. Both halves are eve directory names (kebab-case), so `:` can occur in
- * neither — the value round-trips unambiguously in both directions.
- */
-const SUBAGENT_SEPARATOR = ":";
-
-/** Split a picker value / `?member=` param into a member name and `/`-joined subagent path. */
-function decodeMemberSelection(value: string): {
-  memberName: string;
-  subagentPath: string;
-} {
-  const at = value.indexOf(SUBAGENT_SEPARATOR);
-  if (at < 0) return { memberName: value, subagentPath: "" };
-  return {
-    memberName: value.slice(0, at),
-    subagentPath: value.slice(at + SUBAGENT_SEPARATOR.length),
-  };
-}
-
-/**
- * Every declared subagent below `memberRoot` as a `/`-joined path, parents before children.
- * `subagentDirNames` reads ONE level of `<root>/subagents/`, so recurse it with each child's own
- * root: a declared subagent is itself a full agent root and may declare subagents of its own.
- */
-function declaredSubagentPaths(
-  repoPaths: string[],
-  memberRoot: string,
-  prefix = "",
-): string[] {
-  const base = subagentRootFor(memberRoot, prefix.split("/").filter(Boolean));
-  return subagentDirNames(repoPaths, base).flatMap((name) => {
-    const path = prefix ? `${prefix}/${name}` : name;
-    return [path, ...declaredSubagentPaths(repoPaths, memberRoot, path)];
-  });
 }
 
 /**
@@ -370,6 +339,10 @@ export const loader = (args: LoaderFunctionArgs) =>
       const projectId = url.searchParams.get("project");
       const selectedMember = url.searchParams.get("member");
       const newMemberName = url.searchParams.get("newMember");
+      // Set when the wizard was opened in place from an agent or team page: the back link returns
+      // there instead of to the catalog. Only a same-origin path is honoured.
+      const rawReturnTo = url.searchParams.get("returnTo");
+      const returnTo = rawReturnTo ? safeReturnTo(rawReturnTo, "") || null : null;
 
       // Only connected repos the viewer can WRITE to can host an install: installing edits the
       // repo, and workspace admins hold no implicit repo access.
@@ -406,6 +379,7 @@ export const loader = (args: LoaderFunctionArgs) =>
         missingModelDefault: false,
         selectedMember,
         newMemberName,
+        returnTo,
         /**
          * Set when the selection resolves to a declared subagent — the secrets step needs it to
          * say where the value actually lands, since secrets stay deployment-scoped.
@@ -954,13 +928,14 @@ export default function InstallWizard({
     selectedMember,
     selectedSubagent,
     newMemberName,
+    returnTo,
     preview,
     provider,
     sharedNames,
   } = loaderData;
   const navigate = useNavigate();
 
-  const backTo = `/marketplace/${type}/${manifest.id}`;
+  const backTo = returnTo ?? `/marketplace/${type}/${manifest.id}`;
   const hasConflicts = (preview?.conflicts.length ?? 0) > 0;
   // The root-only rejection is one prose sentence, not a repo path — split it out so it reads as
   // an explanation instead of a broken-looking path in the monospace list.
@@ -1000,6 +975,7 @@ export default function InstallWizard({
     if (selectedProjectId) params.set("project", selectedProjectId);
     if (selectedMember) params.set("member", selectedMember);
     if (newMemberName) params.set("newMember", newMemberName);
+    if (returnTo) params.set("returnTo", returnTo);
     for (const [k, v] of Object.entries(patch)) {
       if (v === null) params.delete(k);
       else params.set(k, v);
@@ -1015,7 +991,7 @@ export default function InstallWizard({
           prefetch="intent"
           className="text-sm text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
         >
-          ← {manifest.name}
+          ← {returnTo ? "Back" : manifest.name}
         </Link>
       </div>
 
@@ -1067,7 +1043,12 @@ export default function InstallWizard({
                 <Select
                   value={selectedProjectId ?? undefined}
                   onValueChange={(id) =>
-                    navigate(`?project=${encodeURIComponent(id)}`)
+                    navigate(
+                      `?${new URLSearchParams({
+                        project: id,
+                        ...(returnTo ? { returnTo } : {}),
+                      }).toString()}`,
+                    )
                   }
                 >
                   <SelectTrigger className="w-full max-w-sm">
@@ -1105,7 +1086,7 @@ export default function InstallWizard({
                       ...m.subagents.map((path) => (
                         <SelectItem
                           key={`${m.name}/${path}`}
-                          value={`${m.name}${SUBAGENT_SEPARATOR}${path}`}
+                          value={encodeMemberSelection(m.name, path)}
                           disabled={!manifest.subagentCompatible}
                         >
                           {[m.name, ...path.split("/")].join(" › ")}
@@ -1175,6 +1156,9 @@ export default function InstallWizard({
             {selectedProjectId && newMemberTemplate && !singleAgentInvalid && (
               <Form method="get" className="grid max-w-sm gap-1.5">
                 <input type="hidden" name="project" value={selectedProjectId} />
+                {returnTo && (
+                  <input type="hidden" name="returnTo" value={returnTo} />
+                )}
                 <Label htmlFor="newMember">New agent name</Label>
                 <div className="flex items-center gap-2">
                   <Input

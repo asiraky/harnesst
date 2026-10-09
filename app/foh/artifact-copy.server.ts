@@ -256,7 +256,7 @@ async function realPathInContainer(
       ok: false,
       error: allowDirectory
         ? `${path} is not a file or a directory, so there is nothing to publish.`
-        : `${path} is not a regular file — publish a single image file.`,
+        : `${path} is not a regular file — publish a single file, or a page directory with kind "html".`,
     };
   }
   if ((verdict !== "file" && verdict !== "dir") || !detail) {
@@ -383,7 +383,7 @@ export async function copyArtifactFromInstance(
   if (!file) {
     return {
       ok: false,
-      error: `${input.path} is not a regular file — publish a single image file.`,
+      error: `${input.path} is not a regular file — publish a single file, or a page directory with kind "html".`,
     };
   }
   if (file.bytes.length === 0) {

@@ -1,7 +1,7 @@
 /**
  * Artifact publishing (issues #290, #291) — the control-plane half of "the agent made something and
- * the user should see it in the conversation": a single image, or a small static PAGE BUNDLE that
- * the FOH preview panel renders in a sandboxed iframe.
+ * the user should see it in the conversation": a single image, PDF or any other FILE, or a small
+ * static PAGE BUNDLE that the FOH preview panel renders in a sandboxed iframe.
  *
  * The transcript cannot carry assets: the wire protocol between harnesst and an instance is JSON
  * text and `textOf` flattens every event to a string, so anything that is not prose is dropped
@@ -13,11 +13,14 @@
  *
  * Two things the agent says are load-bearing and both are validated here, not trusted: the PATH
  * (confined to the agent's own home volume — `docker cp` would otherwise read any file in the
- * instance) and the CONTENT TYPE. For an image the type is sniffed from the bytes, because the image
- * serving route is same-origin and cookie-authenticated, so a mislabelled HTML payload would be
- * stored XSS. A bundle's members cannot be sniffed (HTML/CSS/JS have no magic bytes), so their types
- * come from a closed extension allowlist and their SAFETY comes from the preview response's own
- * `sandbox` CSP instead — see `artifact-preview.server.ts` for why that swap is sound.
+ * instance) and the CONTENT TYPE. An image or a PDF document is sniffed from its bytes and refused
+ * when they disagree, so those kinds keep their promise of a renderable picture or page. A `file` is
+ * typed by its extension (sniff as fallback) and never refused for its type: the single-file
+ * serving route is same-origin and cookie-authenticated, so its SAFETY does not rest on the stored
+ * type being honest — `artifactServePolicy` sends text as `text/plain`, sandboxes everything that
+ * could be active, and downloads what it does not recognise. A bundle's members cannot be sniffed
+ * (HTML/CSS/JS have no magic bytes), so their types come from a closed extension allowlist and
+ * their safety comes from the preview response's own `sandbox` CSP — see `artifact-preview.server.ts`.
  *
  * The DESTINATION is derived the same way, and it is the third security decision here: an artifact
  * goes to the conversation whose turn is running on the calling deployment right now, never to "the
@@ -47,11 +50,11 @@ import {
 import {
   ARTIFACT_BUNDLE_EXTENSIONS,
   ARTIFACT_BUNDLE_MAX_FILES,
-  ARTIFACT_DOCUMENT_MAX_BYTES,
   ARTIFACT_MAX_BYTES,
   artifactKindFor,
   artifactUrl,
   pickBundleEntry,
+  resolveArtifactFileContentType,
   resolveArtifactSource,
   resolveBundleMember,
   sniffArtifactContentType,
@@ -191,10 +194,15 @@ export interface PublishArtifactInput {
   deploymentId: string;
   path: string;
   title?: string | null;
-  /** `image`, `html`, or `document`; omitted, the path's own extension decides. */
+  /** `image`, `html`, `document` or `file`; omitted, the path's own extension decides. */
   kind?: string | null;
-  /** PDF bytes read by the authored tool from its current (possibly subagent) sandbox. */
-  documentBytes?: Buffer;
+  /**
+   * The file's bytes, read by the authored tool from its CURRENT (possibly subagent) sandbox — how a
+   * `document` or a `file` publish arrives. `docker cp` can only reach the root agent's sandbox, and
+   * a subagent's is a different one, so a tool-supplied copy is the only one that sees the file the
+   * agent actually wrote. Images and pages are still copied out of the instance.
+   */
+  suppliedBytes?: Buffer;
 }
 
 export type PublishArtifactResult =
@@ -265,6 +273,7 @@ function kindPinned(name: string, kind: string, was?: string): string {
   const words = (value: string) => {
     if (value === "html") return "a page";
     if (value === "document") return "a document";
+    if (value === "file") return "a file";
     return "an image";
   };
   return `${name} was already published in this conversation as ${was ? words(was) : "a different kind of file"}, so it cannot be republished as ${words(kind)}. Publish it under a different name.`;
@@ -312,23 +321,23 @@ export async function publishArtifact(
   const kind = artifactKindFor(input.kind, source.name);
   if (!kind) {
     return deny(
-      `harnesst publishes images, PDF documents and HTML pages, not "${input.kind}". Pass kind "image", "document" or "html".`,
+      `harnesst publishes images, PDF documents, HTML pages and other files, not "${input.kind}". Pass kind "image", "document", "html" or "file".`,
     );
   }
-  if (kind === "document" && !input.documentBytes) {
+  if (kind === "document" && !input.suppliedBytes) {
     return deny(
       "The PDF bytes were not supplied by Publish Artifact. Update the installed tool and try again.",
     );
   }
-  if (
-    kind === "document" &&
-    input.documentBytes &&
-    input.documentBytes.length > ARTIFACT_DOCUMENT_MAX_BYTES
-  ) {
-    return deny("PDF document artifacts are capped at 4 MiB.");
+  if (input.suppliedBytes && input.suppliedBytes.length > ARTIFACT_MAX_BYTES) {
+    return deny(
+      `Published files are capped at ${ARTIFACT_MAX_BYTES / (1024 * 1024)} MB.`,
+    );
   }
-  if (kind !== "document" && input.documentBytes) {
-    return deny("Only a document publish may include uploaded file bytes.");
+  if (input.suppliedBytes && kind !== "document" && kind !== "file") {
+    return deny(
+      "Only a document or file publish may include uploaded file bytes.",
+    );
   }
 
   // Caller resolution — deployment → environment → agent → project, all from the token's
@@ -355,7 +364,7 @@ export async function publishArtifact(
   // public share URL, just no card in any conversation. What the fallback must re-derive is the
   // SANDBOX: the FOH row named it, so a background publish takes it from the control plane's own
   // run ledger instead (`backgroundRunForDeployment` — the body still names nothing). A document
-  // carries its bytes in the request and needs no sandbox at all. Ambiguity still refuses on both
+  // or file that carries its bytes in the request needs no sandbox at all. Ambiguity still refuses on both
   // paths: several live conversations or several concurrent background sessions is the same
   // "whose files would these be" question, answered the same way.
   const found = await deps.findSession({
@@ -390,7 +399,7 @@ export async function publishArtifact(
       sandboxSessionId,
       worldKey: session.worldKey,
     };
-  } else if (kind === "document" && input.documentBytes) {
+  } else if (input.suppliedBytes) {
     destination = {
       sessionId: null,
       streamIndex: 0,
@@ -513,7 +522,7 @@ export async function publishArtifact(
       worldKey: destination.worldKey,
     },
     kind,
-    input.documentBytes,
+    input.suppliedBytes,
     deps,
   );
 }
@@ -546,7 +555,7 @@ export function artifactShareUrl(shareToken: string | null): string | null {
 interface PublishHalfInput {
   deployment: { id: string };
   worldKey: string;
-  /** Null only for a session-less document publish, whose bytes arrived in the request (#370). */
+  /** Null only for a session-less publish whose bytes arrived in the request (#370). */
   sandboxSessionId: string | null;
   source: { path: string; name: string };
   common: ArtifactRowCommon;
@@ -580,9 +589,10 @@ function recordRefusal(
 }
 
 /**
- * Publish one image or PDF document: copy the file under a concurrency slot, read its real type out
- * of its own bytes, content-address the bytes into the store and record the row. The type is sniffed
- * rather than claimed because the artifact route serves same-origin behind the operator's cookie.
+ * Publish one image, PDF document or file: take the supplied bytes or copy the file under a
+ * concurrency slot, type it, content-address the bytes into the store and record the row. An image
+ * or document is sniffed and refused when the bytes disagree; a file is typed by name then sniff and
+ * never refused for its type (see the module comment — serving does not trust it).
  */
 async function publishFile(
   {
@@ -593,7 +603,7 @@ async function publishFile(
     worldKey,
     sandboxSessionId,
   }: PublishHalfInput,
-  kind: "image" | "document",
+  kind: "image" | "document" | "file",
   suppliedBytes: Buffer | undefined,
   deps: PublishArtifactDeps,
 ): Promise<PublishArtifactResult> {
@@ -622,14 +632,16 @@ async function publishFile(
   if (!copied.ok) return deny(copied.error);
 
   const contentType =
-    kind === "document"
-      ? sniffArtifactDocumentContentType(copied.bytes)
-      : sniffArtifactContentType(copied.bytes, source.name);
+    kind === "file"
+      ? resolveArtifactFileContentType(source.name, copied.bytes)
+      : kind === "document"
+        ? sniffArtifactDocumentContentType(copied.bytes)
+        : sniffArtifactContentType(copied.bytes, source.name);
   if (!contentType) {
     return deny(
       kind === "document"
-        ? `${source.name} is not a PDF document. harnesst reads the file's own bytes, so renaming it does not help.`
-        : `${source.name} is not a PNG, JPEG, WebP or SVG image. harnesst reads the file's own bytes, so renaming it does not help.`,
+        ? `${source.name} is not a PDF document. harnesst reads the file's own bytes, so renaming it does not help. To share it as a plain download, publish it with kind "file".`
+        : `${source.name} is not a PNG, JPEG, WebP, GIF, AVIF or SVG image. harnesst reads the file's own bytes, so renaming it does not help. To share it as a plain download, publish it with kind "file".`,
     );
   }
 

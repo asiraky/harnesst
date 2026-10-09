@@ -22,7 +22,8 @@
  * answer that reaches them; the first card staying put keeps the history readable.
  */
 import type { ChatArtifact, ChatEntry } from "~/chat/types";
-import { artifactUrl } from "~/foh/artifact-media";
+import { ARTIFACT_KINDS, artifactUrl } from "~/foh/artifact-media";
+import { artifactViewerForArtifact } from "~/foh/artifact-viewer";
 
 /**
  * The artifact-row fields the transcript needs — a subset of the `artifacts` table. The content
@@ -44,6 +45,19 @@ export interface ArtifactRow {
   versionNumber: number;
   /** Latest version id, which a single-file artifact URL is scoped to. */
   latestVersionId: string | null;
+  /** Public share token (#370); null when sharing was revoked. Optional for callers that lack it. */
+  shareToken?: string | null;
+}
+
+/**
+ * The app-relative public link for a share token. Relative on purpose: this module is client-safe
+ * and cannot read the server's configured origin, and a browser resolves it against the page it is
+ * on (with `PREVIEW_ORIGIN` set, the app origin bounces `/a/…` to the sandbox origin itself).
+ */
+export function artifactSharePath(
+  shareToken: string | null | undefined,
+): string | null {
+  return shareToken ? `/a/${shareToken}` : null;
 }
 
 /** Which turn owned the stream at a given cache-space index. */
@@ -80,14 +94,21 @@ export function turnAnchorsFromEvents(
   return anchors;
 }
 
+/** A row's kind as the card knows it. Unknown values (a newer server's kind) read as `file`. */
+function chatArtifactKind(kind: string): ChatArtifact["kind"] {
+  return (ARTIFACT_KINDS as readonly string[]).includes(kind)
+    ? (kind as ChatArtifact["kind"])
+    : "file";
+}
+
 /**
  * The transcript entry one artifact row renders as. A page bundle (#291) carries NO url: its bytes
- * are only reachable through a preview token the app mints per panel-open, and the image route
+ * are only reachable through a preview token the app mints per panel-open, and the raw route
  * refuses bundle rows, so there is no path that would work here even if one were baked in.
  */
 export function artifactEntry(row: ArtifactRow): ChatEntry {
-  const html = row.kind === "html";
-  const kind = html ? "html" : row.kind === "document" ? "document" : "image";
+  const kind = chatArtifactKind(row.kind);
+  const html = kind === "html";
   const artifact: ChatArtifact = {
     id: row.id,
     name: row.name,
@@ -97,6 +118,13 @@ export function artifactEntry(row: ArtifactRow): ChatEntry {
     byteSize: row.byteSize,
     url: html ? null : artifactUrl(row.projectId, row.id, row.latestVersionId),
     version: row.versionNumber,
+    latestVersionId: row.latestVersionId,
+    shareUrl: artifactSharePath(row.shareToken),
+    viewer: artifactViewerForArtifact({
+      kind,
+      name: row.name,
+      contentType: row.contentType,
+    }),
   };
   return { id: `artifact:${row.id}`, role: "artifact", text: "", artifact };
 }

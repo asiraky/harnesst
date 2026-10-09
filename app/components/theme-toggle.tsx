@@ -50,18 +50,42 @@ function emit() {
   for (const cb of listeners) cb();
 }
 
+/**
+ * The current preference. Cookie state via useSyncExternalStore: hydration-safe (the server
+ * snapshot is "system") without an extra state+effect round trip.
+ */
+function useTheme(): Theme {
+  return useSyncExternalStore(subscribe, readTheme, () => "system");
+}
+
 const OPTIONS: { value: Theme; label: string; icon: typeof Monitor }[] = [
   { value: "system", label: "System", icon: Monitor },
   { value: "light", label: "Light", icon: Sun },
   { value: "dark", label: "Dark", icon: Moon },
 ];
 
+/** The three theme choices as menu items, for embedding inside an existing dropdown. */
+export function ThemeMenuItems() {
+  const theme = useTheme();
+  return OPTIONS.map(({ value, label, icon: Icon }) => (
+    <DropdownMenuItem
+      key={value}
+      onSelect={() => applyTheme(value)}
+      className={theme === value ? "font-medium" : undefined}
+    >
+      <Icon className="mr-2 h-4 w-4" />
+      {label}
+      {theme === value && <span className="ml-auto text-xs">✓</span>}
+    </DropdownMenuItem>
+  ));
+}
+
 /**
- * The same selector as a submenu, for embedding inside an existing dropdown (the FOH
+ * The same selector as a submenu, for embedding inside an existing dropdown (the sidebar
  * account menu). Must render within a <DropdownMenu> root.
  */
 export function ThemeMenuSub() {
-  const theme = useSyncExternalStore(subscribe, readTheme, () => "system" as Theme);
+  const theme = useTheme();
   const Active = OPTIONS.find((o) => o.value === theme)?.icon ?? Monitor;
 
   return (
@@ -72,17 +96,7 @@ export function ThemeMenuSub() {
       </DropdownMenuSubTrigger>
       <DropdownMenuPortal>
         <DropdownMenuSubContent>
-          {OPTIONS.map(({ value, label, icon: Icon }) => (
-            <DropdownMenuItem
-              key={value}
-              onSelect={() => applyTheme(value)}
-              className={theme === value ? "font-medium" : undefined}
-            >
-              <Icon className="mr-2 h-4 w-4" />
-              {label}
-              {theme === value && <span className="ml-auto text-xs">✓</span>}
-            </DropdownMenuItem>
-          ))}
+          <ThemeMenuItems />
         </DropdownMenuSubContent>
       </DropdownMenuPortal>
     </DropdownMenuSub>
@@ -90,9 +104,7 @@ export function ThemeMenuSub() {
 }
 
 export function ThemeToggle() {
-  // Cookie state via useSyncExternalStore: hydration-safe (server snapshot is
-  // "system") without an extra state+effect round trip.
-  const theme = useSyncExternalStore(subscribe, readTheme, () => "system" as Theme);
+  const theme = useTheme();
 
   const Active = OPTIONS.find((o) => o.value === theme)?.icon ?? Monitor;
 
@@ -104,17 +116,7 @@ export function ThemeToggle() {
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end">
-        {OPTIONS.map(({ value, label, icon: Icon }) => (
-          <DropdownMenuItem
-            key={value}
-            onSelect={() => applyTheme(value)}
-            className={theme === value ? "font-medium" : undefined}
-          >
-            <Icon className="mr-2 h-4 w-4" />
-            {label}
-            {theme === value && <span className="ml-auto text-xs">✓</span>}
-          </DropdownMenuItem>
-        ))}
+        <ThemeMenuItems />
       </DropdownMenuContent>
     </DropdownMenu>
   );

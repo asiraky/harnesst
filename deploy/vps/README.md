@@ -207,7 +207,7 @@ curl -sI http://127.0.0.1:3000 | head -1   # expect HTTP/1.1 200 or a 30x to /lo
 nginx and certbot run as containers in this same compose stack (the `nginx` service and the
 `certbot` tool service) — nothing TLS-related is installed on the host. nginx terminates TLS and
 proxies `/e/…` (agent channel traffic) to the splitter on `:8787` and everything else to harnesst on
-`:3000`, with buffering off — harnesst streams (assistant, playground), and buffered SSE looks like a
+`:3000`, with buffering off — harnesst streams (assistant, chat), and buffered SSE looks like a
 hang.
 
 Point the site config at your domain:
@@ -281,7 +281,7 @@ it's containerized. Add it with `crontab -e`:
    models; without it, deploys come up but every turn fails.
 6. **Connect** a repo (the GitHub App install flow should round-trip through your domain and
    land back on `/connect`).
-7. Create or open an agent, **Ship** it, and talk to it in the **Playground**. The first ship
+7. Create or open an agent, **Ship** it, and talk to it in **Chat**. The first ship
    builds a full agent image (several minutes). The deploy itself is usually seconds — but an
    agent with skills or a sandbox `bootstrap()` prewarms its sandbox template on first boot
    (pulls `ghcr.io/vercel/eve`, runs bootstrap, snapshots an `eve-sbx-tpl-*` image), which can

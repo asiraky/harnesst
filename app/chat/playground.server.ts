@@ -1,7 +1,7 @@
 /**
- * Shared Playground plumbing used by both the page route and the streaming resource route:
- * the tenancy-guarded list of live deployments to talk to. Keeping this in one place means
- * the stream route enforces the exact same "live + belongs to this agent" guard the page has.
+ * Shared chat plumbing used by the Chat (FOH) page and its stream/stop routes, and by team
+ * delegation: the tenancy-guarded list of live deployments to talk to. Keeping this in one place
+ * means every route enforces the exact same "live + belongs to this agent" guard.
  */
 import { listDeployments } from "~/deploy/controller.server";
 import { refreshLiveDeploymentsForEnvironment } from "~/deploy/wake.server";

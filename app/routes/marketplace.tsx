@@ -25,6 +25,7 @@ import { useState } from "react";
 import { Link, type LoaderFunctionArgs } from "react-router";
 
 import { AppShell, PageHeader } from "~/components/shell";
+import { DISPLAY_ORDER } from "~/components/marketplace-type-badge";
 import {
   Card,
   CardDescription,
@@ -59,21 +60,6 @@ interface TypeMeta {
   accent: string;
   dot: string;
 }
-/**
- * Presentation order for the filter tabs and grouped "All" sections — a product ordering (most
- * recruited first), distinct from `TEMPLATE_TYPES` (which is the manifest/registry order). Any
- * type absent here would just be dropped from the UI, so it lists all of them.
- */
-const DISPLAY_ORDER: TemplateType[] = [
-  "agent",
-  "bundle",
-  "skill",
-  "channel",
-  "tool",
-  "subagent",
-  "connection",
-];
-
 const TYPE_META: Record<TemplateType, TypeMeta> = {
   agent: {
     label: "Agent",

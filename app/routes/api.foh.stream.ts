@@ -1,7 +1,7 @@
 import { modelSelectionFailure } from "~/models/provider-reference";
 /**
- * FOH streaming turn (resource route, action only) — the front-of-house sibling of the
- * playground stream route (D20 copy, not a shared refactor). Differences from the playground:
+ * FOH streaming turn (resource route, action only). It began as a copy of the since-removed
+ * Back-of-House Playground stream route (D20 copy, not a shared refactor). Differences from it:
  * the guard is FOH scope (`requireFohProject`, never the BOH-gated `requireProject`), the
  * agent travels as `agentId` (D14 URLs are id-based), a scaled-to-zero agent is WOKEN instead
  * of rejected (§6: opening a session with a stopped agent wakes it), and the supersede rule

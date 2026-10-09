@@ -1,6 +1,6 @@
 /**
- * Per-conversation model directive — the transport between the Playground's model selector and
- * a deployed agent's dynamic-model resolver.
+ * Per-conversation model directive — the transport between a conversation's model selection
+ * (the `modelId`/`effort` a chat send carries) and a deployed agent's dynamic-model resolver.
  *
  * Eve's session API has no per-turn model field, so the selection travels as one
  * machine-readable HTML-comment line prepended to the SENT message (via `messagePrefix` in

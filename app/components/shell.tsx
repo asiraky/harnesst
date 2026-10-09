@@ -396,7 +396,6 @@ const TABS: Record<NavLevel, { path: string; label: string }[]> = {
   single: [
     { path: "", label: "Overview" },
     { path: "/deployment", label: "Deployment" },
-    { path: "/playground", label: "Playground" },
     { path: "/runs", label: "Runs" },
     { path: "/artifacts", label: "Artifacts" },
     { path: "/assistant", label: "Assistant" },
@@ -418,7 +417,6 @@ const TABS: Record<NavLevel, { path: string; label: string }[]> = {
   member: [
     { path: "", label: "Overview" },
     { path: "/deployment", label: "Deployment" },
-    { path: "/playground", label: "Playground" },
     { path: "/runs", label: "Runs" },
     { path: "/settings", label: "Settings" },
   ],

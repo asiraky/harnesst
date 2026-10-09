@@ -1766,10 +1766,11 @@ export const artifacts = pgTable(
     /** Optional agent-supplied caption for the card. */
     title: text("title"),
     /**
-     * `image` (#290), `document`, or `html` (#291). Images and documents are sniffed files served
-     * by the cookie-authenticated artifact route; `html` is a page BUNDLE whose files live in
-     * `artifact_files` and are only ever served through the sandboxed preview route. Defaulted so
-     * every row that predates bundles reads correctly without a backfill.
+     * `image` (#290), `document`, `html` (#291) or `file`. Images and documents are sniffed files,
+     * a `file` is any single file typed by its extension; all three are served by the
+     * cookie-authenticated artifact route under `artifactServePolicy`. `html` is a page BUNDLE whose
+     * files live in `artifact_files` and are only ever served through the sandboxed preview and
+     * share routes. Defaulted so every row that predates bundles reads correctly without a backfill.
      */
     kind: text("kind").notNull().default("image"),
     /** Bundle only: the member the preview opens at, relative to the bundle root (`index.html`). */

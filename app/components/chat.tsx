@@ -1,5 +1,5 @@
 /**
- * Shared chat surface pieces (assistant + playground): a transcript that owns its scroll
+ * Shared chat surface pieces (assistant + Front of House chat): a transcript that owns its scroll
  * region and keeps itself pinned to the newest message (unless the user scrolls up to
  * read), user/assistant bubbles, a typing indicator for an in-flight turn, a collapsible
  * steps card for agent tool activity, and a composer that submits on Enter (Shift+Enter
@@ -27,7 +27,6 @@ import {
   CircleHelp,
   CornerDownLeft,
   Copy,
-  FileCode2,
   FileText,
   Globe,
   Image as ImageIcon,
@@ -66,6 +65,9 @@ import { useCopy } from "./chat/clipboard";
 import { CodeBlock, languageFromClassName } from "./chat/code-block";
 import { formatBytes, loadIntoComposer } from "./chat/composer";
 import { LightboxHost, openLightbox } from "./chat/lightbox";
+import { artifactBadge } from "./artifacts/artifact-type";
+import { SharePopover } from "./artifacts/share-popover";
+import { TypeBadge } from "./artifacts/type-badge";
 import { useAutoScroll } from "./chat/use-auto-scroll";
 
 export function ChatTranscript({
@@ -868,7 +870,7 @@ const ALERT_STYLES: Record<
  * Pending agent input requests (ask_question / tool approvals), rendered inline at the end
  * of the turn so a question never gets lost after a reply that trails off with "one decision
  * for you:". Rendered unboxed (a labelled section, not a nested card) so it sits cleanly
- * whether the surface wraps it in a chat bubble (playground) or an open turn column
+ * whether the surface wraps it in a chat bubble (Front of House) or an open turn column
  * (assistant), instead of stacking a box inside a bubble.
  *
  * The shape of the ask drives the affordance:
@@ -1231,121 +1233,173 @@ function OptionFields({ fields }: { fields: ChatInputOptionField[] }) {
 }
 
 /**
- * A published artifact (#290, #291) as a card under the turn that produced it, with a quiet caption
- * line carrying the agent's title (or the file name) and the size.
+ * A published artifact (#290, #291) as a card under the turn that produced it.
  *
- * An IMAGE renders itself. This is the ONE place harnesst loads an image in a transcript, and it is
- * safe for exactly one reason: `artifact.url` is minted by harnesst from a row id, so the browser
- * only ever fetches first-party bytes harnesst already copied and sniffed. `MarkdownImage` still
- * refuses every `<img>` the agent writes in prose — an agent-supplied src is a tracking pixel or a
- * browser-side GET against any host it can reach, and nothing here relaxes that.
+ * An IMAGE renders itself, with the lightbox as its primary action. This is the ONE place harnesst
+ * loads an image in a transcript, and it is safe for exactly one reason: `artifact.url` is minted by
+ * harnesst from a row id, so the browser only ever fetches first-party bytes harnesst already
+ * copied and sniffed. `MarkdownImage` still refuses every `<img>` the agent writes in prose — an
+ * agent-supplied src is a tracking pixel or a browser-side GET against any host it can reach, and
+ * nothing here relaxes that.
  *
- * An HTML page does NOT render itself: it has no URL in transcript data at all (a bundle is reached
- * only through a token the app mints on demand), so the card is a button that asks the page to open
- * the preview panel. `onOpen` absent means no panel is available on this surface — the playground
- * reuses these pieces — and the card then simply says what was published.
+ * Everything else — a page, a PDF, markdown, a table, media, an unknown file — is a tile (type
+ * badge, title, size, version) whose click asks the page to open the artifact panel, which picks
+ * the viewer from `artifact.viewer`. A page has no URL in transcript data at all (a bundle is
+ * reached only through a token the app mints on demand), so it can only open through the panel or
+ * its public share link.
+ *
+ * `onOpen` absent means this surface has no panel. The tile then opens the bytes in a new tab
+ * instead (`url`, or the share link for a page) rather than sitting there disabled; with neither it
+ * is just a picture of what was published.
+ *
+ * With a public link (`shareUrl`), the card also carries the panel's Share popover. It sits BESIDE
+ * the card's open action, never inside it — a button inside a button is invalid markup and would
+ * open the panel on every share click — and stops its clicks (the popover's portalled ones
+ * included, which bubble through the React tree) at its own wrapper.
  */
 export function ArtifactCard({
   artifact,
   onOpen,
 }: {
   artifact: ChatArtifact;
-  /** Opens the sandboxed preview panel. Only meaningful for `kind: "html"`. */
+  /** Opens the artifact panel on this artifact (any kind). */
   onOpen?: (artifact: ChatArtifact) => void;
 }) {
   const label = artifact.title?.trim() || artifact.name;
-  const caption = (
-    <figcaption className="flex items-center gap-2 border-t border-border/60 px-3 py-2 font-mono text-[11px] text-muted-foreground/70">
-      {artifact.kind === "html" ? (
-        <FileCode2 className="size-3.5 shrink-0" aria-hidden />
-      ) : artifact.kind === "document" ? (
-        <FileText className="size-3.5 shrink-0" aria-hidden />
-      ) : (
-        <ImageIcon className="size-3.5 shrink-0" aria-hidden />
-      )}
-      <span className="min-w-0 flex-1 truncate">{label}</span>
-      {/* The whole "it was republished" signal (#292): the card updated in place, so a version
-          badge is all the transcript needs to say — no second card, no new event. */}
-      {artifact.version > 1 && (
-        <span
-          className="shrink-0 rounded bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground"
-          title={`Updated — version ${artifact.version}`}
-        >
-          v{artifact.version}
-        </span>
-      )}
-      <span className="shrink-0">{formatBytes(artifact.byteSize)}</span>
-    </figcaption>
-  );
+  // The whole "it was republished" signal (#292): the card updated in place, so a version badge is
+  // all the transcript needs to say — no second card, no new event.
+  const versionBadge =
+    artifact.version > 1 ? (
+      <span
+        className="shrink-0 rounded bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground"
+        title={`Updated — version ${artifact.version}`}
+      >
+        v{artifact.version}
+      </span>
+    ) : null;
 
-  if (artifact.kind === "html") {
+  const share = (className: string) =>
+    artifact.shareUrl ? (
+      <span
+        className={cn("shrink-0", className)}
+        onClick={(event) => event.stopPropagation()}
+      >
+        <SharePopover
+          shareUrl={artifact.shareUrl}
+          title={label}
+          isPage={artifact.kind === "html"}
+        />
+      </span>
+    ) : null;
+
+  if (artifact.kind === "image" && artifact.url) {
+    const src = artifact.url;
     return (
       <figure className="w-fit max-w-[95%] sm:max-w-[85%] overflow-hidden rounded-xl border border-border bg-card shadow-sm">
         <button
           type="button"
-          onClick={onOpen ? () => onOpen(artifact) : undefined}
-          disabled={!onOpen}
-          className="flex w-full items-center gap-3 px-4 py-3 text-left enabled:hover:bg-muted/50 disabled:cursor-default"
+          className="block cursor-zoom-in"
+          onClick={() => openLightbox([{ src, alt: label }])}
+          aria-label={`View ${label}`}
         >
-          <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
-            <FileCode2 className="size-4.5" aria-hidden />
-          </span>
-          <span className="min-w-0">
-            <span className="block truncate text-sm font-medium">{label}</span>
-            <span className="block text-xs text-muted-foreground">
-              {onOpen ? "Open preview" : "Published page"}
-            </span>
-          </span>
+          <img
+            src={src}
+            alt={label}
+            // Bounded height so a tall screenshot doesn't push the rest of the transcript out of
+            // view; the transcript follows the bottom as images load.
+            className="block max-h-96 max-w-full object-contain"
+          />
         </button>
-        {caption}
+        <figcaption className="flex items-center gap-2 border-t border-border/60 px-3 py-2 font-mono text-[11px] text-muted-foreground/70">
+          <ImageIcon className="size-3.5 shrink-0" aria-hidden />
+          <span className="min-w-0 flex-1 truncate">{label}</span>
+          {versionBadge}
+          <span className="shrink-0">{formatBytes(artifact.byteSize)}</span>
+          {onOpen && (
+            <button
+              type="button"
+              onClick={() => onOpen(artifact)}
+              className="-my-1 shrink-0 rounded-md px-1.5 py-1 font-sans font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+              aria-label={`Open ${label} in the panel`}
+            >
+              Open
+            </button>
+          )}
+          {share("-my-1.5 font-sans")}
+        </figcaption>
       </figure>
     );
   }
 
-  if (artifact.kind === "document") {
-    return (
-      <figure className="w-fit max-w-[95%] sm:max-w-[85%] overflow-hidden rounded-xl border border-border bg-card shadow-sm">
-        <a
-          href={artifact.url ?? undefined}
-          target="_blank"
-          rel="noreferrer"
-          className="flex w-full items-center gap-3 px-4 py-3 text-left hover:bg-muted/50"
+  const href = artifact.url ?? artifact.shareUrl;
+  const body = (
+    <>
+      <TypeBadge badge={artifactBadge(artifact)} />
+      <span className="flex min-w-0 flex-1 flex-col gap-0.5">
+        <span
+          className="line-clamp-2 text-sm leading-snug font-medium break-words text-foreground"
+          title={artifact.name}
         >
-          <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
-            <FileText className="size-4.5" aria-hidden />
-          </span>
-          <span className="min-w-0">
-            <span className="block truncate text-sm font-medium">{label}</span>
-            <span className="block text-xs text-muted-foreground">
-              Open document
-            </span>
-          </span>
-        </a>
-        {caption}
-      </figure>
-    );
-  }
+          {label}
+        </span>
+        <span className="flex min-w-0 items-center gap-1.5 text-[11px] text-muted-foreground">
+          {label !== artifact.name && (
+            <span className="min-w-0 truncate font-mono">{artifact.name}</span>
+          )}
+          <span className="shrink-0">{formatBytes(artifact.byteSize)}</span>
+          {versionBadge}
+        </span>
+      </span>
+      {(onOpen || href) && (
+        <span className="shrink-0 rounded-md border border-border px-2.5 py-1 text-xs font-medium text-foreground transition-colors group-hover/tile:bg-accent">
+          Open
+        </span>
+      )}
+    </>
+  );
+  // The card is a box holding its open action (button, link, or nothing) and, beside it, Share.
+  const shape =
+    "flex w-full max-w-[95%] items-center rounded-xl border border-border bg-card shadow-sm transition-colors sm:max-w-sm";
+  const action =
+    "group/tile flex min-w-0 flex-1 items-center gap-3 rounded-xl p-2.5 text-left";
+  const interactive =
+    "cursor-pointer outline-none focus-visible:ring-2 focus-visible:ring-ring";
+  const hover = "has-[[data-card-action]:hover]:bg-muted/50";
 
-  return (
-    <figure className="w-fit max-w-[95%] sm:max-w-[85%] overflow-hidden rounded-xl border border-border bg-card shadow-sm">
+  let main: React.ReactNode;
+  if (onOpen) {
+    main = (
       <button
         type="button"
-        className="block cursor-zoom-in"
-        onClick={() =>
-          artifact.url && openLightbox([{ src: artifact.url, alt: label }])
-        }
-        aria-label={`View ${label}`}
+        data-card-action
+        onClick={() => onOpen(artifact)}
+        className={cn(action, interactive)}
+        aria-label={`Open ${label}`}
       >
-        <img
-          src={artifact.url ?? undefined}
-          alt={label}
-          // Bounded height so a tall screenshot doesn't push the rest of the transcript out of
-          // view; the transcript follows the bottom as images load.
-          className="block max-h-96 max-w-full object-contain"
-        />
+        {body}
       </button>
-      {caption}
-    </figure>
+    );
+  } else if (href) {
+    main = (
+      <a
+        href={href}
+        target="_blank"
+        rel="noopener noreferrer"
+        data-card-action
+        className={cn(action, interactive)}
+        aria-label={`Open ${label} in a new tab`}
+      >
+        {body}
+      </a>
+    );
+  } else {
+    main = <div className={action}>{body}</div>;
+  }
+  return (
+    <div className={cn(shape, (onOpen || href) && hover)}>
+      {main}
+      {share("pr-2")}
+    </div>
   );
 }
 

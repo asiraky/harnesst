@@ -358,8 +358,8 @@ sudo ss -ltnp | grep ':5442'
 ```
 
 Port `5442` should appear only on `127.0.0.1` and the Docker bridge address (normally
-`172.17.0.1`), never `0.0.0.0` or `[::]`. Finally, use harnesst to ship an agent and talk to it in the
-Playground. That verifies the host-networked control plane can still reach loopback agent instances
+`172.17.0.1`), never `0.0.0.0` or `[::]`. Finally, use harnesst to ship an agent and talk to it in
+Chat. That verifies the host-networked control plane can still reach loopback agent instances
 and nginx can still reach the splitter.
 
 Swarm automatically attempts the stack's configured rollback when a new harnesst task fails its health

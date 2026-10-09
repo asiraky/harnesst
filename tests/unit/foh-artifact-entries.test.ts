@@ -94,6 +94,35 @@ describe("artifactEntry versions", () => {
       url: "/api/foh/proj_1/artifact/art_1/ver_pdf",
     });
   });
+
+  it("names the viewer and share link a card opens with", () => {
+    const notes = artifactEntry(
+      row({
+        name: "notes.md",
+        kind: "file",
+        contentType: "text/markdown",
+        shareToken: "tok_1",
+      }),
+    );
+    expect(notes.artifact).toMatchObject({
+      kind: "file",
+      viewer: "markdown",
+      latestVersionId: "ver_1",
+      shareUrl: "/a/tok_1",
+    });
+
+    // A page opens as a page whatever its directory is called; a revoked share has no link.
+    const page = artifactEntry(
+      row({ name: "site", kind: "html", contentType: "text/html" }),
+    );
+    expect(page.artifact).toMatchObject({ viewer: "html", shareUrl: null });
+
+    // A kind this client does not know is offered as a file, not dropped or misread as an image.
+    const future = artifactEntry(
+      row({ name: "x.bin", kind: "dataset", contentType: "application/x" }),
+    );
+    expect(future.artifact).toMatchObject({ kind: "file", viewer: "file" });
+  });
 });
 
 describe("mergeArtifactEntries with versions", () => {

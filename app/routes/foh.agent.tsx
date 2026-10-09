@@ -4,7 +4,7 @@
  * shows the no-session empty state; /s/:sessionId shows the conversation).
  */
 import { ChevronLeft, Loader2, Plus, Settings2 } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import {
   data,
@@ -20,6 +20,7 @@ import {
 } from "react-router";
 
 import { getSessionAuth, sessionLoader } from "~/auth/session.server";
+import type { ArtifactPanelOutletContext } from "~/components/artifacts/panel-outlet";
 import { FohPaneError } from "~/components/foh/pane-error";
 import { SessionList } from "~/components/foh/session-list";
 import { Button } from "~/components/ui/button";
@@ -184,6 +185,14 @@ export default function FohAgent({ loaderData }: Route.ComponentProps) {
   // list until a session is open OR the pending pane has taken over. Keying this off
   // `openSessionId` alone would leave the full-width list covering a slow load's spinner.
   const detailVisible = openSessionId !== null || showPending;
+  // While a conversation has its artifact panel docked (xl and up), the session list folds away so
+  // the conversation keeps a readable column beside the panel. Below xl the panel is a sheet over
+  // everything, so the list stays.
+  const [artifactPanelOpen, setArtifactPanelOpen] = useState(false);
+  const outletContext = useMemo<ArtifactPanelOutletContext>(
+    () => ({ setArtifactPanelOpen }),
+    [],
+  );
 
   return (
     <>
@@ -191,6 +200,7 @@ export default function FohAgent({ loaderData }: Route.ComponentProps) {
         className={cn(
           "shrink-0 flex-col border-r",
           detailVisible ? "hidden w-72 md:flex" : "flex w-full md:w-72",
+          artifactPanelOpen && "xl:hidden",
         )}
       >
         <div className="flex h-14 items-center gap-2 border-b px-3">
@@ -268,7 +278,7 @@ export default function FohAgent({ loaderData }: Route.ComponentProps) {
         )}
       </section>
       <SessionPane pending={showPending} basePath={basePath}>
-        <Outlet />
+        <Outlet context={outletContext} />
       </SessionPane>
     </>
   );
