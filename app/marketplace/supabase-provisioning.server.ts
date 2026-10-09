@@ -1,3 +1,7 @@
+import { createHash } from "node:crypto";
+import { readdir, readFile } from "node:fs/promises";
+import { resolve } from "node:path";
+
 /** Fixed-origin API client: operator credentials never go to user-supplied hosts or agents. */
 export class SupabaseManagement {
   constructor(
@@ -86,6 +90,24 @@ insert into harnesst_install.migrations values(${sqlLiteral(version)},${sqlLiter
 end if;
 end $install$;
 commit;`;
+}
+const HOSTED_MIGRATIONS = "catalog/ledger/hosted/supabase/migrations";
+/**
+ * The hosted ledger migrations in apply order, each wrapped in `migrationQuery` for `owner`.
+ * `from` skips versions sorting before it. The directory is the one list: prepare-hosted.mjs
+ * writes it, so a new migration needs no edit here.
+ */
+export async function hostedMigrationQueries(owner: string, from = "") {
+  const files = (await readdir(HOSTED_MIGRATIONS))
+    .filter((file) => file.endsWith(".sql") && file >= from)
+    .sort();
+  return Promise.all(
+    files.map(async (file) => {
+      const source = await readFile(resolve(HOSTED_MIGRATIONS, file), "utf8");
+      const hash = createHash("sha256").update(source).digest("hex");
+      return { file, query: migrationQuery(owner, file, hash, source) };
+    }),
+  );
 }
 export type ActorCredentials = { actorKey: string; wakeToken: string };
 /** Persist keys in encrypted control-plane state BEFORE issuing this query. Never rotate on retry. */

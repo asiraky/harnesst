@@ -78,7 +78,7 @@
       "name": "Ledger",
       "version": "0.2.0",
       "description": "A shared work ledger with authenticated wakes, evidence and human approval gates.",
-      "hash": "c179a9fd4dd349bcfbaa123527d3bcc003d9fe12"
+      "hash": "275dd70f584750c399d0eec7273f8674b12b0040"
     },
     {
       "id": "vercel-bundle",
@@ -110,7 +110,7 @@
       "name": "Ledger wake",
       "version": "0.2.0",
       "description": "Authenticated ledger delivery: one session per issue lease, heartbeated while it works, released at turn end.",
-      "hash": "ce7d6074924d6f4de011a01385705f43ded37973"
+      "hash": "e1fbe1344257daa9c0e4ae696f5e130f49ba41a6"
     },
     {
       "id": "agentmail",

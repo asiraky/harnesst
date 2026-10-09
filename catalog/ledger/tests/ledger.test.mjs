@@ -437,7 +437,10 @@ test("notifications can be acknowledged; ordinary work cannot be silently comple
   [o] =
     await sql`select * from ledger.outbox where item_id=${i.id} and status='pending'`;
   await sql`update ledger.leases set expires_at=now()-interval '1 second' where scope_id=${i.id} and actor_id=${actors.intake.actor_id}`;
-  await rpc("claim", actors.intake.wake_token, { outbox_id: o.id });
+  await rpc("claim", actors.intake.wake_token, {
+    outbox_id: o.id,
+    session_id: "test-intake",
+  });
   await call("intake", "complete_wake", {
     outbox_id: o.id,
     note: "Told requester",
@@ -816,6 +819,8 @@ test("an expired wake session continues until taken over, then is fenced out of 
   assert.ok(takeover.item);
   await wake("implementer", "renew_lease", { lease_token: takeover.lease_token, session_id: "wake-2" });
   await assert.rejects(as("wake-1", "implementer", "set_head", item, head("a")), /LEASE_LOST/);
+  await assert.rejects(call("implementer", "complete_wake", { outbox_id: second.id, session_id: "wake-1" }), /LEASE_LOST/);
+  assert.deepEqual(await call("implementer", "complete_wake", { outbox_id: second.id, session_id: "wake-2" }), { ok: true });
   assert.deepEqual(await wake("implementer", "renew_lease", { lease_token: claim.lease_token, session_id: "wake-1" }), { renewed: false });
   await wake("implementer", "release_lease", { lease_token: takeover.lease_token });
   await assert.rejects(as("wake-1", "implementer", "set_head", await get(i), head("b")), /LEASE_LOST/);

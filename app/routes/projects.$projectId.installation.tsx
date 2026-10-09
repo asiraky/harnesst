@@ -43,8 +43,10 @@ export const loader = (args: LoaderFunctionArgs) =>
     const project = await requireProject(auth, args.params.projectId, {
       request: args.request,
     });
-    const row = await getProvisioning(project.id);
-    const saved = await savedLedgerInputs(project.id);
+    const [row, saved] = await Promise.all([
+      getProvisioning(project.id),
+      savedLedgerInputs(project.id),
+    ]);
     const state = row ? privateState(row) : {};
     let projects: { id: string; name: string }[] = [];
     let connectionError: string | null = null;

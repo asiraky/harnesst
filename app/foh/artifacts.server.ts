@@ -271,6 +271,9 @@ function kindPinned(name: string, kind: string, was?: string): string {
 }
 
 /** How the agent is told one name has been refined as many times as it may be. */
+const DAILY_LIMIT =
+  "This repository has hit its daily limit for published files. Describe the file instead; publishing works again tomorrow.";
+
 function versionsExhausted(name: string): string {
   return `${name} has been published ${MAX_ARTIFACT_VERSIONS_TOTAL} times in this conversation, which is the limit for one file. Publish the next revision under a different name.`;
 }
@@ -431,27 +434,17 @@ export async function publishArtifact(
     // it against the publish that raced this read.
     return deny(kindPinned(source.name, kind, existing.kind));
   }
-  // At the version ceiling one publish is still legitimate: a REDELIVERY of the bytes already on
-  // top, because the tool's POST is best-effort and retried and denying it would report a failure
-  // for a publish that landed. Which one it is cannot be known before the copy, so the refusal
-  // moves down to where the bytes have a sha — still before any of them are written, so a runaway
-  // refine loop at the cap costs a copy and nothing on the disk.
-  const capSha =
-    existing && existing.versionNumber >= MAX_ARTIFACT_VERSIONS_TOTAL
-      ? existing.sha256
-      : null;
-
   const usage = await deps.usage({
     projectId: project.id,
     agentId: agent.id,
     sessionId: destination.sessionId,
     since: new Date(deps.now().getTime() - ARTIFACT_BUDGET_WINDOW_MS),
   });
-  // Only a NEW card is held to the conversation ceiling: that budget bounds how much a transcript
-  // holds, and a republish adds no card. Its bytes are still charged to the daily repo ceiling
-  // below, which is the one that bounds the disk. Session-less, the same ceiling re-bases onto the
-  // agent's unattached pile (#370) — a background loop minting fresh names is exactly the runaway
-  // the conversation count was bounding.
+  // Only a NEW name is held to the conversation ceiling: that budget bounds how many files a
+  // transcript holds, and a republish of one adds none. Its bytes are still charged to the daily repo
+  // ceiling below, which is the one that bounds the disk. Session-less, the same ceiling re-bases
+  // onto the agent's unattached pile (#370) — a background loop minting fresh names is exactly the
+  // runaway the conversation count was bounding.
   if (!existing && usage.sessionCount >= MAX_ARTIFACTS_PER_SESSION) {
     return deny(
       destination.sessionId
@@ -459,14 +452,21 @@ export async function publishArtifact(
         : `This agent already holds ${MAX_ARTIFACTS_PER_SESSION} files published outside conversations, which is the limit. Republish an existing name to update it instead of minting new ones.`,
     );
   }
-  if (
+  const overDailyLimit =
     usage.projectCount >= MAX_ARTIFACTS_PER_PROJECT_WINDOW ||
-    usage.projectBytes >= MAX_ARTIFACT_BYTES_PER_PROJECT_WINDOW
-  ) {
-    return deny(
-      "This repository has hit its daily limit for published files. Describe the file instead; publishing works again tomorrow.",
-    );
-  }
+    usage.projectBytes >= MAX_ARTIFACT_BYTES_PER_PROJECT_WINDOW;
+  if (overDailyLimit && !existing) return deny(DAILY_LIMIT);
+  // At the version ceiling or the daily limit one publish of an existing name is still legitimate:
+  // the bytes already on top. It is a retried delivery (the tool's POST is best-effort), or the
+  // user asking to see the file again, which shows its card and writes nothing. Which one it is
+  // cannot be known before the copy, so the refusal moves down to where the bytes have a sha —
+  // still before any are written, so a runaway refine loop at a limit costs a copy and no disk.
+  const unchangedOnly =
+    existing && existing.versionNumber >= MAX_ARTIFACT_VERSIONS_TOTAL
+      ? { sha256: existing.sha256, refusal: versionsExhausted(source.name) }
+      : existing && overDailyLimit
+        ? { sha256: existing.sha256, refusal: DAILY_LIMIT }
+        : null;
 
   // The position the conversation had reached WHEN the publish landed, so the card renders inside
   // the turn that produced it rather than at the end of the transcript forever after. With the
@@ -496,7 +496,7 @@ export async function publishArtifact(
         deployment,
         source,
         common,
-        capSha,
+        unchangedOnly,
         sandboxSessionId: destination.sandboxSessionId,
         worldKey: destination.worldKey,
       },
@@ -508,7 +508,7 @@ export async function publishArtifact(
       deployment,
       source,
       common,
-      capSha,
+      unchangedOnly,
       sandboxSessionId: destination.sandboxSessionId,
       worldKey: destination.worldKey,
     },
@@ -551,11 +551,11 @@ interface PublishHalfInput {
   source: { path: string; name: string };
   common: ArtifactRowCommon;
   /**
-   * Set only when this name is already at the version ceiling: the sha of the version on top, the
-   * one content identity still allowed through (a retried delivery of it). Anything else is refused
-   * once its own sha is known — before its bytes are written.
+   * Set only when this name is at the version ceiling or the repo is at its daily limit: the sha of
+   * the version on top, the one content identity still allowed through, and the refusal for
+   * anything else, issued once its own sha is known — before its bytes are written.
    */
-  capSha: string | null;
+  unchangedOnly: { sha256: string; refusal: string } | null;
 }
 
 const BUSY =
@@ -589,7 +589,7 @@ async function publishFile(
     deployment,
     source,
     common,
-    capSha,
+    unchangedOnly,
     worldKey,
     sandboxSessionId,
   }: PublishHalfInput,
@@ -634,9 +634,10 @@ async function publishFile(
   }
 
   const sha256 = createHash("sha256").update(copied.bytes).digest("hex");
-  // At the ceiling only the bytes already on top may come through — see `capSha`. Checked before the
+  // At a limit only the bytes already on top may come through — see `unchangedOnly`. Checked before the
   // write so a refused publish leaves nothing on the disk.
-  if (capSha && capSha !== sha256) return deny(versionsExhausted(source.name));
+  if (unchangedOnly && unchangedOnly.sha256 !== sha256)
+    return deny(unchangedOnly.refusal);
   const storagePath = await deps.writeBytes(sha256, copied.bytes);
 
   let recorded: RecordArtifactResult;
@@ -689,7 +690,7 @@ async function publishBundle(
     deployment,
     source,
     common,
-    capSha,
+    unchangedOnly,
     worldKey,
     sandboxSessionId,
   }: PublishHalfInput,
@@ -750,7 +751,8 @@ async function publishBundle(
     sha256: createHash("sha256").update(member.bytes).digest("hex"),
   }));
   const sha256 = bundleSha256(hashed);
-  if (capSha && capSha !== sha256) return deny(versionsExhausted(source.name));
+  if (unchangedOnly && unchangedOnly.sha256 !== sha256)
+    return deny(unchangedOnly.refusal);
 
   const files: ArtifactFileInput[] = [];
   for (const member of hashed) {

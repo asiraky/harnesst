@@ -1,11 +1,10 @@
 import { timingSafeEqual } from "node:crypto";
 import { defineChannel, POST } from "eve/channels";
-import { ledgerRpc } from "../lib/ledger.js";
+import { ledgerRpc, type LedgerCaller } from "../lib/ledger.js";
 import { createLeaseKeeper } from "../lib/ledger-lease.js";
 // claimToken is the issue lease this session holds; the ledger refuses writes from any other session.
 type LedgerState = { itemId: string; outboxId: string; claimToken: string };
 type Channel = { state: LedgerState };
-type Ctx = { session?: { id?: string } } | undefined;
 const leases = createLeaseKeeper(ledgerRpc);
 const release = (_event: unknown, channel: Channel) =>
   leases.release(channel.state.claimToken);
@@ -14,7 +13,7 @@ export default defineChannel({
   state: { itemId: "", outboxId: "", claimToken: "" },
   events: {
     // Also restarts the heartbeat when eve resumes the run after a process restart.
-    "turn.started": (_event: unknown, channel: Channel, ctx: Ctx) =>
+    "turn.started": (_event: unknown, channel: Channel, ctx: LedgerCaller) =>
       leases.hold(channel.state.claimToken, ctx?.session?.id),
     "turn.completed": release,
     "turn.failed": release,

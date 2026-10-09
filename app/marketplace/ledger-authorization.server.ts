@@ -1,5 +1,5 @@
 /** Installation only. OAuth credentials and approval execution stay in Supabase. */
-import { randomBytes, createHash } from "node:crypto";
+import { randomBytes } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { eq } from "drizzle-orm";
 import { db } from "~/db/client.server";
@@ -8,7 +8,7 @@ import { encrypt, getProvisioning, privateState } from "./provisioning.server";
 import {
   SupabaseManagement,
   projectRef,
-  migrationQuery,
+  hostedMigrationQueries,
   sqlLiteral,
 } from "./supabase-provisioning.server";
 
@@ -40,28 +40,12 @@ export async function prepareLedgerAuthorization(projectId: string) {
   const state = privateState(row),
     ref = projectRef(row.projectRef!);
   const api = new SupabaseManagement(state.token!);
-  for (const file of [
-    "20260917000005_hosted_authorization.sql",
-    "20260917000006_oauth_recovery.sql",
-    "20260917000007_scoped_oauth_writes.sql",
-    "20260917000008_review_content.sql",
-    "20260917000009_tickets.sql",
-    "20260917000010_leases.sql",
-  ]) {
-    const source = await readFile(
-      `catalog/ledger/hosted/supabase/migrations/${file}`,
-      "utf8",
-    );
-    await api.query(
-      ref,
-      migrationQuery(
-        projectId,
-        file,
-        createHash("sha256").update(source).digest("hex"),
-        source,
-      ),
-    );
-  }
+  // 0005 onward: the authorization migrations, re-applied (idempotently) on every authorization.
+  for (const { query } of await hostedMigrationQueries(
+    projectId,
+    "20260917000005",
+  ))
+    await api.query(ref, query);
   await api.call(`projects/${ref}/secrets`, [
     { name: "LEDGER_SETUP_TOKEN", value: state.mayiSetupToken },
     { name: "LEDGER_DISPATCH_TOKEN", value: state.dispatchToken },

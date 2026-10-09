@@ -182,9 +182,9 @@ export function mergeArtifactEntries(
       })),
     };
   });
-  const ordered = rows
-    .filter((row) => !referenced.has(row.id))
-    .sort((a, b) => a.streamIndex - b.streamIndex || (a.id < b.id ? -1 : 1));
+  const ordered = [...rows].sort(
+    (a, b) => a.streamIndex - b.streamIndex || (a.id < b.id ? -1 : 1),
+  );
   if (ordered.length === 0) return resolvedEntries;
   const after = new Map<
     number,
@@ -195,20 +195,28 @@ export function mergeArtifactEntries(
     // One card per turn the name was published in. The earliest keeps the plain `artifact:<id>`
     // entry id the card has always had; a later turn's is suffixed with that turn's key so React
     // keys stay unique. Only when NO position resolves to a turn does the card trail the transcript.
+    // An image a choice shows has its first card inside that choice; a later republish still
+    // gets its own card.
+    const inChoice = referenced.has(row.id);
+    const positions = inChoice
+      ? (row.shownAt ?? [])
+      : [row.streamIndex, ...(row.shownAt ?? [])];
     const placed = new Set<number>();
-    for (const streamIndex of [row.streamIndex, ...(row.shownAt ?? [])]) {
+    for (const streamIndex of positions) {
       const turnKey = anchorFor(anchors, streamIndex);
       const index = turnKey ? lastEntryOfTurn(resolvedEntries, turnKey) : -1;
       if (index < 0 || placed.has(index)) continue;
       const base = artifactEntry(row);
       const entry =
-        placed.size === 0 ? base : { ...base, id: `${base.id}@${turnKey}` };
+        placed.size === 0 && !inChoice
+          ? base
+          : { ...base, id: `${base.id}@${turnKey}` };
       placed.add(index);
       const bucket = after.get(index);
       if (bucket) bucket.push({ streamIndex, entry });
       else after.set(index, [{ streamIndex, entry }]);
     }
-    if (placed.size === 0) trailing.push(artifactEntry(row));
+    if (placed.size === 0 && !inChoice) trailing.push(artifactEntry(row));
   }
   const merged: ChatEntry[] = [];
   resolvedEntries.forEach((entry, index) => {

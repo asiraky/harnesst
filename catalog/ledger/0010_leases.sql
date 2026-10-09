@@ -122,6 +122,21 @@ declare a actors; l leases; scopes uuid[]; tokens uuid[]; begin
   and item_id in (select id from work_items where coalesce(parent_id,id)=any(scopes));
  return '{"released":true}';
 end $$;
+-- Completing a wake is a write on its issue, so it needs the lease too: a session that was taken
+-- over cannot mark its successor's wake done.
+create or replace function public.ledger_complete_wake(p_key text,p_args jsonb) returns jsonb language plpgsql security definer set search_path=pg_catalog,ledger as $$
+declare a actors:=ledger.actor(p_key); o outbox; i work_items; begin
+ select w.* into i from work_items w join outbox b on b.item_id=w.id where b.id=(p_args->>'outbox_id')::uuid and b.actor_id=a.id for update of w;
+ if i.id is null then raise exception 'wake not found'; end if;
+ select * into o from outbox where id=(p_args->>'outbox_id')::uuid for update;
+ if o.status='done' then return '{"ok":true}'; end if;
+ perform ledger.require_lease(ledger.scope(i),a,p_args);
+ if o.status<>'claimed' or o.lease_until<=now() then raise exception 'active claim required'; end if;
+ if not(o.kind='escalation' or i.closed_at is not null or i.blocked_on is not null or ledger.stage(i) ? 'gate') then raise exception 'work wakes complete when the stage changes'; end if;
+ perform ledger.event(i,a.id,'notification_completed',jsonb_build_object('outbox_id',o.id,'note',p_args->>'note'));
+ update outbox set status='done',done_at=now() where id=o.id;
+ return '{"ok":true}';
+end $$;
 revoke all on table ledger.leases,ledger.lease_fenced from public;
 revoke all on function ledger.lease_ttl(),ledger.scope(ledger.work_items),ledger.lock_lease(uuid,uuid),ledger.grant_lease(ledger.leases,text,uuid),ledger.require_lease(uuid,ledger.actors,jsonb),ledger.call(text,text,jsonb),ledger.call_unleased(text,text,jsonb) from public;
 revoke all on function public.ledger_renew_lease(text,jsonb),public.ledger_release_lease(text,jsonb) from public;

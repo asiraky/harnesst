@@ -1116,6 +1116,38 @@ describe("publishArtifact budgets", () => {
       NOW.getTime() - ARTIFACT_BUDGET_WINDOW_MS,
     );
   });
+
+  it("still shows a file again at the daily limit, but refuses new bytes for it", async () => {
+    const deploymentId = await seedDeployment();
+    let bytes = PNG;
+    const deps = makeDeps({ copy: async () => ({ ok: true, bytes }) });
+
+    await publishArtifact({ deploymentId, path: "artifacts/chart.png" }, deps);
+    deps.usage = async () => ({
+      sessionCount: 1,
+      projectCount: MAX_ARTIFACTS_PER_PROJECT_WINDOW,
+      projectBytes: 0,
+    });
+    // "Show me it again" is answered by republishing; it writes nothing, so the limit on what the
+    // repository stores must not take away the user's way back to the card.
+    const again = await publishArtifact(
+      { deploymentId, path: "artifacts/chart.png" },
+      deps,
+    );
+    expect(again).toMatchObject({ ok: true, updated: false, card: true });
+
+    bytes = Buffer.from([...PNG, 0x05]);
+    const changed = await publishArtifact(
+      { deploymentId, path: "artifacts/chart.png" },
+      deps,
+    );
+    expect(changed.ok).toBe(false);
+    if (changed.ok) return;
+    expect(changed.error).toMatch(/daily limit/i);
+    // The refused bytes never reach the disk and add no version.
+    expect(deps.written.map((w) => w.byteSize)).not.toContain(PNG.length + 1);
+    expect(deps.versions).toHaveLength(1);
+  });
 });
 
 describe("withArtifactCopySlot", () => {

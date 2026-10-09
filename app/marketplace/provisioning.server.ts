@@ -1,9 +1,7 @@
 import { createHash, randomBytes } from "node:crypto";
-import { readFile } from "node:fs/promises";
-import { resolve } from "node:path";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { db } from "~/db/client.server";
-import { bundleProvisioning } from "~/db/schema";
+import { bundleProvisioning, jobs } from "~/db/schema";
 import { listAgentEnvironments, listAgents } from "~/db/queries.server";
 import { decodeKey, open, seal } from "~/seams/oss/secretbox";
 import { getRuntime } from "~/seams/index.server";
@@ -14,7 +12,7 @@ import { writePendingSecret } from "~/project/secrets.server";
 import {
   SupabaseManagement,
   actorsQuery,
-  migrationQuery,
+  hostedMigrationQueries,
   projectRef,
   validatePublishableKey,
   type ActorCredentials,
@@ -32,6 +30,11 @@ type PrivateState = {
   mayiComponentsReady?: boolean;
   dispatchToken?: string;
 };
+type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0];
+/** Serializes provisioning writes for one project for the rest of the transaction. */
+function lockProject(tx: Tx, projectId: string) {
+  return tx.execute(sql`select pg_advisory_xact_lock(hashtext(${projectId}))`);
+}
 export function encrypt(state: PrivateState) {
   return seal(
     decodeKey(process.env.HARNESST_SECRETS_KEY),
@@ -80,10 +83,7 @@ export async function connectSupabase(projectId: string, token: string) {
     throw new Error("Supabase returned an invalid project list.");
   await ensureProvisioning(projectId);
   await db.transaction(async (tx) => {
-    await tx.execute(
-      (await import("drizzle-orm"))
-        .sql`select pg_advisory_xact_lock(hashtext(${projectId}))`,
-    );
+    await lockProject(tx, projectId);
     const row = (
       await tx
         .select()
@@ -190,10 +190,7 @@ export async function startProvisioning(input: {
   );
   // Serialize submissions before enqueueing; the worker resumes persisted steps after a restart.
   await db.transaction(async (tx) => {
-    await tx.execute(
-      (await import("drizzle-orm"))
-        .sql`select pg_advisory_xact_lock(hashtext(${input.projectId}))`,
-    );
+    await lockProject(tx, input.projectId);
     const current = (
       await tx
         .select()
@@ -222,7 +219,7 @@ export async function startProvisioning(input: {
         updatedAt: new Date(),
       })
       .where(eq(bundleProvisioning.projectId, input.projectId));
-    await tx.insert((await import("~/db/schema")).jobs).values({
+    await tx.insert(jobs).values({
       kind: "provision_bundle",
       payload: { projectId: input.projectId },
       maxAttempts: 3,
@@ -264,33 +261,10 @@ export async function runLedgerProvisioning(projectId: string) {
   const ref = projectRef(row.projectRef);
   let step = "Install database";
   try {
-    for (const file of [
-      "20260917000001_ledger.sql",
-      "20260917000002_delivery.sql",
-      "20260917000003_workflow.sql",
-      "20260917000004_mayi_approvals.sql",
-      "20260917000005_hosted_authorization.sql",
-      "20260917000006_oauth_recovery.sql",
-      "20260917000007_scoped_oauth_writes.sql",
-      "20260917000008_review_content.sql",
-      "20260917000009_tickets.sql",
-      "20260917000010_leases.sql",
-    ]) {
+    for (const { file, query } of await hostedMigrationQueries(projectId)) {
       step = `Install database (${file.slice(0, 14)})`;
       await update(projectId, { step });
-      const source = await readFile(
-        resolve("catalog/ledger/hosted/supabase/migrations", file),
-        "utf8",
-      );
-      await api.query(
-        ref,
-        migrationQuery(
-          projectId,
-          file,
-          createHash("sha256").update(source).digest("hex"),
-          source,
-        ),
-      );
+      await api.query(ref, query);
     }
     step = "Create team identities";
     await update(projectId, { step });
@@ -379,7 +353,7 @@ export async function runLedgerProvisioning(projectId: string) {
           updatedAt: new Date(),
         })
         .where(eq(bundleProvisioning.projectId, projectId));
-      await tx.insert((await import("~/db/schema")).jobs).values({
+      await tx.insert(jobs).values({
         kind: "verify_bundle",
         payload: { projectId, attempt: 0 },
         runAt: new Date(Date.now() + 5000),

@@ -248,6 +248,47 @@ describe("mergeArtifactEntries with versions", () => {
     });
   });
 
+  it("gives a choice's image a card at a later turn that republished it", () => {
+    const entries: ChatEntry[] = [
+      entry("1:t1:user"),
+      {
+        ...entry("1:t1:assistant"),
+        inputRequests: [
+          {
+            requestId: "req_1",
+            prompt: "Choose a direction",
+            options: [
+              {
+                id: "assigned",
+                label: "Editorial",
+                media: { artifactName: "chart.png", artifactVersionId: "ver_1" },
+              },
+            ],
+          },
+        ],
+      },
+      entry("1:t2:user"),
+      entry("1:t2:assistant"),
+    ];
+
+    const merged = mergeArtifactEntries(
+      entries,
+      [row({ versionNumber: 2, latestVersionId: "ver_2", shownAt: [11] })],
+      ANCHORS,
+    );
+
+    expect(merged.map((e) => e.id)).toEqual([
+      "1:t1:user",
+      "1:t1:assistant",
+      "1:t2:user",
+      "1:t2:assistant",
+      "artifact:art_1@1:t2",
+    ]);
+    expect(merged[1].inputRequests?.[0].options?.[0].media?.artifact?.url).toBe(
+      "/api/foh/proj_1/artifact/art_1/ver_1",
+    );
+  });
+
   it("keeps two re-rolls pinned to the artifact versions each round offered", () => {
     const round = (id: string, artifactVersionId: string): ChatEntry => ({
       ...entry(id),

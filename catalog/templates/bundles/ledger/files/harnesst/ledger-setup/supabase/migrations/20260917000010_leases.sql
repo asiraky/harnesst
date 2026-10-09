@@ -2,8 +2,8 @@
 -- lease for the item's issue (a ticket shares its parent's lease). Writes carry the eve session id.
 -- A free lease is taken by the first writing session; a live one refuses every other session.
 -- The lease ends on facts: release at turn end, or expiry when nothing renews it (process gone).
--- After expiry the same session may continue until another session takes over; a session that was
--- taken over is fenced out of that issue for good. Human and system actors are not leased.
+-- After expiry the same session may continue until another session takes over; a wake session that
+-- was taken over is fenced out of that issue for good. Human and system actors are not leased.
 -- Apply together with ledger-tools 0.4.0 and ledger-wake 0.2.0: older tools send no session id.
 begin;
 create table if not exists ledger.leases (
@@ -28,10 +28,12 @@ declare l leases; begin
  insert into leases(scope_id,actor_id) values(scope,actor) on conflict do nothing;
  select * into l from leases where scope_id=scope and actor_id=actor for update; return l;
 end $$;
--- New holder, new token, fence+1. An unreleased previous holder is being taken over: fence it out.
+-- New holder, new token, fence+1. A wake session that never released is being taken over (crashed,
+-- or revived later by a restart): fence it out. A chat session that merely wrote is not fenced; it
+-- can write again whenever the issue is free.
 create or replace function ledger.grant_lease(l ledger.leases,session text,outbox uuid) returns ledger.leases language plpgsql set search_path=pg_catalog,ledger as $$
 begin
- if l.token is not null and l.session_id is not null and l.session_id is distinct from session then
+ if l.token is not null and l.outbox_id is not null and l.session_id is not null and l.session_id is distinct from session then
   insert into lease_fenced(scope_id,actor_id,session_id) values(l.scope_id,l.actor_id,l.session_id) on conflict do nothing;
  end if;
  update leases set fence=fence+1,token=gen_random_uuid(),session_id=session,outbox_id=outbox,expires_at=now()+ledger.lease_ttl(),acquired_at=now(),renewed_at=now()
@@ -119,6 +121,21 @@ declare a actors; l leases; scopes uuid[]; tokens uuid[]; begin
  update outbox set next_attempt_at=now() where actor_id=a.id and status='pending' and next_attempt_at>now()
   and item_id in (select id from work_items where coalesce(parent_id,id)=any(scopes));
  return '{"released":true}';
+end $$;
+-- Completing a wake is a write on its issue, so it needs the lease too: a session that was taken
+-- over cannot mark its successor's wake done.
+create or replace function public.ledger_complete_wake(p_key text,p_args jsonb) returns jsonb language plpgsql security definer set search_path=pg_catalog,ledger as $$
+declare a actors:=ledger.actor(p_key); o outbox; i work_items; begin
+ select w.* into i from work_items w join outbox b on b.item_id=w.id where b.id=(p_args->>'outbox_id')::uuid and b.actor_id=a.id for update of w;
+ if i.id is null then raise exception 'wake not found'; end if;
+ select * into o from outbox where id=(p_args->>'outbox_id')::uuid for update;
+ if o.status='done' then return '{"ok":true}'; end if;
+ perform ledger.require_lease(ledger.scope(i),a,p_args);
+ if o.status<>'claimed' or o.lease_until<=now() then raise exception 'active claim required'; end if;
+ if not(o.kind='escalation' or i.closed_at is not null or i.blocked_on is not null or ledger.stage(i) ? 'gate') then raise exception 'work wakes complete when the stage changes'; end if;
+ perform ledger.event(i,a.id,'notification_completed',jsonb_build_object('outbox_id',o.id,'note',p_args->>'note'));
+ update outbox set status='done',done_at=now() where id=o.id;
+ return '{"ok":true}';
 end $$;
 revoke all on table ledger.leases,ledger.lease_fenced from public;
 revoke all on function ledger.lease_ttl(),ledger.scope(ledger.work_items),ledger.lock_lease(uuid,uuid),ledger.grant_lease(ledger.leases,text,uuid),ledger.require_lease(uuid,ledger.actors,jsonb),ledger.call(text,text,jsonb),ledger.call_unleased(text,text,jsonb) from public;

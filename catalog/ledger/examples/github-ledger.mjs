@@ -63,6 +63,11 @@ export async function handleGitHubEvent(event, eventName, { rpc, gh, repo }) {
       }
     }
   }
+  // An approved issue ships from the default branch; deployment rejects any other merge.
+  function requireDefaultBase(pr) {
+    if (!pr.base?.ref || pr.base.ref !== pr.base.repo?.default_branch)
+      throw Error("Issue PR must target the default branch");
+  }
   async function checkRepo(item) {
     const project = await rpc("get_project", { project_id: item.project_id });
     if (!project || project.repo !== repo)
@@ -112,6 +117,7 @@ export async function handleGitHubEvent(event, eventName, { rpc, gh, repo }) {
         item.stage === "ready-to-merge" &&
         item.head_sha === pr.head.sha
       ) {
+        requireDefaultBase(pr);
         await mutate("transition", item, {
           to_stage: "merged",
           note: `GitHub confirmed PR ${pr.number} merged`,
@@ -160,6 +166,7 @@ export async function handleGitHubEvent(event, eventName, { rpc, gh, repo }) {
         const pr = await gh(`pulls/${match[2]}`);
         if (pr.head.sha !== item.head_sha)
           throw Error("Approved SHA is no longer PR head");
+        requireDefaultBase(pr);
         let mergeSha = pr.merge_commit_sha;
         if (!pr.merged) {
           const result = await gh(`pulls/${pr.number}/merge`, "PUT", {

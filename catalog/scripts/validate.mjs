@@ -427,6 +427,35 @@ function walkFiles(base) {
   return out;
 }
 
+/**
+ * The hosted ledger migrations and the ledger bundle's copies are generated from
+ * catalog/ledger/NNNN_*.sql by prepare-hosted.mjs. Matched by migration number, each copy must be
+ * byte-identical to its source: the installer applies the hosted copy, not the source.
+ */
+function validateLedgerMigrationCopies() {
+  const ledger = join(ROOT, "ledger");
+  const sources = new Map(
+    readdirSync(ledger)
+      .filter((f) => /^\d{4}_.*\.sql$/.test(f))
+      .map((f) => [f.slice(0, 4), f]),
+  );
+  for (const dir of [
+    join(ledger, "hosted/supabase/migrations"),
+    join(ROOT, "templates/bundles/ledger/files/harnesst/ledger-setup/supabase/migrations"),
+  ]) {
+    for (const copy of readdirSync(dir).filter((f) => f.endsWith(".sql"))) {
+      const where = relative(ROOT, join(dir, copy));
+      const source = sources.get(copy.slice(10, 14));
+      if (!source) fail(where, "has no catalog/ledger source migration");
+      else if (
+        readFileSync(join(dir, copy), "utf8") !==
+        readFileSync(join(ledger, source), "utf8")
+      )
+        fail(where, `differs from ledger/${source} — run \`node catalog/ledger/prepare-hosted.mjs\``);
+    }
+  }
+}
+
 function main() {
   const templates = loadTemplates();
   const seenIds = new Map(); // id -> where (uniqueness across the whole catalog)
@@ -643,6 +672,8 @@ function main() {
         fail("index.json", `missing ${key} — run \`npm run catalog:index\``);
     }
   }
+
+  validateLedgerMigrationCopies();
 
   if (errors.length > 0) {
     console.error(`Catalog validation failed (${errors.length} error(s)):`);

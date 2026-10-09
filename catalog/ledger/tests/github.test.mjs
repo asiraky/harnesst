@@ -3,7 +3,8 @@ import assert from "node:assert/strict";
 import { handleGitHubEvent } from "../examples/github-ledger.mjs";
 const id = "a0000000-0000-0000-0000-000000000001",
   sha = "a".repeat(40),
-  repo = "owner/product";
+  repo = "owner/product",
+  base = { ref: "main", repo: { default_branch: "main" } };
 function fixture(stage = "build") {
   let item = {
     id,
@@ -26,7 +27,7 @@ function fixture(stage = "build") {
       gh: async (path, method, body) => {
         calls.push({ path, method, body });
         if (method === "PUT") return { merged: true, sha: "c".repeat(40) };
-        return { number: 1, head: { sha }, merged: false };
+        return { number: 1, head: { sha }, base, merged: false };
       },
       rpc: async (op, args) => {
         calls.push({ op, args });
@@ -71,6 +72,26 @@ test("scheduled merge uses exact approved SHA and records confirmed merge", asyn
   await handleGitHubEvent({}, "schedule", f.deps);
   assert.equal(f.calls.find((x) => x.method === "PUT").body.sha, sha);
   assert.equal(f.item.stage, "merged");
+});
+test("an approved PR retargeted off the default branch is neither merged nor marked merged", async () => {
+  const f = fixture("ready-to-merge");
+  const retargeted = { ref: `ledger/${id}-other`, repo: { default_branch: "main" } };
+  f.deps.gh = async (path, method) => {
+    f.calls.push({ path, method });
+    return { number: 1, head: { sha }, base: retargeted, merged: false };
+  };
+  await assert.rejects(handleGitHubEvent({}, "schedule", f.deps), /default branch/);
+  assert.equal(f.calls.some((x) => x.method === "PUT"), false);
+  assert.equal(f.item.stage, "ready-to-merge");
+  await assert.rejects(
+    handleGitHubEvent(
+      { pull_request: { number: 1, merged: true, head: { ref: `ledger/${id}-x`, sha, repo: { full_name: repo } }, base: retargeted } },
+      "pull_request_target",
+      f.deps,
+    ),
+    /default branch/,
+  );
+  assert.equal(f.item.stage, "ready-to-merge");
 });
 test("changed PR head refuses merge; blocked approvals are skipped", async () => {
   const f = fixture("ready-to-merge");
@@ -160,7 +181,7 @@ test("failed dispatch retains pending merge reconciliation and retries without m
     if (method === "PUT") {
       merges++; merged = true; return { merged: true, sha: "c".repeat(40) };
     }
-    return { number: 1, head: { sha }, merged, merge_commit_sha: merged ? "c".repeat(40) : null };
+    return { number: 1, head: { sha }, base, merged, merge_commit_sha: merged ? "c".repeat(40) : null };
   };
   await assert.rejects(handleGitHubEvent({}, "schedule", f.deps), /dispatch unavailable/);
   assert.equal(f.item.stage, "ready-to-merge");
