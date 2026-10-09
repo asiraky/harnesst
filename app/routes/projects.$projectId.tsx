@@ -576,7 +576,7 @@ export default function ProjectDetail({
   const subagentName = segments[segments.length - 1] ?? "";
   // In-place marketplace install (agent, subagent and team pages). The target is the page's own
   // agent in the wizard's `?member=` format; the team page lets the user pick one instead.
-  const installAction = (installTarget: string | null) =>
+  const installButton = (installTarget: string | null) =>
     canInstall ? (
       <MarketplaceInstallDialog
         projectId={project.id}
@@ -625,7 +625,7 @@ export default function ProjectDetail({
           description={repoLine}
           actions={
             <>
-              {installAction(null)}
+              {installButton(null)}
               <AddMemberDialog />
             </>
           }
@@ -684,7 +684,7 @@ export default function ProjectDetail({
               </span>
             </span>
           }
-          actions={installAction(
+          actions={installButton(
             encodeMemberSelection(target.member, segments.join("/")),
           )}
         />
@@ -710,7 +710,7 @@ export default function ProjectDetail({
             )
           }
           actions={
-            active && !error ? installAction(encodeMemberSelection(active.name)) : null
+            active && !error ? installButton(encodeMemberSelection(active.name)) : null
           }
         />
       )}

@@ -15,11 +15,11 @@ import { listDrafts } from "~/drafts/drafts.server";
 import { getAgentSource } from "~/github/cached.server";
 import { catalogProviderEvidence } from "~/marketplace/install.server";
 import { overlayLock } from "~/marketplace/lock";
-import type { TemplateType } from "~/marketplace/manifest";
 import {
   declaredSubagentPaths,
   encodeMemberSelection,
   installedKeysAtTarget,
+  type PickableTemplate,
 } from "~/marketplace/targets";
 import { resolveSyncedAgentContext } from "~/project/agent-context.server";
 import { requireProjectAccess, requireRepo } from "~/project/guard.server";
@@ -35,14 +35,10 @@ export interface MarketplaceTarget {
   installed: string[];
 }
 
+export type CatalogTemplate = PickableTemplate & { version: string };
+
 export interface MarketplacePickerData {
-  templates: Array<{
-    id: string;
-    type: TemplateType;
-    name: string;
-    version: string;
-    description: string;
-  }>;
+  templates: CatalogTemplate[];
   catalogError: string | null;
   /** Agent templates install as a new member, which only a team repo can take. */
   isTeam: boolean;

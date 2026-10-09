@@ -10,10 +10,14 @@
  * member — or, for an agent template, adds it as a new member of the team.
  */
 import { CircleCheck, Search, Store } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import { Link, useFetcher } from "react-router";
 
-import { TYPE_META, TypeBadge } from "~/components/marketplace-type-badge";
+import {
+  DISPLAY_ORDER,
+  TYPE_META,
+  TypeBadge,
+} from "~/components/marketplace-type-badge";
 import { Button } from "~/components/ui/button";
 import {
   Dialog,
@@ -33,27 +37,13 @@ import {
   SelectValue,
 } from "~/components/ui/select";
 import { TEMPLATE_TYPES, type TemplateType } from "~/marketplace/manifest";
-import {
-  filterTemplates,
-  installWizardHref,
-  type PickableTemplate,
-} from "~/marketplace/targets";
+import { filterTemplates, installWizardHref } from "~/marketplace/targets";
 import { cn } from "~/lib/utils";
 import type {
+  CatalogTemplate,
   MarketplacePickerData,
   MarketplaceTarget,
 } from "~/routes/api.projects.$projectId.marketplace";
-
-/** Filter-chip order — matches the marketplace page's product ordering. */
-const DISPLAY_ORDER: TemplateType[] = [
-  "agent",
-  "bundle",
-  "skill",
-  "channel",
-  "tool",
-  "subagent",
-  "connection",
-];
 
 /** Everything but `agent` installs INTO an existing agent. */
 const INTO_AGENT_TYPES = TEMPLATE_TYPES.filter((t) => t !== "agent");
@@ -69,7 +59,7 @@ export function MarketplaceInstallDialog({
 }: {
   projectId: string;
   /**
-   * The wizard `?member=` value of the page's own agent — fixed, no picker. Null on the team page,
+   * The wizard `?member=` value of the page's own agent — pinned, no picker. Null on the team page,
    * where the user picks a member (or adds an agent template as a new one).
    */
   target: string | null;
@@ -85,31 +75,28 @@ export function MarketplaceInstallDialog({
   const onOpenChange = (next: boolean) => {
     setOpen(next);
     // Fresh on every open: what's installed changes as the user installs things.
-    if (next) fetcher.load(`/api/repos/${encodeURIComponent(projectId)}/marketplace`);
+    if (next)
+      fetcher.load(`/api/repos/${encodeURIComponent(projectId)}/marketplace`);
   };
 
   const data = fetcher.data;
   const targets = data?.targets ?? [];
-  const fixed = target !== null;
-  const chosenValue = fixed ? target : (picked ?? targets[0]?.value ?? null);
+  const pinned = target !== null;
+  const chosenValue = pinned ? target : (picked ?? targets[0]?.value ?? null);
   const chosen = targets.find((t) => t.value === chosenValue) ?? null;
-  const installed = useMemo(() => new Set(chosen?.installed ?? []), [chosen]);
   // Agent templates become a new team member, so only the team page of a team repo offers them.
   const allowedTypes =
-    !fixed && data?.isTeam ? [...TEMPLATE_TYPES] : INTO_AGENT_TYPES;
+    !pinned && data?.isTeam ? [...TEMPLATE_TYPES] : INTO_AGENT_TYPES;
 
   const templates = data?.templates ?? [];
-  const shown = filterTemplates(templates, { query, type, allowedTypes });
-  const counts = new Map<TemplateType, number>();
-  for (const t of filterTemplates(templates, {
+  const matching = filterTemplates(templates, {
     query,
     type: "all",
     allowedTypes,
-  })) {
-    counts.set(t.type, (counts.get(t.type) ?? 0) + 1);
-  }
-
-  const loading = fetcher.state === "loading" && !data;
+  });
+  const shown = filterTemplates(templates, { query, type, allowedTypes });
+  const counts = new Map<TemplateType, number>();
+  for (const t of matching) counts.set(t.type, (counts.get(t.type) ?? 0) + 1);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -123,34 +110,18 @@ export function MarketplaceInstallDialog({
         <DialogHeader>
           <DialogTitle>Add from the marketplace</DialogTitle>
           <DialogDescription>
-            {fixed && chosen
+            {pinned && chosen
               ? `Installs into ${targetLabel(chosen)}. You review the files and secrets before anything is saved.`
               : "Pick where it goes, then review the files and secrets before anything is saved."}
           </DialogDescription>
         </DialogHeader>
 
-        {!fixed && targets.length > 0 && (
-          <div className="grid gap-1.5">
-            <Label htmlFor="marketplace-target">Install into</Label>
-            <Select
-              value={chosenValue ?? undefined}
-              onValueChange={setPicked}
-            >
-              <SelectTrigger
-                id="marketplace-target"
-                className="w-full sm:max-w-sm"
-              >
-                <SelectValue placeholder="Pick an agent" />
-              </SelectTrigger>
-              <SelectContent>
-                {targets.map((t) => (
-                  <SelectItem key={t.value} value={t.value}>
-                    {targetLabel(t)}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
+        {!pinned && targets.length > 0 && (
+          <TargetPicker
+            targets={targets}
+            value={chosenValue}
+            onChange={setPicked}
+          />
         )}
 
         <div className="relative">
@@ -172,7 +143,7 @@ export function MarketplaceInstallDialog({
         <div className="-mx-1 flex flex-wrap items-center gap-1 text-xs">
           <FilterChip
             label="All"
-            count={[...counts.values()].reduce((a, b) => a + b, 0)}
+            count={matching.length}
             active={type === "all"}
             onClick={() => setType("all")}
           />
@@ -188,45 +159,14 @@ export function MarketplaceInstallDialog({
         </div>
 
         <div className="-mx-4 max-h-[55dvh] overflow-y-auto border-y px-4">
-          {loading ? (
-            <p className="py-8 text-center text-muted-foreground">
-              Loading the catalog…
-            </p>
-          ) : fixed && data && !chosen ? (
-            // The wizard resolves targets from the published branch, so an agent that only
-            // exists as saved changes has nowhere to install yet.
-            <p className="py-8 text-center text-muted-foreground">
-              This agent isn&rsquo;t published yet. Publish it, then add
-              templates to it.
-            </p>
-          ) : data?.catalogError ? (
-            <p className="py-8 text-center text-muted-foreground">
-              {data.catalogError} Try again later, or ask an operator to
-              check <span className="font-mono">HARNESST_CATALOG_REPO</span>.
-            </p>
-          ) : shown.length === 0 ? (
-            <p className="py-8 text-center text-muted-foreground">
-              {templates.length === 0 && fetcher.state === "loading"
-                ? "Loading the catalog…"
-                : "Nothing matches."}
-            </p>
-          ) : (
-            <ul className="divide-y">
-              {shown.map((tpl) => (
-                <TemplateRow
-                  key={`${tpl.type}/${tpl.id}`}
-                  tpl={tpl}
-                  projectId={projectId}
-                  target={chosen}
-                  installed={
-                    tpl.type !== "agent" &&
-                    installed.has(`${tpl.type}/${tpl.id}`)
-                  }
-                  returnTo={returnTo}
-                />
-              ))}
-            </ul>
-          )}
+          <CatalogResults
+            data={data}
+            missingPinnedTarget={pinned && !!data && !chosen}
+            shown={shown}
+            projectId={projectId}
+            target={chosen}
+            returnTo={returnTo}
+          />
         </div>
 
         <Link
@@ -240,6 +180,92 @@ export function MarketplaceInstallDialog({
   );
 }
 
+function TargetPicker({
+  targets,
+  value,
+  onChange,
+}: {
+  targets: MarketplaceTarget[];
+  value: string | null;
+  onChange: (value: string) => void;
+}) {
+  return (
+    <div className="grid gap-1.5">
+      <Label htmlFor="marketplace-target">Install into</Label>
+      <Select value={value ?? undefined} onValueChange={onChange}>
+        <SelectTrigger id="marketplace-target" className="w-full sm:max-w-sm">
+          <SelectValue placeholder="Pick an agent" />
+        </SelectTrigger>
+        <SelectContent>
+          {targets.map((t) => (
+            <SelectItem key={t.value} value={t.value}>
+              {targetLabel(t)}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+    </div>
+  );
+}
+
+function EmptyState({ children }: { children: React.ReactNode }) {
+  return <p className="py-8 text-center text-muted-foreground">{children}</p>;
+}
+
+function CatalogResults({
+  data,
+  missingPinnedTarget,
+  shown,
+  projectId,
+  target,
+  returnTo,
+}: {
+  data: MarketplacePickerData | undefined;
+  missingPinnedTarget: boolean;
+  shown: CatalogTemplate[];
+  projectId: string;
+  target: MarketplaceTarget | null;
+  returnTo: string;
+}) {
+  const installed = new Set(target?.installed ?? []);
+  if (!data) return <EmptyState>Loading the catalog…</EmptyState>;
+  if (missingPinnedTarget) {
+    // The wizard resolves targets from the published branch, so an agent that only exists as
+    // saved changes has nowhere to install yet.
+    return (
+      <EmptyState>
+        This agent isn&rsquo;t published yet. Publish it, then add templates to
+        it.
+      </EmptyState>
+    );
+  }
+  if (data.catalogError) {
+    return (
+      <EmptyState>
+        {data.catalogError} Try again later, or ask an operator to check{" "}
+        <span className="font-mono">HARNESST_CATALOG_REPO</span>.
+      </EmptyState>
+    );
+  }
+  if (shown.length === 0) return <EmptyState>Nothing matches.</EmptyState>;
+  return (
+    <ul className="divide-y">
+      {shown.map((tpl) => (
+        <TemplateRow
+          key={`${tpl.type}/${tpl.id}`}
+          tpl={tpl}
+          projectId={projectId}
+          target={target}
+          installed={
+            tpl.type !== "agent" && installed.has(`${tpl.type}/${tpl.id}`)
+          }
+          returnTo={returnTo}
+        />
+      ))}
+    </ul>
+  );
+}
+
 function TemplateRow({
   tpl,
   projectId,
@@ -247,7 +273,7 @@ function TemplateRow({
   installed,
   returnTo,
 }: {
-  tpl: PickableTemplate & { version: string };
+  tpl: CatalogTemplate;
   projectId: string;
   target: MarketplaceTarget | null;
   installed: boolean;

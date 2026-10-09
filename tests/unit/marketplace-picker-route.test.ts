@@ -96,7 +96,7 @@ beforeEach(() => {
 });
 
 describe("marketplace picker route", () => {
-  it("refuses a workspace member who isn't an admin", async () => {
+  it("puts the listing behind the workspace-admin gate", async () => {
     mocks.role = "member";
     await expect(loader(ARGS)).rejects.toMatchObject({ status: 403 });
   });

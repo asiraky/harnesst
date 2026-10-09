@@ -17,7 +17,7 @@ import type { TemplateType } from "~/marketplace/manifest";
  * in the `?member=` param. Both halves are eve directory names (kebab-case), so `:` can occur in
  * neither — the value round-trips unambiguously in both directions.
  */
-export const SUBAGENT_SEPARATOR = ":";
+const SUBAGENT_SEPARATOR = ":";
 
 /** Encode a member (and optional declared-subagent path) as a `?member=` value. */
 export function encodeMemberSelection(

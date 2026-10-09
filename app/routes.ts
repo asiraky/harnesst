@@ -311,12 +311,6 @@ export default [
     "api/repos/:projectId/playground/stream",
     "routes/api.projects.$projectId.playground.stream.ts",
   ),
-  // In-place marketplace install (agent + team pages): catalog listing and per-target installs
-  // for the "Add from marketplace" dialog, which links into the wizard with the target chosen.
-  route(
-    "api/repos/:projectId/marketplace",
-    "routes/api.projects.$projectId.marketplace.ts",
-  ),
   route(
     "api/repos/:projectId/playground/stop",
     "routes/api.projects.$projectId.playground.stop.ts",
@@ -325,6 +319,12 @@ export default [
   route(
     "api/repos/:projectId/assistant/stream",
     "routes/api.projects.$projectId.assistant.stream.ts",
+  ),
+  // In-place marketplace install (agent + team pages): catalog listing and per-target installs
+  // for the "Add from marketplace" dialog, which links into the wizard with the target chosen.
+  route(
+    "api/repos/:projectId/marketplace",
+    "routes/api.projects.$projectId.marketplace.ts",
   ),
   route("api/github/webhook", "routes/api.github.webhook.tsx"),
   // One-click Discord channel (issue #32): harnesst's shared app. The relay is the app's single

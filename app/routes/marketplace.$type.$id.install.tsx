@@ -88,9 +88,9 @@ import {
   type ResolvedInclude,
 } from "~/marketplace/compose.server";
 import {
-  SUBAGENT_SEPARATOR,
   declaredSubagentPaths,
   decodeMemberSelection,
+  encodeMemberSelection,
 } from "~/marketplace/targets";
 import { safeReturnTo } from "~/auth/return-to";
 import {
@@ -1081,7 +1081,7 @@ export default function InstallWizard({
                       ...m.subagents.map((path) => (
                         <SelectItem
                           key={`${m.name}/${path}`}
-                          value={`${m.name}${SUBAGENT_SEPARATOR}${path}`}
+                          value={encodeMemberSelection(m.name, path)}
                           disabled={!manifest.subagentCompatible}
                         >
                           {[m.name, ...path.split("/")].join(" › ")}
