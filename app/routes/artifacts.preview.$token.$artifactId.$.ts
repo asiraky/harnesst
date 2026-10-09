@@ -82,6 +82,8 @@ export async function loader({ params, request }: LoaderFunctionArgs) {
       projectId: artifact.projectId,
       viewerId: claim.userId,
       includeAll: claim.backOfHouse,
+      // Same rule as the mint: back of house previews archived conversations' pages too.
+      includeArchived: claim.backOfHouse,
     });
     if (!session) throw notFound();
   }

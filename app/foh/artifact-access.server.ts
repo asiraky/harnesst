@@ -53,13 +53,15 @@ export async function requireArtifactAccess(
 
   // A session-less artifact (#370, background publish) sits in no conversation, so there is no
   // per-creator confidentiality to enforce beyond the repo access already checked above — it is
-  // agent output, not somebody's private chat.
+  // agent output, not somebody's private chat. Back of house sees every conversation, archived
+  // ones included: it owns the archived shelf, and its Artifacts page previews their artifacts.
   if (artifact.sessionId) {
     const session = await getFohSessionForViewer({
       id: artifact.sessionId,
       projectId: access.project.id,
       viewerId: auth.user.id,
       includeAll: access.backOfHouse,
+      includeArchived: access.backOfHouse,
     });
     if (!session) throw notFound();
   }
