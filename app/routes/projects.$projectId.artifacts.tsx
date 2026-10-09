@@ -8,9 +8,14 @@
  * request), and generate/rotate (a fresh token, the old one dead in the same statement). The
  * artifact itself is never deleted here — cards in conversations point at these rows, and the
  * conversation lifecycle owns their deletion (cascade from the session).
+ *
+ * Each row also opens in the same artifact panel the conversation uses, as an overlay. The panel's
+ * endpoints authorize through `requireFohProject`, where this page's write role is back-of-house:
+ * every session's artifacts, archived conversations' included, plus the session-less ones.
  */
 import { getSessionAuth, sessionLoader } from "~/auth/session.server";
 import { FileBox } from "lucide-react";
+import { useMemo, useState } from "react";
 import {
   redirect,
   useNavigation,
@@ -19,6 +24,7 @@ import {
   type LoaderFunctionArgs,
 } from "react-router";
 
+import { ArtifactPanel } from "~/components/artifacts/artifact-panel";
 import { ConfirmDialog } from "~/components/confirm-dialog";
 import { RelativeTime } from "~/components/localized-values";
 import { AgentNav, AppShell, PageHeader, repoCrumbs } from "~/components/shell";
@@ -39,7 +45,9 @@ import {
   TableHeader,
   TableRow,
 } from "~/components/ui/table";
+import { artifactEntry } from "~/foh/artifact-entries";
 import { artifactShareUrl } from "~/foh/artifacts.server";
+import { useArtifactPreview } from "~/foh/use-artifact-preview";
 import {
   listProjectArtifacts,
   regenerateArtifactShareToken,
@@ -70,6 +78,10 @@ export const loader = (args: LoaderFunctionArgs) =>
         isTeam: project.layout === "team",
         roster: roster.map((agent) => ({ name: agent.name })),
         artifacts: artifacts.map((artifact) => ({
+          // What the panel opens: the same card data a conversation's transcript carries, so the
+          // panel cannot tell (or care) which surface it was opened from. Its share link is the
+          // app-relative one the panel resolves against the page.
+          card: artifactEntry({ ...artifact, streamIndex: 0 }).artifact!,
           id: artifact.id,
           name: artifact.name,
           title: artifact.title,
@@ -125,7 +137,8 @@ export async function action(args: ActionFunctionArgs) {
 function kindLabel(kind: string): string {
   if (kind === "html") return "Page";
   if (kind === "document") return "Document";
-  return "Image";
+  if (kind === "image") return "Image";
+  return "File";
 }
 
 function sizeLabel(byteSize: number): string {
@@ -143,6 +156,11 @@ export default function ProjectArtifactsPage({
   const submit = useSubmit();
   const navigation = useNavigation();
   const busy = navigation.state !== "idle";
+  // Passed to the panel so a link created, rotated or revoked here (or a republish the loader
+  // picks up) reaches the open panel's Share button without reopening it.
+  const cards = useMemo(() => artifacts.map((a) => a.card), [artifacts]);
+  const preview = useArtifactPreview({ projectId: project.id, artifacts: cards });
+  const [panelMaximised, setPanelMaximised] = useState(false);
 
   return (
     <AppShell
@@ -213,7 +231,7 @@ export default function ProjectArtifactsPage({
                   <TableHead>Version</TableHead>
                   <TableHead>Size</TableHead>
                   <TableHead>Published</TableHead>
-                  <TableHead className="w-64 text-right">Public link</TableHead>
+                  <TableHead className="w-80 text-right">Public link</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -244,6 +262,16 @@ export default function ProjectArtifactsPage({
                     </TableCell>
                     <TableCell className="text-right">
                       <div className="flex items-center justify-end gap-1">
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => {
+                            setPanelMaximised(false);
+                            preview.open(artifact.card);
+                          }}
+                        >
+                          Preview
+                        </Button>
                         {artifact.shareUrl ? (
                           <>
                             <Button variant="ghost" size="sm" asChild>
@@ -320,6 +348,15 @@ export default function ProjectArtifactsPage({
           </CardContent>
         </Card>
       )}
+      <ArtifactPanel
+        preview={preview}
+        projectId={project.id}
+        placement="overlay"
+        // The AppShell sidebar (w-64), which an overlay panel never covers.
+        overlayInsetLeft={256}
+        maximised={panelMaximised}
+        onMaximisedChange={setPanelMaximised}
+      />
     </AppShell>
   );
 }
