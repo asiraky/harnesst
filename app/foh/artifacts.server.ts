@@ -50,7 +50,6 @@ import {
 import {
   ARTIFACT_BUNDLE_EXTENSIONS,
   ARTIFACT_BUNDLE_MAX_FILES,
-  ARTIFACT_DOCUMENT_MAX_BYTES,
   ARTIFACT_MAX_BYTES,
   artifactKindFor,
   artifactUrl,
@@ -307,12 +306,9 @@ export async function publishArtifact(
       "The PDF bytes were not supplied by Publish Artifact. Update the installed tool and try again.",
     );
   }
-  if (
-    input.suppliedBytes &&
-    input.suppliedBytes.length > ARTIFACT_DOCUMENT_MAX_BYTES
-  ) {
+  if (input.suppliedBytes && input.suppliedBytes.length > ARTIFACT_MAX_BYTES) {
     return deny(
-      `Published files are capped at ${ARTIFACT_DOCUMENT_MAX_BYTES / (1024 * 1024)} MB.`,
+      `Published files are capped at ${ARTIFACT_MAX_BYTES / (1024 * 1024)} MB.`,
     );
   }
   if (input.suppliedBytes && kind !== "document" && kind !== "file") {

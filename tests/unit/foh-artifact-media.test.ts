@@ -209,6 +209,11 @@ describe("bundleMemberContentType", () => {
     // A leading dot is not an extension — `.css` is a dotfile, and dotfiles are refused above.
     expect(bundleMemberContentType(".css")).toBeNull();
   });
+
+  it("does not take an inherited object key for an extension", () => {
+    expect(bundleMemberContentType("a.constructor")).toBeNull();
+    expect(bundleMemberContentType("a.__proto__")).toBeNull();
+  });
 });
 
 describe("resolveBundleMember", () => {
@@ -415,6 +420,8 @@ describe("file content types", () => {
     expect(artifactMediaTypeFromName("Makefile")).toBe("text/plain");
     expect(artifactMediaTypeFromName("archive.xyz")).toBeNull();
     expect(artifactMediaTypeFromName(".env")).toBeNull();
+    expect(artifactMediaTypeFromName("a.constructor")).toBeNull();
+    expect(artifactMediaTypeFromName("a.__proto__")).toBeNull();
   });
 });
 

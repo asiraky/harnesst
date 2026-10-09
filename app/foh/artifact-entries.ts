@@ -17,7 +17,7 @@
  * away from the conversation the user is having about it.
  */
 import type { ChatArtifact, ChatEntry } from "~/chat/types";
-import { artifactUrl } from "~/foh/artifact-media";
+import { ARTIFACT_KINDS, artifactUrl } from "~/foh/artifact-media";
 import { artifactViewerForArtifact } from "~/foh/artifact-viewer";
 
 /**
@@ -89,8 +89,9 @@ export function turnAnchorsFromEvents(
 
 /** A row's kind as the card knows it. Unknown values (a newer server's kind) read as `file`. */
 function chatArtifactKind(kind: string): ChatArtifact["kind"] {
-  if (kind === "html" || kind === "document" || kind === "image") return kind;
-  return "file";
+  return (ARTIFACT_KINDS as readonly string[]).includes(kind)
+    ? (kind as ChatArtifact["kind"])
+    : "file";
 }
 
 /**

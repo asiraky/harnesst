@@ -25,10 +25,10 @@ import {
   publishArtifact,
   withArtifactCopySlot,
 } from "~/foh/artifacts.server";
-import { ARTIFACT_DOCUMENT_MAX_BYTES } from "~/foh/artifact-media";
+import { ARTIFACT_MAX_BYTES } from "~/foh/artifact-media";
 import { verifyDelegationToken } from "~/team/token.server";
 
-const MAX_DOCUMENT_BYTES = ARTIFACT_DOCUMENT_MAX_BYTES;
+const MAX_DOCUMENT_BYTES = ARTIFACT_MAX_BYTES;
 const MAX_DOCUMENT_BASE64_CHARS = Math.ceil(MAX_DOCUMENT_BYTES / 3) * 4;
 const MAX_REQUEST_BYTES = MAX_DOCUMENT_BASE64_CHARS + 16 * 1024;
 /** Bodies at or under this are small enough to read outside a copy slot (a path-only publish). */

@@ -26,7 +26,7 @@ import {
   withArtifactCopySlot,
   type PublishArtifactDeps,
 } from "~/foh/artifacts.server";
-import { ARTIFACT_DOCUMENT_MAX_BYTES } from "~/foh/artifact-media";
+import { ARTIFACT_MAX_BYTES } from "~/foh/artifact-media";
 import type {
   Artifact,
   ArtifactFileInput,
@@ -550,7 +550,7 @@ describe("publishArtifact kinds", () => {
   it("refuses a PDF over the document upload limit before storing bytes", async () => {
     const deploymentId = await seedDeployment();
     const deps = makeDeps();
-    const oversized = Buffer.alloc(ARTIFACT_DOCUMENT_MAX_BYTES + 1, 0);
+    const oversized = Buffer.alloc(ARTIFACT_MAX_BYTES + 1, 0);
     oversized.set(Buffer.from("%PDF-"));
 
     const result = await publishArtifact(

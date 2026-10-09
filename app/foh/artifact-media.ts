@@ -34,10 +34,12 @@
  * Client+server safe: no node builtins, no server imports.
  */
 import {
+  artifactExtensionOf,
+  ARTIFACT_INERT_IMAGE_TYPES,
   artifactIsTextMedia,
   artifactMediaEssence,
-  ARTIFACT_CODE_EXTENSIONS,
-  ARTIFACT_PLAIN_TEXT_EXTENSIONS,
+  artifactReadsText,
+  ARTIFACT_TEXT_EXTENSIONS,
   artifactViewerFor,
 } from "~/foh/artifact-viewer";
 import { truncateUtf8 } from "~/foh/artifact-source";
@@ -48,13 +50,6 @@ import { truncateUtf8 } from "~/foh/artifact-source";
  * (nginx-harnesst.conf) still admits at this size.
  */
 export const ARTIFACT_MAX_BYTES = 25 * 1024 * 1024;
-
-/**
- * Ceiling on bytes the tool carries IN the publish request (a PDF `document`, or a `file`) — read by
- * the tool from its own, possibly subagent, sandbox. The same 25 MB as everything else: the request
- * route's body cap is derived from it (base64 + framing ≈ 33.4 MiB, under the edge's 40m).
- */
-export const ARTIFACT_DOCUMENT_MAX_BYTES = ARTIFACT_MAX_BYTES;
 
 /**
  * The only directory tree an agent may publish out of: its own persistent home, which the
@@ -97,6 +92,77 @@ export const ARTIFACT_BUNDLE_MAX_FILES = 40;
 export const ARTIFACT_BUNDLE_ENTRY = "index.html";
 
 /**
+ * Media types by extension for a `file` publish — the formats whose type a viewer or a browser
+ * actually cares about. Code and plain-text extensions not listed resolve to `text/plain` (see
+ * `artifactMediaTypeFromName`). Stored WITHOUT a charset: the serving policy adds one where it
+ * sends text.
+ */
+const FILE_MEDIA_TYPES = {
+  md: "text/markdown",
+  markdown: "text/markdown",
+  mdx: "text/markdown",
+  csv: "text/csv",
+  tsv: "text/tab-separated-values",
+  json: "application/json",
+  geojson: "application/geo+json",
+  jsonl: "application/x-ndjson",
+  ndjson: "application/x-ndjson",
+  webmanifest: "application/manifest+json",
+  yaml: "application/yaml",
+  yml: "application/yaml",
+  toml: "application/toml",
+  xml: "application/xml",
+  txt: "text/plain",
+  log: "text/plain",
+  html: "text/html",
+  htm: "text/html",
+  xhtml: "application/xhtml+xml",
+  css: "text/css",
+  js: "text/javascript",
+  mjs: "text/javascript",
+  cjs: "text/javascript",
+  ts: "text/x-typescript",
+  tsx: "text/x-typescript",
+  go: "text/x-go",
+  py: "text/x-python",
+  sh: "text/x-shellscript",
+  sql: "text/x-sql",
+  svg: "image/svg+xml",
+  png: "image/png",
+  jpg: "image/jpeg",
+  jpeg: "image/jpeg",
+  gif: "image/gif",
+  webp: "image/webp",
+  avif: "image/avif",
+  bmp: "image/bmp",
+  ico: "image/x-icon",
+  pdf: "application/pdf",
+  mp3: "audio/mpeg",
+  wav: "audio/wav",
+  ogg: "audio/ogg",
+  oga: "audio/ogg",
+  opus: "audio/ogg",
+  m4a: "audio/mp4",
+  aac: "audio/aac",
+  flac: "audio/flac",
+  weba: "audio/webm",
+  mp4: "video/mp4",
+  m4v: "video/mp4",
+  webm: "video/webm",
+  mov: "video/quicktime",
+  ogv: "video/ogg",
+  zip: "application/zip",
+  gz: "application/gzip",
+  tar: "application/x-tar",
+  docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  pptx: "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+  wasm: "application/wasm",
+} as const satisfies Record<string, string>;
+
+type FileExtension = keyof typeof FILE_MEDIA_TYPES;
+
+/**
  * The closed allowlist of bundle member types, keyed by lowercase extension: the static assets a
  * rendered page plausibly loads — markup, styles, scripts, fonts, images, small media, data files
  * and wasm. Executables, archives and other container formats (zip, pdf, exe, sh) stay off it; an
@@ -107,45 +173,61 @@ export const ARTIFACT_BUNDLE_ENTRY = "index.html";
  * Data files (`json`, `csv`, `md`, `txt`) are here because a page may now READ them: the preview's
  * CSP no longer closes `connect-src`, and its responses carry `Access-Control-Allow-Origin: *` so
  * the sandbox's opaque origin can `fetch('./data.json')` a sibling (see `artifact-preview.server.ts`).
+ *
+ * The list names extensions only; their types are the ones a lone `file` publish gets
+ * (`FILE_MEDIA_TYPES`), so the two can never disagree about what a `.js` is.
  */
-const BUNDLE_MEMBER_TYPES: Readonly<Record<string, string>> = {
-  html: "text/html",
-  htm: "text/html",
-  css: "text/css",
-  js: "text/javascript",
-  mjs: "text/javascript",
-  cjs: "text/javascript",
-  json: "application/json",
+const BUNDLE_MEMBER_EXTENSIONS: readonly FileExtension[] = [
+  "html",
+  "htm",
+  "css",
+  "js",
+  "mjs",
+  "cjs",
+  "json",
+  "webmanifest",
+  "txt",
+  "md",
+  "csv",
+  "tsv",
+  "svg",
+  "png",
+  "jpg",
+  "jpeg",
+  "webp",
+  "gif",
+  "avif",
+  "ico",
+  "mp3",
+  "wav",
+  "ogg",
+  "m4a",
+  "mp4",
+  "webm",
+  "wasm",
+];
+
+/** Bundle member types a lone `file` publish has no entry for: source maps and web fonts. */
+const BUNDLE_ONLY_TYPES: Readonly<Record<string, string>> = {
   map: "application/json",
-  webmanifest: "application/manifest+json",
-  txt: "text/plain",
-  md: "text/markdown",
-  csv: "text/csv",
-  tsv: "text/tab-separated-values",
-  svg: "image/svg+xml",
-  png: "image/png",
-  jpg: "image/jpeg",
-  jpeg: "image/jpeg",
-  webp: "image/webp",
-  gif: "image/gif",
-  avif: "image/avif",
-  ico: "image/x-icon",
   woff2: "font/woff2",
   woff: "font/woff",
   ttf: "font/ttf",
   otf: "font/otf",
-  mp3: "audio/mpeg",
-  wav: "audio/wav",
-  ogg: "audio/ogg",
-  m4a: "audio/mp4",
-  mp4: "video/mp4",
-  webm: "video/webm",
-  wasm: "application/wasm",
 };
 
+const BUNDLE_MEMBER_TYPES: ReadonlyMap<string, string> = new Map([
+  ...BUNDLE_MEMBER_EXTENSIONS.map((ext): [string, string] => [
+    ext,
+    FILE_MEDIA_TYPES[ext],
+  ]),
+  ...Object.entries(BUNDLE_ONLY_TYPES),
+]);
+
 /** Extensions an agent may publish inside a bundle, for the refusal message. */
-export const ARTIFACT_BUNDLE_EXTENSIONS: readonly string[] =
-  Object.keys(BUNDLE_MEMBER_TYPES);
+export const ARTIFACT_BUNDLE_EXTENSIONS: readonly string[] = [
+  ...BUNDLE_MEMBER_TYPES.keys(),
+];
 
 /** Longest single path segment inside a bundle, and the deepest a bundle may nest. */
 const MAX_SEGMENT_LENGTH = 100;
@@ -177,10 +259,7 @@ export function normalizeBundleRelPath(raw: unknown): string | null {
 
 /** The content type a bundle member's extension declares, or null when it is not on the list. */
 export function bundleMemberContentType(relPath: string): string | null {
-  const name = relPath.slice(relPath.lastIndexOf("/") + 1);
-  const dot = name.lastIndexOf(".");
-  if (dot <= 0) return null;
-  return BUNDLE_MEMBER_TYPES[name.slice(dot + 1).toLowerCase()] ?? null;
+  return BUNDLE_MEMBER_TYPES.get(artifactExtensionOf(relPath)) ?? null;
 }
 
 export interface BundleMember {
@@ -413,92 +492,18 @@ export function sniffArtifactDocumentContentType(
     : null;
 }
 
-/**
- * Media types by extension for a `file` publish — the formats whose type a viewer or a browser
- * actually cares about. Code and plain-text extensions not listed resolve to `text/plain` (see
- * `artifactMediaTypeFromName`). Stored WITHOUT a charset: the serving policy adds one where it
- * sends text.
- */
-const FILE_MEDIA_TYPES: Readonly<Record<string, string>> = {
-  md: "text/markdown",
-  markdown: "text/markdown",
-  mdx: "text/markdown",
-  csv: "text/csv",
-  tsv: "text/tab-separated-values",
-  json: "application/json",
-  geojson: "application/geo+json",
-  jsonl: "application/x-ndjson",
-  ndjson: "application/x-ndjson",
-  webmanifest: "application/manifest+json",
-  yaml: "application/yaml",
-  yml: "application/yaml",
-  toml: "application/toml",
-  xml: "application/xml",
-  txt: "text/plain",
-  log: "text/plain",
-  html: "text/html",
-  htm: "text/html",
-  xhtml: "application/xhtml+xml",
-  css: "text/css",
-  js: "text/javascript",
-  mjs: "text/javascript",
-  cjs: "text/javascript",
-  ts: "text/x-typescript",
-  tsx: "text/x-typescript",
-  go: "text/x-go",
-  py: "text/x-python",
-  sh: "text/x-shellscript",
-  sql: "text/x-sql",
-  svg: "image/svg+xml",
-  png: "image/png",
-  jpg: "image/jpeg",
-  jpeg: "image/jpeg",
-  gif: "image/gif",
-  webp: "image/webp",
-  avif: "image/avif",
-  bmp: "image/bmp",
-  ico: "image/x-icon",
-  pdf: "application/pdf",
-  mp3: "audio/mpeg",
-  wav: "audio/wav",
-  ogg: "audio/ogg",
-  oga: "audio/ogg",
-  opus: "audio/ogg",
-  m4a: "audio/mp4",
-  aac: "audio/aac",
-  flac: "audio/flac",
-  weba: "audio/webm",
-  mp4: "video/mp4",
-  m4v: "video/mp4",
-  webm: "video/webm",
-  mov: "video/quicktime",
-  ogv: "video/ogg",
-  zip: "application/zip",
-  gz: "application/gzip",
-  tar: "application/x-tar",
-  docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-  xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-  pptx: "application/vnd.openxmlformats-officedocument.presentationml.presentation",
-  wasm: "application/wasm",
-};
-
-const TEXT_EXTENSIONS = new Set([
-  ...ARTIFACT_CODE_EXTENSIONS,
-  ...ARTIFACT_PLAIN_TEXT_EXTENSIONS,
-]);
-
 /** The media type a file's NAME declares, or null when the extension is not one harnesst knows. */
 export function artifactMediaTypeFromName(name: string): string | null {
-  const base = name.slice(name.lastIndexOf("/") + 1).toLowerCase();
-  const dot = base.lastIndexOf(".");
-  if (dot <= 0) {
+  const ext = artifactExtensionOf(name);
+  if (!ext) {
     // `Dockerfile`, `Makefile`: named for what they are, read as text.
+    const base = name.slice(name.lastIndexOf("/") + 1).toLowerCase();
     return base === "dockerfile" || base === "makefile" ? "text/plain" : null;
   }
-  const ext = base.slice(dot + 1);
-  return (
-    FILE_MEDIA_TYPES[ext] ?? (TEXT_EXTENSIONS.has(ext) ? "text/plain" : null)
-  );
+  if (Object.hasOwn(FILE_MEDIA_TYPES, ext)) {
+    return FILE_MEDIA_TYPES[ext as FileExtension];
+  }
+  return ARTIFACT_TEXT_EXTENSIONS.has(ext) ? "text/plain" : null;
 }
 
 /**
@@ -569,18 +574,6 @@ export function resolveArtifactFileContentType(
   );
 }
 
-/** Raster types a browser renders as a picture and nothing else — safe to hand over as themselves. */
-const INERT_IMAGE_TYPES = new Set([
-  "image/png",
-  "image/jpeg",
-  "image/webp",
-  "image/gif",
-  "image/avif",
-  "image/bmp",
-  "image/x-icon",
-  "image/vnd.microsoft.icon",
-]);
-
 export interface ArtifactServePolicy {
   /** `inline` renders in the browser (or an `<img>`/`<video>`/`<iframe>`); `attachment` downloads. */
   disposition: "inline" | "attachment";
@@ -640,7 +633,7 @@ export function artifactServePolicy(input: {
       embeddable: true,
     };
   }
-  if (INERT_IMAGE_TYPES.has(stored)) {
+  if (ARTIFACT_INERT_IMAGE_TYPES.has(stored)) {
     return {
       disposition: "inline",
       contentType: stored,
@@ -664,13 +657,9 @@ export function artifactServePolicy(input: {
       embeddable: false,
     };
   }
-  const viewer = artifactViewerFor(input.name, stored);
   if (
     artifactIsTextMedia(stored) ||
-    viewer === "markdown" ||
-    viewer === "csv" ||
-    viewer === "json" ||
-    viewer === "text"
+    artifactReadsText(artifactViewerFor(input.name, stored))
   ) {
     return {
       disposition: "inline",

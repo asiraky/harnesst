@@ -12,6 +12,7 @@ import {
   artifactExtensionOf,
   artifactIsTextMedia,
   artifactMediaEssence,
+  artifactReadsText,
   artifactViewerFor,
 } from "~/foh/artifact-viewer";
 
@@ -251,13 +252,5 @@ export function splitLines(text: string): string[] {
  * other binaries are not: the source endpoint would hand back their bytes as mojibake.
  */
 export function artifactMemberIsText(path: string, contentType: string): boolean {
-  const viewer = artifactViewerFor(path, contentType);
-  return (
-    viewer === "html" ||
-    viewer === "markdown" ||
-    viewer === "svg" ||
-    viewer === "csv" ||
-    viewer === "json" ||
-    viewer === "text"
-  );
+  return artifactReadsText(artifactViewerFor(path, contentType), "source");
 }

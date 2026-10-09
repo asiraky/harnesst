@@ -5,10 +5,14 @@
  *
  * The EXTENSION is asked first and the media type only decides what the name cannot. Agents and
  * byte sniffers are both sloppy with types — a `.ts` file sniffs as `video/mp2t`, a `.md` arrives as
- * `application/octet-stream` — while the name is whatever the author called it. That ordering is a
- * DISPLAY decision only: what the serving routes put on the wire is decided from the stored content
- * type (`artifactServePolicy` in `artifact-media.ts`), and a viewer that guesses wrong renders a
- * broken preview, never a live document.
+ * `application/octet-stream` — while the name is whatever the author called it.
+ *
+ * The serving routes use this too: `artifactServePolicy` (`artifact-media.ts`) sends a file as
+ * `text/plain` when its viewer reads text, even if the stored type is not text. That can only ever
+ * DOWNGRADE a response to inert text. Every type the browser would render as itself — PDF, raster,
+ * audio/video, SVG — is decided from the stored type before the viewer is asked, and nothing this
+ * module returns can put agent bytes on the wire as `text/html`. A wrong guess is a broken preview,
+ * never a live document.
  */
 
 export const ARTIFACT_VIEWERS = [
@@ -154,9 +158,25 @@ export const ARTIFACT_PLAIN_TEXT_EXTENSIONS: readonly string[] = [
 const BROWSER_IMAGES = new Set(ARTIFACT_BROWSER_IMAGE_EXTENSIONS);
 const AUDIO = new Set(ARTIFACT_AUDIO_EXTENSIONS);
 const VIDEO = new Set(ARTIFACT_VIDEO_EXTENSIONS);
-const TEXT = new Set([
+/** Every extension the `text` viewer claims: code plus plain text. */
+export const ARTIFACT_TEXT_EXTENSIONS: ReadonlySet<string> = new Set([
   ...ARTIFACT_CODE_EXTENSIONS,
   ...ARTIFACT_PLAIN_TEXT_EXTENSIONS,
+]);
+
+/**
+ * Raster media types a browser renders as a picture and nothing else — the `image` viewer's, and
+ * the ones the serving routes may send as themselves.
+ */
+export const ARTIFACT_INERT_IMAGE_TYPES: ReadonlySet<string> = new Set([
+  "image/png",
+  "image/jpeg",
+  "image/webp",
+  "image/gif",
+  "image/avif",
+  "image/bmp",
+  "image/x-icon",
+  "image/vnd.microsoft.icon",
 ]);
 
 /** `application/*` types that are text a person can read. */
@@ -223,7 +243,7 @@ export function artifactViewerFor(
   if (BROWSER_IMAGES.has(ext)) return "image";
   if (AUDIO.has(ext)) return "audio";
   if (VIDEO.has(ext)) return "video";
-  if (TEXT.has(ext)) return "text";
+  if (ARTIFACT_TEXT_EXTENSIONS.has(ext)) return "text";
 
   if (mt === "text/html" || mt === "application/xhtml+xml") return "html";
   if (mt === "text/markdown" || mt === "text/x-markdown") return "markdown";
@@ -231,20 +251,7 @@ export function artifactViewerFor(
   if (mt === "application/pdf") return "pdf";
   if (mt === "text/csv" || mt === "text/tab-separated-values") return "csv";
   if (mt === "application/json" || mt.endsWith("+json")) return "json";
-  if (
-    [
-      "png",
-      "jpeg",
-      "gif",
-      "webp",
-      "avif",
-      "bmp",
-      "x-icon",
-      "vnd.microsoft.icon",
-    ].some((sub) => mt === `image/${sub}`)
-  ) {
-    return "image";
-  }
+  if (ARTIFACT_INERT_IMAGE_TYPES.has(mt)) return "image";
   if (mt.startsWith("audio/")) return "audio";
   if (mt.startsWith("video/")) return "video";
   if (artifactIsTextMedia(mt)) return "text";
