@@ -311,6 +311,48 @@ describe("reattachDelegation", () => {
     });
   });
 
+  it("refreshes the row without marking it unread when the poll saw nothing new", async () => {
+    const delegationId = await seedDelegation();
+    const lost = (streamIndex: number) =>
+      turnResult({
+        ok: false,
+        reply: null,
+        error: "Couldn't read the reply stream: terminated",
+        streamLost: true,
+        streamIndex,
+      });
+
+    // Same index the row already holds: a silent tool call, not activity.
+    const quiet = makeDeps({
+      sessionRow: session({ streamIndex: 20 }),
+      resume: scriptedResume(lost(20)),
+    });
+    await reattachDelegation(payloadFor(delegationId), quiet);
+    expect(quiet.cursors).toEqual([
+      expect.objectContaining({ streamIndex: 20, livenessOnly: true }),
+    ]);
+
+    // No settled result at all: nothing proves the stream moved.
+    const silent = makeDeps({
+      sessionRow: session({ streamIndex: 20 }),
+      resume: async function* () {} as unknown as ReattachDeps["resume"],
+    });
+    await reattachDelegation(payloadFor(delegationId), silent);
+    expect(silent.cursors).toEqual([
+      expect.objectContaining({ streamIndex: 20, livenessOnly: true }),
+    ]);
+
+    // The stream advanced past the row's cursor: real activity, so it counts.
+    const advanced = makeDeps({
+      sessionRow: session({ streamIndex: 20 }),
+      resume: scriptedResume(lost(25)),
+    });
+    await reattachDelegation(payloadFor(delegationId), advanced);
+    expect(advanced.cursors).toEqual([
+      expect.objectContaining({ streamIndex: 25, livenessOnly: false }),
+    ]);
+  });
+
   /**
    * The slice's idle budget only bounds SILENCE. A turn chattering every few seconds would hold it
    * open forever — and with the worker at concurrency 1, block every deploy and publish behind it.

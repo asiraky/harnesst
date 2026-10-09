@@ -1269,6 +1269,12 @@ export async function savePlaygroundSessionCursor(input: {
   status: "running" | "waiting" | "completed" | "failed";
   /** Fencing token (issue #221 finding 5): when set, only the claim-holding drain writes. */
   claimId?: string;
+  /**
+   * A liveness save that observed no new event: refresh the row without moving `lastEventAt`,
+   * which is the unread signal — bumping it would mark the conversation unread for every viewer
+   * when nothing happened.
+   */
+  livenessOnly?: boolean;
 }): Promise<void> {
   await db
     .update(playgroundSessions)
@@ -1281,7 +1287,7 @@ export async function savePlaygroundSessionCursor(input: {
       lastVersion: input.target.version,
       title: inferredTitleUpdate(input.title),
       status: input.status,
-      lastEventAt: new Date(),
+      ...(input.livenessOnly ? {} : { lastEventAt: new Date() }),
       updatedAt: new Date(),
     })
     // The drain can reach its final cursor save after /stop has settled the row. Preserve the

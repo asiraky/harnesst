@@ -495,5 +495,6 @@ export async function action(args: ActionFunctionArgs) {
     claimId,
     preClaimStatus,
     succession: succeedsChannelSession,
+    viewerId: auth.user.id,
   });
 }
