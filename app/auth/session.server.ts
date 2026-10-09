@@ -81,6 +81,9 @@ const SIGNED_OR_BEARER_ENDPOINTS = new Set([
   // verifies the token itself — listing it here bypasses the CSRF check, not authentication.
   "/api/foh/artifacts",
   "/api/foh/park",
+  // Team artifacts: the `team-artifacts` tool reads the repo's published artifacts with the same
+  // delegation bearer; the route verifies the token itself.
+  "/api/foh/team-artifacts",
   "/api/gateway/v1/chat/completions",
   "/api/github/webhook",
   "/api/ingest/runs",

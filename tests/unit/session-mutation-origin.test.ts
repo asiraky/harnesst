@@ -52,6 +52,8 @@ describe("mutation-origin guard: bearer machine endpoints bypass the browser CSR
     // silently produce zero channel runs — the exact class of invisible failure this workstream
     // exists to end.
     "/api/agent/runs",
+    // The team-artifacts tool reads published artifacts with the delegation bearer.
+    "/api/foh/team-artifacts",
   ];
 
   for (const path of machinePaths) {
@@ -82,7 +84,10 @@ describe("mutation-origin guard: bearer machine endpoints bypass the browser CSR
     const next = vi.fn(async () => new Response("must not render"));
 
     const result = await betterAuthSessionMiddleware(
-      middlewareArgs(originlessPost("/org/settings"), new RouterContextProvider()),
+      middlewareArgs(
+        originlessPost("/org/settings"),
+        new RouterContextProvider(),
+      ),
       next,
     );
 
@@ -125,7 +130,8 @@ describe("mutation-origin guard: tailnet development UI", () => {
   afterEach(() => vi.unstubAllEnvs());
 
   async function post(path: string, origin: string, host = origin) {
-    const { betterAuthSessionMiddleware } = await import("~/auth/session.server");
+    const { betterAuthSessionMiddleware } =
+      await import("~/auth/session.server");
     const next = vi.fn(async () => new Response("action reached"));
     const result = await betterAuthSessionMiddleware(
       middlewareArgs(
@@ -142,13 +148,19 @@ describe("mutation-origin guard: tailnet development UI", () => {
     "/api/connections/codex.data",
     "/settings/connections.data",
     "/projects/fixture/settings.data",
-  ])("routes a same-origin tailnet POST to %s through session auth", async (path) => {
-    const { result, next } = await post(path, "http://app.harnesst.test:5277");
-    expect(next).toHaveBeenCalledOnce();
-    expect(getSession).toHaveBeenCalledOnce();
-    expect(result.status).toBe(200);
-    expect(await result.text()).toBe("action reached");
-  });
+  ])(
+    "routes a same-origin tailnet POST to %s through session auth",
+    async (path) => {
+      const { result, next } = await post(
+        path,
+        "http://app.harnesst.test:5277",
+      );
+      expect(next).toHaveBeenCalledOnce();
+      expect(getSession).toHaveBeenCalledOnce();
+      expect(result.status).toBe(200);
+      expect(await result.text()).toBe("action reached");
+    },
+  );
 
   it.each([
     "http://app.harnesst.test:5278",
