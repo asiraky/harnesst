@@ -205,14 +205,21 @@ export type PublishArtifactResult =
       artifactVersionId: string;
       kind: string;
       /**
-       * App path the artifact is served at, or null for a page bundle — a bundle's bytes are ONLY
-       * reachable through a preview URL the app mints per panel-open, so there is no stable link to
-       * hand the agent. It says "published" in the reply; the card opens the preview.
+       * True when the artifact landed as a card in the live conversation. The card is how that
+       * user opens it, so a card publish carries no links at all (`url` and `shareUrl` are null):
+       * the person on the other end is not a developer, and a URL in the result is a URL in the
+       * reply — a localhost or sign-in-walled link they cannot open, in place of the card they can.
+       */
+      card: boolean;
+      /**
+       * App path the artifact is served at — null for a card publish, and for a page bundle, whose
+       * bytes are ONLY reachable through a preview URL the app mints per panel-open.
        */
       url: string | null;
       /**
        * Stable PUBLIC link (#370): `/a/<token>`, serving the latest version to anyone holding it —
-       * no sign-in, every kind including pages. Null only when sharing was revoked for this name.
+       * no sign-in, every kind including pages. Background runs only: there is no card, so this is
+       * how people reach what the run made. Null for a card publish and when sharing was revoked.
        */
       shareUrl: string | null;
       name: string;
@@ -235,6 +242,19 @@ export type PublishArtifactResult =
       fileCount?: number;
     }
   | { ok: false; error: string };
+
+/**
+ * The links a publish hands back to the agent. A card publish gets none: the user opens it from the
+ * card, and anything the agent holds it will paste into the reply instead. A background publish has
+ * no card, so its public share link is the way in.
+ */
+function publishLinks(
+  artifact: { sessionId: string | null; shareToken: string | null },
+  url: string | null,
+): { card: boolean; url: string | null; shareUrl: string | null } {
+  if (artifact.sessionId) return { card: true, url: null, shareUrl: null };
+  return { card: false, url, shareUrl: artifactShareUrl(artifact.shareToken) };
+}
 
 function deny(error: string): PublishArtifactResult {
   return { ok: false, error };
@@ -643,10 +663,11 @@ async function publishFile(
     artifactId: artifact.id,
     artifactVersionId: version.id,
     kind: artifact.kind,
-    // Version-scoped, so the URL in transcript data stays immutably cacheable while the card it
-    // sits on goes on changing.
-    url: artifactUrl(artifact.projectId, artifact.id, version.id),
-    shareUrl: artifactShareUrl(artifact.shareToken),
+    ...publishLinks(
+      artifact,
+      // Version-scoped, so the URL stays immutably cacheable while the artifact goes on changing.
+      artifactUrl(artifact.projectId, artifact.id, version.id),
+    ),
     name: artifact.name,
     contentType: version.contentType,
     byteSize: version.byteSize,
@@ -773,8 +794,7 @@ async function publishBundle(
     // No stable APP url by design — a bundle is reachable only through a short-lived preview token
     // the app mints when the user opens the card. The PUBLIC link (#370) is the exception: it goes
     // out through the sandboxed share route, which is its own trust story.
-    url: null,
-    shareUrl: artifactShareUrl(artifact.shareToken),
+    ...publishLinks(artifact, null),
     name: artifact.name,
     contentType: version.contentType,
     byteSize: version.byteSize,

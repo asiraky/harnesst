@@ -1803,6 +1803,17 @@ export const artifacts = pgTable(
      */
     streamIndex: integer("stream_index").notNull(),
     /**
+     * Later transcript positions the agent published this name again at — a revision, or an
+     * unchanged republish because the user asked to see it again. Each one renders a card at that
+     * turn too, while the first card stays at `stream_index`: "show me again" has to put the
+     * artifact in front of the user, and a card frozen forty turns up does not. Bounded by
+     * `markArtifactShown`; empty for a name published once and for session-less rows.
+     */
+    shownAt: integer("shown_at")
+      .array()
+      .notNull()
+      .default(sql`'{}'::integer[]`),
+    /**
      * The latest `artifact_versions` row — a soft ref (no FK; the two tables reference each other
      * and one direction has to be plain). It is what the single-file URL in transcript data points at, so
      * that URL stays immutably cacheable while the artifact itself keeps changing.

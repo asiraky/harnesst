@@ -281,6 +281,13 @@
       "when": 1789952820693,
       "tag": "0039_naive_sunset_bain",
       "breakpoints": true
+    },
+    {
+      "idx": 40,
+      "version": "7",
+      "when": 1791504475523,
+      "tag": "0040_artifact_shown_at",
+      "breakpoints": true
     }
   ]
 }

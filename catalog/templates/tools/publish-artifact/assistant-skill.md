@@ -7,18 +7,27 @@ description:
 # Publish Artifact (installed tool)
 
 Publishes an image, PDF document, or static HTML page from the current agent or subagent's home
-directory. In a live Front of House conversation it appears as a card the user can see; from a
-background or scheduled run it is published without a card, reachable through its public link. For
+directory. In a live Front of House conversation it appears as a card, and the card is how the user
+opens it; from a background or scheduled run it is published without a card, reachable through its
+public link. For
 a PDF in a declared subagent's isolated sandbox, the tool reads the file and sends it in the
 private tool request; the bytes never enter model context. Harnesst stores the exact bytes at
 publish time, so the artifact survives the agent scaling to zero or redeploying.
 
-Every publish returns `shareUrl`: a stable PUBLIC link to the artifact's newest version that
-anyone holding it can open, with no harnesst sign-in. Quote it in your reply (or post it to a
-channel) whenever the result is meant to be shared; keep it out of the reply when the content is
-sensitive — the URL itself is the only key, and an operator can revoke or rotate it from the
-repository's Artifacts page. Republishing the same name updates what the link shows; the link
-itself does not change.
+**The card is the user's link.** The people in a Front of House conversation are not developers:
+they cannot open a sandbox path, a localhost address or an app-internal URL, and they should not
+have to. A live-conversation publish returns `card: true` and no URL at all (`url` and `shareUrl`
+are null), so the reply points the user to the card and describes what it shows. The card's
+viewer opens a page in its own browser tab when they want one. When an agent you are building
+talks to people, write the same into its instructions: asking for "the link", to open it or to
+see it again means the card.
+
+A background or scheduled run has no card, so its publish returns `card: false` and `shareUrl`: a
+stable PUBLIC link to the artifact's newest version that anyone holding it can open, with no
+harnesst sign-in. Put it in whatever the run reports (a channel post, an email); keep it out when
+the content is sensitive — the URL itself is the only key, and an operator can revoke or rotate it
+from the repository's Artifacts page. Republishing the same name updates what the link shows; the
+link itself does not change.
 
 **Images** — PNG, JPEG, WebP or SVG, up to 25 MB. The type is read from the file's own bytes, so
 renaming something else to `.png` is refused. Images are served back behind the user's own sign-in
@@ -50,16 +59,17 @@ read with `textContent`. Stylesheets, scripts, fonts and images loaded with `<li
 and `<img src>` are fine; only the network APIs are closed.
 
 The same sandbox applies when a page is opened through its public `shareUrl`, which always serves
-the newest version. A page publish returns no in-app `url` (the preview is minted when the user
-opens the card), so `shareUrl` is the one link you can quote for a page.
+the newest version.
 
 **Revising something you already published** — publish it again under the SAME file name. The card
 already in the conversation updates in place to the new version, with a version picker the user can
 look back through; a new name would leave them with two cards and no idea which is current. So
 overwrite `artifacts/chart.png` and publish that path again rather than writing `chart-v2.png`. The
 reply tells you the version number, and tells you when the file was unchanged (`updated: false`) —
-in that case say so instead of claiming you updated it. The card stays where it was first published,
-so mention the update in your reply; the user may be scrolled somewhere else. The response also
+in that case say so instead of claiming you updated it. The first card stays where it was first
+published, and every later turn that publishes the name again — changed or not — shows the card
+again at that point in the conversation. So when the user asks to see it again, publish it again:
+that puts the card in front of them. The response also
 includes `artifactVersionId`, the immutable identifier to retain when another structured record
 needs to point at the exact bytes from this publish rather than whichever version is newest later.
 
@@ -76,8 +86,7 @@ WHERE a publish lands depends on when it happens. Inside the turn you are answer
 harnesst, the card goes to that conversation — publish as part of the reply that mentions it.
 From a background, scheduled or channel run there is no conversation: the publish still succeeds,
 with no card, and the `shareUrl` (plus the repository's back-of-house Artifacts page) is how
-anyone reaches it — so a background run that produces something should include the `shareUrl` in
-whatever it reports. Background publishes of one name are their own artifact, separate from any
+anyone reaches it. Background publishes of one name are their own artifact, separate from any
 conversation's card with the same name. harnesst still refuses rather than guess when the agent is
 answering two people at once, or when several background runs are executing on the same deployment
 and it cannot tell whose workspace holds the file.

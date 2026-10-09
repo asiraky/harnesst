@@ -9,12 +9,20 @@
       "hash": "df5e8338e3e25c5a7259adf90de8e0e4618c21f6"
     },
     {
+      "id": "ledger-architect",
+      "type": "agent",
+      "name": "Ledger Architect",
+      "version": "0.1.0",
+      "description": "The team’s technical designer. For non-trivial issues, call in an engineer, grill them on the technical design, and finalise the spec before breakdown.",
+      "hash": "35831dc3ea1282f8f94b6c2773c4f51fed73a8bf"
+    },
+    {
       "id": "ledger-implementer",
       "type": "agent",
       "name": "Ledger Implementer",
-      "version": "0.2.0",
-      "description": "The team’s product engineer. Turn ledger specifications into working changes in the project repository. Use GitHub for code and the ledger for work state. Keep one branch and one PR per item. Delegate browser QA to the qa subagent and independent code review to reviewer; record their findings against the exact head SHA.",
-      "hash": "92dd7e670ba8b21579450e3738c5bacc91588f1c"
+      "version": "0.2.1",
+      "description": "The team’s product engineer. Build each issue ticket by ticket on the issue branch, then take the issue PR through QA and review to merge approval. Use GitHub for code and the ledger for work state. Delegate code review to the reviewer subagent and browser QA to the qa subagent; record their findings against the exact head SHA.",
+      "hash": "79b3696c2d486f534c14f864eca448b3ad2c5cca"
     },
     {
       "id": "ledger-infra",
@@ -22,15 +30,15 @@
       "name": "Ledger Infra",
       "version": "0.1.1",
       "description": "The team’s infrastructure engineer. Own cloud resources, CI, credentials and deployment configuration. Discover the target product and conventions through the ledger; work through the installed Cloudflare and GitHub tools. Record provisioning results on the item.",
-      "hash": "e2efdada2b4779721854ea78f9bb8e27297ed84d"
+      "hash": "553037e8bb0a0bd59cf21421ac84f079194e3b1c"
     },
     {
       "id": "ledger-intake",
       "type": "agent",
       "name": "Ledger Intake",
       "version": "0.2.0",
-      "description": "The team’s front of house. Turn requests into testable specifications, break large plans into reviewable work, and relay human decisions. Read project context through the ledger. Report pending May I approvals to the named human and report when their work is live.",
-      "hash": "8e5a3369268602fc68aa4b09f50ba8429cf36b78"
+      "description": "The team’s front of house. Grill requesters on requirements, publish the spec as the ledger issue, send non-trivial work to the architect, break issues into tickets, and relay human decisions. Report pending May I approvals to the named human and report when their work is live.",
+      "hash": "17d7a081de8fe424d4782aba580c955e5b28022e"
     },
     {
       "id": "vercel-issuer",
@@ -68,9 +76,9 @@
       "id": "ledger",
       "type": "bundle",
       "name": "Ledger",
-      "version": "0.1.1",
+      "version": "0.2.0",
       "description": "A shared work ledger with authenticated wakes, evidence and human approval gates.",
-      "hash": "30b0590db1b1611c3e2313746804568ced1731e5"
+      "hash": "f6b321bf32832d8aac23efae24d34506bb77a948"
     },
     {
       "id": "vercel-bundle",
@@ -100,9 +108,9 @@
       "id": "ledger-wake",
       "type": "channel",
       "name": "Ledger wake",
-      "version": "0.1.0",
-      "description": "Authenticated, claimed ledger delivery starts one agent turn per live lease.",
-      "hash": "0a95ad4d056603e5befa2074a73962d7e7d35bfc"
+      "version": "0.2.0",
+      "description": "Authenticated ledger delivery: one session per issue lease, heartbeated while it works, released at turn end.",
+      "hash": "ce7d6074924d6f4de011a01385705f43ded37973"
     },
     {
       "id": "agentmail",
@@ -161,28 +169,12 @@
       "hash": "4e7cc86a8065a73437024291e8e760850e22d9d7"
     },
     {
-      "id": "breaking-down-work",
-      "type": "skill",
-      "name": "Breaking Down Work",
-      "version": "0.1.0",
-      "description": "Use when an agreed request needs several independently reviewable changes, infrastructure dependencies, or proposed child items for plan approval.",
-      "hash": "4595fe7412ea6d9b9b87d621a714054a00864347"
-    },
-    {
       "id": "building-cloudflare-apps",
       "type": "skill",
       "name": "Building Cloudflare apps",
       "version": "0.1.2",
       "description": "How to build a full-stack web app on Cloudflare Workers — a React + Vite SPA with a Worker API backend: choosing the scaffold, project layout, wrangler.jsonc semantics, the SPA-vs-Worker routing rules, the verify workflow, and bindings. Building only; deploying and shipping to a forge are separate skills.",
       "hash": "a1df3a370caea93e14fbf2454f24d2d92b88f343"
-    },
-    {
-      "id": "clarifying-a-request",
-      "type": "skill",
-      "name": "Clarifying A Request",
-      "version": "0.1.0",
-      "description": "Use when a person requests a build, change or fix that is not yet a testable specification, or challenges an existing spec.",
-      "hash": "d4ffc109a52d82c1983f62d2dff02d42d518c989"
     },
     {
       "id": "cloudflare",
@@ -215,6 +207,14 @@
       "version": "0.1.0",
       "description": "Assess and plan migrations from existing VPN, SWG, or SASE platforms to Cloudflare One, including policy mapping, parity gaps, and rollout.",
       "hash": "f1eb2d19b37367fa75f5f8fecde1e75acd410b14"
+    },
+    {
+      "id": "codebase-design",
+      "type": "skill",
+      "name": "Codebase Design",
+      "version": "0.1.0",
+      "description": "Shared vocabulary for designing deep modules: interfaces, seams, adapters, depth, leverage and locality, plus deepening and design-it-twice procedures. From mattpocock/skills.",
+      "hash": "f4aefb2aa519b6cd9d105ae829a8b4fb6b3ff1b5"
     },
     {
       "id": "deploying-cloudflare-apps",
@@ -334,7 +334,7 @@
       "name": "Using The Ledger",
       "version": "0.2.0",
       "description": "Use when a ledger wake arrives or before recording evidence, handing code to infra for a preview, moving work, resolving a block, or relaying human approval.",
-      "hash": "149e4d4f626ef6685cb9d76fc969a48dca006ba7"
+      "hash": "4b70f517eacfae35de327cbcf9fe461f7e3d3e38"
     },
     {
       "id": "web-perf",
@@ -359,30 +359,6 @@
       "version": "0.1.0",
       "description": "Run or troubleshoot Wrangler CLI commands and configure Worker projects for local development, deployment, and Cloudflare resource management.",
       "hash": "b523ad2b033386e66e05eb97a657964666e9e0f4"
-    },
-    {
-      "id": "ledger-code-review",
-      "type": "subagent",
-      "name": "reviewer",
-      "version": "0.1.0",
-      "description": "Execute the verbatim two-axis code-review procedure on supplied committed base/head revisions and scope.",
-      "hash": "f3ac7f869c5f86c06ba89ebf0e64c6aef338b478"
-    },
-    {
-      "id": "ledger-planner",
-      "type": "subagent",
-      "name": "planner",
-      "version": "0.1.0",
-      "description": "Break one settled issue specification into internal tickets and dependencies; return unresolved decisions to intake.",
-      "hash": "175fb515009fe851eda47c870e6a7614b674ab6b"
-    },
-    {
-      "id": "ledger-researcher",
-      "type": "subagent",
-      "name": "researcher",
-      "version": "0.1.0",
-      "description": "Investigate a bounded codebase question for intake; report file references, facts and unknowns without making product decisions.",
-      "hash": "2ccca361beac58c06e6f19b7ad53ab8a29fb79cc"
     },
     {
       "id": "asset-library",
@@ -420,17 +396,17 @@
       "id": "ledger-tools",
       "type": "tool",
       "name": "Ledger tools",
-      "version": "0.2.0",
+      "version": "0.4.0",
       "description": "Read and move team work through database-enforced stages, evidence and human gates.",
-      "hash": "ea23dd69a7bb4c5989a180f870ff7e575aec12db"
+      "hash": "9e79bc29b82484e8744d3ea5bca0c9f530c9729d"
     },
     {
       "id": "publish-artifact",
       "type": "tool",
       "name": "Publish Artifact",
-      "version": "0.5.0",
-      "description": "Publish a file from the agent's home directory as durable, versioned evidence — into the live Front of House conversation as a card, or from a background run with no conversation at all. Images render as cards, PDF documents receive download links, and static HTML pages open in a sandboxed preview. Every publish returns a stable public share URL anyone can open without signing in. harnesst copies the bytes without sending them through model context; publishing the same name again updates the artifact in place as a new version.",
-      "hash": "4b762ea731eff68096fc9a470e68f56259d4f964"
+      "version": "0.6.0",
+      "description": "Publish a file from the agent's home directory as durable, versioned evidence — into the live Front of House conversation as a card the user opens it from, or from a background run with no conversation at all, which returns a stable public share URL anyone can open without signing in. Images render as cards, PDF documents receive download links, and static HTML pages open in a sandboxed preview. harnesst copies the bytes without sending them through model context; publishing the same name again updates the artifact in place as a new version, and shows its card again when it is a later turn.",
+      "hash": "7d006e2ef6bc45498d1ff248d3820a4787ad4df2"
     },
     {
       "id": "vercel-cli",

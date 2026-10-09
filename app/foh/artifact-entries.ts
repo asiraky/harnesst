@@ -15,6 +15,11 @@
  * which is the whole reason the card was built as a session-attached row rather than a transcript
  * event. Moving it to the newest version's position would slide it down past every turn since,
  * away from the conversation the user is having about it.
+ *
+ * A republish in a LATER turn also renders the card at that turn (`shown_at`), one card per turn,
+ * every one showing the newest version. The user cannot see the agent's files or any URL it holds,
+ * so when they ask to see the thing again, a card at the bottom of the conversation is the only
+ * answer that reaches them; the first card staying put keeps the history readable.
  */
 import type { ChatArtifact, ChatEntry } from "~/chat/types";
 import { artifactUrl } from "~/foh/artifact-media";
@@ -33,6 +38,8 @@ export interface ArtifactRow {
   contentType: string;
   byteSize: number;
   streamIndex: number;
+  /** Later positions the name was published again at (`artifacts.shown_at`): a card at each turn. */
+  shownAt?: readonly number[] | null;
   /** Latest version's ordinal (#292) — 1 until the name is republished. */
   versionNumber: number;
   /** Latest version id, which a single-file artifact URL is scoped to. */
@@ -179,24 +186,38 @@ export function mergeArtifactEntries(
     .filter((row) => !referenced.has(row.id))
     .sort((a, b) => a.streamIndex - b.streamIndex || (a.id < b.id ? -1 : 1));
   if (ordered.length === 0) return resolvedEntries;
-  const after = new Map<number, ChatEntry[]>();
+  const after = new Map<
+    number,
+    Array<{ streamIndex: number; entry: ChatEntry }>
+  >();
   const trailing: ChatEntry[] = [];
   for (const row of ordered) {
-    const turnKey = anchorFor(anchors, row.streamIndex);
-    const index = turnKey ? lastEntryOfTurn(resolvedEntries, turnKey) : -1;
-    if (index < 0) {
-      trailing.push(artifactEntry(row));
-      continue;
+    // One card per turn the name was published in. The earliest keeps the plain `artifact:<id>`
+    // entry id the card has always had; a later turn's is suffixed with that turn's key so React
+    // keys stay unique. Only when NO position resolves to a turn does the card trail the transcript.
+    const placed = new Set<number>();
+    for (const streamIndex of [row.streamIndex, ...(row.shownAt ?? [])]) {
+      const turnKey = anchorFor(anchors, streamIndex);
+      const index = turnKey ? lastEntryOfTurn(resolvedEntries, turnKey) : -1;
+      if (index < 0 || placed.has(index)) continue;
+      const base = artifactEntry(row);
+      const entry =
+        placed.size === 0 ? base : { ...base, id: `${base.id}@${turnKey}` };
+      placed.add(index);
+      const bucket = after.get(index);
+      if (bucket) bucket.push({ streamIndex, entry });
+      else after.set(index, [{ streamIndex, entry }]);
     }
-    const bucket = after.get(index);
-    if (bucket) bucket.push(artifactEntry(row));
-    else after.set(index, [artifactEntry(row)]);
+    if (placed.size === 0) trailing.push(artifactEntry(row));
   }
   const merged: ChatEntry[] = [];
   resolvedEntries.forEach((entry, index) => {
     merged.push(entry);
     const extra = after.get(index);
-    if (extra) merged.push(...extra);
+    if (extra) {
+      extra.sort((a, b) => a.streamIndex - b.streamIndex);
+      merged.push(...extra.map((card) => card.entry));
+    }
   });
   merged.push(...trailing);
   return merged;
