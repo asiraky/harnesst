@@ -1278,15 +1278,19 @@ export function ArtifactCard({
       </span>
     ) : null;
 
-  const share = artifact.shareUrl ? (
-    <span className="shrink-0" onClick={(event) => event.stopPropagation()}>
-      <SharePopover
-        shareUrl={artifact.shareUrl}
-        title={label}
-        isPage={artifact.kind === "html"}
-      />
-    </span>
-  ) : null;
+  const share = (className: string) =>
+    artifact.shareUrl ? (
+      <span
+        className={cn("shrink-0", className)}
+        onClick={(event) => event.stopPropagation()}
+      >
+        <SharePopover
+          shareUrl={artifact.shareUrl}
+          title={label}
+          isPage={artifact.kind === "html"}
+        />
+      </span>
+    ) : null;
 
   if (artifact.kind === "image" && artifact.url) {
     const src = artifact.url;
@@ -1321,7 +1325,7 @@ export function ArtifactCard({
               Open
             </button>
           )}
-          {share && <span className="-my-1.5 font-sans">{share}</span>}
+          {share("-my-1.5 font-sans")}
         </figcaption>
       </figure>
     );
@@ -1394,7 +1398,7 @@ export function ArtifactCard({
   return (
     <div className={cn(shape, (onOpen || href) && hover)}>
       {main}
-      {share && <span className="pr-2">{share}</span>}
+      {share("pr-2")}
     </div>
   );
 }
