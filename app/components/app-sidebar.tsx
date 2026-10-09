@@ -36,10 +36,11 @@ import {
 
 import { BrandWordmark } from "~/components/marketing/logo";
 import { SETTINGS_TABS } from "~/components/settings-tabs";
-import { ThemeMenuSub } from "~/components/theme-toggle";
+import { ThemeMenuItems, ThemeMenuSub } from "~/components/theme-toggle";
 import {
   DropdownMenu,
   DropdownMenuContent,
+  DropdownMenuGroup,
   DropdownMenuItem,
   DropdownMenuLabel,
   DropdownMenuPortal,
@@ -63,6 +64,7 @@ import {
   type Surface,
   type SurfaceRepo,
 } from "~/lib/surfaces";
+import { useNarrowViewport } from "~/lib/use-narrow-viewport";
 import { cn } from "~/lib/utils";
 
 export interface SidebarAccount {
@@ -304,14 +306,26 @@ interface WorkspaceInfo {
   name: string;
 }
 
+interface WorkspacesData {
+  currentOrgId: string | null;
+  workspaces: WorkspaceInfo[];
+}
+
 /**
  * Bottom-left account control: who you are, which workspace you're in, and everything that
  * is about YOU rather than the product — switching workspace, theme, sign out. Opens upward.
  *
- * The workspace list self-fetches from `/api/workspaces` (the pattern the old header switcher
- * used) so no page loader has to thread it through. Each switch is a real `<Form>` POST —
- * a full document navigation — because the org changes underneath and every loader's data
+ * The workspace list self-fetches from `/api/workspaces` so no page loader has to thread it
+ * through. The fetcher is deliberately unkeyed and loads on every mount: Chat and Build each
+ * mount their own sidebar, and a keyed fetcher shared between them has its data deleted when
+ * the outgoing sidebar unmounts — after the incoming one has already seen it and skipped its
+ * load, which left the list empty until a reload. Each switch is a real `<Form>` POST — a
+ * full document navigation — because the org changes underneath and every loader's data
  * would otherwise be stale.
+ *
+ * On phone-width viewports the Workspace and Theme choices render inline as labelled groups:
+ * a Radix submenu only opens sideways and never shifts back on-screen, so inside a drawer (or
+ * Chat's full-width sidebar) it would land off the edge of the viewport.
  */
 function AccountMenu({
   account,
@@ -323,18 +337,18 @@ function AccountMenu({
   canSettings: boolean;
 }) {
   const submit = useSubmit();
+  const narrow = useNarrowViewport();
   const display = account.name || account.email || "Account";
   const initial = display.charAt(0).toUpperCase();
-  const workspaces = useFetcher<{
-    currentOrgId: string | null;
-    workspaces: WorkspaceInfo[];
-  }>({ key: "workspaces" });
+  const workspaces = useFetcher<WorkspacesData>();
   const { load } = workspaces;
   useEffect(() => {
-    if (!workspaces.data) load("/api/workspaces");
-    // Load once per mount; a workspace switch is a document navigation and remounts anyway.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    load("/api/workspaces");
   }, [load]);
+
+  const workspaceItems = (
+    <WorkspaceItems data={workspaces.data} returnTo={SURFACE_ROOT[surface]} />
+  );
 
   return (
     <DropdownMenu>
@@ -363,6 +377,7 @@ function AccountMenu({
         side="top"
         align="start"
         sideOffset={6}
+        collisionPadding={8}
         className="w-(--radix-dropdown-menu-trigger-width) min-w-56"
       >
         <DropdownMenuLabel className="font-normal">
@@ -384,55 +399,35 @@ function AccountMenu({
             </Link>
           </DropdownMenuItem>
         )}
-        <DropdownMenuSub>
-          <DropdownMenuSubTrigger>
-            <Building2 className="mr-2 h-4 w-4 text-muted-foreground" />
-            <span className="truncate">Workspace</span>
-          </DropdownMenuSubTrigger>
-          <DropdownMenuPortal>
-            <DropdownMenuSubContent className="w-56">
-              {(workspaces.data?.workspaces ?? []).map((ws) => {
-                const isCurrent = ws.id === workspaces.data?.currentOrgId;
-                return (
-                  <Form method="post" action="/workspaces" key={ws.id}>
-                    <input type="hidden" name="orgId" value={ws.id} />
-                    <input
-                      type="hidden"
-                      name="returnTo"
-                      value={SURFACE_ROOT[surface]}
-                    />
-                    <DropdownMenuItem asChild>
-                      <button
-                        type="submit"
-                        className="w-full cursor-pointer"
-                        disabled={isCurrent}
-                      >
-                        <Check
-                          className={cn(
-                            "mr-2 h-4 w-4",
-                            isCurrent ? "opacity-100" : "opacity-0",
-                          )}
-                          aria-hidden
-                        />
-                        <span className="truncate">{ws.name}</span>
-                      </button>
-                    </DropdownMenuItem>
-                  </Form>
-                );
-              })}
-              {workspaces.data && workspaces.data.workspaces.length > 0 && (
-                <DropdownMenuSeparator />
-              )}
-              <DropdownMenuItem asChild>
-                <Link to="/workspaces" className="cursor-pointer">
-                  <Plus className="mr-2 h-4 w-4" aria-hidden />
-                  Create workspace
-                </Link>
-              </DropdownMenuItem>
-            </DropdownMenuSubContent>
-          </DropdownMenuPortal>
-        </DropdownMenuSub>
-        <ThemeMenuSub />
+        {narrow ? (
+          <>
+            {canSettings && <DropdownMenuSeparator />}
+            <DropdownMenuGroup>
+              <DropdownMenuLabel>Workspace</DropdownMenuLabel>
+              {workspaceItems}
+            </DropdownMenuGroup>
+            <DropdownMenuSeparator />
+            <DropdownMenuGroup>
+              <DropdownMenuLabel>Theme</DropdownMenuLabel>
+              <ThemeMenuItems />
+            </DropdownMenuGroup>
+          </>
+        ) : (
+          <>
+            <DropdownMenuSub>
+              <DropdownMenuSubTrigger>
+                <Building2 className="mr-2 h-4 w-4 text-muted-foreground" />
+                <span className="truncate">Workspace</span>
+              </DropdownMenuSubTrigger>
+              <DropdownMenuPortal>
+                <DropdownMenuSubContent className="w-56">
+                  {workspaceItems}
+                </DropdownMenuSubContent>
+              </DropdownMenuPortal>
+            </DropdownMenuSub>
+            <ThemeMenuSub />
+          </>
+        )}
         <DropdownMenuSeparator />
         <DropdownMenuItem
           onSelect={() =>
@@ -447,5 +442,49 @@ function AccountMenu({
         </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>
+  );
+}
+
+/** The workspace switch rows (current one checked) followed by "Create workspace". */
+function WorkspaceItems({
+  data,
+  returnTo,
+}: {
+  data: WorkspacesData | undefined;
+  returnTo: string;
+}) {
+  const list = data?.workspaces ?? [];
+  return (
+    <>
+      {list.map((ws) => {
+        const isCurrent = ws.id === data?.currentOrgId;
+        return (
+          <Form method="post" action="/workspaces" key={ws.id}>
+            <input type="hidden" name="orgId" value={ws.id} />
+            <input type="hidden" name="returnTo" value={returnTo} />
+            <DropdownMenuItem asChild>
+              <button
+                type="submit"
+                className="w-full cursor-pointer"
+                disabled={isCurrent}
+              >
+                <Check
+                  className={cn("mr-2 h-4 w-4", isCurrent ? "opacity-100" : "opacity-0")}
+                  aria-hidden
+                />
+                <span className="truncate">{ws.name}</span>
+              </button>
+            </DropdownMenuItem>
+          </Form>
+        );
+      })}
+      {list.length > 0 && <DropdownMenuSeparator />}
+      <DropdownMenuItem asChild>
+        <Link to="/workspaces" className="cursor-pointer">
+          <Plus className="mr-2 h-4 w-4" aria-hidden />
+          Create workspace
+        </Link>
+      </DropdownMenuItem>
+    </>
   );
 }
