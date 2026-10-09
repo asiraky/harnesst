@@ -3,7 +3,7 @@
  *
  * A real eve instance, not an in-process loop: the composer POSTs to the
  * streaming resource route (api.projects.$projectId.assistant.stream) and this component reads the
- * same NDJSON turn feed the playground uses. Eve's durable stream is the transcript source
+ * same NDJSON turn feed Chat uses. Eve's durable stream is the transcript source
  * (#288); the loader wakes a resumable instance to render it. First use shows a provisioning
  * state while the instance builds/deploys.
  */

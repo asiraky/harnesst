@@ -1,5 +1,5 @@
 /**
- * Shared streaming-turn machinery for harnesst's durable chat surfaces (playground + assistant).
+ * Shared streaming-turn machinery for harnesst's durable chat surfaces (Chat/FOH + assistant).
  *
  * Both surfaces drive an eve turn over `streamTurn`, re-emit it to the browser as NDJSON, and —
  * critically — keep draining Eve to the terminal `done` even if the client disconnects, then
@@ -172,7 +172,7 @@ export function streamTurnResponse(input: {
    * the send (so the replay can serve them) and sent to eve as base64 file parts.
    */
   attachments?: ReadonlyArray<ParsedAttachment>;
-  /** Observability channel — "playground" | "assistant" | "foh". */
+  /** Observability channel — "assistant" | "foh" ("playground" on runs from before its removal). */
   channel: string;
   /** Recompute the session title on the first turn (null once titled). */
   title: string | null;
@@ -201,7 +201,7 @@ export function streamTurnResponse(input: {
   /**
    * The session row's status BEFORE the route's claim flipped it to `running` (issue #282).
    * Read only on a `notDelivered` refusal, to put the row back exactly where it was. Callers
-   * whose sends can never be refused pre-delivery (builder, playground) omit it.
+   * whose sends can never be refused pre-delivery (the assistant) omit it.
    */
   preClaimStatus?: string | null;
   /**

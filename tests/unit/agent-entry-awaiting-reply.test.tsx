@@ -1,7 +1,7 @@
 /**
  * The transcript's persisted-entry renderer (#271): a still-running turn rebuilt from the
  * event cache — switching away from a session mid-turn and back — has steps but no reply
- * text yet, and must NOT render the "(empty reply)" fallback. All three transcript views
+ * text yet, and must NOT render the "(empty reply)" fallback. Both transcript views
  * share the guard; the assistant route is the original from #193.
  */
 import { MemoryRouter } from "react-router";
@@ -10,7 +10,6 @@ import { describe, expect, it } from "vitest";
 
 import type { ChatEntry } from "~/chat/types";
 import { AgentEntry as FohAgentEntry } from "~/routes/foh.session";
-import { AgentEntry as PlaygroundAgentEntry } from "~/routes/projects.$projectId.playground";
 import { AgentEntry as AssistantAgentEntry } from "~/routes/projects.$projectId.assistant";
 
 function entry(overrides: Partial<ChatEntry> = {}): ChatEntry {
@@ -25,7 +24,6 @@ function entry(overrides: Partial<ChatEntry> = {}): ChatEntry {
 
 const VIEWS = [
   ["foh", FohAgentEntry],
-  ["playground", PlaygroundAgentEntry],
   ["assistant", AssistantAgentEntry],
 ] as const;
 

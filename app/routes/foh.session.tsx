@@ -1,7 +1,7 @@
 /**
  * FOH session view (D14: /t/:projectId/:agentId/s/:sessionId) — the right pane: one
- * conversation with a team member. A deliberate COPY of the playground page's loader
- * pipeline (wake → reconcile → settle → eve render) and client machinery (LiveTurn
+ * conversation with a team member. Began as a deliberate COPY of the since-removed Playground
+ * page's loader pipeline (wake → reconcile → settle → eve render) and client machinery (LiveTurn
  * reducer, NDJSON send/stop, 2s reconnect poll, newest-entry-only onAnswer) per D20 — the
  * regression criterion outweighs DRY.
  *

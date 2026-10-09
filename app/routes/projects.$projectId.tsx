@@ -161,7 +161,7 @@ interface ProjectView {
    */
   canInstall: boolean;
   roster: { name: string }[];
-  active: Pick<Agent, "name" | "root"> | null;
+  active: Pick<Agent, "id" | "name" | "root"> | null;
   isTeam: boolean;
   /** True when the repo uses the team layout (agents/*) — enables roster CRUD. */
   teamLayout: boolean;
@@ -425,7 +425,9 @@ export const loader = (args: LoaderFunctionArgs) =>
           project,
           canInstall,
           roster: roster.map((a) => ({ name: a.name })),
-          active: active ? { name: active.name, root: active.root } : null,
+          active: active
+            ? { id: active.id, name: active.name, root: active.root }
+            : null,
           isTeam,
           teamLayout,
           view,
@@ -729,15 +731,15 @@ export default function ProjectDetail({
               />{" "}
               on {running[0].envName}
               {" · "}updated <RelativeTime value={running[0].at} />
-              {/* `url` is instance-internal — its presence just gates the playground link. */}
-              {running[0].url && (
+              {/* `url` is instance-internal — its presence just gates the Chat link. */}
+              {running[0].url && active && (
                 <>
                   {" · "}
                   <Link
-                    to={`${ctx}/playground`}
+                    to={`/t/${encodeURIComponent(project.slug)}/${encodeURIComponent(active.id)}`}
                     className="underline underline-offset-4"
                   >
-                    open
+                    chat
                   </Link>
                 </>
               )}
