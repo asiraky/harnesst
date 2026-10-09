@@ -54,6 +54,9 @@ describe("mutation-origin guard: bearer machine endpoints bypass the browser CSR
     "/api/agent/runs",
     // The team-artifacts tool reads published artifacts with the delegation bearer.
     "/api/foh/team-artifacts",
+    // #322 Asset Library and #364 credential deposit tools, same delegation bearer.
+    "/api/assets",
+    "/api/secrets/deposit",
   ];
 
   for (const path of machinePaths) {
