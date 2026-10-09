@@ -19,6 +19,7 @@ import {
   Building2,
   Check,
   ChevronsUpDown,
+  Loader2,
   LogOut,
   Plus,
   Settings,
@@ -315,13 +316,14 @@ interface WorkspacesData {
  * Bottom-left account control: who you are, which workspace you're in, and everything that
  * is about YOU rather than the product — switching workspace, theme, sign out. Opens upward.
  *
- * The workspace list self-fetches from `/api/workspaces` so no page loader has to thread it
- * through. The fetcher is deliberately unkeyed and loads on every mount: Chat and Build each
- * mount their own sidebar, and a keyed fetcher shared between them has its data deleted when
- * the outgoing sidebar unmounts — after the incoming one has already seen it and skipped its
- * load, which left the list empty until a reload. Each switch is a real `<Form>` POST — a
- * full document navigation — because the org changes underneath and every loader's data
- * would otherwise be stale.
+ * The workspace list self-fetches from `/api/workspaces` each time the menu opens, so no page
+ * loader has to thread it through and it is never stale. The fetcher is deliberately unkeyed:
+ * the sidebar remounts on every surface switch (and every Build page, each of which renders its
+ * own shell), and a keyed fetcher shared across those mounts has its data deleted when the
+ * outgoing one unmounts — after the incoming one has already seen it and skipped its load,
+ * which left the list empty until a reload. Each switch is a real `<Form>` POST — a full
+ * document navigation — because the org changes underneath and every loader's data would
+ * otherwise be stale.
  *
  * On phone-width viewports the Workspace and Theme choices render inline as labelled groups:
  * a Radix submenu only opens sideways and never shifts back on-screen, so inside a drawer (or
@@ -341,17 +343,16 @@ function AccountMenu({
   const display = account.name || account.email || "Account";
   const initial = display.charAt(0).toUpperCase();
   const workspaces = useFetcher<WorkspacesData>();
-  const { load } = workspaces;
-  useEffect(() => {
-    load("/api/workspaces");
-  }, [load]);
+  const onOpenChange = (open: boolean) => {
+    if (open && workspaces.state === "idle") void workspaces.load("/api/workspaces");
+  };
 
   const workspaceItems = (
     <WorkspaceItems data={workspaces.data} returnTo={SURFACE_ROOT[surface]} />
   );
 
   return (
-    <DropdownMenu>
+    <DropdownMenu onOpenChange={onOpenChange}>
       <DropdownMenuTrigger asChild>
         <button
           type="button"
@@ -456,6 +457,12 @@ function WorkspaceItems({
   const list = data?.workspaces ?? [];
   return (
     <>
+      {!data && (
+        <DropdownMenuItem disabled>
+          <Loader2 className="mr-2 h-4 w-4 animate-spin" aria-hidden />
+          Loading…
+        </DropdownMenuItem>
+      )}
       {list.map((ws) => {
         const isCurrent = ws.id === data?.currentOrgId;
         return (
