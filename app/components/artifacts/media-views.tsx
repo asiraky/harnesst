@@ -186,6 +186,12 @@ export function PdfView({
     // `application/pdf` + `nosniff` (the browser's own viewer, never a page of this origin) and is
     // the only type it lets the app frame — a file merely NAMED `.pdf` with some other stored type
     // goes out sandboxed or as an attachment, so it cannot become a live document here either.
+    //
+    // WHY THE APP ORIGIN, not the preview origin pages use: `application/pdf` + `nosniff` is never
+    // parsed as HTML, and the browser's PDF viewer gives the document no DOM or cookie access to
+    // the app that embeds it, so the cookie-authenticated route is safe to frame. The preview origin
+    // would buy nothing a PDF needs — Chrome's viewer blanks under any sandbox anyway — and it
+    // carries no cookies, so it would need a token route of its own. Omniplex makes the same call.
     // react-doctor-disable-next-line react-doctor/iframe-missing-sandbox -- any sandbox blanks Chrome's PDF viewer; the src is a same-origin PDF served with nosniff
     return <iframe src={src} title={title} className="size-full border-0 bg-white" />;
   }

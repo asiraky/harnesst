@@ -12,7 +12,11 @@
  *     viewer renders a blank page under a `sandbox` CSP — and with `frame-ancestors 'self'` so the
  *     app's own panel can frame it (setting a CSP also makes the session middleware drop its
  *     `X-Frame-Options: DENY`). No third party can frame it, and the viewer's scripting runs in the
- *     browser's PDF plugin, not against this origin;
+ *     browser's PDF plugin, not against this origin. Served from HERE, the app origin, on purpose
+ *     rather than from the preview origin pages use: `application/pdf` + `nosniff` is never parsed
+ *     as HTML, the PDF viewer gives the document no DOM or cookie access to the embedding app,
+ *     Chrome's viewer blanks under any sandbox, and the preview origin carries no cookies so it
+ *     would need a token route — the same call Omniplex makes;
  *   - SVG goes out inline but under `Content-Security-Policy: sandbox`: inert in an `<img>`, and a
  *     direct navigation now runs no script and gets an opaque origin;
  *   - every text format — markdown, CSV, JSON, code, plain text, even HTML that arrived as a single
