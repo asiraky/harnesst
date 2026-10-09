@@ -15,6 +15,9 @@ process.env.HARNESST_DISABLE_WORKER = "1";
 process.env.HARNESST_DISABLE_SPLITTER = "1";
 process.env.HARNESST_DISABLE_RECONCILER = "1";
 process.env.MARKETING_HOST = "127.0.0.1";
+// The sweep drives http://localhost:<port>; keep the app origin there rather than the tailnet
+// host `npm run dev` would pick (scripts/dev-origin.mjs).
+process.env.HARNESST_DEV_HOST = "localhost";
 const sha = "a".repeat(40);
 const files = {};
 for (const root of [

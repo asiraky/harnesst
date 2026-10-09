@@ -55,6 +55,7 @@ import {
   TooltipTrigger,
 } from "~/components/ui/tooltip";
 import { cn } from "~/lib/utils";
+import { copyText } from "~/components/chat/clipboard";
 
 const ALL = "all";
 
@@ -205,8 +206,13 @@ function MetaLine({
                 type="button"
                 className="font-mono underline-offset-4 hover:underline"
                 onClick={() => {
-                  void navigator.clipboard?.writeText(fingerprint);
-                  onCopied("Fingerprint copied.");
+                  void copyText(fingerprint).then((ok) =>
+                    onCopied(
+                      ok
+                        ? "Fingerprint copied."
+                        : "Couldn't copy to the clipboard.",
+                    ),
+                  );
                 }}
               >
                 fp {fingerprint.slice(0, 6)}
@@ -277,8 +283,9 @@ function CopyNameButton({
       className="size-7"
       aria-label={`Copy secret name ${name}`}
       onClick={() => {
-        void navigator.clipboard?.writeText(name);
-        onCopied(COPY.copyNameToast);
+        void copyText(name).then((ok) =>
+          onCopied(ok ? COPY.copyNameToast : "Couldn't copy to the clipboard."),
+        );
       }}
     >
       <Copy className="size-3.5" />

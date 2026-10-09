@@ -1,13 +1,22 @@
 import { reactRouter } from "@react-router/dev/vite";
 import tailwindcss from "@tailwindcss/vite";
-import { defineConfig, loadEnv } from "vite";
+import { defineConfig, loadEnv, type Plugin } from "vite";
 
-export default defineConfig(({ mode }) => {
+import {
+  hostResolves,
+  isGitWorktree,
+  resolveDevOrigin,
+} from "./scripts/dev-origin.mjs";
+
+export default defineConfig(async ({ command, mode, isPreview }) => {
   // Worktrees created by scripts/worktree-setup.mjs get a unique PORT written
   // into their .env.local; the main checkout has no PORT and keeps 5173.
   const env = loadEnv(mode, process.cwd(), "");
+  const port = Number(env.PORT ?? 5173);
+  const devServer = command === "serve" && mode === "development" && !isPreview;
+  const dev = devServer ? await tailnetOrigin(env, port) : null;
   return {
-    plugins: [tailwindcss(), reactRouter()],
+    plugins: [tailwindcss(), reactRouter(), ...(dev ? [dev.plugin] : [])],
     resolve: {
       tsconfigPaths: true,
     },
@@ -28,7 +37,7 @@ export default defineConfig(({ mode }) => {
       ],
     },
     server: {
-      port: Number(env.PORT ?? 5173),
+      port,
       // Bind all interfaces (not just loopback). Containerized eve instances reach harnesst via
       // `host.docker.internal` → the Docker host-gateway IP, which cannot connect to a server
       // bound only to 127.0.0.1/::1. Without this the assistant/deploy callbacks fail with
@@ -46,6 +55,8 @@ export default defineConfig(({ mode }) => {
         ".harnesst.test",
         ".loca.lt",
         ".trycloudflare.com",
+        // Whatever host the dev origin landed on, e.g. a HARNESST_DEV_HOST outside .harnesst.test.
+        ...(dev ? [dev.hostname] : []),
       ],
       // In production nginx routes /e/<environmentId>/… to the traffic splitter
       // (deploy/vps/nginx-harnesst.conf); mirror that here so the ingress URLs the UI shows —
@@ -58,3 +69,37 @@ export default defineConfig(({ mode }) => {
     },
   };
 });
+
+/**
+ * Point the dev server's app origin at its tailnet hostname (scripts/dev-origin.mjs) and print it
+ * under Vite's own URLs. Runs before React Router loads `.env.local` into `process.env`, and that
+ * load never overwrites a key already set, so the upgraded `BETTER_AUTH_URL` is the one the server
+ * sees.
+ */
+async function tailnetOrigin(
+  env: Record<string, string>,
+  port: number,
+): Promise<{ plugin: Plugin; hostname: string }> {
+  const cwd = process.cwd();
+  const { origin, upgraded, note } = await resolveDevOrigin({
+    env,
+    port,
+    cwd,
+    isWorktree: isGitWorktree(cwd),
+    resolves: (hostname) => hostResolves(hostname),
+  });
+  if (upgraded) process.env.BETTER_AUTH_URL = origin;
+  const plugin: Plugin = {
+    name: "harnesst:tailnet-origin",
+    configureServer(server) {
+      const printUrls = server.printUrls.bind(server);
+      server.printUrls = () => {
+        printUrls();
+        server.config.logger.info(
+          `  ➜  App:     ${origin}/${note ? ` (${note})` : ""}`,
+        );
+      };
+    },
+  };
+  return { plugin, hostname: new URL(origin).hostname };
+}

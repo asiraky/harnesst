@@ -117,6 +117,7 @@ import { auth as betterAuth } from "~/lib/auth.server";
 import { publicAuthErrorMessage } from "~/lib/auth-error.server";
 import { invalidateOrganizationEnvironments } from "~/deploy/env-reconcile.server";
 import type { Route } from "./+types/settings";
+import { copyText } from "~/components/chat/clipboard";
 
 interface OrgSettingsView {
   org: WorkspaceInfo | null;
@@ -1007,10 +1008,9 @@ function ConnectionRow({
             className="ml-1 size-7"
             aria-label={`Copy connection ID for ${conn.label}, ${conn.id}`}
             onClick={async () => {
-              try {
-                await navigator.clipboard.writeText(conn.id);
+              if (await copyText(conn.id)) {
                 toast.success("Connection ID copied");
-              } catch {
+              } else {
                 toast.error("Could not copy connection ID");
               }
             }}

@@ -232,10 +232,10 @@ export default function GitHubAppNew({ loaderData }: Route.ComponentProps) {
               <Alert>
                 <AlertTitle>Local development origin</AlertTitle>
                 <AlertDescription>
-                  The webhook URL points at localhost, which GitHub can&rsquo;t
-                  reach. The App will still be created and its credentials
-                  stored — expose harnesst through a tunnel and update the
-                  App&rsquo;s webhook URL for live mentions.
+                  The webhook URL points at a local address, which GitHub
+                  can&rsquo;t reach. The App will still be created and its
+                  credentials stored — expose harnesst through a tunnel and
+                  update the App&rsquo;s webhook URL for live mentions.
                 </AlertDescription>
               </Alert>
             )}
