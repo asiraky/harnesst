@@ -6,6 +6,7 @@
  */
 
 import type { ReasoningEffort } from "~/models/reasoning";
+import type { ArtifactViewer } from "~/foh/artifact-viewer";
 
 export interface ChatStep {
   type: string;
@@ -140,8 +141,11 @@ export interface ChatArtifact {
   /** File name as the agent published it. */
   name: string;
   title: string | null;
-  /** Images render, documents link to their download, and HTML opens in the preview panel. */
-  kind: "image" | "html" | "document";
+  /**
+   * Images render, HTML opens in the preview panel, documents (PDF) and files open in the viewer
+   * `viewer` names. `file` is any other single file (markdown, CSV, JSON, code, media, binaries).
+   */
+  kind: "image" | "html" | "document" | "file";
   contentType: string;
   byteSize: number;
   /**
@@ -157,6 +161,15 @@ export interface ChatArtifact {
    * agent's own reply is the narrative.
    */
   version: number;
+  /** The version `url` is scoped to — what the source endpoint and version picker key off. */
+  latestVersionId: string | null;
+  /**
+   * App-relative public share link (`/a/<token>`, #370) — resolve against `location.origin`. Null
+   * when sharing was revoked.
+   */
+  shareUrl: string | null;
+  /** Which viewer opens it (`artifactViewerForArtifact` in `~/foh/artifact-viewer`). */
+  viewer: ArtifactViewer;
 }
 
 export interface ChatEntry {

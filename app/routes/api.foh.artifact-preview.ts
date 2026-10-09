@@ -30,13 +30,17 @@ import { getFohSessionForViewer } from "~/playground/sessions.server";
 
 export async function action(args: ActionFunctionArgs) {
   const auth = await getSessionAuth(args);
-  if (!auth.user) throw data({ ok: false, error: "Not found" }, { status: 404 });
+  if (!auth.user)
+    throw data({ ok: false, error: "Not found" }, { status: 404 });
   const access = await requireFohProject(auth, args.params.projectId);
 
   const form = await args.request.formData();
   const artifactId = String(form.get("artifactId") ?? "");
   const artifact = artifactId
-    ? await findProjectArtifact({ id: artifactId, projectId: access.project.id })
+    ? await findProjectArtifact({
+        id: artifactId,
+        projectId: access.project.id,
+      })
     : null;
   if (!artifact || artifact.kind !== "html") {
     throw data({ ok: false, error: "Not found" }, { status: 404 });
@@ -87,7 +91,7 @@ export async function action(args: ActionFunctionArgs) {
     url: artifactPreviewUrl(minted.token, artifact.id, selected.entryPath),
     expiresAt: minted.expiresAt,
     // Echoed so the panel's re-mint pins the version the user is LOOKING at: re-resolving "newest"
-    // every ten minutes would swap a user parked on v1 to v3 with no interaction at all.
+    // on every re-mint would swap a user parked on v1 to v3 with no interaction at all.
     versionId: selected.id,
     versions: versions.map((version) => ({
       id: version.id,
