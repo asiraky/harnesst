@@ -67,6 +67,13 @@ export default [
     "api/foh/:projectId/artifact/:artifactId/:versionId?",
     "routes/api.foh.artifact.ts",
   ),
+  // An artifact's source text / file listing for the panel's source view — same auth as the raw
+  // route, always `text/plain` or JSON. The static `source` segment outranks the raw route's
+  // dynamic `:versionId`, and version ids are 12-char nanoids, never the word `source`.
+  route(
+    "api/foh/:projectId/artifact/:artifactId/source/:versionId?",
+    "routes/api.foh.artifact-source.ts",
+  ),
   // The bytes behind a file the user attached to a chat message — the conversation's own
   // visibility applies, out-of-scope is 404, content-addressed so immutable.
   route(

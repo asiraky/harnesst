@@ -1,13 +1,29 @@
 /**
  * Serves one published single-file artifact's bytes (#290). Resource route (loader only) — image
- * cards and document links point here, same-origin with the browser session's cookie, so no bytes
- * and no URL ever leave harnesst's own auth.
+ * cards, media players, the PDF viewer and the text viewers all point here, same-origin with the
+ * browser session's cookie, so no bytes and no URL ever leave harnesst's own auth. Who may read is
+ * `requireArtifactAccess` (shared with the source route); every failure is a 404.
  *
- * Everything unauthorized is a 404, never a 403: `requireFohProject` already makes an out-of-scope
- * repo indistinguishable from a nonexistent one, and the same must hold for an artifact id — a
- * signed-out visitor or a member outside the repo's team must not be able to learn that an id
- * exists. Visibility is the session's, not the project's: the row is only served when the viewer
- * can see the conversation it was published into.
+ * WHAT GOES ON THE WIRE is `artifactServePolicy`'s call, made from the stored content type, because
+ * since the `file` kind that type is the agent's extension rather than a sniff:
+ *
+ *   - raster images, audio and video go out as themselves, inline;
+ *   - a PDF goes out inline as `application/pdf` with `nosniff` and NO sandbox — Chrome's built-in
+ *     viewer renders a blank page under a `sandbox` CSP — and with `frame-ancestors 'self'` so the
+ *     app's own panel can frame it (setting a CSP also makes the session middleware drop its
+ *     `X-Frame-Options: DENY`). No third party can frame it, and the viewer's scripting runs in the
+ *     browser's PDF plugin, not against this origin;
+ *   - SVG goes out inline but under `Content-Security-Policy: sandbox`: inert in an `<img>`, and a
+ *     direct navigation now runs no script and gets an opaque origin;
+ *   - every text format — markdown, CSV, JSON, code, plain text, even HTML that arrived as a single
+ *     file — goes out as `text/plain; charset=utf-8`, sandboxed. The viewers fetch and render it
+ *     themselves; the browser never interprets it as markup;
+ *   - anything else, and anything requested with `?download=1`, is an attachment.
+ *
+ * Page BUNDLES are refused here outright (#291) — their one door is the preview/share routes, whose
+ * responses sandbox themselves into an opaque origin. Their source text is the source route's.
+ *
+ * `Range` is honoured (single range, 206/416) so media can seek and a PDF viewer can fetch by page.
  *
  * The bytes at an id-AND-VERSION never change (they are content-addressed at publish time and a
  * version row is immutable), so the response is cacheable — set explicitly, because a dynamic route
@@ -18,91 +34,54 @@
  */
 import { data, type LoaderFunctionArgs } from "react-router";
 
-import { getSessionAuth } from "~/auth/session.server";
+import { requireArtifactAccess } from "~/foh/artifact-access.server";
+import { artifactBytesResponse, artifactEtag } from "~/foh/artifact-http";
 import {
   artifactIsSingleFileKind,
-  artifactRendersInline,
+  artifactServePolicy,
   safeArtifactFileName,
 } from "~/foh/artifact-media";
-import {
-  findArtifactVersion,
-  findProjectArtifact,
-  latestArtifactVersion,
-  readArtifactBytes,
-} from "~/foh/artifact-store.server";
-import { requireFohProject } from "~/foh/guard.server";
-import { getFohSessionForViewer } from "~/playground/sessions.server";
+import { readArtifactBytes } from "~/foh/artifact-store.server";
 
 export async function loader(args: LoaderFunctionArgs) {
-  const auth = await getSessionAuth(args);
-  // 404, not the /login redirect the other FOH resource routes use: this URL is loaded by an
-  // `<img>`, so a redirect would resolve to the sign-in HTML and render as a broken image while
-  // also confirming the id exists.
-  if (!auth.user) throw data("Not found", { status: 404 });
-  const access = await requireFohProject(auth, args.params.projectId);
-
-  const artifactId = args.params.artifactId ?? "";
-  const artifact = artifactId
-    ? await findProjectArtifact({
-        id: artifactId,
-        projectId: access.project.id,
-      })
-    : null;
-  if (!artifact) throw data("Not found", { status: 404 });
-  // Single files only, and this is a security boundary rather than a lookup nicety (#291): this response
-  // sets no CSP, so serving a page bundle's `text/html` here would execute agent-authored script
-  // same-origin against the viewer's own cookie. Bundles have exactly one door — the preview route,
-  // whose response sandboxes itself.
+  const { artifact, version, versionPinned } =
+    await requireArtifactAccess(args);
+  // Single files only, and this is a security boundary rather than a lookup nicety (#291): a page
+  // bundle's `text/html` served from this origin would execute agent-authored script against the
+  // viewer's own cookie.
   if (!artifactIsSingleFileKind(artifact.kind)) {
     throw data("Not found", { status: 404 });
   }
 
-  // A session-less artifact (#370, background publish) sits in no conversation, so there is no
-  // per-creator confidentiality to enforce beyond the repo access already checked above — it is
-  // agent output, not somebody's private chat.
-  if (artifact.sessionId) {
-    const session = await getFohSessionForViewer({
-      id: artifact.sessionId,
-      projectId: access.project.id,
-      viewerId: auth.user.id,
-      includeAll: access.backOfHouse,
-    });
-    if (!session) throw data("Not found", { status: 404 });
-  }
-
-  // The requested version, or the newest. Looked up CONSTRAINED to the artifact, so a version id
-  // belonging to another artifact is not found rather than served — the artifact is what the
-  // authorization above was about.
-  const requested = args.params.versionId ?? "";
-  const version = requested
-    ? await findArtifactVersion({
-        artifactId: artifact.id,
-        versionId: requested,
-      })
-    : await latestArtifactVersion(artifact.id);
-  if (!version) throw data("Not found", { status: 404 });
-
   const bytes = await readArtifactBytes(version.storagePath);
   if (!bytes) throw data("Not found", { status: 404 });
 
-  const inline =
-    artifact.kind === "image" && artifactRendersInline(version.contentType);
-  // `new Uint8Array(...)`: a Node Buffer is not a `BodyInit` as far as the DOM lib is concerned,
-  // and the copy is a view, not a duplicate of the bytes.
-  return new Response(new Uint8Array(bytes), {
-    headers: {
-      "Content-Type": version.contentType,
-      "Content-Length": String(bytes.length),
-      // An SVG is safe inside an `<img>` (scripts never run in an image context) but a direct
-      // navigation to this URL would execute them same-origin. A download disposition kills that:
-      // navigations honour it, image loads ignore it. Raster formats stay inline.
-      "Content-Disposition": `${inline ? "inline" : "attachment"}; filename="${safeArtifactFileName(artifact.name)}"`,
-      "X-Content-Type-Options": "nosniff",
-      // Only a version-scoped URL is immutable. Without the segment this means "whatever is
-      // newest", which a year-long cache would freeze at whatever it first happened to be.
-      "Cache-Control": requested
-        ? "private, max-age=31536000, immutable"
-        : "private, no-cache",
-    },
+  const download =
+    new URL(args.request.url).searchParams.get("download") === "1";
+  const policy = artifactServePolicy({
+    name: artifact.name,
+    contentType: version.contentType,
+    download,
+  });
+  const headers = new Headers({
+    "Content-Type": policy.contentType,
+    "Content-Disposition": `${policy.disposition}; filename="${safeArtifactFileName(artifact.name)}"`,
+    "X-Content-Type-Options": "nosniff",
+    // Only a version-scoped URL is immutable. Without the segment this means "whatever is
+    // newest", which a year-long cache would freeze at whatever it first happened to be.
+    "Cache-Control": versionPinned
+      ? "private, max-age=31536000, immutable"
+      : "private, no-cache",
+  });
+  if (policy.sandbox) {
+    headers.set("Content-Security-Policy", "sandbox; frame-ancestors 'self'");
+  } else if (policy.embeddable) {
+    headers.set("Content-Security-Policy", "frame-ancestors 'self'");
+  }
+  return artifactBytesResponse({
+    request: args.request,
+    bytes,
+    headers,
+    etag: artifactEtag(version.sha256),
   });
 }
