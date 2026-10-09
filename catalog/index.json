@@ -409,6 +409,14 @@
       "hash": "adcf7a3b9828ef30bd8fd40cd854c1d5755511b5"
     },
     {
+      "id": "team-artifacts",
+      "type": "tool",
+      "name": "Team Artifacts",
+      "version": "0.1.0",
+      "description": "List and fetch the artifacts any agent in this repository published (pages, images, documents, files), so one agent can build on another's prototype, chart or report.",
+      "hash": "cba60ea6838436570a53756d1e4ca2fa7ec1e2ba"
+    },
+    {
       "id": "vercel-cli",
       "type": "tool",
       "name": "Vercel CLI",

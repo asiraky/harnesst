@@ -393,7 +393,8 @@ export function channelIdsForEntry(entry: InstallEntry): string[] {
  * delegation token (#290), so a channel or hook that merely shares the name gets nothing.
  *
  * Deliberately matches on `member` alone, so it SEES subagent rows: it gates the deployment env
- * vars (`HARNESST_FOH_ARTIFACTS_URL`, `HARNESST_ASSETS_URL`) that a tool needs at runtime, and a
+ * vars (`HARNESST_FOH_ARTIFACTS_URL`, `HARNESST_ASSETS_URL`,
+ * `HARNESST_TEAM_ARTIFACTS_URL`) that a tool needs at runtime, and a
  * tool installed on a declared subagent still runs in its member's container and still needs them.
  */
 export function hasToolInstalled(

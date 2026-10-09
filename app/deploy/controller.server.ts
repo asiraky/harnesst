@@ -644,6 +644,15 @@ export async function deployRelease(
       envVars.HARNESST_TEAM_TOKEN ??= mintDelegationToken(dep.id);
     }
 
+    // Team artifacts: where the `team-artifacts` tool lists and fetches what any agent in this repo
+    // published. The route re-derives the project from the token's deployment, so the URL grants
+    // nothing beyond the repo the caller already belongs to. Gated on the install like the others.
+    delete envVars.HARNESST_TEAM_ARTIFACTS_URL;
+    if (lock && hasToolInstalled(lock, "team-artifacts", member)) {
+      envVars.HARNESST_TEAM_ARTIFACTS_URL = `${controlPlaneBase}/api/foh/team-artifacts`;
+      envVars.HARNESST_TEAM_TOKEN ??= mintDelegationToken(dep.id);
+    }
+
     // Credential deposit (issue #364): where the Vercel issuer's provision tool drops a minted
     // project-scoped token for a teammate. Gated on the committed lock carrying the vercel-issuer
     // AGENT install for this member — a deposit URL plus a delegation token in any other

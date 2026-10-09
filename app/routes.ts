@@ -52,6 +52,9 @@ export default [
   // Artifact publish (#290): an agent files an image it produced. Same bearer story as park, and
   // likewise kept above the :projectId routes so the static segment can't be swallowed.
   route("api/foh/artifacts", "routes/api.foh.artifacts.ts"),
+  // Team artifacts: a teammate lists and fetches what any agent in the repo published. Same
+  // bearer and static-segment placement as the publish route above.
+  route("api/foh/team-artifacts", "routes/api.foh.team-artifacts.ts"),
   // Agent-initiated conversations (#288 3c): the baked notify-user tool posts here. Same
   // bearer auth and the same static-segment placement rule as the park route above.
   route("api/foh/notify", "routes/api.foh.notify.ts"),
@@ -110,7 +113,10 @@ export default [
   // Build — every back-of-house page shares one pathless layout whose loader feeds the sidebar
   // (routes/build.tsx). Resource routes are registered outside it: they render nothing.
   layout("routes/build.tsx", [
-    route("repos/:projectId/installation", "routes/projects.$projectId.installation.tsx"),
+    route(
+      "repos/:projectId/installation",
+      "routes/projects.$projectId.installation.tsx",
+    ),
     route("dashboard", "routes/dashboard.tsx"),
     // Recruit — the marketplace (PRD §7.8, M6). Browse (index.json) + a template detail page.
     route("marketplace", "routes/marketplace.tsx"),
