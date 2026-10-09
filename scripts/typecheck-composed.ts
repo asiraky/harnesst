@@ -157,8 +157,11 @@ async function typescriptFiles(root: string): Promise<string[]> {
   async function walk(dir: string) {
     for (const entry of await readdir(dir, { withFileTypes: true })) {
       const absolute = path.join(dir, entry.name);
-      if (entry.isDirectory()) await walk(absolute);
-      else if (/\.(?:ts|tsx|mts|cts)$/.test(entry.name)) files.push(absolute);
+      // Supabase edge functions are Deno source shipped for the ledger backend, not agent code;
+      // `npm run ledger:typecheck` checks them under their own config.
+      if (entry.isDirectory()) {
+        if (entry.name !== "supabase") await walk(absolute);
+      } else if (/\.(?:ts|tsx|mts|cts)$/.test(entry.name)) files.push(absolute);
     }
   }
   await walk(root);

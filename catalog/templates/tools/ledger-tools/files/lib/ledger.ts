@@ -1,4 +1,9 @@
-export type LedgerResult = Record<string, any>;
+export type LedgerResult = {
+  ok: boolean;
+  data?: any;
+  error?: string;
+  stop?: string;
+};
 /** RPCs authenticated by the wake token (the channel's own claim/heartbeat/release). */
 const WAKE_OPS = ["claim", "renew_claim", "renew_lease", "release_lease"];
 /** The part of eve's tool context the ledger needs: the session that is writing. */

@@ -5,7 +5,11 @@ export function env(name: string): string {
   if (!value) throw new Error(`Missing backend configuration: ${name}`);
   return value;
 }
-export async function rpc(name: string, operation: string, args = {}) {
+export async function rpc(
+  name: string,
+  operation: string,
+  args: Record<string, unknown> = {},
+) {
   const key = env("SUPABASE_SERVICE_ROLE_KEY");
   const response = await fetch(`${env("SUPABASE_URL")}/rest/v1/rpc/${name}`, {
     method: "POST",
