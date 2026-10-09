@@ -236,16 +236,20 @@ function DockedPanel(props: ArtifactPanelProps & { artifact: ChatArtifact }) {
   const overlay = props.placement === "overlay";
   const viewport = useViewport();
   const asideRef = useRef<HTMLElement>(null);
-  const [requested, setRequested] = useState(() => {
+  // The width the reader asked for: null until the stored one is read, which happens in a layout
+  // effect (before the first paint, so there is no jump) rather than during render, where it would
+  // read the browser's storage on a pass the server renders too.
+  const [requested, setRequested] = useState<number | null>(null);
+  useLayoutEffect(() => {
     try {
-      return (
-        parseStoredPanelWidth(window.localStorage.getItem(WIDTH_KEY)) ??
-        defaultPanelWidth(viewportWidth())
+      const stored = parseStoredPanelWidth(
+        window.localStorage.getItem(WIDTH_KEY),
       );
+      if (stored !== null) setRequested(stored);
     } catch {
-      return defaultPanelWidth(viewportWidth());
+      // Private mode: the default width.
     }
-  });
+  }, []);
   const [dragging, setDragging] = useState(false);
   // Everything left of the conversation column — the app sidebar (the caller collapses its own
   // list while the panel is open). Measured from the conversation itself, the aside's previous
@@ -271,10 +275,17 @@ function DockedPanel(props: ArtifactPanelProps & { artifact: ChatArtifact }) {
     return () => observer.disconnect();
   }, [overlay, props.overlayInsetLeft, viewport, maximised]);
 
-  const width = clampPanelWidth({ viewport, requested, reservedLeft });
+  const width = clampPanelWidth({
+    viewport,
+    requested: requested ?? defaultPanelWidth(viewport),
+    reservedLeft,
+  });
   const max = panelMaxWidth(viewport, reservedLeft);
+  // What a drag stores when it ends. Synced after commit, not assigned during render.
   const widthRef = useRef(width);
-  widthRef.current = width;
+  useLayoutEffect(() => {
+    widthRef.current = width;
+  }, [width]);
 
   const store = (value: number) => {
     try {
@@ -577,7 +588,12 @@ function PanelBody({
                 onSelect={(event) => {
                   // Stay open long enough to say it worked.
                   event.preventDefault();
-                  void copy(absoluteShareUrl(artifact.shareUrl as string));
+                  void copy(
+                    absoluteShareUrl(
+                      artifact.shareUrl as string,
+                      window.location.origin,
+                    ),
+                  );
                 }}
               >
                 {copied ? <Check aria-hidden /> : <Link2 aria-hidden />}
