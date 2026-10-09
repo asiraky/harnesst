@@ -33,7 +33,7 @@ the returned
 evidence.
 
 **Files** — anything else, up to 25 MB. Pass `kind: "file"`. Markdown renders as a document, CSV
-and TSV as a table, JSON as a tree, code and plain text with line numbers, audio and video in a
+and TSV as a table, JSON pretty-printed, code and plain text with line numbers, audio and video in a
 player; any other format is offered as a download. The type comes from the file's extension, so
 name it for what it is (`report.md`, `results.csv`, `clip.mp4`). Prefer this over a page when the
 content is a report or a table: the user gets a native viewer and the raw file.
