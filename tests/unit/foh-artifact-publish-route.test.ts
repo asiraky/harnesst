@@ -16,6 +16,10 @@ vi.mock("~/foh/artifacts.server", async (importOriginal) => ({
   defaultPublishArtifactDeps: () => ({}),
 }));
 
+import {
+  MAX_CONCURRENT_ARTIFACT_COPIES,
+  withArtifactCopySlot,
+} from "~/foh/artifacts.server";
 import { action, artifactPublishFields } from "~/routes/api.foh.artifacts";
 
 /** A POST with no Content-Length — what a chunked upload looks like to the route. */
@@ -86,5 +90,53 @@ describe("publish route", () => {
     await post(chunked({ path: "artifacts/empty.txt", kind: "file", contentBase64: "" }));
     const input = mocks.publishArtifact.mock.calls[0][0];
     expect(input.suppliedBytes).toHaveLength(0);
+  });
+
+  it("never holds a read slot while a path-only publish copies", async () => {
+    // Each fake publish copies — takes a slot — and holds it until every request is in flight.
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    mocks.publishArtifact.mockImplementation(async () => {
+      const slot = await withArtifactCopySlot(() => gate);
+      return slot.ok ? { ok: true } : { ok: false, error: "busy" };
+    });
+
+    const results = Array.from({ length: MAX_CONCURRENT_ARTIFACT_COPIES }, () =>
+      post(chunked({ path: "artifacts/chart.png" })),
+    );
+    await vi.waitFor(() =>
+      expect(mocks.publishArtifact).toHaveBeenCalledTimes(
+        MAX_CONCURRENT_ARTIFACT_COPIES,
+      ),
+    );
+    release();
+
+    for (const result of await Promise.all(results)) {
+      expect(result).toEqual({ ok: true });
+    }
+  });
+
+  it("publishes supplied bytes inside the slot it read them in", async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    mocks.publishArtifact.mockImplementation(async () => {
+      await gate;
+      return { ok: true };
+    });
+
+    const inFlight = Array.from({ length: MAX_CONCURRENT_ARTIFACT_COPIES }, () =>
+      post(chunked({ path: "artifacts/a.bin", kind: "file", contentBase64: "aGk=" })),
+    );
+    await vi.waitFor(() =>
+      expect(mocks.publishArtifact).toHaveBeenCalledTimes(
+        MAX_CONCURRENT_ARTIFACT_COPIES,
+      ),
+    );
+    // Every slot is taken by a buffered payload, so one more large request is refused as busy.
+    expect(await post(chunked({ path: "artifacts/b.bin", contentBase64: "aGk=" }))).toMatchObject({
+      ok: false,
+    });
+    release();
+    await Promise.all(inFlight);
   });
 });

@@ -7,9 +7,10 @@
  * BODY SIZE. The supplied-bytes cap is the artifact cap (25 MB), so a request is up to ~33.4 MiB of
  * base64 plus framing — under the edge's `client_max_body_size 40m`. Buffering that is the same
  * heap cost as a `docker cp`, so a body that may be large (no `Content-Length`, or one over 64 KiB)
- * is read and published inside one of the same copy slots (`withArtifactCopySlot`), and refused as
- * busy when none is free. A slot-held publish never takes a second slot: a supplied-bytes publish
- * does not copy.
+ * is read inside one of the same copy slots (`withArtifactCopySlot`), and refused as busy when none
+ * is free. One request never holds two slots: a supplied-bytes publish runs in the read's slot (it
+ * does not copy), and a path-only publish releases the read's slot before its copy takes one.
+ *
  * Transport shell only — the same division as
  * `routes/api.foh.park.ts`: the token authenticates the CALLER DEPLOYMENT and nothing else, a bad
  * token is the only 401, malformed JSON or a missing path is a 400, and every business outcome the
@@ -134,9 +135,16 @@ export async function action({ request }: ActionFunctionArgs) {
     declared <= SMALL_REQUEST_BYTES;
   if (small) return publish(await readFields(request), deploymentId);
 
-  const slot = await withArtifactCopySlot(async () =>
-    publish(await readFields(request), deploymentId),
-  );
+  // A body that may be large is read inside a copy slot. Supplied bytes are published in that same
+  // slot (that publish never copies, so it takes no second one). A path-only body is small once
+  // read, so its slot is released BEFORE the publish — whose copy takes a slot of its own. Holding
+  // the read slot through it would make each request need two, and three at once would all fail.
+  const slot = await withArtifactCopySlot(async () => {
+    const fields = await readFields(request);
+    return fields.suppliedBytes
+      ? { published: await publish(fields, deploymentId) }
+      : { pending: fields };
+  });
   if (!slot.ok) {
     await request.body?.cancel().catch(() => undefined);
     return data({
@@ -145,7 +153,9 @@ export async function action({ request }: ActionFunctionArgs) {
         "harnesst is already copying as many files as it can at once. Try publishing again in a moment.",
     });
   }
-  return slot.value;
+  return "published" in slot.value
+    ? slot.value.published
+    : publish(slot.value.pending, deploymentId);
 }
 
 type PublishFields = Extract<
