@@ -460,10 +460,14 @@ function PanelBody({
     requestAnimationFrame(restore);
   };
 
-  const pageView = isPage && viewer === "html" && mode === "preview";
-  let body: React.ReactNode;
-  if (pageView) {
-    body = preview.error ? (
+  // A page's mini browser stays MOUNTED while its source is shown, only hidden: unmounting it
+  // would drop the frame, so flipping back would reload the entry page at the top and lose where
+  // the reader had navigated and whatever state the page held. It goes away only with the version
+  // (by key) or the panel.
+  const hasBrowser = isPage && viewer === "html";
+  const pageView = hasBrowser && mode === "preview";
+  const browser = hasBrowser ? (
+    preview.error ? (
       <p className="p-4 text-sm text-muted-foreground">{preview.error}</p>
     ) : preview.preview && preview.preview.versionId === versionId ? (
       <MiniBrowser
@@ -475,17 +479,8 @@ function PanelBody({
       />
     ) : (
       <p className="p-4 text-sm text-muted-foreground">Opening…</p>
-    );
-  } else {
-    body = (
-      <ArtifactFileView
-        artifact={artifact}
-        projectId={projectId}
-        versionId={versionId}
-        mode={mode}
-      />
-    );
-  }
+    )
+  ) : null;
 
   return (
     <div className="flex h-full min-h-0 flex-col">
@@ -627,7 +622,17 @@ function PanelBody({
           pageView ? "overflow-hidden" : "overflow-auto overscroll-contain",
         )}
       >
-        {body}
+        {browser && (
+          <div className={cn("h-full", !pageView && "hidden")}>{browser}</div>
+        )}
+        {!pageView && (
+          <ArtifactFileView
+            artifact={artifact}
+            projectId={projectId}
+            versionId={versionId}
+            mode={mode}
+          />
+        )}
       </div>
     </div>
   );
