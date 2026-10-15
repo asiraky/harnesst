@@ -2,12 +2,14 @@
 
 Install `github-ledger.mjs` as `.github/scripts/ledger.mjs` and `ledger.yml` as
 `.github/workflows/ledger.yml`. The ledger workflow uses trusted default-branch
-code and the GitHub actor credential. It merges only the approved PR head.
+code and the GitHub actor credential. It never merges: harnesst merges the
+approved PR head with its own GitHub App, and this workflow only observes it.
 
-A merge made with `GITHUB_TOKEN` does not trigger push workflows. The helper
-therefore emits `repository_dispatch: ledger-deploy` with the item ID, approved
-PR head, confirmed merge commit and PR number. Install a consumer before enabling
-automatic merging. `deploy.yml` is a Cloudflare Workers example; configure the
+When the approved PR merges (the `pull_request` closed event, or the scheduled
+sweep if that run failed), the helper emits `repository_dispatch: ledger-deploy`
+with the item ID, approved PR head, confirmed merge commit and PR number, then
+moves the item to merged. Install a consumer before approving merges.
+`deploy.yml` is a Cloudflare Workers example; configure the
 repository variable `CLOUDFLARE_WORKER_URL` and the Cloudflare secrets it names.
 Both workflows must be on the default branch. The helper alone is not a complete
 deployment integration.

@@ -1,5 +1,5 @@
 /** Verified, tenant-scoped GitHub installation grants. */
-import { and, desc, eq, isNotNull } from "drizzle-orm";
+import { and, desc, eq, isNotNull, sql } from "drizzle-orm";
 
 import { db } from "~/db/client.server";
 import { githubInstallations } from "~/db/schema";
@@ -61,6 +61,27 @@ export async function listKnownInstallations(
     )
     .orderBy(desc(githubInstallations.createdAt));
   return rows;
+}
+
+/** The org's verified grants on one GitHub account (logins are case-insensitive), newest first. */
+export async function listInstallationsForAccount(
+  orgId: string,
+  accountLogin: string,
+): Promise<KnownInstallation[]> {
+  return db
+    .select({
+      grantId: githubInstallations.id,
+      accountLogin: githubInstallations.accountLogin,
+    })
+    .from(githubInstallations)
+    .where(
+      and(
+        eq(githubInstallations.orgId, orgId),
+        isNotNull(githubInstallations.verifiedAt),
+        sql`lower(${githubInstallations.accountLogin}) = lower(${accountLogin})`,
+      ),
+    )
+    .orderBy(desc(githubInstallations.createdAt));
 }
 
 export async function resolveInstallationGrantForOrg(

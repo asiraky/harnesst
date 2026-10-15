@@ -73,9 +73,10 @@ done
 
 What the token may do inside a repository is the App's permission set: every agent can clone,
 branch, push, open pull requests and work issues (labels, comments, edits, closing). Only an
-agent whose App was granted repository administration and Actions workflows/secrets/variables
-(the team's infra agent) can create repositories or change CI configuration — anyone else gets
-HTTP 403 for those, which is by design, not a broken credential.
+agent whose App was granted Actions workflows/secrets/variables (the team's infra agent) can
+change CI configuration — anyone else gets HTTP 403 for those, which is by design, not a broken
+credential. A protected default branch refuses agent pushes and merges the same way: changes
+reach it through a pull request a human (or harnesst, after approval) merges.
 
 **2. Assume the credential's identity.** You are acting as the App, so commits must be
 authored as its bot account — an identity *derived from the credential*, never chosen.

@@ -14,7 +14,7 @@ Read the using-the-ledger skill when build checks pass, when a teammate requests
    - branch `ledger/<ticket-id>-<slug>` off the issue branch;
    - run implement with the ticket's `spec.body` and the issue's `spec.body`; pass the reviewer the repository, the ticket branch, the issue branch as the fixed point, and both specs;
    - open a PR into the issue branch, and merge it once review is clean. GitHub closes the ticket.
-3. **Issue PR.** When every ticket has merged, open the issue PR from the issue branch into the default branch, then follow the Preview handoff and move to `qa`.
+3. **Issue PR.** When every ticket has merged, open the issue PR from the issue branch into the default branch (never merge it yourself), then follow the Preview handoff and move to `qa`.
 4. **QA and review.** Give the qa subagent the preview URL, commit and acceptance criteria. At `review`, have the reviewer review the issue branch against the default branch with the issue spec, and record `review_approved` or `review_changes`. Approval moves the issue to `merge-approval`.
 5. **Rework.** After failed QA, requested changes or a rejected merge approval, run implement for the fixes directly on the issue branch.
 
@@ -37,7 +37,7 @@ Return the result to the waiting caller without opening a reciprocal request. Wh
 
 ## Boundaries
 
-Merge ticket PRs into the issue branch yourself. The issue PR merges only after merge approval, through the authorized repository workflow. Subagents return findings to you; you own the evidence record.
+Merge ticket PRs into the issue branch yourself. Never merge into or push to the default branch, and never enable auto-merge: after merge approval, harnesst merges the issue PR at the approved head. Subagents return findings to you; you own the evidence record.
 
 ## Final report
 

@@ -7,6 +7,7 @@ import { isbot } from "isbot";
 import type { RenderToPipeableStreamOptions } from "react-dom/server";
 import { renderToPipeableStream } from "react-dom/server";
 
+import { ensureApprovalSyncStarted } from "~/approvals/sync-loop.server";
 import { ensureSplitterStarted } from "~/deploy/splitter.server";
 import { ensureWorkerStarted } from "~/jobs/worker.server";
 import { ensureReconcilerStarted } from "~/observability/reconcile.server";
@@ -16,6 +17,7 @@ import { ensureReconcilerStarted } from "~/observability/reconcile.server";
 ensureWorkerStarted();
 ensureSplitterStarted();
 ensureReconcilerStarted();
+ensureApprovalSyncStarted();
 
 export const streamTimeout = 5_000;
 

@@ -54,7 +54,7 @@ import { resolveTemplate } from "~/marketplace/compose.server";
 import { catalogLocator } from "~/marketplace/install.server";
 import { overlayLock } from "~/marketplace/lock";
 import { isTemplateSlug, type TemplateManifest } from "~/marketplace/manifest";
-import { ensureProvisioning } from "~/marketplace/provisioning.server";
+import { ensureProvisioners } from "~/provisioners/registry.server";
 import { planTeamInstall } from "~/marketplace/team-install.server";
 import { getWorkspaceAssistantSelection } from "~/org/workspace.server";
 import { ownsWorkspaceModelReference } from "~/models/union.server";
@@ -279,13 +279,10 @@ export async function action(args: ActionFunctionArgs) {
         createdBy: auth.user.id,
       });
     }
-    if (
-      result.plan.members.some((m) =>
-        m.provisioning.includes("supabase-ledger"),
-      )
-    ) {
-      await ensureProvisioning(project.id);
-    }
+    await ensureProvisioners(
+      project.id,
+      result.plan.members.flatMap((m) => m.provisioning),
+    );
     throw redirect(`/repos/${project.slug}/setup`);
   } catch (error) {
     if (error instanceof Response) throw error;

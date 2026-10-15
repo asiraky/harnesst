@@ -22,7 +22,8 @@ import {
 
 import { resolveActiveWorkspace } from "~/auth/workspace.server";
 import { listInboxForViewer } from "~/foh/inbox.server";
-import { listViewerProjectIds } from "~/foh/sidebar.server";
+import { listViewerGrants, listViewerProjectIds } from "~/foh/sidebar.server";
+import { listApprovalInboxItems } from "~/approvals/inbox.server";
 import { getRuntime } from "~/seams/index.server";
 
 export const loader = (args: LoaderFunctionArgs) =>
@@ -31,15 +32,20 @@ export const loader = (args: LoaderFunctionArgs) =>
     async ({ auth }) => {
       const active = await resolveActiveWorkspace(auth);
       if (!active) return { items: [], count: 0 };
-      const projectIds = await listViewerProjectIds({
+      const grants = await listViewerGrants({
         userId: auth.user.id,
         orgId: active.org.id,
         workspaceRole: active.member.role,
       });
-      const items = await listInboxForViewer({
-        userId: auth.user.id,
-        projectIds,
-      });
+      const [sessionItems, approvalItems] = await Promise.all([
+        listInboxForViewer({
+          userId: auth.user.id,
+          projectIds: grants.map((grant) => grant.projectId),
+        }),
+        // Ledger gates waiting on a person (harnesst approvals), beside the session items.
+        listApprovalInboxItems(grants),
+      ]);
+      const items = [...approvalItems, ...sessionItems];
       return { items, count: items.length };
     },
     { ensureSignedIn: true },

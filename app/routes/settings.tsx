@@ -118,6 +118,18 @@ import { publicAuthErrorMessage } from "~/lib/auth-error.server";
 import { invalidateOrganizationEnvironments } from "~/deploy/env-reconcile.server";
 import type { Route } from "./+types/settings";
 import { copyText } from "~/components/chat/clipboard";
+import { ServiceConnectionsCard } from "~/components/service-connections";
+import {
+  createServiceConnection,
+  listServiceConnections,
+  removeServiceConnection,
+  replaceServiceConnectionCredential,
+  reverifyServiceConnection,
+} from "~/service-connections/connections.server";
+import {
+  isServiceProviderId,
+  type ServiceConnection,
+} from "~/service-connections/providers";
 
 interface OrgSettingsView {
   org: WorkspaceInfo | null;
@@ -133,6 +145,8 @@ interface OrgSettingsView {
   /** Connected model providers (issue #28) — display metadata only, never a token. */
   connections: ModelConnection[];
   connectionAliases: { oldConnectionId: string; connectionId: string }[];
+  /** Workspace service connections (e.g. Supabase) — display metadata only, never a token. */
+  serviceConnections: ServiceConnection[];
   /** Better Auth organization:update permission for the active workspace. */
   canManage: boolean;
 }
@@ -179,6 +193,7 @@ export const loader = (args: LoaderFunctionArgs) =>
           agentOverrides: [],
           connections: [],
           connectionAliases: [],
+          serviceConnections: [],
           canManage: false,
         };
       }
@@ -190,6 +205,7 @@ export const loader = (args: LoaderFunctionArgs) =>
         agentOverrides,
         connections,
         connectionAliases,
+        serviceConnections,
         canManage,
         orgProjects,
       ] = await Promise.all([
@@ -200,6 +216,7 @@ export const loader = (args: LoaderFunctionArgs) =>
         listAgentModelOverrides(org.id),
         listModelConnections(org.id),
         listModelConnectionAliases(org.id),
+        listServiceConnections(org.id),
         canManageWorkspace(org.id, auth.requestHeaders),
         listProjects(org.id).catch(() => []),
       ]);
@@ -233,6 +250,7 @@ export const loader = (args: LoaderFunctionArgs) =>
           })),
         connections,
         connectionAliases,
+        serviceConnections,
         canManage,
       };
     },
@@ -317,6 +335,83 @@ export async function action(args: ActionFunctionArgs) {
             : "The provider could not validate that API key.",
       };
     }
+    return { ok: true as const };
+  }
+
+  // ── Workspace service connections: tokens harnesst uses server-side (e.g. Supabase) ──
+  if (intent === "connect-service" || intent === "replace-service") {
+    const provider = String(form.get("provider") ?? "");
+    const id = String(form.get("connectionId") ?? "");
+    const label = String(form.get("label") ?? "").trim();
+    const token = String(form.get("token") ?? "").trim();
+    if (!isServiceProviderId(provider)) return { error: "Choose a service." };
+    if (!label) return { error: "Give the connection a name." };
+    if (!token) return { error: "Paste the access token." };
+    try {
+      const connection =
+        intent === "replace-service"
+          ? await replaceServiceConnectionCredential({
+              orgId: org.id,
+              id,
+              credential: token,
+              label,
+            })
+          : await createServiceConnection({
+              orgId: org.id,
+              provider,
+              label,
+              credential: token,
+              createdBy: auth.user.id,
+            });
+      await recordAudit({
+        orgId: org.id,
+        actorUserId: auth.user.id,
+        action:
+          intent === "replace-service"
+            ? "service_connection_replaced"
+            : "service_connection_connected",
+        target: connection.id,
+        meta: { provider },
+      });
+    } catch (error) {
+      return {
+        error:
+          error instanceof Error
+            ? error.message
+            : "The service could not verify that token.",
+      };
+    }
+    return { ok: true as const };
+  }
+
+  if (intent === "reverify-service") {
+    const id = String(form.get("connectionId") ?? "");
+    try {
+      await reverifyServiceConnection({ orgId: org.id, id });
+    } catch (error) {
+      return {
+        error: error instanceof Error ? error.message : "Verification failed.",
+      };
+    }
+    await recordAudit({
+      orgId: org.id,
+      actorUserId: auth.user.id,
+      action: "service_connection_reverified",
+      target: id,
+    });
+    return { ok: true as const };
+  }
+
+  if (intent === "remove-service") {
+    const id = String(form.get("connectionId") ?? "");
+    if (!(await removeServiceConnection({ orgId: org.id, id })))
+      return { error: "This connection no longer exists." };
+    await recordAudit({
+      orgId: org.id,
+      actorUserId: auth.user.id,
+      action: "service_connection_removed",
+      target: id,
+    });
     return { ok: true as const };
   }
 
@@ -520,6 +615,7 @@ export default function WorkspaceSettings({
     agentOverrides,
     connections,
     connectionAliases,
+    serviceConnections,
     canManage,
   } = loaderData;
   const modelFetcher = useFetcher<typeof action>();
@@ -723,6 +819,13 @@ export default function WorkspaceSettings({
             />
           </CardContent>
         </Card>
+        )}
+
+        {section === "connections" && (
+          <ServiceConnectionsCard
+            connections={serviceConnections}
+            canManage={canManage}
+          />
         )}
 
         {/* Spend controls */}

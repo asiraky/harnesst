@@ -1952,15 +1952,125 @@ export const artifactFiles = pgTable(
   ],
 );
 
-/** Installation state belongs to the control plane, never to agent environment secrets. */
-export const bundleProvisioning = pgTable("bundle_provisioning", {
-  projectId: varchar("project_id", { length: 12 }).primaryKey().references(() => projects.id, { onDelete: "cascade" }),
-  provider: text("provider").notNull().default("supabase-ledger"),
-  status: text("status").notNull().default("pending"),
-  step: text("step").notNull().default("Connect Supabase"),
-  error: text("error"),
-  projectRef: text("project_ref"),
-  publicOrigin: text("public_origin"),
-  encryptedState: jsonb("encrypted_state").$type<{ ciphertext: string; iv: string; authTag: string }>(),
-  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
-});
+/**
+ * Workspace credentials for external services harnesst itself operates on (today: a Supabase
+ * personal access token used to run ledger migrations). Added once in Settings → Connections,
+ * then linked per team by a provisioner. Several per provider are allowed, each labelled.
+ *
+ * The credential is write-only, AES-256-GCM sealed with the same secretbox as `secret_values`.
+ * It is only opened server-side, only sent to the provider's own API, never to an agent.
+ * `credentialVersion` lets a failure from an old credential leave its replacement untouched.
+ */
+export const serviceConnections = pgTable(
+  "service_connections",
+  {
+    id: varchar("id", { length: 12 }).primaryKey().$defaultFn(newId),
+    orgId: text("org_id")
+      .notNull()
+      .references(() => organization.id, { onDelete: "cascade" }),
+    /** Registry id (app/service-connections/providers.ts), e.g. `supabase`. */
+    provider: varchar("provider", { length: 32 }).notNull(),
+    label: text("label").notNull(),
+    credentialCiphertext: text("credential_ciphertext").notNull(),
+    credentialIv: text("credential_iv").notNull(),
+    credentialAuthTag: text("credential_auth_tag").notNull(),
+    credentialVersion: integer("credential_version").notNull().default(0),
+    /** "active" | "expired" | "invalid" — display + use guard, not a secret. */
+    status: varchar("status", { length: 16 }).notNull().default("active"),
+    lastVerifiedAt: timestamp("last_verified_at", { withTimezone: true }),
+    /** Non-secret account details from verification (e.g. Supabase organization names). */
+    metadata: jsonb("metadata").$type<Record<string, unknown>>().notNull().default({}),
+    createdBy: text("created_by").references(() => user.id, {
+      onDelete: "set null",
+    }),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [index("service_connections_org_provider_idx").on(t.orgId, t.provider)],
+);
+
+/**
+ * One provisioner's installation for one team (app/provisioners). Installation state belongs to
+ * the control plane, never to agent environment secrets. The workspace credential it uses is a
+ * link (`serviceConnectionId`), never a copy; the provisioner's own private state is sealed.
+ */
+export const bundleProvisioning = pgTable(
+  "bundle_provisioning",
+  {
+    projectId: varchar("project_id", { length: 12 })
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    /** Registry id (app/provisioners/descriptors.ts), as named by a manifest's `provisioning`. */
+    provisioner: text("provisioner").notNull(),
+    serviceConnectionId: varchar("service_connection_id", { length: 12 }),
+    status: text("status").notNull().default("pending"),
+    step: text("step").notNull().default("Connect Supabase"),
+    error: text("error"),
+    projectRef: text("project_ref"),
+    publicOrigin: text("public_origin"),
+    encryptedState: jsonb("encrypted_state").$type<{ ciphertext: string; iv: string; authTag: string }>(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.projectId, t.provisioner] }),
+    // Named: the generated name exceeds Postgres's 63-character identifier limit.
+    foreignKey({
+      name: "bundle_provisioning_service_connection_fk",
+      columns: [t.serviceConnectionId],
+      foreignColumns: [serviceConnections.id],
+    }).onDelete("set null"),
+  ],
+);
+
+/**
+ * Human approvals harnesst hosts for an external gate (today: the ledger's merge approval). The
+ * source system owns the gate and re-checks every decision; this row is harnesst's copy for the
+ * approval page, the inline chat card and the inbox. `externalId` is the source's request id.
+ */
+export const approvals = pgTable(
+  "approvals",
+  {
+    id: varchar("id", { length: 12 }).primaryKey().$defaultFn(newId),
+    projectId: varchar("project_id", { length: 12 })
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    source: text("source").notNull().default("ledger"),
+    externalId: text("external_id").notNull(),
+    title: text("title").notNull(),
+    /** The source's request as it stands: the action under approval, its project, evidence. */
+    details: jsonb("details").$type<Record<string, unknown>>().notNull(),
+    /** The source role the gate names (engineer); who may decide is harnesst's project access. */
+    approverRole: text("approver_role"),
+    // pending | approved | rejected | expired | superseded
+    status: text("status").notNull().default("pending"),
+    expiresAt: timestamp("expires_at", { withTimezone: true }),
+    decidedBy: text("decided_by").references(() => user.id, {
+      onDelete: "set null",
+    }),
+    decidedByName: text("decided_by_name"),
+    decidedAt: timestamp("decided_at", { withTimezone: true }),
+    feedback: text("feedback"),
+    /**
+     * harnesst's merge of an approved merge gate (agents can't merge into the default branch).
+     * null: not a merge, or not yet approved; pending: to (re)try, with the last error;
+     * merged; failed: permanently refused, with the reason.
+     */
+    mergeStatus: text("merge_status"),
+    mergeSha: text("merge_sha"),
+    mergeError: text("merge_error"),
+    mergedAt: timestamp("merged_at", { withTimezone: true }),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [
+    uniqueIndex("approvals_source_external_uq").on(
+      t.projectId,
+      t.source,
+      t.externalId,
+    ),
+    index("approvals_project_status_idx").on(t.projectId, t.status),
+  ],
+);
+export type Approval = typeof approvals.$inferSelect;
+export type ServiceConnectionRow = typeof serviceConnections.$inferSelect;
+export type BundleProvisioningRow = typeof bundleProvisioning.$inferSelect;

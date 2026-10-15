@@ -157,14 +157,11 @@ async function execute(job: Job): Promise<void> {
       console.log(`[jobs] reattach_delegation ${p.delegationId}: ${detail}`);
       return;
     }
-    case "verify_bundle": {
-      const { verifyLedgerInstallation } = await import("~/marketplace/provisioning.server");
-      await verifyLedgerInstallation(String(job.payload.projectId), Number(job.payload.attempt ?? 0));
-      return;
-    }
-    case "provision_bundle": {
-      const { runLedgerProvisioning } = await import("~/marketplace/provisioning.server");
-      await runLedgerProvisioning(String(job.payload.projectId));
+    case "verify_bundle":
+    case "provision_bundle":
+    case "upgrade_bundle": {
+      const { runProvisioningJob } = await import("~/provisioners/registry.server");
+      await runProvisioningJob(job.kind, job.payload);
       return;
     }
     case "publish": {

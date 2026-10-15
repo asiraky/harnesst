@@ -18,7 +18,7 @@ The playground runs real authorization, transactions, evidence checks, approval 
 
 ### Approval testing
 
-The diagnostic UI cannot approve gates. Human decisions use May I and the Supabase callback backend described in [TEAM-SETUP.md](TEAM-SETUP.md). `npm run ledger:test` verifies SQL behavior and signed callback handling against disposable databases and test signing keys. It does not claim live May I or Supabase deployment has passed.
+The diagnostic UI cannot approve gates. Human decisions are made in HARNESST, which holds the ledger's approvals key, as described in [TEAM-SETUP.md](TEAM-SETUP.md). `npm run ledger:test` verifies SQL behavior, including the approvals API, against disposable databases. It does not claim a live Supabase deployment has passed.
 
 ## Real team in harnesst
 
@@ -51,13 +51,13 @@ Real GitHub and Cloudflare calls require your test repository/account credential
 
 ## Hosted Supabase
 
-Follow [TEAM-SETUP.md](TEAM-SETUP.md) for migrations, functions, OAuth, cron and recovery. Production uses Supabase PostgREST, Edge Functions, Vault, pg_net and pg_cron. There is no HARNESST ledger route and no hosted dependency on the diagnostic Node bridge.
+Follow [TEAM-SETUP.md](TEAM-SETUP.md) for migrations, approvals and recovery. Production uses Supabase PostgREST, pg_net and pg_cron. There is no HARNESST ledger route and no hosted dependency on the diagnostic Node bridge.
 
 ## GitHub and deployment integration
 
 Copy `examples/ledger.yml` into the **product** repo's `.github/workflows/ledger.yml` and `examples/github-ledger.mjs` into `.github/scripts/ledger.mjs`. Add `LEDGER_URL`, `LEDGER_ANON_KEY`, and the **github system actor's** `LEDGER_ACTOR_KEY` as repository secrets.
 
-The workflow runs only trusted default-branch code with its secrets; it never checks out PR code. Same-repository branches use `ledger/<uuid>-<slug>`: the parent issue branch targets the default branch and each ticket branch targets its parent issue branch. PR events record head/branch/PR artifacts. A merged ticket PR closes the ticket only when its base is the parent issue branch. The scheduled/manual job merges only `ready-to-merge` items for this repository, compares the live PR head to the approved SHA, passes that SHA to GitHub's merge API, and records the confirmed merge. Branch protections still apply. Your production deploy pipeline must run from the confirmed merge or be explicitly dispatched: merges made using `GITHUB_TOKEN` do not reliably start other Actions workflows.
+The workflow runs only trusted default-branch code with its secrets; it never checks out PR code. Same-repository branches use `ledger/<uuid>-<slug>`: the parent issue branch targets the default branch and each ticket branch targets its parent issue branch. PR events record head/branch/PR artifacts. A merged ticket PR closes the ticket only when its base is the parent issue branch. The workflow never merges. After merge approval HARNESST squash-merges the issue PR with its own GitHub App, passing the approved head SHA to GitHub's merge API; the workflow observes the merge (the PR's closed event, or the scheduled/manual sweep of this repository's `ready-to-merge` items), dispatches `ledger-deploy` and records the confirmed merge. Agents never merge into or push to the default branch: see [TEAM-SETUP.md](TEAM-SETUP.md) for the recommended rulesets and branch protection, which allow only developers and HARNESST's App to push. Your production deploy pipeline must run from the confirmed merge or the `ledger-deploy` dispatch.
 
 The product's preview/production pipeline should create a GitHub Deployment with this payload:
 
@@ -74,12 +74,12 @@ The infra agent owns provisioning and adapting the product's build/deploy workfl
 - `triage` and `breakdown` are owned by intake, `design` by the architect. Intake sends non-trivial work to design and trivial work straight to breakdown; breakdown needs at least one ticket and build cannot hand to QA while tickets are open. The only human gate is `merge-approval` on the parent issue.
 - `triage` is owned by intake. Workflow `next` is a destination-to-requirements map; returning to build does not require a pass. Workflow structure is checked by SQL, rather than claiming a SQL CHECK runs Zod.
 - Each parent issue has one PR from its issue branch; each ticket has its own PR into that branch. A new head SHA on the parent invalidates earlier evidence.
-- Human merge approval moves to `ready-to-merge`; only GitHub confirms `merged`, and deployment evidence is required for `deployed`.
+- Human merge approval moves to `ready-to-merge`; HARNESST then merges at the approved head, only GitHub confirms `merged`, and deployment evidence is required for `deployed`.
 - All item mutations use explicit versions, including artifacts/head updates. Tools never share an implicit version cache across concurrent turns. Head observations older than the current timestamp are harmless no-ops.
 - One writer per issue and role. Every agent write carries its eve session id; the ledger accepts it only from the session holding that issue's lease (tickets share their parent's). A free lease goes to the first writing session or the wake channel's claim; a wake for leased work waits and is redelivered when the holder releases at turn end or its lease expires. The channel renews every minute from a process timer, so long silent model work keeps the lease; expiry (10 minutes by default, `lease_ttl_seconds`) only happens when the process stops renewing. Until another session takes over, the old one may continue. A wake session that was taken over gets `LEASE_LOST` and is refused on that issue for good; a chat session only waits for the issue to be free. Leases do **not** stop a session pushing to GitHub; external side effects are still not exactly-once. Notification wakes have a separate completion RPC.
 - Tickets record `blocked_by` sibling tickets. The implementer works them in dependency order; there is no automatic scheduler.
 - The Cloudflare bundle vendors all fourteen upstream skills with license and commit provenance. Wrangler uses harnesst's credential path. MCP OAuth remains optional and is not added to core.
-- Migrations, workflow, May I functions, local harness and GitHub examples live here; marketplace bundles materialize only agent runtime files.
+- Migrations, workflow, local harness and GitHub examples live here; marketplace bundles materialize only agent runtime files.
 
 To update vendored skills, check out the desired `cloudflare/skills` revision and run `node catalog/ledger/vendor-cloudflare.mjs /path/to/checkout`, review changes, bump affected template/bundle versions, and run `npm run catalog:index && npm run catalog:validate`.
 

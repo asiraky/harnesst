@@ -68,6 +68,20 @@ export async function handleGitHubEvent(event, eventName, { rpc, gh, repo }) {
     if (!pr.base?.ref || pr.base.ref !== pr.base.repo?.default_branch)
       throw Error("Issue PR must target the default branch");
   }
+  async function dispatchDeploy(item, pr, mergeSha) {
+    if (!/^[0-9a-f]{40}$/.test(mergeSha ?? ""))
+      throw Error("GitHub did not return a confirmed merge commit");
+    // Pushes by the merge may not start workflows. Explicit dispatch is supported.
+    await gh("dispatches", "POST", {
+      event_type: "ledger-deploy",
+      client_payload: {
+        ledger_item_id: item.id,
+        head_sha: item.head_sha,
+        merge_sha: mergeSha,
+        pull_request: pr.number,
+      },
+    });
+  }
   async function checkRepo(item) {
     const project = await rpc("get_project", { project_id: item.project_id });
     if (!project || project.repo !== repo)
@@ -118,6 +132,9 @@ export async function handleGitHubEvent(event, eventName, { rpc, gh, repo }) {
         item.head_sha === pr.head.sha
       ) {
         requireDefaultBase(pr);
+        // harnesst merges approved PRs with its own App, so this event fires; deploy from here.
+        // Dispatch first: if it fails, the item stays ready-to-merge and the sweep retries it.
+        await dispatchDeploy(item, pr, pr.merge_commit_sha);
         await mutate("transition", item, {
           to_stage: "merged",
           note: `GitHub confirmed PR ${pr.number} merged`,
@@ -164,33 +181,16 @@ export async function handleGitHubEvent(event, eventName, { rpc, gh, repo }) {
         );
         if (!match || match[1] !== repo) throw Error("Invalid PR artifact");
         const pr = await gh(`pulls/${match[2]}`);
+        // harnesst merges approved PRs (agents and Actions can't push to the default branch).
+        // This sweep only settles merges whose pull_request event was missed or failed.
+        if (!pr.merged) continue;
         if (pr.head.sha !== item.head_sha)
           throw Error("Approved SHA is no longer PR head");
         requireDefaultBase(pr);
-        let mergeSha = pr.merge_commit_sha;
-        if (!pr.merged) {
-          const result = await gh(`pulls/${pr.number}/merge`, "PUT", {
-            sha: item.head_sha,
-            merge_method: "squash",
-          });
-          if (!result.merged) throw Error(result.message);
-          mergeSha = result.sha;
-        }
-        if (!/^[0-9a-f]{40}$/.test(mergeSha ?? ""))
-          throw Error("GitHub did not return a confirmed merge commit");
-        // GITHUB_TOKEN suppresses push workflows. Explicit dispatch is supported.
         // Dispatch before settling the item so a failed/uncertain delivery is retried
-        // by the next sweep against the already merged PR, without another merge.
-        await gh("dispatches", "POST", {
-          event_type: "ledger-deploy",
-          client_payload: {
-            ledger_item_id: item.id,
-            head_sha: item.head_sha,
-            merge_sha: mergeSha,
-            pull_request: pr.number,
-          },
-        });
-        // GITHUB_TOKEN merges may not produce another Actions run. Record the confirmed result here.
+        // by the next sweep.
+        await dispatchDeploy(item, pr, pr.merge_commit_sha);
+        // Record the confirmed result here too, in case the pull_request run never settles it.
         item = await rpc("get_item", { item_id: item.id });
         if (item.stage === "ready-to-merge" && item.head_sha === pr.head.sha)
           await mutate("transition", item, {

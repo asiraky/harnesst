@@ -24,6 +24,7 @@ import {
 } from "~/deploy/drain.server";
 import { envIngressUrl } from "~/lib/ingress";
 import { verifyDelegationToken } from "~/team/token.server";
+import type { ProviderDefinition } from "~/connections/providers.server";
 import type { DeployTarget, SecretsProvider } from "~/seams/types";
 import { fakeDeployTarget, fakeSecrets } from "../fakes/infra";
 import { makeFakeStore, type FakeStore } from "../fakes/store";
@@ -41,6 +42,40 @@ vi.mock("~/github/cached.server", () => ({
     truncated: false,
   })),
 }));
+
+// Registry fixtures: a second refresh-token provider and a rotating-grant brokered provider
+// (with a static deployEnv constant), so env injection exercises both deliveries.
+vi.mock("~/connections/providers.server", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("~/connections/providers.server")>();
+  const fixtures: ProviderDefinition[] = [
+    {
+      id: "hubspot",
+      label: "HubSpot",
+      authorizeUrl: "https://auth.hubspot.example/oauth/authorize",
+      tokenUrl: "https://auth.hubspot.example/oauth/token",
+      envPrefix: "HUBSPOT",
+    },
+    {
+      id: "rotating",
+      label: "Rotating Provider",
+      authorizeUrl: "https://auth.rotating.example/oauth/authorize",
+      tokenUrl: "https://auth.rotating.example/oauth/token",
+      pkce: true,
+      envPrefix: "ROTATING",
+      tokenEndpointAuth: "none",
+      credentialDelivery: "access-token-broker",
+      clientRegistration: { endpoint: "https://auth.rotating.example/oauth/register" },
+      deployEnv: { ROTATING_KEY_ID: "k1" },
+    },
+  ];
+  return {
+    ...actual,
+    getProvider: (id: string) =>
+      fixtures.find((p) => p.id === id) ?? actual.getProvider(id),
+    listProviders: () => [...actual.listProviders(), ...fixtures],
+  };
+});
 
 let store: FakeStore;
 const PROJECT = "proj_1";
@@ -1627,8 +1662,7 @@ describe("shared Discord app env injection (issue #32)", () => {
 });
 
 describe("Google connection env injection (issue #30)", () => {
-  // Deploys that broker an access-token-broker provider (the real mayi entry, issue #167) mint
-  // a delegation token, which is HMAC-keyed by the secrets key.
+  // Deploys that broker an access-token-broker provider (issue #167) mint a delegation token, which is HMAC-keyed by the secrets key.
   const OLD_KEY = process.env.HARNESST_SECRETS_KEY;
   beforeEach(() => {
     process.env.HARNESST_SECRETS_KEY = "a".repeat(64);
@@ -1723,24 +1757,24 @@ describe("Google connection env injection (issue #30)", () => {
         // A user secret trying to shadow the second provider's brokered token.
         secrets: fakeSecrets({
           OPENROUTER_API_KEY: "k",
-          MAYI_OAUTH_REFRESH_TOKEN: "user_token",
+          HUBSPOT_OAUTH_REFRESH_TOKEN: "user_token",
         }),
         connectionGrantEnv: async () => ({
           GOOGLE_OAUTH_CLIENT_ID: "g_client",
           GOOGLE_OAUTH_CLIENT_SECRET: "g_secret",
           GOOGLE_OAUTH_REFRESH_TOKEN: "g_token",
-          MAYI_OAUTH_CLIENT_ID: "m_client",
-          MAYI_OAUTH_CLIENT_SECRET: "m_secret",
-          MAYI_OAUTH_REFRESH_TOKEN: "m_token",
+          HUBSPOT_OAUTH_CLIENT_ID: "h_client",
+          HUBSPOT_OAUTH_CLIENT_SECRET: "h_secret",
+          HUBSPOT_OAUTH_REFRESH_TOKEN: "h_token",
         }),
       },
     );
     const env = deployedEnvs[0];
     expect(env.GOOGLE_OAUTH_CLIENT_ID).toBe("g_client");
     expect(env.GOOGLE_OAUTH_REFRESH_TOKEN).toBe("g_token");
-    expect(env.MAYI_OAUTH_CLIENT_ID).toBe("m_client");
-    expect(env.MAYI_OAUTH_CLIENT_SECRET).toBe("m_secret");
-    expect(env.MAYI_OAUTH_REFRESH_TOKEN).toBe("m_token");
+    expect(env.HUBSPOT_OAUTH_CLIENT_ID).toBe("h_client");
+    expect(env.HUBSPOT_OAUTH_CLIENT_SECRET).toBe("h_secret");
+    expect(env.HUBSPOT_OAUTH_REFRESH_TOKEN).toBe("h_token");
   });
 
   it("injects broker coordinates (HARNESST_API_URL + delegation token) for an access-token-broker provider (issue #167)", async () => {
@@ -1762,23 +1796,23 @@ describe("Google connection env injection (issue #30)", () => {
         secrets: fakeSecrets({
           OPENROUTER_API_KEY: "k",
           HARNESST_API_URL: "https://evil.example",
-          MAYI_CALLBACK_STATE_KEY_ID: "user_kid",
+          ROTATING_KEY_ID: "user_kid",
         }),
-        // Brokered delivery (real mayi entry): scopes + deployEnv constants, no OAuth trio.
+        // Brokered delivery: scopes + deployEnv constants, no OAuth trio.
         connectionGrantEnv: async () => ({
-          MAYI_OAUTH_SCOPES: "approval:create approval:read approval:cancel",
-          MAYI_CALLBACK_STATE_KEY_ID: "k1",
+          ROTATING_OAUTH_SCOPES: "approval:create approval:read approval:cancel",
+          ROTATING_KEY_ID: "k1",
         }),
       },
     );
     const env = deployedEnvs[0];
-    expect(env.MAYI_CALLBACK_STATE_KEY_ID).toBe("k1");
-    expect(env.MAYI_OAUTH_SCOPES).toBe(
+    expect(env.ROTATING_KEY_ID).toBe("k1");
+    expect(env.ROTATING_OAUTH_SCOPES).toBe(
       "approval:create approval:read approval:cancel",
     );
     // The refresh token NEVER ships for brokered providers.
-    expect(env).not.toHaveProperty("MAYI_OAUTH_REFRESH_TOKEN");
-    expect(env).not.toHaveProperty("MAYI_OAUTH_CLIENT_ID");
+    expect(env).not.toHaveProperty("ROTATING_OAUTH_REFRESH_TOKEN");
+    expect(env).not.toHaveProperty("ROTATING_OAUTH_CLIENT_ID");
     // Broker coordinates are harnesst-owned: the user-set HARNESST_API_URL is replaced, and the
     // delegation token identifies THIS deployment (same auth story as the Discord send proxy).
     expect(env.HARNESST_API_URL).toMatch(/^http:\/\/host\.docker\.internal:/);
@@ -1953,15 +1987,15 @@ describe("generated-secret mint-once (issue #163)", () => {
     version: 1,
     installs: [
       {
-        id: "mayi-approvals",
+        id: "approvals-channel",
         type: "connection",
-        name: "May I? approvals",
+        name: "Approvals channel",
         version: "1.0.0",
         hash: "h",
         registry: "fixture",
         member: null,
         files: [],
-        secrets: [{ name: "MAYI_STATE_KEY", generated: true }],
+        secrets: [{ name: "CHANNEL_STATE_KEY", generated: true }],
       },
     ],
   });
@@ -2036,12 +2070,12 @@ describe("generated-secret mint-once (issue #163)", () => {
 
     // Exactly one mint: 32 random bytes base64url (43 chars), persisted through the seam.
     expect(setCalls).toHaveLength(1);
-    expect(setCalls[0].key).toBe("MAYI_STATE_KEY");
+    expect(setCalls[0].key).toBe("CHANNEL_STATE_KEY");
     expect(setCalls[0].value).toMatch(/^[A-Za-z0-9_-]{43}$/);
     // Both containers received the SAME value — stable across redeploys.
     expect(deployedEnvs).toHaveLength(2);
-    expect(deployedEnvs[0].MAYI_STATE_KEY).toBe(setCalls[0].value);
-    expect(deployedEnvs[1].MAYI_STATE_KEY).toBe(setCalls[0].value);
+    expect(deployedEnvs[0].CHANNEL_STATE_KEY).toBe(setCalls[0].value);
+    expect(deployedEnvs[1].CHANNEL_STATE_KEY).toBe(setCalls[0].value);
   });
 
   it("suppresses the mint only for an existing exact (agent, env, name) row", async () => {
@@ -2052,7 +2086,7 @@ describe("generated-secret mint-once (issue #163)", () => {
     const deployedEnvs: Record<string, string>[] = [];
     const { provider, setCalls } = mintingSecrets(
       { OPENROUTER_API_KEY: "k" },
-      { MAYI_STATE_KEY: "already-minted" },
+      { CHANNEL_STATE_KEY: "already-minted" },
     );
 
     await deployRelease(
@@ -2069,7 +2103,7 @@ describe("generated-secret mint-once (issue #163)", () => {
     );
 
     expect(setCalls).toHaveLength(0);
-    expect(deployedEnvs[0].MAYI_STATE_KEY).toBe("already-minted");
+    expect(deployedEnvs[0].CHANNEL_STATE_KEY).toBe("already-minted");
   });
 
   it("mints despite a same-named value from another scope level — generated material is nobody's credential", async () => {
@@ -2078,11 +2112,11 @@ describe("generated-secret mint-once (issue #163)", () => {
       store,
     );
     const deployedEnvs: Record<string, string>[] = [];
-    // A user/shared/agent-scoped MAYI_STATE_KEY resolves from the cascade, but no exact
+    // A user/shared/agent-scoped CHANNEL_STATE_KEY resolves from the cascade, but no exact
     // (agent, env, name) row exists — harnesst must still mint, and the mint must win.
     const { provider, setCalls } = mintingSecrets({
       OPENROUTER_API_KEY: "k",
-      MAYI_STATE_KEY: "user-shadow-attempt",
+      CHANNEL_STATE_KEY: "user-shadow-attempt",
     });
 
     await deployRelease(
@@ -2099,8 +2133,8 @@ describe("generated-secret mint-once (issue #163)", () => {
     );
 
     expect(setCalls).toHaveLength(1);
-    expect(deployedEnvs[0].MAYI_STATE_KEY).toBe(setCalls[0].value);
-    expect(deployedEnvs[0].MAYI_STATE_KEY).not.toBe("user-shadow-attempt");
+    expect(deployedEnvs[0].CHANNEL_STATE_KEY).toBe(setCalls[0].value);
+    expect(deployedEnvs[0].CHANNEL_STATE_KEY).not.toBe("user-shadow-attempt");
   });
 
   it("fails the deploy when the lock fetch fails — required generated secrets can't be determined", async () => {

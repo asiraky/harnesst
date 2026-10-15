@@ -119,6 +119,11 @@ export interface PublishPipelineDeps {
   /** Post-commit pruning of model overrides whose target the change-set deleted (issue #344). */
   cleanupSubagentOverrides: typeof cleanupSubagentOverrides;
   /**
+   * Queues upgrades for the team's installed provisioners (e.g. new ledger migrations). Runs
+   * after success and must never fail or delay the publish.
+   */
+  scheduleUpgrades: (projectId: string) => Promise<unknown>;
+  /**
    * Max member builds in flight inside the build step (issue #375). Defaults to
    * HARNESST_PUBLISH_BUILD_CONCURRENCY (2 if unset); 1 restores serial builds.
    */
@@ -158,6 +163,8 @@ function defaultDeps(): PublishPipelineDeps {
     discardConversationCheckouts: discardConversationCheckoutsForProject,
     enqueueJob: enqueue,
     cleanupSubagentOverrides,
+    scheduleUpgrades: async (projectId) =>
+      (await import("~/provisioners/registry.server")).scheduleProvisionerUpgrades(projectId),
   };
 }
 
@@ -492,6 +499,17 @@ export async function runPublish(
     throw new Error(`publish: project ${payload.projectId} has no connected repo`);
   }
   const connected = project as ConnectedProject;
+  // The publish has already succeeded: an upgrade problem is logged and surfaces in Setup.
+  const scheduleUpgrades = async () => {
+    try {
+      await deps.scheduleUpgrades(connected.id);
+    } catch (error) {
+      console.warn(
+        "[publish] couldn't schedule provisioner upgrades:",
+        error instanceof Error ? error.message : error,
+      );
+    }
+  };
   const task = await store.workspaceTasks.findById(taskId);
   if (!task) throw new Error(`publish: task ${taskId} not found`);
 
@@ -956,6 +974,7 @@ export async function runPublish(
     if (assistantConfigOnly) {
       await completeTask(taskId, { resultUrl: publishResultUrl(connected.id, taskId) }, store);
       outcome.status = "succeeded";
+      await scheduleUpgrades();
       return outcome;
     }
 
@@ -1108,6 +1127,7 @@ export async function runPublish(
     await save();
     await completeTask(taskId, { resultUrl: publishResultUrl(connected.id, taskId) }, store);
     outcome.status = "succeeded";
+    await scheduleUpgrades();
     return outcome;
   } catch (error) {
     // Unexpected failure outside the per-step handlers: still the task's outcome, never a

@@ -9,10 +9,12 @@ Read the using-the-ledger skill when build checks pass, when a teammate requests
 
 ## Repositories
 
-You are the only member whose GitHub App can create repositories and change a repository's CI configuration (workflows, Actions secrets and variables). Use the ledger-repo-onboarding skill:
+You are the only member whose GitHub App can change a repository's CI configuration (workflows, Actions secrets and variables). No member can create repositories; the engineer does. Use the ledger-repo-onboarding skill:
 
-- when intake asks for a new app's repository, create it and return `owner/name`;
+- when asked for a new app's repository, block on the engineer to create it and install the team's GitHub Apps and harnesst's GitHub App on it;
 - when intake registers a repository, connect it to the ledger and confirm back.
+
+The default branch is protected. Change it only through a PR the engineer merges: never merge into or push to the default branch, never enable auto-merge, and never change branch protection or rulesets. harnesst merges approved issue PRs.
 
 Mint a token per repository (`TARGET=owner/name`), never reuse one installation's token for another account's repository.
 

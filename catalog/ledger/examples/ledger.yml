@@ -1,3 +1,6 @@
+# Reports pull requests, merges and deployments to the ledger. It never merges: harnesst merges
+# approved PRs with its own GitHub App, and this workflow (like every agent) can't push to the
+# default branch.
 name: Ledger
 on:
   pull_request_target:
@@ -9,8 +12,9 @@ on:
     - cron: "*/5 * * * *"
   workflow_dispatch:
 permissions:
+  # repository_dispatch (ledger-deploy) needs contents: write; it can't push past branch protection.
   contents: write
-  pull-requests: write
+  pull-requests: read
   deployments: read
 jobs:
   ledger:

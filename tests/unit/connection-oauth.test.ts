@@ -31,18 +31,17 @@ import {
 
 /**
  * A hypothetical PKCE provider definition, passed DIRECTLY (never resolved via the registry).
- * The real registry's mayi entry (issue #167) has different endpoints/flags — this local shape
- * deliberately exercises the generic builders (authorizeParams/identityScopes) instead.
+ * It deliberately exercises the generic builders (authorizeParams/identityScopes).
  */
-const MAYI: ProviderDefinition = {
-  id: "mayi",
-  label: "May I?",
-  authorizeUrl: "https://auth.mayi.example/oauth/authorize",
-  tokenUrl: "https://auth.mayi.example/oauth/token",
+const PKCE_PROVIDER: ProviderDefinition = {
+  id: "pkceprov",
+  label: "PKCE Provider",
+  authorizeUrl: "https://auth.pkce.example/oauth/authorize",
+  tokenUrl: "https://auth.pkce.example/oauth/token",
   pkce: true,
-  authorizeParams: { audience: "https://api.mayi.example", access_type: "offline" },
+  authorizeParams: { audience: "https://api.pkce.example", access_type: "offline" },
   identityScopes: ["profile"],
-  envPrefix: "MAYI",
+  envPrefix: "PKCEPROV",
 };
 
 const state: ConnectState = {
@@ -112,7 +111,6 @@ describe("PKCE (RFC 7636)", () => {
 
 describe("verifyConnectState registry validation", () => {
   it("rejects a state whose provider is not registered (the registry is the authority)", () => {
-    // "mayi" is REAL as of issue #167, so an unknown id proves the registry check now.
     const key = randomBytes(32);
     const token = signConnectState({ ...state, provider: "notaprovider" }, key);
     expect(verifyConnectState(token, key, state.exp - 1000)).toBeNull();
@@ -122,15 +120,15 @@ describe("verifyConnectState registry validation", () => {
 describe("authorizeUrl (generic)", () => {
   const input = {
     clientId: "client_1",
-    redirectUri: "https://harnesst.example/connections/mayi/callback",
+    redirectUri: "https://harnesst.example/connections/pkceprov/callback",
     state: "signed-state",
-    scopes: "mayi.approvals",
+    scopes: "pkce.write",
   };
 
   it("emits params in insertion order: standard, authorizeParams, state", () => {
-    const url = authorizeUrl(MAYI, input);
+    const url = authorizeUrl(PKCE_PROVIDER, input);
     const parsed = new URL(url);
-    expect(parsed.origin + parsed.pathname).toBe(MAYI.authorizeUrl);
+    expect(parsed.origin + parsed.pathname).toBe(PKCE_PROVIDER.authorizeUrl);
     expect([...parsed.searchParams.keys()]).toEqual([
       "client_id",
       "redirect_uri",
@@ -141,36 +139,36 @@ describe("authorizeUrl (generic)", () => {
       "state",
     ]);
     expect(parsed.searchParams.get("response_type")).toBe("code");
-    expect(parsed.searchParams.get("audience")).toBe("https://api.mayi.example");
+    expect(parsed.searchParams.get("audience")).toBe("https://api.pkce.example");
     expect(parsed.searchParams.get("access_type")).toBe("offline");
     expect(parsed.searchParams.get("state")).toBe("signed-state");
   });
 
   it("appends identityScopes after the requested scopes, deduped", () => {
-    const url = authorizeUrl(MAYI, input);
+    const url = authorizeUrl(PKCE_PROVIDER, input);
     expect(new URL(url).searchParams.get("scope")).toBe(
-      "mayi.approvals profile",
+      "pkce.write profile",
     );
-    const already = authorizeUrl(MAYI, {
+    const already = authorizeUrl(PKCE_PROVIDER, {
       ...input,
-      scopes: ["profile", "mayi.approvals"],
+      scopes: ["profile", "pkce.write"],
     });
     expect(new URL(already).searchParams.get("scope")).toBe(
-      "profile mayi.approvals",
+      "profile pkce.write",
     );
   });
 
   it("adds code_challenge + S256 method only when a challenge is passed", () => {
     const verifier = generateCodeVerifier();
     const withPkce = new URL(
-      authorizeUrl(MAYI, { ...input, codeChallenge: codeChallengeS256(verifier) }),
+      authorizeUrl(PKCE_PROVIDER, { ...input, codeChallenge: codeChallengeS256(verifier) }),
     );
     expect(withPkce.searchParams.get("code_challenge")).toBe(
       codeChallengeS256(verifier),
     );
     expect(withPkce.searchParams.get("code_challenge_method")).toBe("S256");
 
-    const without = new URL(authorizeUrl(MAYI, input));
+    const without = new URL(authorizeUrl(PKCE_PROVIDER, input));
     expect(without.searchParams.has("code_challenge")).toBe(false);
     expect(without.searchParams.has("code_challenge_method")).toBe(false);
   });
@@ -182,7 +180,7 @@ describe("exchangeCode with PKCE", () => {
     access_token: "at",
     refresh_token: "rt",
     expires_in: 3599,
-    scope: "mayi.approvals",
+    scope: "pkce.write",
   });
 
   it("sends code_verifier when supplied and omits it otherwise", async () => {
@@ -195,20 +193,20 @@ describe("exchangeCode with PKCE", () => {
     const verifier = generateCodeVerifier();
     await exchangeCode(
       {
-        provider: MAYI,
+        provider: PKCE_PROVIDER,
         config,
         code: "code_1",
-        redirectUri: "https://e/connections/mayi/callback",
+        redirectUri: "https://e/connections/pkceprov/callback",
         codeVerifier: verifier,
       },
       fetchImpl,
     );
     await exchangeCode(
       {
-        provider: MAYI,
+        provider: PKCE_PROVIDER,
         config,
         code: "code_2",
-        redirectUri: "https://e/connections/mayi/callback",
+        redirectUri: "https://e/connections/pkceprov/callback",
       },
       fetchImpl,
     );
@@ -221,17 +219,17 @@ describe("exchangeCode with PKCE", () => {
       new Response("bad", { status: 400 })) as typeof fetch;
     await expect(
       exchangeCode(
-        { provider: MAYI, config, code: "x", redirectUri: "https://e/cb" },
+        { provider: PKCE_PROVIDER, config, code: "x", redirectUri: "https://e/cb" },
         fetchImpl,
       ),
-    ).rejects.toThrow(/May I\? rejected the token exchange/);
+    ).rejects.toThrow(/PKCE Provider rejected the token exchange/);
   });
 });
 
 describe("fetchAccountEmail without a userinfo endpoint", () => {
   it("returns null with zero network calls", async () => {
     const fetchImpl = vi.fn() as unknown as typeof fetch;
-    expect(await fetchAccountEmail(MAYI, "at", fetchImpl)).toBeNull();
+    expect(await fetchAccountEmail(PKCE_PROVIDER, "at", fetchImpl)).toBeNull();
     expect(fetchImpl).not.toHaveBeenCalled();
   });
 });
@@ -281,7 +279,7 @@ describe("Google-unchanged regression (issue #163 acceptance criterion 2)", () =
     expect(providerRedirectPath(getProvider("google")!)).toBe(
       "/google/callback",
     );
-    expect(providerRedirectPath(MAYI)).toBe("/connections/mayi/callback");
+    expect(providerRedirectPath(PKCE_PROVIDER)).toBe("/connections/pkceprov/callback");
   });
 
   it("derives the S256 challenge with sha256/base64url (sanity against node primitives)", () => {
@@ -311,10 +309,10 @@ describe("public clients (issue #167)", () => {
     const { bodies, fetchImpl } = capturingFetch(grantReply);
     await exchangeCode(
       {
-        provider: MAYI,
+        provider: PKCE_PROVIDER,
         config: { clientId: "pub_client" },
         code: "code_1",
-        redirectUri: "https://e/connections/mayi/callback",
+        redirectUri: "https://e/connections/pkceprov/callback",
         codeVerifier: generateCodeVerifier(),
       },
       fetchImpl,
@@ -340,7 +338,7 @@ describe("public clients (issue #167)", () => {
   it("omits client_secret from the refresh for a public client and sends it for a confidential one", async () => {
     const { bodies, fetchImpl } = capturingFetch({ access_token: "at", expires_in: 3599 });
     await refreshAccessToken(
-      { provider: MAYI, config: { clientId: "pub_client" }, refreshToken: "rt" },
+      { provider: PKCE_PROVIDER, config: { clientId: "pub_client" }, refreshToken: "rt" },
       fetchImpl,
     );
     await refreshAccessToken(
@@ -365,7 +363,7 @@ describe("rotating refresh grants (issue #167)", () => {
       expires_in: 3600,
     });
     const out = await refreshAccessToken(
-      { provider: MAYI, config: { clientId: "c" }, refreshToken: "rt_old" },
+      { provider: PKCE_PROVIDER, config: { clientId: "c" }, refreshToken: "rt_old" },
       fetchImpl,
     );
     expect(out).toEqual({
@@ -398,20 +396,20 @@ describe("refreshAccessToken dead-grant detection", () => {
   it("throws InvalidGrantError on RFC 6749 invalid_grant", async () => {
     await expect(
       refreshAccessToken(
-        { provider: MAYI, config, refreshToken: "rt" },
+        { provider: PKCE_PROVIDER, config, refreshToken: "rt" },
         failing(400, '{"error":"invalid_grant"}'),
       ),
     ).rejects.toBeInstanceOf(InvalidGrantError);
   });
 
-  it("throws InvalidGrantError on May I?'s expired/revoked wording", async () => {
+  it("throws InvalidGrantError on non-standard expired/revoked wording", async () => {
     for (const body of [
       '{"statusCode":400,"statusMessage":"Invalid refresh token"}',
       '{"statusMessage":"Refresh token reuse detected; connection revoked"}',
     ]) {
       await expect(
         refreshAccessToken(
-          { provider: MAYI, config, refreshToken: "rt" },
+          { provider: PKCE_PROVIDER, config, refreshToken: "rt" },
           failing(400, body),
         ),
       ).rejects.toBeInstanceOf(InvalidGrantError);
@@ -420,13 +418,13 @@ describe("refreshAccessToken dead-grant detection", () => {
 
   it("keeps other refresh failures as plain (retryable) errors", async () => {
     const err = await refreshAccessToken(
-      { provider: MAYI, config, refreshToken: "rt" },
+      { provider: PKCE_PROVIDER, config, refreshToken: "rt" },
       failing(500, "upstream down"),
     ).catch((e: unknown) => e);
     expect(err).toBeInstanceOf(Error);
     expect(err).not.toBeInstanceOf(InvalidGrantError);
     const clientErr = await refreshAccessToken(
-      { provider: MAYI, config, refreshToken: "rt" },
+      { provider: PKCE_PROVIDER, config, refreshToken: "rt" },
       failing(400, '{"error":"invalid_client"}'),
     ).catch((e: unknown) => e);
     expect(clientErr).not.toBeInstanceOf(InvalidGrantError);
@@ -435,10 +433,10 @@ describe("refreshAccessToken dead-grant detection", () => {
 
 describe("registerOAuthClient (RFC 7591, issue #167)", () => {
   const REG: ProviderDefinition = {
-    ...MAYI,
+    ...PKCE_PROVIDER,
     clientRegistration: {
-      endpoint: "https://auth.mayi.example/oauth/register",
-      approvalCallbackPath: "/eve/v1/mayi/approval-resolved",
+      endpoint: "https://auth.pkce.example/oauth/register",
+      approvalCallbackPath: "/eve/v1/pkceprov/approval-resolved",
     },
   };
 
@@ -454,9 +452,9 @@ describe("registerOAuthClient (RFC 7591, issue #167)", () => {
       {
         provider: REG,
         clientName: "harnesst — proj / agent",
-        redirectUris: ["https://harnesst.example/connections/mayi/callback"],
+        redirectUris: ["https://harnesst.example/connections/pkceprov/callback"],
         approvalCallbackUris: [
-          "https://harnesst.example/e/env_1/eve/v1/mayi/approval-resolved",
+          "https://harnesst.example/e/env_1/eve/v1/pkceprov/approval-resolved",
         ],
       },
       fetchImpl,
@@ -465,9 +463,9 @@ describe("registerOAuthClient (RFC 7591, issue #167)", () => {
     expect(calls[0].url).toBe(REG.clientRegistration!.endpoint);
     expect(calls[0].body).toEqual({
       client_name: "harnesst — proj / agent",
-      redirect_uris: ["https://harnesst.example/connections/mayi/callback"],
+      redirect_uris: ["https://harnesst.example/connections/pkceprov/callback"],
       approval_callback_uris: [
-        "https://harnesst.example/e/env_1/eve/v1/mayi/approval-resolved",
+        "https://harnesst.example/e/env_1/eve/v1/pkceprov/approval-resolved",
       ],
     });
   });
@@ -498,7 +496,7 @@ describe("registerOAuthClient (RFC 7591, issue #167)", () => {
         fetchImpl,
       ),
     ).rejects.toThrow(
-      /May I\? rejected the OAuth client registration \(HTTP 400\).*invalid_client_metadata/,
+      /PKCE Provider rejected the OAuth client registration \(HTTP 400\).*invalid_client_metadata/,
     );
   });
 
@@ -517,7 +515,7 @@ describe("registerOAuthClient (RFC 7591, issue #167)", () => {
     const fetchImpl = vi.fn() as unknown as typeof fetch;
     await expect(
       registerOAuthClient(
-        { provider: MAYI, clientName: "n", redirectUris: ["https://e/cb"] },
+        { provider: PKCE_PROVIDER, clientName: "n", redirectUris: ["https://e/cb"] },
         fetchImpl,
       ),
     ).rejects.toThrow(/does not support dynamic client registration/);
@@ -576,19 +574,5 @@ describe("connect-state environmentIds (issue #167)", () => {
     }
     const plain = signConnectState(state, key);
     expect(verifyConnectState(plain, key, state.exp - 1000)).toEqual(state);
-  });
-});
-
-describe("mayi provider OAuth endpoints (issue #167)", () => {
-  // Regression guard: the OAuth server is app.mayi.sh — mayi.sh is the marketing site and its
-  // /api/oauth/* return 404/405, so a mayi.sh endpoint fails Connect with a 405 at registration.
-  // Authoritative source: https://app.mayi.sh/.well-known/oauth-authorization-server.
-  it("targets app.mayi.sh, not the marketing host", () => {
-    const mayi = getProvider("mayi")!;
-    expect(mayi.authorizeUrl).toBe("https://app.mayi.sh/api/oauth/authorize");
-    expect(mayi.tokenUrl).toBe("https://app.mayi.sh/api/oauth/token");
-    expect(mayi.clientRegistration?.endpoint).toBe(
-      "https://app.mayi.sh/api/oauth/register",
-    );
   });
 });

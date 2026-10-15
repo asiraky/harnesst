@@ -3,7 +3,7 @@
   "type": "channel",
   "name": "Ledger wake",
   "description": "Authenticated ledger delivery: one session per issue lease, heartbeated while it works, released at turn end.",
-  "version": "0.2.0",
+  "version": "0.4.0",
   "eve": ">=0.22.0",
   "subagentCompatible": false,
   "files": [

@@ -288,6 +288,27 @@
       "when": 1791504475523,
       "tag": "0040_artifact_shown_at",
       "breakpoints": true
+    },
+    {
+      "idx": 41,
+      "version": "7",
+      "when": 1791769034106,
+      "tag": "0041_harnesst_approvals",
+      "breakpoints": true
+    },
+    {
+      "idx": 42,
+      "version": "7",
+      "when": 1792020790388,
+      "tag": "0042_provisioner_service_connections",
+      "breakpoints": true
+    },
+    {
+      "idx": 43,
+      "version": "7",
+      "when": 1792035525700,
+      "tag": "0043_approval_merges",
+      "breakpoints": true
     }
   ]
 }

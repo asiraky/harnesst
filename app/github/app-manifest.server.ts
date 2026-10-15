@@ -61,7 +61,8 @@ export interface AppManifestInput {
   description?: string;
   /**
    * Extra permissions the agent's installed templates declare (lock `github.permissions`) — how
-   * the infra agent alone gets repository administration and Actions workflows/secrets/variables.
+   * the infra agent alone gets Actions workflows/secrets/variables. No agent gets administration:
+   * it would let the agent bypass the branch protection that keeps it off the default branch.
    */
   permissions?: GitHubPermissions;
 }

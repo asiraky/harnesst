@@ -2,8 +2,8 @@
   "id": "ledger-repo-onboarding",
   "type": "skill",
   "name": "Ledger repository onboarding",
-  "description": "Create organization repositories and connect any repository to the team ledger with gh: Actions secrets, the ledger workflow and helper, and the Cloudflare deploy workflow. For the team's infra agent.",
-  "version": "0.1.0",
+  "description": "Connect an existing repository to the team ledger with gh: Actions secrets, the ledger workflow and helper, and the Cloudflare deploy workflow, proposed to the protected default branch as a pull request. For the team's infra agent.",
+  "version": "0.3.0",
   "eve": ">=0.22.0",
   "subagentCompatible": false,
   "files": [
@@ -23,7 +23,6 @@
   ],
   "github": {
     "permissions": {
-      "administration": "write",
       "workflows": "write",
       "secrets": "write",
       "actions_variables": "write",

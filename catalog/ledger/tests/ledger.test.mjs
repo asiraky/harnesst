@@ -16,7 +16,7 @@ try {
   await connection.unsafe(
     await readFile(new URL("../local/roles.sql", import.meta.url), "utf8"),
   );
-  for (const file of ["0001_ledger.sql", "0004_mayi_approvals.sql", "0005_hosted_authorization.sql", "0006_oauth_recovery.sql", "0007_scoped_oauth_writes.sql", "0008_review_content.sql", "0009_tickets.sql", "0010_leases.sql"])
+  for (const file of ["0001_ledger.sql", "0004_mayi_approvals.sql", "0005_hosted_authorization.sql", "0006_oauth_recovery.sql", "0007_scoped_oauth_writes.sql", "0008_review_content.sql", "0009_tickets.sql", "0010_leases.sql", "0011_harnesst_approvals.sql"])
     await connection.unsafe(
       await readFile(new URL("../" + file, import.meta.url), "utf8"),
     );
@@ -142,7 +142,9 @@ async function gated() {
   });
   return get(i);
 }
-// Test harness simulates the already verified Edge Function. Agents cannot use this role.
+// harnesst records the human decision through the approvals API; agents never hold its key.
+const approvalsKey = "approvals-" + Date.now();
+await sql`insert into ledger.approval_access(key_hash) values(ledger.hash(${approvalsKey}))`;
 async function gate(descriptor, args = {}) {
   const [r] =
     await sql`select * from ledger.approval_requests where item_id=${descriptor.id} and epoch=${descriptor.epoch}`;
@@ -151,8 +153,8 @@ async function gate(descriptor, args = {}) {
     throw new Error("stale_binding");
   if (!args.decision) return current;
   await sql.begin(async (tx) => {
-    await tx`set local role service_role`;
-    await tx`select public.ledger_approval_backend('resolve',${tx.json({ review_protocol: 2, state: r.callback_state, event_id: r.id, approval_id: r.id, status: args.decision === "approve" ? "approved" : "denied", approver_id: "HumanUserAbc", expires_at: new Date(Date.now() + 86400000).toISOString(), occurred_at: new Date().toISOString() })})`;
+    await tx`set local role anon`;
+    await tx`select public.ledger_approvals(${approvalsKey},'resolve',${tx.json({ id: r.id, decision: args.decision, approver_id: "user-1", approver_name: "Human" })})`;
   });
   return get(descriptor);
 }

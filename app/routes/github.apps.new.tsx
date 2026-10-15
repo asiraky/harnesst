@@ -111,7 +111,7 @@ export const loader = (args: LoaderFunctionArgs) =>
       const memberSegment = roster.length > 1 ? agent.name : null;
       const deploymentUrl = `${origin}${contextPath(project.id, memberSegment)}/deployment`;
       // The templates installed on this agent decide what its App may do (e.g. only infra gets
-      // repository administration and Actions secrets) — read from the effective lock.
+      // Actions workflows and secrets) — read from the effective lock.
       const [source, drafts] = await Promise.all([
         getAgentSource(project.repoInstallationId, {
           owner: project.repoOwner,

@@ -60,8 +60,7 @@ export interface ProviderDefinition {
   clientRegistration?: { endpoint: string; approvalCallbackPath?: string };
   /**
    * Static env constants injected alongside this provider's grant env at deploy (issue #167),
-   * anti-shadowed like the `<PREFIX>_OAUTH_*` names. For mayi this carries the callback-state
-   * key id that pairs with the `generated` MAYI_CALLBACK_STATE_KEY secret.
+   * anti-shadowed like the `<PREFIX>_OAUTH_*` names.
    */
   deployEnv?: Record<string, string>;
 }
@@ -88,35 +87,6 @@ const PROVIDERS: Record<string, ProviderDefinition> = {
     redirectPath: "/google/callback",
     noRefreshTokenHint:
       "Remove harnesst's access at myaccount.google.com/permissions and connect again so Google re-issues one.",
-  },
-  // May I? (issue #167) — human-approval channel. Verified against asiraky/mayi: PUBLIC client
-  // (token_endpoint_auth_methods_supported: ["none"], PKCE S256 required), refresh tokens ROTATE
-  // per use with family-reuse revocation (so the instance never holds one — access-token broker),
-  // clients are register-once/immutable with exact-match approval callback URIs (so one client is
-  // registered PER GRANT, covering every environment's callback URL at Connect time). No userinfo
-  // endpoint — the card shows "Connected" without an account email. Hosted OAuth origin is
-  // app.mayi.sh (mayi.sh is the marketing site — its /api/oauth/* 404/405; the authoritative
-  // endpoints come from https://app.mayi.sh/.well-known/oauth-authorization-server). Self-hosted
-  // mayi origins are deferred until a consumer exists (issue #167 open question).
-  mayi: {
-    id: "mayi",
-    label: "May I?",
-    authorizeUrl: "https://app.mayi.sh/api/oauth/authorize",
-    tokenUrl: "https://app.mayi.sh/api/oauth/token",
-    pkce: true,
-    envPrefix: "MAYI",
-    tokenEndpointAuth: "none",
-    credentialDelivery: "access-token-broker",
-    clientRegistration: {
-      endpoint: "https://app.mayi.sh/api/oauth/register",
-      // The @mayiapp/eve adapter registers exactly this route on the instance and builds its
-      // callback URL as <EVE_PUBLIC_ORIGIN>/eve/v1/mayi/approval-resolved.
-      approvalCallbackPath: "/eve/v1/mayi/approval-resolved",
-    },
-    // The adapter's callback-state key id — a purely local rotation identifier paired with the
-    // generated MAYI_CALLBACK_STATE_KEY (mayi's channel.ts: currentKey { kid, key }); a fixed
-    // first id is correct, and a future rotation moves "k1" into MAYI_CALLBACK_STATE_PREVIOUS_KEYS.
-    deployEnv: { MAYI_CALLBACK_STATE_KEY_ID: "k1" },
   },
   // Xero (issue #166) — the first CAPABILITY provider: money-adjacent, so the OAuth grant never
   // leaves the control plane and the instance can only reach the whitelisted operations in

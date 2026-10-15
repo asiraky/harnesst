@@ -10,7 +10,7 @@ The runtime files belong to the selected member. A ledger bundle includes tools,
 
 The operator runbook is `catalog/ledger/README.md` in the harnesst source. For a local trial run `npm run ledger:up` then `npm run ledger:dev`; the playground is http://localhost:55430. Actors are in ignored `catalog/ledger/.local/actors.json`. `npm run ledger:team` composes all four members and their subagents.
 
-For manual hosted setup, follow the Ledger bundle’s LEDGER-SETUP.md. The bundle ships Supabase migrations, approval-dispatch and approval-callback functions. May I authentication and human role mappings are configured by the operator; agent credentials cannot administer approvals.
+For manual hosted setup, follow the Ledger bundle’s LEDGER-SETUP.md. The bundle ships the Supabase migrations. harnesst hosts human approvals and alone holds the approvals key; agent credentials cannot administer approvals.
 
 Set shared LEDGER_URL and LEDGER_ANON_KEY from Supabase API settings. Set each member's LEDGER_ACTOR_KEY and LEDGER_WAKE_TOKEN from its mint result; these are different secrets, copied once. Locally, the Docker-facing URL is http://host.docker.internal:55431 and the anon value is local. On Linux, the container may need a host-gateway mapping. SQL admin credentials never belong in an agent.
 
@@ -18,9 +18,9 @@ Add this grounding if the member does not already have it: “Work arrives from 
 
 ## Workflow and recovery
 
-The workflow assigns triage and breakdown to intake, design to architect, infra to infra and build/QA/review to implementer. The only gate is merge-approval on the parent issue; entering it queues a May I request automatically. The human reviews and decides in May I; a signed callback applies the decision in Supabase and wakes the next role. Intake reports the approval status from ledger-get-item and completes the notification wake. A chat reply cannot approve a gate.
+The workflow assigns triage and breakdown to intake, design to architect, infra to infra and build/QA/review to implementer. The only gate is merge-approval on the parent issue; entering it opens an approval request automatically. harnesst publishes the request's link, a person with write access to the team decides in harnesst, and the ledger applies the decision and wakes the next role. Intake reports the approval status from ledger-get-item and completes the notification wake. A chat reply cannot approve a gate.
 
-Requirements belong to each next edge. Human approval moves merge work to ready-to-merge; the GitHub adapter alone confirms merged and deployed. Tickets are sub-issues intake creates during breakdown; GitHub closes each one when its PR merges into the parent issue branch, and build cannot hand to QA while any are open. A spec edit by anyone other than the current stage owner restarts pre-code work at triage; a new SHA resets downstream review and invalidates old evidence and previews.
+Requirements belong to each next edge. Human approval moves merge work to ready-to-merge, and harnesst then merges the issue PR at the approved head with its own GitHub App; no agent merges into the default branch. The GitHub adapter alone confirms merged and deployed. Tickets are sub-issues intake creates during breakdown; GitHub closes each one when its PR merges into the parent issue branch, and build cannot hand to QA while any are open. A spec edit by anyone other than the current stage owner restarts pre-code work at triage; a new SHA resets downstream review and invalidates old evidence and previews.
 
 A workflow change is a new workflows row with version+1, making the old version inactive and the new one active in the same transaction. In-flight items keep their pinned version. Update roles and stage requirements in the workflow rather than copying rules into prompts. One actor per role in this prototype; re-minting rotates that role's keys.
 

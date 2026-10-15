@@ -41,10 +41,13 @@ export default [
       index("routes/foh.agent._index.tsx"),
       route("s/:sessionId", "routes/foh.session.tsx"),
     ]),
+    // A ledger gate's approval: the link the team's proxy agent posts (harnesst approvals).
+    route("approvals/:id", "routes/approvals.$id.tsx"),
   ]),
   // FOH resource routes: the streaming turn + stop for one repo's sessions, and the global
   // inbox badge/flyout endpoint (D12 polling).
   route("api/foh/inbox", "routes/api.foh.inbox.ts"),
+  route("api/approvals/:id", "routes/api.approvals.$id.ts"),
   // Channel park (WS1): a channel-homed agent files its `input.requested` question here. Bearer
   // (HARNESST_TEAM_TOKEN) auth, no browser session — kept above the :projectId routes so the
   // static segment can't be swallowed by them.
@@ -340,7 +343,7 @@ export default [
   route("api/discord/interactions", "routes/api.discord.interactions.ts"),
   route("api/discord/send", "routes/api.discord.send.ts"),
   // Instance token broker (issue #167): instances of access-token-broker providers (rotating
-  // refresh grants — mayi) fetch fresh access tokens here with their HARNESST_TEAM_TOKEN.
+  // refresh grants) fetch fresh access tokens here with their HARNESST_TEAM_TOKEN.
   route("api/connections/token", "routes/api.connections.token.ts"),
   // Brokered capabilities (issue #166): capability providers' whitelisted operations. Instances
   // POST typed inputs with their HARNESST_TEAM_TOKEN; harnesst validates and executes with the

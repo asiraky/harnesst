@@ -142,6 +142,7 @@ function makeDeps(over: Partial<PublishPipelineDeps> = {}): PublishPipelineDeps 
     discardConversationCheckouts: vi.fn().mockResolvedValue(undefined),
     cleanupSubagentOverrides: vi.fn().mockResolvedValue(undefined),
     enqueueJob: enqueue,
+    scheduleUpgrades: vi.fn().mockResolvedValue([]),
     ...over,
   } as PublishPipelineDeps;
 }
@@ -508,6 +509,45 @@ describe("runPublish — parallel builds (issue #375)", () => {
 
     expect((await store.workspaceTasks.findById(task.id))?.status).toBe("succeeded");
     expect(peak).toBe(1);
+  });
+});
+
+describe("runPublish — provisioner upgrades", () => {
+  it("schedules upgrades for the project once the publish has succeeded", async () => {
+    seedTeam();
+    await stageDrafts({ "agents/ivy/agent/agent.ts": "export default {};" });
+    const task = await seedTask();
+    const deps = makeDeps();
+
+    await runPublish(payload(task.id), deps, store);
+
+    expect((await store.workspaceTasks.findById(task.id))?.status).toBe("succeeded");
+    expect(deps.scheduleUpgrades).toHaveBeenCalledWith(PROJECT);
+  });
+
+  it("a scheduling failure leaves the publish succeeded", async () => {
+    seedTeam();
+    await stageDrafts({ "agents/ivy/agent/agent.ts": "export default {};" });
+    const task = await seedTask();
+    const deps = makeDeps({ scheduleUpgrades: vi.fn().mockRejectedValue(new Error("db down")) });
+
+    await expect(runPublish(payload(task.id), deps, store)).resolves.toMatchObject({
+      status: "succeeded",
+    });
+    expect((await store.workspaceTasks.findById(task.id))?.status).toBe("succeeded");
+  });
+
+  it("a failed publish schedules nothing", async () => {
+    seedTeam();
+    await stageDrafts({ "agents/ivy/agent/agent.ts": "broken" });
+    const task = await seedTask();
+    const deps = makeDeps({
+      checkBuild: vi.fn().mockResolvedValue({ ok: false, output: "TS2304" }),
+    });
+
+    await runPublish(payload(task.id), deps, store);
+
+    expect(deps.scheduleUpgrades).not.toHaveBeenCalled();
   });
 });
 

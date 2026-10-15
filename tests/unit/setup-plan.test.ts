@@ -20,12 +20,25 @@ function member(
   };
 }
 
+function provisioner(
+  status: string,
+  extra: Partial<SetupInput["provisioning"][number]> = {},
+): SetupInput["provisioning"][number] {
+  return {
+    provisioner: "supabase-ledger",
+    status,
+    needsUpdate: false,
+    verify: true,
+    ...extra,
+  };
+}
+
 function input(extra: Partial<SetupInput> = {}): SetupInput {
   return {
     members: [],
     sharedSecretNames: [],
     hasUnpublishedChanges: false,
-    ledger: null,
+    provisioning: [],
     ...extra,
   };
 }
@@ -88,11 +101,11 @@ describe("planSetup", () => {
     });
   });
 
-  it("orders secrets, ledger, publish, GitHub, connections, May I, wakes", () => {
+  it("orders secrets, provisioning, publish, GitHub, connections, verification", () => {
     const plan = planSetup(
       input({
         hasUnpublishedChanges: true,
-        ledger: { status: "pending", mayi: "not_installed" },
+        provisioning: [provisioner("pending", { needsUpdate: true })],
         members: [
           member("hermes", {
             agentId: null,
@@ -105,12 +118,11 @@ describe("planSetup", () => {
     );
     expect(plan.steps.map((s) => s.kind)).toEqual([
       "secret",
-      "ledger",
+      "provision",
       "publish",
       "github-app",
       "connection",
-      "mayi",
-      "wakes",
+      "provision-verify",
     ]);
     expect(plan.next?.kind).toBe("secret");
     expect(plan.steps.find((s) => s.kind === "publish")).toMatchObject({
@@ -128,33 +140,61 @@ describe("planSetup", () => {
   it("counts finished steps and points next at the first unfinished one", () => {
     const plan = planSetup(
       input({
-        ledger: { status: "ready", mayi: "authorizing" },
+        provisioning: [provisioner("ready")],
         members: [
           member("a", {
-            connections: [{ provider: "google", connected: true }],
+            connections: [{ provider: "google", connected: false }],
           }),
         ],
       }),
     );
     expect(plan.steps.map((s) => [s.kind, s.done])).toEqual([
-      ["ledger", true],
-      ["connection", true],
-      ["mayi", false],
-      ["wakes", true],
+      ["provision", true],
+      ["connection", false],
+      ["provision-verify", true],
     ]);
-    expect(plan.next?.kind).toBe("mayi");
-    expect(plan.done).toBe(3);
-    expect(plan.total).toBe(4);
+    expect(plan.next?.kind).toBe("connection");
+    expect(plan.done).toBe(2);
+    expect(plan.total).toBe(3);
   });
 
-  it("treats a provisioned ledger as installed but not yet verified", () => {
+  it("treats a provisioned install as installed but not yet verified", () => {
+    const plan = planSetup(input({ provisioning: [provisioner("provisioned")] }));
+    expect(plan.steps.map((s) => [s.kind, s.done])).toEqual([
+      ["provision", true],
+      ["provision-verify", false],
+    ]);
+  });
+
+  it("asks to update an install that is behind", () => {
     const plan = planSetup(
-      input({ ledger: { status: "provisioned", mayi: "connected" } }),
+      input({ provisioning: [provisioner("ready", { needsUpdate: true })] }),
+    );
+    expect(plan.next).toMatchObject({
+      kind: "provision",
+      id: "provision:supabase-ledger",
+      needsUpdate: true,
+      done: false,
+    });
+  });
+
+  it("ignores needsUpdate until the install has happened", () => {
+    const plan = planSetup(
+      input({ provisioning: [provisioner("failed", { needsUpdate: true })] }),
+    );
+    expect(plan.next).toMatchObject({
+      kind: "provision",
+      needsUpdate: false,
+      done: false,
+    });
+  });
+
+  it("omits verification for a provisioner without one", () => {
+    const plan = planSetup(
+      input({ provisioning: [provisioner("provisioned", { verify: false })] }),
     );
     expect(plan.steps.map((s) => [s.kind, s.done])).toEqual([
-      ["ledger", true],
-      ["mayi", true],
-      ["wakes", false],
+      ["provision", true],
     ]);
   });
 

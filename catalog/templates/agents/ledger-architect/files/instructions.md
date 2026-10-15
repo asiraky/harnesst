@@ -33,7 +33,7 @@ Use teammate questions for bounded information requests. Report progress through
 
 ## Boundaries
 
-Requirements belong to intake and the requester; code belongs to the implementer.
+Requirements belong to intake and the requester; code belongs to the implementer. Never merge into or push to the default branch and never enable auto-merge; harnesst merges the issue PR after merge approval.
 
 ## Final report
 

@@ -2,7 +2,7 @@
  * Reads everything the setup wizard needs for one repo into a `SetupInput` (setup-plan.ts) and
  * writes the wizard's secret answers. All state is the real state: the effective lock, the
  * secrets store (or the pending store for members not yet published), the agent's GitHub App and
- * its installations, OAuth grants, and ledger provisioning. Nothing here is wizard-only storage.
+ * its installations, OAuth grants, and provisioner rows. Nothing here is wizard-only storage.
  */
 import { listGrantsForAgent } from "~/connections/grants.server";
 import { invalidateAgentEnvironments } from "~/deploy/env-reconcile.server";
@@ -31,14 +31,15 @@ import {
   listSharedSecrets,
 } from "~/seams/oss/secret-store";
 import { decodeKey, fingerprint, seal } from "~/seams/oss/secretbox";
-import { ledgerAuthorization } from "./ledger-authorization.server";
 import {
   githubPermissionsForMember,
   overlayLock,
   requiredScopesByProvider,
   type HarnesstLock,
 } from "./lock";
-import { getProvisioning } from "./provisioning.server";
+import { isProvisionerId, provisionerDescriptor } from "~/provisioners/descriptors";
+import { getProvisioner } from "~/provisioners/registry.server";
+import { listProvisioning } from "~/provisioners/state.server";
 import {
   planSetup,
   type SetupInput,
@@ -188,16 +189,21 @@ async function connectionsFor(ref: SetupMemberRef, lock: HarnesstLock) {
   }));
 }
 
-async function ledgerState(projectId: string): Promise<SetupInput["ledger"]> {
-  const row = await getProvisioning(projectId);
-  if (!row) return null;
-  let mayi = "not_installed";
-  try {
-    mayi = (await ledgerAuthorization(projectId, "status")).status as string;
-  } catch {
-    mayi = "unavailable";
-  }
-  return { status: row.status, mayi };
+async function provisioningState(projectId: string): Promise<SetupInput["provisioning"]> {
+  const rows = (await listProvisioning(projectId))
+    .filter((r) => isProvisionerId(r.provisioner))
+    .sort((a, b) => a.provisioner.localeCompare(b.provisioner));
+  return Promise.all(
+    rows.map(async (row) => {
+      const id = row.provisioner as Parameters<typeof getProvisioner>[0];
+      return {
+        provisioner: id,
+        status: row.status,
+        needsUpdate: await getProvisioner(id).needsUpgrade(row),
+        verify: provisionerDescriptor(id).verifyTitle !== null,
+      };
+    }),
+  );
 }
 
 export async function loadSetup(
@@ -244,7 +250,7 @@ export async function loadSetup(
     members,
     sharedSecretNames: sharedNames,
     hasUnpublishedChanges: drafts.length > 0,
-    ledger: await ledgerState(project.id).catch(() => null),
+    provisioning: await provisioningState(project.id).catch(() => []),
   };
   return {
     isTeam: ctx.isTeam,

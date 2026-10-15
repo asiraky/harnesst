@@ -117,7 +117,8 @@ import type { Route } from "./+types/projects.$projectId";
 
 /** Roster card data for the team landing view. */
 interface MemberSummary {
-  ledgerInstallation?: string;
+  /** A provisioner an install declared hasn't finished (Setup links to it). */
+  setupIncomplete?: boolean;
   name: string;
   model: string | null;
   tools: number;
@@ -349,8 +350,12 @@ export const loader = (args: LoaderFunctionArgs) =>
           source.files["harnesst-lock.json"] ?? null,
           drafts.map((d) => ({ path: d.path, content: d.content })),
         );
-        const usesLedger = lock.installs.some(e => e.secrets?.some(s => s.name === "LEDGER_ACTOR_KEY"));
-        const ledgerInstallation = usesLedger ? (await (await import("~/marketplace/provisioning.server")).getProvisioning(project.id))?.status ?? "pending" : undefined;
+        const setupIncomplete = await (
+          await import("~/provisioners/registry.server")
+        ).provisioningIncomplete(
+          project.id,
+          lock.installs.flatMap((e) => e.provisioning ?? []),
+        );
         const members =
           view === "team"
             ? await Promise.all(
@@ -374,7 +379,7 @@ export const loader = (args: LoaderFunctionArgs) =>
                     channels: c.channels.length,
                     subagents,
                     secretsMissing: requiredState.missing.length,
-                    ledgerInstallation,
+                    setupIncomplete,
                   };
                 }),
               )
@@ -921,7 +926,7 @@ function TeamSurface({
 
   return (
     <div className="space-y-6">
-      {members.some(m=>m.ledgerInstallation && m.ledgerInstallation !== "ready") && (
+      {members.some((m) => m.setupIncomplete) && (
         <Card><CardContent className="pt-6"><p>Setup isn&apos;t finished. Complete it before using this team.</p><Link className="underline" to={`${base}/setup`}>Continue setup</Link></CardContent></Card>
       )}
       {showIntro && (

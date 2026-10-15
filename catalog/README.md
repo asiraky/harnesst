@@ -115,9 +115,8 @@ deploy. The contract:
 ### Provider capabilities beyond the Google shape (issue #167)
 
 Registry entries can declare three orthogonal capabilities for OAuth hosts that don't behave
-like Google. The mayi template (`templates/connections/mayi/`) is the first consumer of all
-three; template authors only need to know which delivery their provider uses (it decides what
-the shipped credential code looks like):
+like Google. Template authors only need to know which delivery their provider uses (it decides
+what the shipped credential code looks like):
 
 - **Public clients** — `tokenEndpointAuth: "none"` (RFC 8414
   `token_endpoint_auth_methods_supported: ["none"]`): no client secret exists, PKCE is the
@@ -127,8 +126,8 @@ the shipped credential code looks like):
   family on reuse). The refresh token never ships to the instance; harnesst stays the grant's
   single writer, and the shipped credential file fetches short-lived access tokens from
   harnesst's token broker (`POST <HARNESST_API_URL>/api/connections/token`, authenticated with the
-  deployment's injected `HARNESST_TEAM_TOKEN`) instead of self-refreshing — see the mayi
-  template's `credentials.server.ts` for the caching pattern (~one call per token lifetime).
+  deployment's injected `HARNESST_TEAM_TOKEN`) instead of self-refreshing, caching each access
+  token for its lifetime (~one call per token lifetime).
   The default `"refresh-token"` delivery keeps the `<PREFIX>_OAUTH_*` trio exactly as before.
 - **Per-grant dynamic client registration** — `clientRegistration: { endpoint }` (RFC
   7591-shaped) for providers whose OAuth clients are register-once/immutable with exact-match

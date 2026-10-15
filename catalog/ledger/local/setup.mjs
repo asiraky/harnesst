@@ -1,6 +1,15 @@
 import { readFile, writeFile, mkdir } from "node:fs/promises";
 import { sql, rpc } from "./db.mjs";
 const root = new URL("../", import.meta.url);
+// Migration files carry their own begin/commit, which postgres.js only allows on one connection.
+async function apply(file) {
+  const connection = await sql.reserve();
+  try {
+    await connection.unsafe(await readFile(new URL(file, root), "utf8"));
+  } finally {
+    connection.release();
+  }
+}
 try {
   await sql.unsafe(await readFile(new URL("local/roles.sql", root), "utf8"));
   const [exists] =
@@ -61,23 +70,24 @@ try {
       connection.release();
     }
   }
-  const [hosted] =
-    await sql`select to_regclass('ledger.oauth_attempts') as present`;
-  if (!hosted.present)
-    await sql.unsafe(
-      await readFile(new URL("0005_hosted_authorization.sql", root), "utf8"),
-    );
-
-  // Local prototype setup is repeatable; this migration only replaces functions.
-  await sql.unsafe(
-    await readFile(new URL("0006_oauth_recovery.sql", root), "utf8"),
-  );
-  await sql.unsafe(
-    await readFile(new URL("0007_scoped_oauth_writes.sql", root), "utf8"),
-  );
-  await sql.unsafe(await readFile(new URL("0008_review_content.sql", root), "utf8"));
-  await sql.unsafe(await readFile(new URL("0009_tickets.sql", root), "utf8"));
-  await sql.unsafe(await readFile(new URL("0010_leases.sql", root), "utf8"));
+  // 0011 retires the May I tables that 0005-0010 create or reference, so once it has run only
+  // 0011 itself (re-runnable) is applied again.
+  const [retired] =
+    await sql`select to_regclass('ledger.approval_access') as present`;
+  if (!retired.present) {
+    const [hosted] =
+      await sql`select to_regclass('ledger.oauth_attempts') as present`;
+    if (!hosted.present) await apply("0005_hosted_authorization.sql");
+    for (const file of [
+      "0006_oauth_recovery.sql",
+      "0007_scoped_oauth_writes.sql",
+      "0008_review_content.sql",
+      "0009_tickets.sql",
+      "0010_leases.sql",
+    ])
+      await apply(file);
+  }
+  await apply("0011_harnesst_approvals.sql");
   const workflow = JSON.parse(
     await readFile(new URL("workflow.json", root), "utf8"),
   );

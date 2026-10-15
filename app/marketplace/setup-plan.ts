@@ -4,12 +4,13 @@
  * from current state (lock, secrets, provisioning, GitHub, grants), so the wizard never stores
  * progress of its own: closing the tab and coming back lands on the same next step.
  *
- * Order is the order the work can actually happen in: secrets and the ledger can be done
- * before members are published (values are held for unpublished members); a GitHub App and an
- * OAuth grant belong to a published agent; May I and wake verification need the ledger and
+ * Order is the order the work can actually happen in: secrets and provisioner installs can be
+ * done before members are published (values are held for unpublished members); a GitHub App and
+ * an OAuth grant belong to a published agent; a provisioner's verification needs its install and
  * deployed members.
  */
 import type { GitHubPermissions } from "./manifest";
+import type { ProvisionerId } from "~/provisioners/descriptors";
 
 export interface SetupSecretRequirement {
   name: string;
@@ -54,13 +55,16 @@ export interface SetupInput {
   sharedSecretNames: string[];
   /** Saved changes not yet published (installs stage drafts). */
   hasUnpublishedChanges: boolean;
-  /** Null when nothing installed needs the supabase-ledger provisioner. */
-  ledger: null | {
+  /** One entry per provisioner an installed template declared (app/provisioners). */
+  provisioning: Array<{
+    provisioner: ProvisionerId;
     /** bundle_provisioning status: pending | running | activating | provisioned | ready | failed. */
     status: string;
-    /** May I connection status (connected, authorizing, needs_reconnect, not_installed, …). */
-    mayi: string;
-  };
+    /** Installed, but behind (pending migrations, or the workspace connection needs relinking). */
+    needsUpdate: boolean;
+    /** The provisioner has a post-deploy verification step. */
+    verify: boolean;
+  }>;
 }
 
 export type SetupStep =
@@ -76,7 +80,15 @@ export type SetupStep =
       sharedExists: boolean;
       done: false;
     }
-  | { kind: "ledger"; id: "ledger"; status: string; done: boolean }
+  | {
+      kind: "provision";
+      id: string;
+      provisioner: ProvisionerId;
+      status: string;
+      /** Installed, but behind: Setup offers a manual update. */
+      needsUpdate: boolean;
+      done: boolean;
+    }
   | { kind: "publish"; id: "publish"; members: string[]; done: boolean }
   | {
       kind: "github-app";
@@ -108,8 +120,13 @@ export type SetupStep =
       published: boolean;
       done: boolean;
     }
-  | { kind: "mayi"; id: "mayi"; status: string; done: boolean }
-  | { kind: "wakes"; id: "wakes"; done: boolean };
+  | {
+      kind: "provision-verify";
+      id: string;
+      provisioner: ProvisionerId;
+      status: string;
+      done: boolean;
+    };
 
 export interface SetupPlan {
   steps: SetupStep[];
@@ -119,7 +136,7 @@ export interface SetupPlan {
   total: number;
 }
 
-const LEDGER_INSTALLED = ["provisioned", "ready"];
+const INSTALLED = ["provisioned", "ready"];
 
 function githubStep(member: SetupMemberState): SetupStep | null {
   const github = member.github;
@@ -212,13 +229,16 @@ export function planSetup(input: SetupInput): SetupPlan {
     ...[...byName.values()].sort((a, b) => a.name.localeCompare(b.name)),
   );
 
-  // 2. Ledger database + team identities (can run before publish; values are held).
-  if (input.ledger) {
+  // 2. Provisioner installs (can run before publish; values are held for unpublished members).
+  for (const p of input.provisioning) {
+    const installed = INSTALLED.includes(p.status);
     steps.push({
-      kind: "ledger",
-      id: "ledger",
-      status: input.ledger.status,
-      done: LEDGER_INSTALLED.includes(input.ledger.status),
+      kind: "provision",
+      id: `provision:${p.provisioner}`,
+      provisioner: p.provisioner,
+      status: p.status,
+      needsUpdate: installed && p.needsUpdate,
+      done: installed && !p.needsUpdate,
     });
   }
 
@@ -253,18 +273,15 @@ export function planSetup(input: SetupInput): SetupPlan {
     }
   }
 
-  // 6. May I approvals and 7. wake verification, once the ledger exists.
-  if (input.ledger) {
+  // 6. Post-deploy verification, for provisioners that have one.
+  for (const p of input.provisioning) {
+    if (!p.verify) continue;
     steps.push({
-      kind: "mayi",
-      id: "mayi",
-      status: input.ledger.mayi,
-      done: input.ledger.mayi === "connected",
-    });
-    steps.push({
-      kind: "wakes",
-      id: "wakes",
-      done: input.ledger.status === "ready",
+      kind: "provision-verify",
+      id: `provision-verify:${p.provisioner}`,
+      provisioner: p.provisioner,
+      status: p.status,
+      done: p.status === "ready",
     });
   }
 

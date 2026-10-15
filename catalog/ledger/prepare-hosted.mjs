@@ -1,16 +1,10 @@
-import { mkdir, readFile, writeFile, copyFile, cp, rm } from "node:fs/promises";
+import { mkdir, readFile, writeFile, copyFile, rm } from "node:fs/promises";
 const root = new URL("./", import.meta.url);
 const target = new URL("hosted/", root);
 await mkdir(new URL("supabase/migrations/", target), { recursive: true });
-await rm(new URL("supabase/functions/", target), {
-  recursive: true,
-  force: true,
-});
-await cp(
-  new URL("supabase/functions/", root),
-  new URL("supabase/functions/", target),
-  { recursive: true },
-);
+// Approvals live in harnesst; the May I edge functions are gone from every install.
+for (const stale of ["supabase/functions/", "deploy/"])
+  await rm(new URL(stale, target), { recursive: true, force: true });
 for (const [source, destination] of [
   ["0001_ledger.sql", "supabase/migrations/20260917000001_ledger.sql"],
   [
@@ -32,6 +26,10 @@ for (const [source, destination] of [
   ["0008_review_content.sql", "supabase/migrations/20260917000008_review_content.sql"],
   ["0009_tickets.sql", "supabase/migrations/20260917000009_tickets.sql"],
   ["0010_leases.sql", "supabase/migrations/20260917000010_leases.sql"],
+  [
+    "0011_harnesst_approvals.sql",
+    "supabase/migrations/20260917000011_harnesst_approvals.sql",
+  ],
   ["supabase/config.toml", "supabase/config.toml"],
   ["0003_workflow.sql", "supabase/migrations/20260917000003_workflow.sql"],
   [
@@ -54,35 +52,6 @@ await copyFile(
   new URL("TEAM-SETUP.md", root),
   new URL("LEDGER-SETUP.md", target),
 );
-// Prebundle the fixed backend assets; installation uploads these without a CLI.
-const { build } = await import("esbuild");
-await mkdir(new URL("deploy/", target), { recursive: true });
-for (const slug of [
-  "approval-callback",
-  "approval-dispatch",
-  "approval-oauth",
-]) {
-  await build({
-    entryPoints: [
-      new URL(`supabase/functions/${slug}/index.ts`, root).pathname,
-    ],
-    bundle: true,
-    format: "esm",
-    platform: "neutral",
-    target: "es2022",
-    outfile: new URL(`deploy/${slug}.js`, target).pathname,
-    external: ["@mayiapp/sdk/webhook-verifier"],
-    banner: { js: "// Generated from canonical Supabase sources." },
-  });
-  const file = new URL(`deploy/${slug}.js`, target);
-  await writeFile(
-    file,
-    (await readFile(file, "utf8")).replaceAll(
-      '"@mayiapp/sdk/webhook-verifier"',
-      '"npm:@mayiapp/sdk@0.3.0/webhook-verifier"',
-    ),
-  );
-}
 console.log(
   "Hosted Supabase deployment package prepared. No cloud changes made.",
 );

@@ -2,6 +2,15 @@ import { createHash } from "node:crypto";
 import { readdir, readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 
+/** An upstream Supabase failure. Carries the status only: upstream bodies can echo secrets. */
+export class SupabaseRequestError extends Error {
+  constructor(readonly status: number) {
+    super(
+      `Supabase request failed (HTTP ${status}). Check project access and retry installation.`,
+    );
+  }
+}
+
 /** Fixed-origin API client: operator credentials never go to user-supplied hosts or agents. */
 export class SupabaseManagement {
   constructor(
@@ -28,10 +37,7 @@ export class SupabaseManagement {
         : { body: body instanceof FormData ? body : JSON.stringify(body) }),
     });
     // Never return upstream errors: SQL errors can contain the credential-bearing query.
-    if (!response.ok)
-      throw new Error(
-        `Supabase request failed (HTTP ${response.status}). Check project access and retry installation.`,
-      );
+    if (!response.ok) throw new SupabaseRequestError(response.status);
     const text = await response.text();
     return text.trim() ? JSON.parse(text) : null;
   }
@@ -91,7 +97,7 @@ end if;
 end $install$;
 commit;`;
 }
-const HOSTED_MIGRATIONS = "catalog/ledger/hosted/supabase/migrations";
+export const HOSTED_MIGRATIONS = "catalog/ledger/hosted/supabase/migrations";
 /**
  * The hosted ledger migrations in apply order, each wrapped in `migrationQuery` for `owner`.
  * `from` skips versions sorting before it. The directory is the one list: prepare-hosted.mjs
@@ -109,6 +115,13 @@ export async function hostedMigrationQueries(owner: string, from = "") {
     }),
   );
 }
+/** The newest hosted migration version: an install that recorded it has nothing pending. */
+export async function latestHostedMigration(): Promise<string> {
+  const files = (await readdir(HOSTED_MIGRATIONS)).filter((file) => file.endsWith(".sql")).sort();
+  return files.at(-1) ?? "";
+}
+/** Versions already journalled in a ledger by `migrationQuery`. */
+export const APPLIED_MIGRATIONS_QUERY = "select version from harnesst_install.migrations";
 export type ActorCredentials = { actorKey: string; wakeToken: string };
 /** Persist keys in encrypted control-plane state BEFORE issuing this query. Never rotate on retry. */
 export function actorsQuery(
@@ -130,6 +143,11 @@ end $check$;`,
 ${entries}
 insert into ledger.actors(role,kind,display_name,email) values('engineer','human','Engineer',${sqlLiteral(email)}),('requester','human','Requester',${sqlLiteral(email)}) on conflict(role) do nothing;
 notify pgrst, 'reload schema'; commit;`;
+}
+/** Registers harnesst's approvals key; re-running with the same key is a no-op. */
+export function approvalsAccessQuery(approvalsKey: string): string {
+  return `insert into ledger.approval_access(singleton,key_hash) values(true,ledger.hash(${sqlLiteral(approvalsKey)}))
+on conflict(singleton) do update set key_hash=excluded.key_hash;`;
 }
 
 export function validatePublishableKey(key: string): void {

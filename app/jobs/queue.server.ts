@@ -25,8 +25,10 @@ export type JobKind =
   | "reattach_delegation"
   // issue #225: the whole publish pipeline (check → build → commit → version → deploy).
   | "publish"
+  // Provisioners (app/provisioners): install, post-deploy verify, post-publish upgrade.
   | "provision_bundle"
-  | "verify_bundle";
+  | "verify_bundle"
+  | "upgrade_bundle";
 
 export interface DeployReleasePayload {
   environmentId: string;

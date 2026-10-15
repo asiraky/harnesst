@@ -27,7 +27,7 @@ import {
   type LoaderFunctionArgs,
 } from "react-router";
 
-import { ensureProvisioning } from "~/marketplace/provisioning.server";
+import { ensureProvisioners } from "~/provisioners/registry.server";
 import { COPY } from "~/components/secrets-card";
 
 import { TYPE_META, TypeBadge } from "~/components/marketplace-type-badge";
@@ -889,9 +889,7 @@ export async function action(args: ActionFunctionArgs) {
       }
     }
 
-    if (template.manifest.provisioning?.includes("supabase-ledger")) {
-      await ensureProvisioning(project.id);
-    }
+    await ensureProvisioners(project.id, template.manifest.provisioning ?? []);
     // Every install hands off to the setup wizard, scoped to the agent it landed on: it lists
     // whatever is still missing (or says setup is complete) and links on to publish.
     const memberName =

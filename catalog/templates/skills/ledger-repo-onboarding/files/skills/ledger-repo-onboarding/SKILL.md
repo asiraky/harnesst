@@ -1,37 +1,34 @@
 ---
 name: ledger-repo-onboarding
-description: Create a product repository and connect a repository to the team's ledger with gh (Actions secrets, ledger workflow, Cloudflare deploy secrets). Infra only. Use when intake asks for a new app or a repository the ledger does not know yet.
+description: Connect an existing repository to the team's ledger with gh (Actions secrets, ledger workflow, Cloudflare deploy secrets). Infra only. Use when intake asks to connect a repository the ledger does not know yet.
 ---
 
 # Ledger repository onboarding
 
-The team works across many repositories. A repository joins the team in two halves:
+The team works across many repositories. A repository joins the team in three steps:
 
+- **the engineer** creates it. No agent can: no team App has the Administration permission, by
+  design (Administration can edit branch protection and always bypasses its push allowlist).
 - **intake** registers it as a ledger project (`ledger-create-project`). Only intake can.
 - **infra** (you) makes the repository report to the ledger: the ledger workflow, its helper
-  script and three Actions secrets. Only your GitHub App has the Workflows, Secrets, Variables and
-  Administration permissions this needs; teammates get HTTP 403 by design.
+  script and three Actions secrets. Only your GitHub App has the Workflows, Secrets and Variables
+  permissions this needs; teammates get HTTP 403 by design.
 
-Mint `GH_TOKEN` with the github-app-auth skill first, with `TARGET` set to the repository (or to
-the owner, when creating one). Every step below is idempotent: re-run it rather than guessing
-what a previous attempt finished.
+Mint `GH_TOKEN` with the github-app-auth skill first, with `TARGET` set to the repository. Every
+step below is idempotent: re-run it rather than guessing what a previous attempt finished.
 
-## Create a repository
+## New repositories
 
-Only when a human asked for a new app and the owner is a GitHub **organization** the App is
-installed on. An App cannot create repositories in a personal account: if the owner is a user,
-block on the engineer and ask them to create the empty repository.
+You cannot create repositories. When asked for one, block on the engineer to:
 
-```bash
-gh repo create "$OWNER/$NAME" --private --add-readme --description "$DESCRIPTION"
-```
+- create the empty repository (with a README, so it has a default branch) under the organization;
+- add it to every team member's GitHub App installation, unless they cover "All repositories";
+- add it to harnesst's GitHub App installation, so harnesst can merge approved changes.
 
-A repository created this way is visible to the App only when its installation covers "All
-repositories". If the next step returns HTTP 404, block on the engineer to add the repository to
-the App installation (`https://github.com/apps/$GITHUB_APP_SLUG/installations/new`) — and to the
-other team members' Apps, which need it too.
-
-Then ask intake (ask-teammate) to register the project with its slug, name and `owner/name`.
+Then ask intake (ask-teammate) to register the project with its slug, name and `owner/name`, and
+connect it below once registered. If a step below returns HTTP 404, the repository is missing from
+your App's installation: block on the engineer to add it
+(`https://github.com/apps/$GITHUB_APP_SLUG/installations/new`).
 
 ## Connect a repository to the ledger
 
@@ -48,15 +45,17 @@ gh secret set LEDGER_ANON_KEY  --repo "$REPO" --body "$LEDGER_ANON_KEY"
 gh secret set LEDGER_ACTOR_KEY --repo "$REPO" --body "$LEDGER_GITHUB_ACTOR_KEY"
 ```
 
-3. Install the workflow and its helper on the **default branch**, byte-for-byte from this skill's
-   references: `references/ledger.yml` → `.github/workflows/ledger.yml` and
-   `references/github-ledger.mjs` → `.github/scripts/ledger.mjs`. Never modify them. If either
-   path already exists with different content, stop and block on the engineer — do not
-   overwrite. Commit with the message `Install ledger automation` and push to the default branch
-   (or open a PR when branch protection requires one, and ask the engineer to merge it).
+3. The default branch is protected: no agent can push or merge into it. Put the workflow and its
+   helper on a branch `ledger-automation` off the default branch (not `ledger/`, which names work
+   items), byte-for-byte from this skill's references: `references/ledger.yml` →
+   `.github/workflows/ledger.yml` and `references/github-ledger.mjs` → `.github/scripts/ledger.mjs`.
+   Never modify them. A repository connected by an earlier version of this skill already has
+   both files: replace them (this is an upgrade; the engineer reviews it in the PR). Any other
+   file already at either path is not ours: stop and block on the engineer.
 
-4. For a Cloudflare Workers app, also install `references/deploy.yml` as
-   `.github/workflows/deploy.yml`, adapt only its build and deploy commands, and set:
+4. For a Cloudflare Workers app, also add `references/deploy.yml` as
+   `.github/workflows/deploy.yml` on the same branch, adapt only its build and deploy commands,
+   and set:
 
 ```bash
 gh secret set CLOUDFLARE_API_TOKEN  --repo "$REPO" --body "$CLOUDFLARE_API_TOKEN"
@@ -64,7 +63,10 @@ gh secret set CLOUDFLARE_ACCOUNT_ID --repo "$REPO" --body "$CLOUDFLARE_ACCOUNT_I
 gh variable set CLOUDFLARE_WORKER_URL --repo "$REPO" --body "https://<worker>.<subdomain>.workers.dev"
 ```
 
-5. Enable automation and confirm:
+5. Commit with the message `Install ledger automation`, push the branch, open a PR into the
+   default branch, and block on the engineer to review and merge it. Continue once it has merged.
+
+6. Enable automation and confirm:
 
 ```bash
 gh variable set LEDGER_ENABLED --repo "$REPO" --body true
@@ -76,6 +78,8 @@ on the infra item, then tell intake the repository is connected.
 
 ## Merging
 
-Who merges is the repository's choice, not this skill's: the ledger workflow merges an approved
-PR head after May I approval, and branch protection decides whether anyone else can. Do not
-loosen branch protection to make a merge go through.
+After a human approves the merge gate, harnesst merges the issue PR into the default branch with
+its own GitHub App, at the exact approved head SHA. The ledger workflow only observes the merge,
+records it and dispatches the deploy. Never merge into or push to the default branch, never enable
+auto-merge, and never touch branch protection or rulesets. A merge that does not go through is the
+engineer's to resolve.

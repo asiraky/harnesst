@@ -29,8 +29,7 @@
     "ledger:dev": "node catalog/ledger/local/server.mjs",
     "ledger:down": "docker compose -f catalog/ledger/local/compose.yaml down",
     "ledger:test": "node --import tsx --test catalog/ledger/tests/*.test.mjs",
-    "ledger:team": "tsx catalog/ledger/local/materialize-team.ts",
-    "ledger:typecheck": "tsc -p catalog/ledger/supabase/tsconfig.json"
+    "ledger:team": "tsx catalog/ledger/local/materialize-team.ts"
   },
   "dependencies": {
     "@balena/dockerignore": "^1.0.2",

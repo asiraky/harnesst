@@ -5,8 +5,8 @@
  * a readable throw so the deploy fails honestly. Providers iterate over the UNION of the agent's
  * grant rows and the lock's required providers; unregistered ids are skipped silently.
  *
- * The registry is mocked to add a second provider ("hubspot") — the real registry ships only
- * google, and multi-provider behavior needs two.
+ * The registry is mocked to add a second provider ("hubspot") for multi-provider behavior, and a
+ * rotating-grant brokered provider ("rotating") for access-token-broker delivery.
  */
 import { describe, expect, it, vi } from "vitest";
 
@@ -22,14 +22,32 @@ const HUBSPOT: ProviderDefinition = {
   envPrefix: "HUBSPOT",
 };
 
+/** A hypothetical rotating-grant provider: brokered delivery, per-grant client registration. */
+const ROTATING: ProviderDefinition = {
+  id: "rotating",
+  label: "Rotating Provider",
+  authorizeUrl: "https://auth.rotating.example/oauth/authorize",
+  tokenUrl: "https://auth.rotating.example/oauth/token",
+  pkce: true,
+  envPrefix: "ROTATING",
+  tokenEndpointAuth: "none",
+  credentialDelivery: "access-token-broker",
+  clientRegistration: { endpoint: "https://auth.rotating.example/oauth/register" },
+  deployEnv: { ROTATING_KEY_ID: "k1" },
+};
+
 vi.mock("~/connections/providers.server", async (importOriginal) => {
   const actual =
     await importOriginal<typeof import("~/connections/providers.server")>();
   return {
     ...actual,
     getProvider: (id: string) =>
-      id === "hubspot" ? HUBSPOT : actual.getProvider(id),
-    listProviders: () => [...actual.listProviders(), HUBSPOT],
+      id === "hubspot"
+        ? HUBSPOT
+        : id === "rotating"
+          ? ROTATING
+          : actual.getProvider(id),
+    listProviders: () => [...actual.listProviders(), HUBSPOT, ROTATING],
   };
 });
 
@@ -382,7 +400,7 @@ describe("connectionGrantEnv", () => {
     ).rejects.toThrow(/reconnected while this deploy was validating/);
   });
 
-  it("brokered delivery (real mayi entry): no OAuth trio, scopes + deployEnv constants only (issue #167)", async () => {
+  it("brokered delivery: no OAuth trio, scopes + deployEnv constants only (issue #167)", async () => {
     const rotateRefreshToken = vi.fn(async () => true);
     const refreshAccessToken = vi.fn(async () => ({
       accessToken: "at",
@@ -393,38 +411,38 @@ describe("connectionGrantEnv", () => {
       scope,
       okFetch,
       deps({
-        // No operator config exists for mayi — the grant carries its registered client.
+        // No operator config exists — the grant carries its registered client.
         getConfig: () => null,
         rotateRefreshToken,
         refreshAccessToken,
         listGrantsForAgent: async () => [
-          { provider: "mayi", status: "active" as const },
+          { provider: "rotating", status: "active" as const },
         ],
         openRefreshToken: async () => ({
           grant: {
-            id: "grant_mayi",
+            id: "grant_rotating",
             status: "active",
             scopes: "approval:create approval:read approval:cancel",
-            clientId: "mayi_client_1",
+            clientId: "rotating_client_1",
           },
-          refreshToken: "rt_mayi",
-          tokenVersion: "iv_mayi",
+          refreshToken: "rt_rotating",
+          tokenVersion: "iv_rotating",
         }),
       }),
     );
     // The validation refresh ran against the grant's OWN registered client — secretless.
     expect(refreshAccessToken).toHaveBeenCalledWith(
       expect.objectContaining({
-        config: { clientId: "mayi_client_1" },
-        refreshToken: "rt_mayi",
+        config: { clientId: "rotating_client_1" },
+        refreshToken: "rt_rotating",
       }),
       okFetch,
     );
     // The rotation was persisted even though the refresh token never ships.
-    expect(rotateRefreshToken).toHaveBeenCalledWith("grant_mayi", "rt_next", "iv_mayi");
+    expect(rotateRefreshToken).toHaveBeenCalledWith("grant_rotating", "rt_next", "iv_rotating");
     expect(out).toEqual({
-      MAYI_CALLBACK_STATE_KEY_ID: "k1",
-      MAYI_OAUTH_SCOPES: "approval:create approval:read approval:cancel",
+      ROTATING_KEY_ID: "k1",
+      ROTATING_OAUTH_SCOPES: "approval:create approval:read approval:cancel",
     });
   });
 
@@ -438,25 +456,25 @@ describe("connectionGrantEnv", () => {
           getConfig: () => null,
           markGrantStatus,
           listGrantsForAgent: async () => [
-            { provider: "mayi", status: "active" as const },
+            { provider: "rotating", status: "active" as const },
           ],
           openRefreshToken: async () => ({
             grant: {
-              id: "grant_mayi",
+              id: "grant_rotating",
               status: "active",
               scopes: "approval:create",
-              clientId: "mayi_client_1",
+              clientId: "rotating_client_1",
             },
-            refreshToken: "rt_mayi",
-            tokenVersion: "iv_mayi",
+            refreshToken: "rt_rotating",
+            tokenVersion: "iv_rotating",
           }),
           refreshAccessToken: async () => {
             throw new InvalidGrantError("family revoked");
           },
         }),
       ),
-    ).rejects.toThrow(/The May I\? connection for this agent has expired/);
-    expect(markGrantStatus).toHaveBeenCalledWith("grant_mayi", "expired", "iv_mayi");
+    ).rejects.toThrow(/The Rotating Provider connection for this agent has expired/);
+    expect(markGrantStatus).toHaveBeenCalledWith("grant_rotating", "expired", "iv_rotating");
   });
 
   it("skips a registration provider whose grant has no clientId and no operator config", async () => {
@@ -466,16 +484,16 @@ describe("connectionGrantEnv", () => {
       deps({
         getConfig: () => null,
         listGrantsForAgent: async () => [
-          { provider: "mayi", status: "active" as const },
+          { provider: "rotating", status: "active" as const },
         ],
         openRefreshToken: async () => ({
           grant: {
-            id: "grant_mayi",
+            id: "grant_rotating",
             status: "active",
             scopes: "approval:create",
             clientId: null,
           },
-          refreshToken: "rt_mayi",
+          refreshToken: "rt_rotating",
         }),
       }),
     );
