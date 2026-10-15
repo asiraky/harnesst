@@ -16,8 +16,8 @@ const EXPECTED_LABELS: Record<
   "single" | "repo" | "member" | "subagent",
   string[]
 > = {
-  single: ["Overview", "Deployment", "Runs", "Assistant", "Settings"],
-  repo: ["Agents", "Deployment", "Assistant", "Settings"],
+  single: ["Overview", "Deployment", "Runs", "Assistant", "Setup", "Settings"],
+  repo: ["Agents", "Deployment", "Assistant", "Setup", "Settings"],
   member: ["Overview", "Deployment", "Runs", "Settings"],
   // A declared subagent deploys with its member and has no runs of its own.
   subagent: ["Overview", "Settings"],
@@ -40,6 +40,8 @@ describe("AgentNav", () => {
       }
       // Settings must be a link whose href ends in /settings (the tab users couldn't find on mobile).
       expect(html).toMatch(/href="\/repos\/NuOMEPzKzcmQ\/settings"/);
+      // Setup stays reachable once the wizard is finished (no banner links to it then).
+      expect(html).toMatch(/href="\/repos\/NuOMEPzKzcmQ\/setup"/);
     });
   }
 
@@ -58,6 +60,8 @@ describe("AgentNav", () => {
       expect(html).toContain(`>${label}</a>`);
     }
     expect(html).toMatch(/href="\/repos\/sQLfctIEkNIA\/agents\/pm\/settings"/);
+    // Setup is repo-wide; a member has no setup route of its own.
+    expect(html).not.toContain(">Setup</a>");
   });
 
   it("offers a subagent exactly Overview and Settings — nothing it does not own", () => {

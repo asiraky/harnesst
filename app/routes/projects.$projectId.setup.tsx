@@ -23,7 +23,7 @@ import {
 
 import { getSessionAuth, sessionLoader } from "~/auth/session.server";
 import { usePublishHref } from "~/components/publish";
-import { AppShell, PageHeader } from "~/components/shell";
+import { AgentNav, AppShell, PageHeader } from "~/components/shell";
 import { Alert, AlertDescription } from "~/components/ui/alert";
 import { Badge } from "~/components/ui/badge";
 import { Button } from "~/components/ui/button";
@@ -291,7 +291,14 @@ export default function Setup({
 
   const { plan } = d;
   return (
-    <AppShell>
+    <AppShell
+      nav={
+        <AgentNav
+          base={contextPath(d.project.id, null)}
+          level={d.isTeam ? "repo" : "single"}
+        />
+      }
+    >
       <PageHeader
         title={d.member ? `Set up ${d.member}` : "Set up"}
         description={`${d.project.name} · ${plan.done} of ${plan.total} done`}
@@ -304,7 +311,15 @@ export default function Setup({
             </AlertDescription>
           </Alert>
         )}
-        {plan.total === 0 || plan.next === null ? (
+        {plan.total === 0 ? (
+          <div className="rounded-lg border p-4">
+            <p className="font-semibold">Nothing to set up for this repo.</p>
+            <p className="text-sm text-muted-foreground">
+              Steps appear here when something installed needs a secret, a
+              connection or a service.
+            </p>
+          </div>
+        ) : plan.next === null ? (
           <div className="rounded-lg border p-4">
             <p className="font-semibold">Setup is complete.</p>
             <p className="text-sm text-muted-foreground">

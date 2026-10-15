@@ -53,7 +53,6 @@ import {
   regenerateArtifactShareToken,
   revokeArtifactShareToken,
 } from "~/foh/artifact-store.server";
-import { listAgents } from "~/db/queries.server";
 import { contextPath } from "~/lib/paths";
 import { requireProject } from "~/project/guard.server";
 import type { Route } from "./+types/projects.$projectId.artifacts";

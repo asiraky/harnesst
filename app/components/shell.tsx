@@ -399,6 +399,7 @@ const TABS: Record<NavLevel, { path: string; label: string }[]> = {
     { path: "/runs", label: "Runs" },
     { path: "/artifacts", label: "Artifacts" },
     { path: "/assistant", label: "Assistant" },
+    { path: "/setup", label: "Setup" },
     { path: "/settings", label: "Settings" },
   ],
   // Team landing: the repo-wide surfaces. Assistant is project-level (one per repo), so it lives
@@ -410,6 +411,9 @@ const TABS: Record<NavLevel, { path: string; label: string }[]> = {
     { path: "/deployment", label: "Deployment" },
     { path: "/artifacts", label: "Artifacts" },
     { path: "/assistant", label: "Assistant" },
+    // Setup stays reachable after the wizard finishes: it is where a team changes its public
+    // address, relinks a service connection, or re-checks callbacks.
+    { path: "/setup", label: "Setup" },
     { path: "/settings", label: "Settings" },
   ],
   // One team member: the member-scoped surfaces (+ the switcher). No Assistant tab — it is a
