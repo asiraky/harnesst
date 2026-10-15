@@ -5,6 +5,7 @@
   "scripts": {
     "build": "react-router build",
     "dev": "react-router dev",
+    "tunnel": "node scripts/dev-tunnel.mjs",
     "dev:tunnel": "node scripts/dev-tunnel.mjs",
     "tunnel:init": "node scripts/tunnel-init.mjs",
     "start": "node ./server/production.mjs",

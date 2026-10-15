@@ -86,3 +86,19 @@ can ask what's in it later.
 
 If the App line ends with a note that the `.test` host does not resolve, the
 tailnet DNS is down. Report that, and fix it with the `infra` skill.
+
+## Public URL
+
+When something outside the tailnet must reach the app (webhooks, OAuth
+callbacks, the user testing from elsewhere), run `npm run tunnel` **instead of**
+`npm run dev`:
+
+```bash
+npm run tunnel > /tmp/harnesst-dev-<PORT>.log 2>&1 &
+```
+
+It is the whole procedure: it frees this checkout's ports itself, creates the
+DNS record, and starts the server. It is up when the log shows
+`dev-tunnel: PASS public https://…`; report that URL. If it stops with "no
+Cloudflare login" or "login is for zone …", ask the user to run
+`cloudflared tunnel login` and authorize the zone it names, then rerun.

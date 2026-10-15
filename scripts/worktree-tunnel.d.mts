@@ -1,3 +1,4 @@
+export const DEFAULT_TUNNEL_DOMAIN: string;
 export type PortEntry = {
   dev: number;
   splitter: number;
@@ -36,3 +37,21 @@ export function parseQuickTunnelUrl(output: string): string;
 export function cloudflaredEnvironment(
   env?: NodeJS.ProcessEnv,
 ): NodeJS.ProcessEnv;
+export function resolveCloudflaredBin(
+  env?: NodeJS.ProcessEnv,
+  exists?: (path: string) => boolean,
+): string;
+export function rehomeRegistry<T extends Record<string, PortEntry>>(
+  registry: T,
+  domain: string,
+): T;
+export function findWorktreeEntry(
+  registry: Record<string, PortEntry>,
+  key: string,
+  port: number,
+): { key: string; entry: PortEntry } | null;
+export function parseRouteDnsHost(output: string): string | null;
+export function parseOriginCert(
+  contents: string,
+): { zoneID: string; accountID?: string; apiToken: string } | null;
+export function hostInZone(host: string, zone: string): boolean;
