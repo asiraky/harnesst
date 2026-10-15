@@ -1,5 +1,5 @@
 /** Durable identities for per-agent GitHub Apps created by the manifest flow (issue #362). */
-import { and, asc, eq, isNotNull, isNull, ne, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, isNotNull, isNull, ne, or, sql } from "drizzle-orm";
 
 import { db } from "~/db/client.server";
 import { agentGithubApps, agents } from "~/db/schema";
@@ -153,6 +153,27 @@ export async function recordCreatedAgentGitHubApp(
       superseded,
     };
   });
+}
+
+/** The agent's current App (activated, not superseded), or null — owner info for settings links. */
+export async function activeAgentGitHubApp(
+  projectId: string,
+  agentId: string,
+): Promise<AgentGitHubApp | null> {
+  const [row] = await db
+    .select()
+    .from(agentGithubApps)
+    .where(
+      and(
+        eq(agentGithubApps.projectId, projectId),
+        eq(agentGithubApps.agentId, agentId),
+        isNotNull(agentGithubApps.activatedAt),
+        isNull(agentGithubApps.supersededAt),
+      ),
+    )
+    .orderBy(desc(agentGithubApps.activatedAt))
+    .limit(1);
+  return row ? toAgentGitHubApp(row) : null;
 }
 
 /** Superseded Apps plus pending creations whose credential activation never committed. */

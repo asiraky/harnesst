@@ -150,7 +150,7 @@ export async function upsertGrant(input: UpsertGrantInput): Promise<ConnectionGr
 }
 
 /**
- * Persist a ROTATED refresh token onto its grant (issue #167) — providers like mayi return a new
+ * Persist a ROTATED refresh token onto its grant (issue #167) — rotating-grant providers return a new
  * refresh token on every refresh and revoke the whole family on reuse, so the rotated token must
  * replace the stored one before anything else uses it. When `expectedTokenVersion` is given (the
  * `tokenVersion` from `openRefreshToken`), the write is compare-and-set against the token that

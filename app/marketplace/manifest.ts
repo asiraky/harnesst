@@ -53,16 +53,18 @@ export const TEMPLATE_TYPES = [
   "connection",
   "bundle",
   "agent",
+  "team",
 ] as const;
 export type TemplateType = (typeof TEMPLATE_TYPES)[number];
 
 /**
- * Types a template may `includes`-reference: everything except `agent`. An agent is a whole team
- * member — it installs as its own root, so it can't be flattened into a parent's file tree.
+ * Types a template may `includes`-reference: everything except `agent` and `team`. An agent is a
+ * whole team member — it installs as its own root, so it can't be flattened into a parent's file
+ * tree; a team is a roster of agents, so the same holds one level up.
  */
 export const INCLUDABLE_TYPES = TEMPLATE_TYPES.filter(
-  (t) => t !== "agent",
-) as Exclude<TemplateType, "agent">[];
+  (t) => t !== "agent" && t !== "team",
+) as Exclude<TemplateType, "agent" | "team">[];
 export type IncludableType = (typeof INCLUDABLE_TYPES)[number];
 
 /** kebab-case slug: lowercase, digits, single hyphens; matches the on-disk directory name. */
@@ -112,6 +114,60 @@ const sandboxSetupSchema = z.object({
   revalidationKey: z.string().min(1).optional(),
 });
 
+/**
+ * GitHub App permissions a template's agent needs beyond the baseline every agent App gets
+ * (metadata read; contents, issues and pull requests write). Declared per template so one agent
+ * can be trusted with more than its teammates — e.g. only the infra agent creates repositories
+ * and writes Actions workflows/secrets. Composition unions them (write beats read) and the
+ * install snapshots them into the lock, where the App manifest flow reads them.
+ */
+export const GITHUB_APP_PERMISSIONS = [
+  "actions",
+  "actions_variables",
+  "administration",
+  "checks",
+  "contents",
+  "deployments",
+  "issues",
+  "pages",
+  "pull_requests",
+  "secrets",
+  "statuses",
+  "workflows",
+] as const;
+export type GitHubAppPermission = (typeof GITHUB_APP_PERMISSIONS)[number];
+export type GitHubAccess = "read" | "write";
+export const githubPermissionsSchema = z.record(
+  z.enum(GITHUB_APP_PERMISSIONS),
+  z.enum(["read", "write"]),
+);
+export type GitHubPermissions = z.infer<typeof githubPermissionsSchema>;
+
+/** Union two permission sets; write beats read. Pure. */
+export function mergeGitHubPermissions(
+  a: GitHubPermissions | undefined,
+  b: GitHubPermissions | undefined,
+): GitHubPermissions {
+  const out: GitHubPermissions = { ...(a ?? {}) };
+  for (const [name, access] of Object.entries(b ?? {}) as Array<
+    [GitHubAppPermission, GitHubAccess]
+  >) {
+    if (out[name] !== "write") out[name] = access;
+  }
+  return out;
+}
+
+/** One seat on a team template: the role it plays, the agent template filling it, its default name. */
+export const rosterEntrySchema = z.object({
+  /** Stable role id (e.g. `intake`) — what provisioners and instructions key on. */
+  role: slug,
+  /** The `agent` template installed for this role. */
+  agent: slug,
+  /** Default member name; the installer can rename it. */
+  name: slug,
+});
+export type RosterEntry = z.infer<typeof rosterEntrySchema>;
+
 export const templateManifestSchema = z
   .object({
     id: slug,
@@ -140,6 +196,15 @@ export const templateManifestSchema = z
     assistantSkill: relativeFilePath.optional(),
     /** npm name → version range, JSON-merged into the target's package.json at install (PRD §7.8). */
     dependencies: z.record(npmName, z.string().min(1)).optional(),
+    provisioning: z.array(z.enum(["supabase-ledger"])).optional(),
+    /** Extra GitHub App permissions this template's agent needs (see GITHUB_APP_PERMISSIONS). */
+    github: z.object({ permissions: githubPermissionsSchema }).optional(),
+    /**
+     * A `team` template's members — ONLY valid (and required) on a team. Installing a team
+     * installs every roster agent as a new member in one change-set and records role → member,
+     * so nobody maps roles by hand.
+     */
+    roster: z.array(rosterEntrySchema).min(1).optional(),
     /**
      * Secrets the template needs, by name — the wizard collects values at install. `sandbox: true`
      * marks one for the agent's sandbox shell (HARNESST_SANDBOX_ENV convention): the install flips the
@@ -253,7 +318,10 @@ export const templateManifestSchema = z
     );
     if (
       m.subagentCompatible &&
-      (m.type === "agent" || m.type === "channel" || rootOnlyFile)
+      (m.type === "agent" ||
+        m.type === "team" ||
+        m.type === "channel" ||
+        rootOnlyFile)
     ) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
@@ -263,8 +331,49 @@ export const templateManifestSchema = z
           : `must be false for ${m.type} templates`,
       });
     }
-    // Only a bundle may ship no files of its own (pure grouping); everything else must ship ≥1.
-    if (m.type !== "bundle" && m.files.length === 0) {
+    // A team is a roster, not files: it requires one, ships nothing itself and includes nothing.
+    if (m.type === "team") {
+      if (!m.roster) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["roster"],
+          message: "a team template must declare a roster",
+        });
+      }
+      if (m.files.length > 0 || (m.includes?.length ?? 0) > 0) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["files"],
+          message: "a team template ships no files or includes — its roster agents do",
+        });
+      }
+      const roles = new Set<string>();
+      const names = new Set<string>();
+      (m.roster ?? []).forEach((r, i) => {
+        if (roles.has(r.role))
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ["roster", i, "role"],
+            message: `duplicate role "${r.role}"`,
+          });
+        if (names.has(r.name))
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ["roster", i, "name"],
+            message: `duplicate member name "${r.name}"`,
+          });
+        roles.add(r.role);
+        names.add(r.name);
+      });
+    } else if (m.roster) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["roster"],
+        message: "roster is only valid on a team template",
+      });
+    }
+    // Only a bundle (or a team) may ship no files of its own; everything else must ship ≥1.
+    if (m.type !== "bundle" && m.type !== "team" && m.files.length === 0) {
       ctx.addIssue({
         code: z.ZodIssueCode.too_small,
         minimum: 1,

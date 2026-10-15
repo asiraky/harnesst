@@ -28,6 +28,7 @@ const TYPE_DIRS = {
   connection: "connections",
   bundle: "bundles",
   agent: "agents",
+  team: "teams",
 };
 
 /** Deterministic JSON: object keys sorted recursively, so the same value hashes the same way. */

@@ -1,0 +1,16 @@
+{
+  "id": "codebase-design",
+  "subagentCompatible": true,
+  "type": "skill",
+  "name": "Codebase Design",
+  "description": "Shared vocabulary for designing deep modules: interfaces, seams, adapters, depth, leverage and locality, plus deepening and design-it-twice procedures. From mattpocock/skills.",
+  "version": "0.1.0",
+  "eve": ">=0.22.0",
+  "files": [
+    "skills/codebase-design/DEEPENING.md",
+    "skills/codebase-design/DESIGN-IT-TWICE.md",
+    "skills/codebase-design/LICENSE",
+    "skills/codebase-design/SKILL.md"
+  ],
+  "assistantSkill": "assistant-skill.md"
+}

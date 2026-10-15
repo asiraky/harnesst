@@ -16,7 +16,13 @@
  */
 import { z } from "zod";
 
-import { TEMPLATE_TYPES, type TemplateType } from "./manifest";
+import {
+  TEMPLATE_TYPES,
+  githubPermissionsSchema,
+  mergeGitHubPermissions,
+  type GitHubPermissions,
+  type TemplateType,
+} from "./manifest";
 
 /** The lock schema version — bumped only on a breaking shape change (migration lives here). */
 export const LOCK_VERSION = 1;
@@ -114,6 +120,13 @@ const installEntrySchema = z.object({
    * "required by this template" renderable forever — surviving template upgrades per-version.
    * Old locks without the field simply produce no required-rows.
    */
+  provisioning: z.array(z.enum(["supabase-ledger"])).optional(),
+  /** Extra GitHub App permissions the install needs — read by the App manifest flow. */
+  github: z.object({ permissions: githubPermissionsSchema }).optional(),
+  /** A team install's role → member map (team entries only; member is null). */
+  roster: z
+    .array(z.object({ role: z.string().min(1), member: z.string().min(1) }))
+    .optional(),
   secrets: z
     .array(
       z.object({
@@ -392,7 +405,8 @@ export function channelIdsForEntry(entry: InstallEntry): string[] {
  * delegation token (#290), so a channel or hook that merely shares the name gets nothing.
  *
  * Deliberately matches on `member` alone, so it SEES subagent rows: it gates the deployment env
- * vars (`HARNESST_FOH_ARTIFACTS_URL`, `HARNESST_ASSETS_URL`) that a tool needs at runtime, and a
+ * vars (`HARNESST_FOH_ARTIFACTS_URL`, `HARNESST_ASSETS_URL`,
+ * `HARNESST_TEAM_ARTIFACTS_URL`) that a tool needs at runtime, and a
  * tool installed on a declared subagent still runs in its member's container and still needs them.
  */
 export function hasToolInstalled(
@@ -861,4 +875,31 @@ export function serializeLock(lock: HarnesstLock): string {
     return as < bs ? -1 : as > bs ? 1 : 0;
   });
   return JSON.stringify({ version: lock.version, installs }, null, 2) + "\n";
+}
+
+/**
+ * The GitHub App permissions a member's installs ask for beyond the baseline (union, write beats
+ * read). The App manifest flow requests exactly these, so a template — not the user — decides
+ * which agent may create repositories or write Actions secrets. Pure.
+ */
+export function githubPermissionsForMember(
+  lock: HarnesstLock,
+  member: string | null,
+): GitHubPermissions {
+  let out: GitHubPermissions = {};
+  for (const entry of lock.installs)
+    // Subagents run in the member's container with its App, so their asks count too.
+    if (entry.member === member)
+      out = mergeGitHubPermissions(out, entry.github?.permissions);
+  return out;
+}
+
+/** The role → member map recorded by the most recent team install, or null when none. Pure. */
+export function teamRoster(
+  lock: HarnesstLock,
+): { templateId: string; roster: Array<{ role: string; member: string }> } | null {
+  const team = [...lock.installs]
+    .reverse()
+    .find((e) => e.type === "team" && e.roster?.length);
+  return team ? { templateId: team.id, roster: team.roster! } : null;
 }

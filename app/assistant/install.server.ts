@@ -309,6 +309,13 @@ export async function installMarketplaceTemplate(
     };
   }
   const templateType = type as TemplateType;
+  if (templateType === "team") {
+    return {
+      ok: false,
+      error:
+        "Team templates install from the marketplace page, which also runs their setup wizard.",
+    };
+  }
   const id = typeof input.id === "string" ? input.id : "";
   if (!isTemplateSlug(id)) {
     return {

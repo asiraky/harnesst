@@ -1,0 +1,18 @@
+{
+  "id": "team-artifacts",
+  "subagentCompatible": true,
+  "type": "tool",
+  "name": "Team Artifacts",
+  "description": "List and fetch the artifacts any agent in this repository published (pages, images, documents, files), so one agent can build on another's prototype, chart or report.",
+  "version": "0.1.0",
+  "eve": ">=0.20.0",
+  "files": [
+    "lib/team-artifacts.ts",
+    "tools/artifacts-get.ts",
+    "tools/artifacts-list.ts"
+  ],
+  "assistantSkill": "assistant-skill.md",
+  "dependencies": {
+    "zod": "^4.4.3"
+  }
+}

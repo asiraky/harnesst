@@ -1,0 +1,15 @@
+{
+  "id": "web-perf",
+  "type": "skill",
+  "name": "Web Perf",
+  "description": "Audit, diagnose, or optimize website loading and interaction performance, Core Web Vitals, and Lighthouse performance scores.",
+  "version": "0.1.0",
+  "eve": ">=0.22.0",
+  "subagentCompatible": true,
+  "files": [
+    "skills/web-perf/LICENSE",
+    "skills/web-perf/SKILL.md",
+    "skills/web-perf/VENDORED.md"
+  ],
+  "assistantSkill": "assistant-skill.md"
+}

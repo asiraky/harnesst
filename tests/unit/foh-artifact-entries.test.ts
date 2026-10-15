@@ -127,9 +127,8 @@ describe("artifactEntry versions", () => {
 
 describe("mergeArtifactEntries with versions", () => {
   it("re-renders one card at the position the first publish gave it", () => {
-    // The row's stream index is frozen at first publish even though v2 landed two turns later:
-    // merged by the newest version's position instead, the card would slide away from the exchange
-    // the user is discussing it in, and read as a new thing the agent just made.
+    // The row's stream index is frozen at first publish: a revision within that turn updates the
+    // card in place rather than adding a second one.
     const merged = mergeArtifactEntries(
       ENTRIES,
       [row({ versionNumber: 2, latestVersionId: "ver_2" })],
@@ -147,6 +146,65 @@ describe("mergeArtifactEntries with versions", () => {
     expect(merged.find((e) => e.role === "artifact")?.artifact?.version).toBe(
       2,
     );
+  });
+
+  it("shows the card again at a later turn that republished it, keeping the first in place", () => {
+    // "Show me it again" is answered by republishing. The first card is forty turns up by then, so
+    // the later turn needs a card of its own, or the user is told about a card they cannot see.
+    const merged = mergeArtifactEntries(
+      ENTRIES,
+      [row({ versionNumber: 2, latestVersionId: "ver_2", shownAt: [11] })],
+      ANCHORS,
+    );
+
+    expect(merged.map((e) => e.id)).toEqual([
+      "1:t1:user",
+      "1:t1:assistant",
+      "artifact:art_1",
+      "1:t2:user",
+      "1:t2:assistant",
+      "artifact:art_1@1:t2",
+    ]);
+    const cards = merged.filter((e) => e.role === "artifact");
+    expect(cards.map((e) => e.artifact?.version)).toEqual([2, 2]);
+  });
+
+  it("renders one card per turn however many times that turn republished", () => {
+    const merged = mergeArtifactEntries(
+      ENTRIES,
+      [row({ shownAt: [5, 9, 12] })],
+      ANCHORS,
+    );
+
+    expect(
+      merged.filter((e) => e.role === "artifact").map((e) => e.id),
+    ).toEqual(["artifact:art_1", "artifact:art_1@1:t2"]);
+  });
+
+  it("trails one card only when no publish of it resolves to a turn", () => {
+    const unplaced = mergeArtifactEntries(
+      ENTRIES,
+      [row({ streamIndex: 1, shownAt: [1] })],
+      ANCHORS,
+    );
+    expect(unplaced.map((e) => e.id)).toEqual([
+      ...ENTRIES.map((e) => e.id),
+      "artifact:art_1",
+    ]);
+
+    // The first publish predates the transcript, but the republish is in it: one card, inline.
+    const later = mergeArtifactEntries(
+      ENTRIES,
+      [row({ streamIndex: 1, shownAt: [10] })],
+      ANCHORS,
+    );
+    expect(later.map((e) => e.id)).toEqual([
+      "1:t1:user",
+      "1:t1:assistant",
+      "1:t2:user",
+      "1:t2:assistant",
+      "artifact:art_1",
+    ]);
   });
 
   it("still places a second name separately", () => {
@@ -217,6 +275,47 @@ describe("mergeArtifactEntries with versions", () => {
       version: 2,
       url: "/api/foh/proj_1/artifact/art_1/ver_1",
     });
+  });
+
+  it("gives a choice's image a card at a later turn that republished it", () => {
+    const entries: ChatEntry[] = [
+      entry("1:t1:user"),
+      {
+        ...entry("1:t1:assistant"),
+        inputRequests: [
+          {
+            requestId: "req_1",
+            prompt: "Choose a direction",
+            options: [
+              {
+                id: "assigned",
+                label: "Editorial",
+                media: { artifactName: "chart.png", artifactVersionId: "ver_1" },
+              },
+            ],
+          },
+        ],
+      },
+      entry("1:t2:user"),
+      entry("1:t2:assistant"),
+    ];
+
+    const merged = mergeArtifactEntries(
+      entries,
+      [row({ versionNumber: 2, latestVersionId: "ver_2", shownAt: [11] })],
+      ANCHORS,
+    );
+
+    expect(merged.map((e) => e.id)).toEqual([
+      "1:t1:user",
+      "1:t1:assistant",
+      "1:t2:user",
+      "1:t2:assistant",
+      "artifact:art_1@1:t2",
+    ]);
+    expect(merged[1].inputRequests?.[0].options?.[0].media?.artifact?.url).toBe(
+      "/api/foh/proj_1/artifact/art_1/ver_1",
+    );
   });
 
   it("keeps two re-rolls pinned to the artifact versions each round offered", () => {

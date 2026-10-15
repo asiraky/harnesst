@@ -1,6 +1,6 @@
 /**
  * Instance token broker (issue #167) — the control-plane half of the "access-token-broker"
- * credential delivery. Providers with ROTATING refresh grants (mayi: a refresh mints a new
+ * credential delivery. Providers with ROTATING refresh grants (a refresh mints a new
  * refresh token, and reusing an old one revokes the whole token family) can't ship
  * `<PREFIX>_OAUTH_REFRESH_TOKEN` to instances: harnesst and the instance would race the rotation
  * and kill the grant. Instead harnesst stays the SINGLE WRITER — the instance POSTs
@@ -15,7 +15,7 @@
  * `rotateGrantRefreshToken` and surface as a retryable error.
  *
  * eve-side traffic is cheap: the shipped credentials binding caches the token until close to
- * `expiresAt`, so this is ~one call per access-token lifetime (an hour for mayi) per instance,
+ * `expiresAt`, so this is ~one call per access-token lifetime (typically an hour) per instance,
  * not per request.
  *
  * Deps are injectable so the decision logic unit-tests with fakes; default wiring hits

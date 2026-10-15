@@ -267,6 +267,7 @@ describe.runIf(LIVE)("Save & Publish core loop (real routes + pipeline)", () => 
         { projectId: project.id, taskId: task.id, createdBy: owner.userId },
         {
           checkBuild: async () => ({ ok: true, skipped: true }),
+          scheduleUpgrades: async () => [],
           listRepoPaths: async () => [`${agent.root}/agent.ts`],
           normalizeDrafts: async (input) => input.files,
           getBranchHead: async () => "base0000head0000sha0000000000000000000000",

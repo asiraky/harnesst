@@ -488,7 +488,6 @@ function worktreeMdTemplate(
   canonicalDb,
   baseBranch,
   dirLabel,
-  tunnelActive,
 ) {
   return `# Worktree: ${feat.full}
 
@@ -511,7 +510,7 @@ This worktree's branch was created from \`${baseBranch}\`. Any PR opened from th
 
 - **App**: http://${devHostname({ cwd: dirLabel, isWorktree: true })}:${ports.dev} (tailnet; hand this one to the user)
 - **Loopback**: http://localhost:${ports.dev}
-- **Public app**: https://${ports.tunnelHost}${tunnelActive ? "" : " (reserved; run `npm run tunnel:init` once from the main checkout to activate)"}
+- **Public app**: https://${ports.tunnelHost} (only while \`npm run tunnel\` runs)
 - Dev server port: \`${ports.dev}\` (via \`PORT\` in this worktree's \`.env.local\`)
 - Traffic splitter port: \`${ports.splitter}\` (\`HARNESST_SPLITTER_PORT\`)
 - Deployed-instance base port: \`${ports.instance}\` (\`HARNESST_INSTANCE_PORT\`)
@@ -520,11 +519,11 @@ This worktree's branch was created from \`${baseBranch}\`. Any PR opened from th
 
 Use the \`dev\` skill to start it.
 
-For public testing through Cloudflare, run:
+For a public URL (webhooks, OAuth callbacks, testing from outside the tailnet), run:
 \`\`\`
-npm run dev:tunnel
+npm run tunnel
 \`\`\`
-This publishes the server at https://${ports.tunnelHost} and starts the child server with that origin as \`BETTER_AUTH_URL\`. Ordinary \`npm run dev\` stays on the tailnet. For an ephemeral fallback, use \`npm run dev:tunnel -- --quick\`.
+That one command does everything and is safe to rerun: it sets up the shared Cloudflare tunnel on first use, adds this host's DNS record, frees this worktree's ports, starts the dev server with https://${ports.tunnelHost} as \`BETTER_AUTH_URL\`, and checks the public URL reaches the app. Use it instead of \`npm run dev\`, not alongside it. If it says there is no Cloudflare login, ask the user to sign in (\`cloudflared tunnel login\`) and rerun. For an ephemeral URL instead, use \`npm run tunnel -- --quick\`.
 
 The public endpoint exposes this development server to the internet. Do not put production data or credentials into it.
 
@@ -887,7 +886,6 @@ function main() {
     canonicalDb,
     baseBranch,
     dirLabel,
-    Boolean(tunnelMetadata),
   );
 
   writeFileSync(join(worktreePath, ".env.local"), worktreeEnv);
@@ -992,7 +990,7 @@ function main() {
     `  app url:   http://${devHostname({ cwd: worktreePath, isWorktree: true })}:${ports.dev}`,
   );
   console.log(
-    `  public:    https://${ports.tunnelHost}${tunnelMetadata ? "" : " (reserved; run npm run tunnel:init)"}`,
+    `  public:    https://${ports.tunnelHost} (npm run tunnel)`,
   );
   console.log(`  splitter:  ${ports.splitter}`);
   console.log(`  instances: ${ports.instance}+`);

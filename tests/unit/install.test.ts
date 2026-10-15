@@ -2630,3 +2630,43 @@ describe("marketplace workspace inheritance", () => {
     });
   });
 });
+
+describe("planInstall — team row update", () => {
+  const teamTpl = (version: string): CatalogTemplate => ({
+    assistantSkill: null,
+    manifest: {
+      id: "software-team",
+      type: "team",
+      name: "Software team",
+      description: "A team.",
+      version,
+      eve: ">=0.1.0",
+      subagentCompatible: false,
+      files: [],
+      roster: [{ role: "intake", agent: "ledger-intake", name: "hermes" }],
+    } as CatalogTemplate["manifest"],
+    files: {},
+  });
+  const roster = [{ role: "intake", member: "pm" }];
+
+  it("keeps the role → member map when the team row is updated", () => {
+    const first = planInstall(
+      memberCtx({ template: teamTpl("0.1.0"), target: { kind: "member", memberName: null, root: "agents/pm/agent" } }),
+    );
+    const installed = lockFrom(first);
+    const lock = upsertInstall(installed, {
+      ...findInstall(installed, "software-team", null)!,
+      roster,
+    });
+    const plan = planInstall(
+      memberCtx({
+        template: teamTpl("0.2.0"),
+        lock,
+        target: { kind: "member", memberName: null, root: "agents/pm/agent" },
+      }),
+    );
+    const entry = findInstall(lockFrom(plan), "software-team", null)!;
+    expect(entry.version).toBe("0.2.0");
+    expect(entry.roster).toEqual(roster);
+  });
+});

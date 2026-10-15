@@ -1,0 +1,15 @@
+{
+  "id": "cloudflare-one-migrations",
+  "type": "skill",
+  "name": "Cloudflare One Migrations",
+  "description": "Assess and plan migrations from existing VPN, SWG, or SASE platforms to Cloudflare One, including policy mapping, parity gaps, and rollout.",
+  "version": "0.1.0",
+  "eve": ">=0.22.0",
+  "subagentCompatible": true,
+  "files": [
+    "skills/cloudflare-one-migrations/LICENSE",
+    "skills/cloudflare-one-migrations/SKILL.md",
+    "skills/cloudflare-one-migrations/VENDORED.md"
+  ],
+  "assistantSkill": "assistant-skill.md"
+}

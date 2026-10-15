@@ -7,7 +7,7 @@
  * (operators' Google apps registered that URI; acceptance criterion 2).
  *
  * Same seam mocking as google-auth-routes.test.ts; the registry is extended with a hypothetical
- * "mayi" PKCE provider (the real registry ships only google, which declares no pkce).
+ * "pkceprov" PKCE provider (google declares no pkce).
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -38,14 +38,14 @@ const mocks = vi.hoisted(() => ({
   upsertGrant: vi.fn(),
 }));
 
-const MAYI = vi.hoisted(
+const PKCE_PROVIDER = vi.hoisted(
   (): ProviderDefinition => ({
-    id: "mayi",
-    label: "May I?",
-    authorizeUrl: "https://auth.mayi.example/oauth/authorize",
-    tokenUrl: "https://auth.mayi.example/oauth/token",
+    id: "pkceprov",
+    label: "PKCE Provider",
+    authorizeUrl: "https://auth.pkce.example/oauth/authorize",
+    tokenUrl: "https://auth.pkce.example/oauth/token",
     pkce: true,
-    envPrefix: "MAYI",
+    envPrefix: "PKCEPROV",
   }),
 );
 
@@ -86,8 +86,8 @@ vi.mock("~/connections/providers.server", async (importOriginal) => {
   return {
     ...actual,
     getProvider: (id: string) =>
-      id === "mayi" ? MAYI : id === "regprov" ? REGPROV : actual.getProvider(id),
-    listProviders: () => [...actual.listProviders(), MAYI, REGPROV],
+      id === "pkceprov" ? PKCE_PROVIDER : id === "regprov" ? REGPROV : actual.getProvider(id),
+    listProviders: () => [...actual.listProviders(), PKCE_PROVIDER, REGPROV],
   };
 });
 
@@ -162,7 +162,7 @@ const AGENT = {
   kind: "member",
 };
 const SHEETS_SCOPE = "https://www.googleapis.com/auth/spreadsheets";
-const MAYI_SCOPE = "mayi.approvals";
+const PKCE_SCOPE = "pkce.write";
 
 function routeArgs<P extends Record<string, string>>(
   url: string,
@@ -325,7 +325,7 @@ describe("provider-generic connection routes (issue #163)", () => {
 
   it("puts an S256 code_challenge on a PKCE provider's authorize URL and the verifier in the state", async () => {
     mocks.getAgentSource.mockResolvedValue({
-      files: { "harnesst-lock.json": lockWith("mayi", MAYI_SCOPE) },
+      files: { "harnesst-lock.json": lockWith("pkceprov", PKCE_SCOPE) },
       paths: [],
     });
     const { loader } = await import(
@@ -337,18 +337,18 @@ describe("provider-generic connection routes (issue #163)", () => {
     const response = await redirectFrom(
       loader(
         routeArgs(
-          "https://harnesst.example.com/connections/mayi/connect?project=projabcdefgh&agent=agent&returnTo=%2Fdashboard",
-          { provider: "mayi" },
+          "https://harnesst.example.com/connections/pkceprov/connect?project=projabcdefgh&agent=agent&returnTo=%2Fdashboard",
+          { provider: "pkceprov" },
         ),
       ),
     );
     const location = new URL(response.headers.get("location")!);
     expect(location.origin + location.pathname).toBe(
-      "https://auth.mayi.example/oauth/authorize",
+      "https://auth.pkce.example/oauth/authorize",
     );
     // New providers use the canonical redirect path — no legacy override.
     expect(location.searchParams.get("redirect_uri")).toBe(
-      "https://harnesst.example.com/connections/mayi/callback",
+      "https://harnesst.example.com/connections/pkceprov/callback",
     );
     expect(location.searchParams.get("code_challenge_method")).toBe("S256");
 
@@ -356,7 +356,7 @@ describe("provider-generic connection routes (issue #163)", () => {
       location.searchParams.get("state")!,
       connectStateKey(),
     );
-    expect(state).toMatchObject({ provider: "mayi", scopes: MAYI_SCOPE });
+    expect(state).toMatchObject({ provider: "pkceprov", scopes: PKCE_SCOPE });
     expect(state?.codeVerifier).toMatch(/^[A-Za-z0-9_-]{43}$/);
     // The challenge on the URL is derived from the verifier riding in the signed state.
     expect(location.searchParams.get("code_challenge")).toBe(
@@ -378,9 +378,9 @@ describe("provider-generic connection routes (issue #163)", () => {
         agentId: AGENT.id,
         userId: mocks.auth.user.id,
         sessionId: mocks.auth.session.id,
-        nonce: "mayi-nonce",
-        provider: "mayi",
-        scopes: MAYI_SCOPE,
+        nonce: "pkce-nonce",
+        provider: "pkceprov",
+        scopes: PKCE_SCOPE,
         returnTo: "/dashboard",
         exp: Date.now() + 60_000,
         codeVerifier,
@@ -391,19 +391,19 @@ describe("provider-generic connection routes (issue #163)", () => {
       accessToken: "access-token",
       refreshToken: "refresh-token",
       expiresIn: 3599,
-      scope: MAYI_SCOPE,
+      scope: PKCE_SCOPE,
     });
 
     // Credential-bearing hit stages into the path-scoped cookie and redirects clean.
     const staged = await loader(
       routeArgs(
-        `https://harnesst.example.com/connections/mayi/callback?code=one-time-code&state=${encodeURIComponent(state)}`,
-        { provider: "mayi" },
+        `https://harnesst.example.com/connections/pkceprov/callback?code=one-time-code&state=${encodeURIComponent(state)}`,
+        { provider: "pkceprov" },
       ),
     );
     expect(staged).toBeInstanceOf(Response);
     expect((staged as Response).headers.get("location")).toBe(
-      "/connections/mayi/callback",
+      "/connections/pkceprov/callback",
     );
     const cookie = (staged as Response).headers
       .get("set-cookie")!
@@ -412,27 +412,27 @@ describe("provider-generic connection routes (issue #163)", () => {
     const response = await redirectFrom(
       loader(
         routeArgs(
-          "https://harnesst.example.com/connections/mayi/callback",
-          { provider: "mayi" },
+          "https://harnesst.example.com/connections/pkceprov/callback",
+          { provider: "pkceprov" },
           { cookie },
         ),
       ),
     );
     expect(response.status).toBe(302);
-    expect(response.headers.get("location")).toBe("/dashboard?connected=mayi");
+    expect(response.headers.get("location")).toBe("/dashboard?connected=pkceprov");
     expect(mocks.exchangeCode).toHaveBeenCalledWith(
       expect.objectContaining({
-        provider: expect.objectContaining({ id: "mayi" }),
+        provider: expect.objectContaining({ id: "pkceprov" }),
         config: { clientId: "client_1", clientSecret: "secret_1" },
         code: "one-time-code",
-        redirectUri: "https://harnesst.example.com/connections/mayi/callback",
+        redirectUri: "https://harnesst.example.com/connections/pkceprov/callback",
         codeVerifier,
       }),
     );
     // No userinfoUrl → the grant stores accountEmail null ("Connected" without an email).
     expect(mocks.upsertGrant).toHaveBeenCalledWith(
       expect.objectContaining({
-        provider: "mayi",
+        provider: "pkceprov",
         accountEmail: null,
         refreshToken: "refresh-token",
       }),
@@ -462,8 +462,8 @@ describe("provider-generic connection routes (issue #163)", () => {
     );
     const staged = await loader(
       routeArgs(
-        `https://harnesst.example.com/connections/mayi/callback?code=one-time-code&state=${encodeURIComponent(state)}`,
-        { provider: "mayi" },
+        `https://harnesst.example.com/connections/pkceprov/callback?code=one-time-code&state=${encodeURIComponent(state)}`,
+        { provider: "pkceprov" },
       ),
     );
     const cookie = (staged as Response).headers
@@ -471,8 +471,8 @@ describe("provider-generic connection routes (issue #163)", () => {
       .split(";", 1)[0];
     const result = await loader(
       routeArgs(
-        "https://harnesst.example.com/connections/mayi/callback",
-        { provider: "mayi" },
+        "https://harnesst.example.com/connections/pkceprov/callback",
+        { provider: "pkceprov" },
         { cookie },
       ),
     );

@@ -5,7 +5,10 @@ import { join, resolve } from "node:path";
 import {
   cloudflaredEnvironment,
   getMainCheckoutRoot,
+  originCertPath,
+  originCertZone,
   readJson,
+  rehomeRegistry,
   renderAndValidateConfig,
   runSync,
   tunnelPaths,
@@ -36,7 +39,7 @@ function parseJsonOutput(result, operation) {
   }
 }
 
-function main() {
+async function main() {
   let root;
   try {
     root = getMainCheckoutRoot();
@@ -53,7 +56,7 @@ function main() {
       `cloudflared is required but was not found (${version.stderr.trim()}). Install it and retry.`,
     );
 
-  const registry = readJson(paths.registry, {});
+  let registry = readJson(paths.registry, {});
   const existing = readJson(paths.metadata, null);
   if (existing) {
     if (!existsSync(existing.credentialsFile)) {
@@ -70,14 +73,11 @@ function main() {
       `tunnel-init: ${existing.tunnelName} (${existing.tunnelId}) is already initialized`,
     );
     console.log(`  config: ${paths.config}`);
-    console.log(`  domain: *.${existing.domain}`);
+    console.log(`  domain: <worktree>.${existing.domain}`);
     return;
   }
 
-  const originCert =
-    process.env.HARNESST_CLOUDFLARED_ORIGIN_CERT ||
-    process.env.TUNNEL_ORIGIN_CERT ||
-    join(homedir(), ".cloudflared", "cert.pem");
+  const originCert = originCertPath();
   if (!existsSync(originCert)) {
     cloudflareFailure(
       `Cloudflare origin certificate was not found at ${originCert}. No account resources were changed.`,
@@ -132,24 +132,23 @@ function main() {
     );
   }
 
-  const wildcard = `*.${settings.domain}`;
-  const dns = runSync(
-    [settings.cloudflaredBin, "tunnel", "route", "dns", tunnelId, wildcard],
-    { env: cfEnv },
-  );
-  const dnsOutput = `${dns.stdout}\n${dns.stderr}`;
-  if (dns.code !== 0 && !/already exists|record.*exists/i.test(dnsOutput)) {
-    cloudflareFailure(
-      `provisioning DNS route ${wildcard} failed: ${dns.stderr.trim() || dns.stdout.trim()}`,
-    );
-  }
+  // Worktree hosts go directly under the zone `cloudflared tunnel login`
+  // authorized, unless HARNESST_TUNNEL_DOMAIN pins one. DNS records are made
+  // per host by `npm run tunnel`, never as a wildcard: the zone may also host
+  // real services.
+  const domain = process.env.HARNESST_TUNNEL_DOMAIN
+    ? settings.domain
+    : (await originCertZone(originCert)) || settings.domain;
   const metadata = {
     tunnelId,
     tunnelName: settings.name,
     credentialsFile,
-    domain: settings.domain,
+    domain,
   };
   try {
+    const moved = rehomeRegistry(registry, domain);
+    if (moved !== registry) writeJson(paths.registry, moved);
+    registry = moved;
     renderAndValidateConfig(paths, metadata, registry, cfEnv);
   } catch (err) {
     die(err.message);
@@ -157,7 +156,7 @@ function main() {
   writeJson(paths.metadata, metadata);
 
   console.log(`tunnel-init: initialized ${settings.name} (${tunnelId})`);
-  console.log(`  wildcard: ${wildcard}`);
+  console.log(`  hosts:    <worktree>.${domain} (DNS added per host by npm run tunnel)`);
   console.log(`  config:   ${paths.config}`);
   console.log(
     `  metadata: ${paths.metadata} (non-secret; credentials remain at ${credentialsFile})`,
@@ -167,4 +166,4 @@ function main() {
   );
 }
 
-main();
+main().catch((err) => die(err.stack || err.message));

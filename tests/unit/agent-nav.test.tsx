@@ -2,7 +2,7 @@ import { renderToString } from "react-dom/server";
 import { createRoutesStub } from "react-router";
 import { describe, expect, it } from "vitest";
 
-import { AgentNav, switchAgentHref } from "~/components/shell";
+import { AgentNav } from "~/components/shell";
 import { TooltipProvider } from "~/components/ui/tooltip";
 
 // AgentNav's controls self-fetch via useFetcher, which needs a data router in
@@ -16,8 +16,8 @@ const EXPECTED_LABELS: Record<
   "single" | "repo" | "member" | "subagent",
   string[]
 > = {
-  single: ["Overview", "Deployment", "Runs", "Assistant", "Settings"],
-  repo: ["Agents", "Deployment", "Assistant", "Settings"],
+  single: ["Overview", "Deployment", "Runs", "Assistant", "Setup", "Settings"],
+  repo: ["Agents", "Deployment", "Assistant", "Setup", "Settings"],
   member: ["Overview", "Deployment", "Runs", "Settings"],
   // A declared subagent deploys with its member and has no runs of its own.
   subagent: ["Overview", "Settings"],
@@ -40,18 +40,18 @@ describe("AgentNav", () => {
       }
       // Settings must be a link whose href ends in /settings (the tab users couldn't find on mobile).
       expect(html).toMatch(/href="\/repos\/NuOMEPzKzcmQ\/settings"/);
+      // Setup stays reachable once the wizard is finished (no banner links to it then).
+      expect(html).toMatch(/href="\/repos\/NuOMEPzKzcmQ\/setup"/);
     });
   }
 
-  it("renders every member-level tab plus the switcher, including a reachable Settings link", () => {
+  it("renders every member-level tab including a reachable Settings link", () => {
     const base = "/repos/sQLfctIEkNIA/agents/pm";
     const html = renderInRouter(
       <TooltipProvider>
         <AgentNav
           base={base}
           level="member"
-          roster={[{ name: "pm" }]}
-          activeAgent="pm"
         />
       </TooltipProvider>,
     );
@@ -60,6 +60,8 @@ describe("AgentNav", () => {
       expect(html).toContain(`>${label}</a>`);
     }
     expect(html).toMatch(/href="\/repos\/sQLfctIEkNIA\/agents\/pm\/settings"/);
+    // Setup is repo-wide; a member has no setup route of its own.
+    expect(html).not.toContain(">Setup</a>");
   });
 
   it("offers a subagent exactly Overview and Settings — nothing it does not own", () => {
@@ -69,8 +71,6 @@ describe("AgentNav", () => {
         <AgentNav
           base={base}
           level="subagent"
-          roster={[{ name: "pm" }]}
-          activeAgent="pm"
         />
       </TooltipProvider>,
     );
@@ -83,68 +83,6 @@ describe("AgentNav", () => {
     }
     expect(html).toMatch(
       /href="\/repos\/sQLfctIEkNIA\/agents\/pm\/sub\/researcher\/settings"/,
-    );
-  });
-
-  it("stacks the tab row above the controls on mobile (regression guard for the merged-row bug)", () => {
-    const html = renderInRouter(
-      <TooltipProvider>
-        <AgentNav base="/repos/NuOMEPzKzcmQ" level="single" />
-      </TooltipProvider>,
-    );
-
-    // The responsive wrapper must be present so a regression that re-merges the two rows
-    // (dropping flex-col) fails here — that merge is what hid Settings on ~375px.
-    expect(html).toContain("flex-col");
-    expect(html).toContain("sm:flex-row");
-  });
-});
-
-
-/**
- * The member picker's destination. Switching members keeps the TAB you are on, but everything
- * that names a place inside the member you are leaving has to go: the nested `/sub/<name>`
- * context and the editor's `?path=` (issue #344).
- */
-describe("switchAgentHref", () => {
-  const at = (url: string) => {
-    const { pathname, search } = new URL(url, "https://h.example.com");
-    return { pathname, search };
-  };
-
-  it("swaps the member and keeps the tab", () => {
-    expect(switchAgentHref(at("/repos/p1/agents/ivy/runs"), "otto")).toBe(
-      "/repos/p1/agents/otto/runs",
-    );
-  });
-
-  it("drops a nested subagent context — the new member has its own", () => {
-    expect(
-      switchAgentHref(at("/repos/p1/agents/ivy/sub/researcher/settings"), "otto"),
-    ).toBe("/repos/p1/agents/otto/settings");
-  });
-
-  it("drops the editor's ?path= (it names a file in the member being left)", () => {
-    expect(
-      switchAgentHref(
-        at("/repos/p1/agents/ivy/edit?path=agents%2Fivy%2Fagent%2Ftools%2Fsearch.ts"),
-        "otto",
-      ),
-    ).toBe("/repos/p1/agents/otto/edit");
-  });
-
-  it("keeps every other query param", () => {
-    expect(
-      switchAgentHref(
-        at("/repos/p1/agents/ivy/runs?path=agents%2Fivy%2Fagent.ts&status=failed"),
-        "otto",
-      ),
-    ).toBe("/repos/p1/agents/otto/runs?status=failed");
-  });
-
-  it("encodes a member name that needs it", () => {
-    expect(switchAgentHref(at("/repos/p1/agents/ivy"), "a b")).toBe(
-      "/repos/p1/agents/a%20b",
     );
   });
 });

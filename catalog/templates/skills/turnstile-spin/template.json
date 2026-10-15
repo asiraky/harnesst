@@ -1,0 +1,27 @@
+{
+  "id": "turnstile-spin",
+  "type": "skill",
+  "name": "Turnstile Spin",
+  "description": "Set up, repair, or migrate to Cloudflare Turnstile bot verification in an existing frontend and backend, including server-side Siteverify.",
+  "version": "0.1.0",
+  "eve": ">=0.22.0",
+  "subagentCompatible": true,
+  "files": [
+    "skills/turnstile-spin/LICENSE",
+    "skills/turnstile-spin/README.md",
+    "skills/turnstile-spin/SKILL.md",
+    "skills/turnstile-spin/VENDORED.md",
+    "skills/turnstile-spin/references/astro.md",
+    "skills/turnstile-spin/references/hugo.md",
+    "skills/turnstile-spin/references/nextjs-app.md",
+    "skills/turnstile-spin/references/nextjs-pages.md",
+    "skills/turnstile-spin/references/sveltekit.md",
+    "skills/turnstile-spin/references/vanilla-html.md",
+    "skills/turnstile-spin/scripts/auth-probe.sh",
+    "skills/turnstile-spin/scripts/persist-skill.sh",
+    "skills/turnstile-spin/scripts/validate.sh",
+    "skills/turnstile-spin/scripts/widget-create.sh",
+    "skills/turnstile-spin/tests/validation.md"
+  ],
+  "assistantSkill": "assistant-skill.md"
+}

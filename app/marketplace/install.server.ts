@@ -1096,11 +1096,16 @@ export function planInstall(ctx: PlanContext): InstallPlan {
       : {}),
     ...(Object.keys(platformFiles).length > 0 ? { platformFiles } : {}),
     ...(carriedSettings ? { settings: carriedSettings } : {}),
+    // A team entry's role → member map is install state, not template content: an update of the
+    // team row keeps it, or the ledger's role defaults and teamRoster() lose every member.
+    ...(existing?.roster ? { roster: existing.roster } : {}),
     ...(manifest.dependencies ? { dependencies: manifest.dependencies } : {}),
     // Record composition provenance so Settings/uninstall can see what a parent bundled.
     ...(template.includes && template.includes.length > 0
       ? { includes: template.includes }
       : {}),
+    ...(manifest.provisioning ? { provisioning: manifest.provisioning } : {}),
+    ...(manifest.github ? { github: manifest.github } : {}),
     // Snapshot required secrets so Settings can render "required by template" forever (§4.5).
     ...(manifest.secrets && manifest.secrets.length > 0
       ? {
