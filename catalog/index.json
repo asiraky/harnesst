@@ -12,9 +12,9 @@
       "id": "ledger-architect",
       "type": "agent",
       "name": "Ledger Architect",
-      "version": "0.4.0",
+      "version": "0.5.0",
       "description": "The team’s technical designer. For non-trivial issues, call in an engineer, grill them on the technical design, and finalise the spec before breakdown.",
-      "hash": "9cbf602cf959fd8fa92e33c198a13b3281e808fd"
+      "hash": "a38160c8864729c912e5e162ad5e5f2c4a823f23"
     },
     {
       "id": "ledger-implementer",
@@ -28,17 +28,17 @@
       "id": "ledger-infra",
       "type": "agent",
       "name": "Ledger Infra",
-      "version": "0.4.0",
+      "version": "0.5.0",
       "description": "The team’s infrastructure engineer. Owns cloud resources, CI and deployment, and connects the team's repositories to the ledger. The only member whose GitHub App can change CI configuration.",
-      "hash": "93224ebe9bf2c15fa991a0fa2e8143bc0aa76173"
+      "hash": "6d88229e9333681037d333ff4669144ef199105b"
     },
     {
       "id": "ledger-intake",
       "type": "agent",
       "name": "Ledger Intake",
-      "version": "0.5.0",
+      "version": "0.7.0",
       "description": "The team’s front of house. Grill requesters on requirements, publish the spec as the ledger issue, send non-trivial work to the architect, break issues into tickets, and relay human decisions. Report pending approvals to the named human and report when their work is live.",
-      "hash": "a4016aaf3a4f6613deb95057bb3462b284d08bea"
+      "hash": "c10966ddcd8c52928bfc065fcb63efc6fe297a56"
     },
     {
       "id": "vercel-issuer",
@@ -276,9 +276,9 @@
       "id": "ledger-repo-onboarding",
       "type": "skill",
       "name": "Ledger repository onboarding",
-      "version": "0.3.0",
+      "version": "0.4.0",
       "description": "Connect an existing repository to the team ledger with gh: Actions secrets, the ledger workflow and helper, and the Cloudflare deploy workflow, proposed to the protected default branch as a pull request. For the team's infra agent.",
-      "hash": "710b86f9ca4d616a3e6efd00e0690e948ffdba08"
+      "hash": "c685349f09d90ce705546cea9fce55e720c178e5"
     },
     {
       "id": "nextjs-on-cloudflare",
@@ -364,9 +364,9 @@
       "id": "software-team",
       "type": "team",
       "name": "Software team",
-      "version": "0.3.0",
+      "version": "0.5.0",
       "description": "A four-agent software team that works across your GitHub repositories: intake grills requests into specs, the architect designs, the implementer builds, reviews and QAs pull requests, and infra connects repositories, wires CI and deploys to Cloudflare. Work is tracked in a Supabase ledger; after human approval, harnesst merges.",
-      "hash": "dfb74bcf7f84f5ddfabcb28f114307d24fade0bb"
+      "hash": "10436eb4083920ddded7180a58bfb556d3001f9f"
     },
     {
       "id": "asset-library",

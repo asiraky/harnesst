@@ -3,7 +3,7 @@
   "type": "team",
   "name": "Software team",
   "description": "A four-agent software team that works across your GitHub repositories: intake grills requests into specs, the architect designs, the implementer builds, reviews and QAs pull requests, and infra connects repositories, wires CI and deploys to Cloudflare. Work is tracked in a Supabase ledger; after human approval, harnesst merges.",
-  "version": "0.3.0",
+  "version": "0.5.0",
   "eve": ">=0.22.0",
   "subagentCompatible": false,
   "files": [],

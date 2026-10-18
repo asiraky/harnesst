@@ -1,21 +1,28 @@
 ---
 name: ledger-repo-onboarding
-description: Connect an existing repository to the team's ledger with gh (Actions secrets, ledger workflow, Cloudflare deploy secrets). Infra only. Use when intake asks to connect a repository the ledger does not know yet.
+description: Connect or reconnect a repository to the team's ledger with gh (Actions secrets, ledger workflow, Cloudflare deploy secrets). Infra only. Use when the ledger wakes you for an infra item that asks to connect or reconnect a repository.
 ---
 
 # Ledger repository onboarding
 
-The team works across many repositories. A repository joins the team in three steps:
+The team works across many repositories. A repository joins the team in four steps:
 
 - **the engineer** creates it. No agent can: no team App has the Administration permission, by
   design (Administration can edit branch protection and always bypasses its push allowlist).
 - **intake** registers it as a ledger project (`ledger-create-project`). Only intake can.
+- **intake** then creates an `infra` item asking for the connection and routes it to you.
 - **infra** (you) makes the repository report to the ledger: the ledger workflow, its helper
   script and three Actions secrets. Only your GitHub App has the Workflows, Secrets and Variables
   permissions this needs; teammates get HTTP 403 by design.
 
+Run this only on a ledger wake for that `infra` item, which holds the item's lease. A teammate
+message asking you to connect a repository is not the start signal: tell the sender to have intake
+route an `infra` item, and stop. Record each step's result as evidence on the item.
+
 Mint `GH_TOKEN` with the github-app-auth skill first, with `TARGET` set to the repository. Every
-step below is idempotent: re-run it rather than guessing what a previous attempt finished.
+step below is idempotent: re-run it rather than guessing what a previous attempt finished. An
+existing `ledger-automation` branch or PR that the item's evidence records is your own earlier
+attempt: reuse it.
 
 ## New repositories
 
@@ -26,9 +33,9 @@ You cannot create repositories. When asked for one, block on the engineer to:
 - add it to harnesst's GitHub App installation, so harnesst can merge approved changes.
 
 Then ask intake (ask-teammate) to register the project with its slug, name and `owner/name`, and
-connect it below once registered. If a step below returns HTTP 404, the repository is missing from
-your App's installation: block on the engineer to add it
-(`https://github.com/apps/$GITHUB_APP_SLUG/installations/new`).
+to route an `infra` item for the connection. Finish your turn; the ledger wakes you for that item.
+If a step below returns HTTP 404, the repository is missing from your App's installation: block on
+the engineer to add it (`https://github.com/apps/$GITHUB_APP_SLUG/installations/new`).
 
 ## Connect a repository to the ledger
 
@@ -74,7 +81,9 @@ gh workflow run ledger.yml --repo "$REPO" && sleep 20 && gh run list --repo "$RE
 ```
 
 The run must succeed. Record the repository, the workflow run URL and the default-branch commit
-on the infra item, then tell intake the repository is connected.
+on the infra item as `infra_provisioned` evidence, then transition it to `done`. The ledger wakes
+intake on `done`; that is how intake learns the repository is connected, so don't message intake
+as well.
 
 ## Merging
 

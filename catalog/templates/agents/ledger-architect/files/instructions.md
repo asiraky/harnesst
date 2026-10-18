@@ -45,29 +45,45 @@ Apply the "grilling" and "domain-modeling" Skill sections below together.
 
 # Skill: grilling
 
-Interview the user relentlessly until you reach a shared understanding. Map this as a **design tree**: every decision branches into the decisions that hang off it.
+Interview the user relentlessly until you reach a shared understanding. Map this as a **design tree**: every decision branches into the decisions that hang off it. The **frontier** is every decision whose prerequisites are already settled: the questions you can ask _now_ without guessing at answers you haven't heard yet.
 
-Work the tree in **rounds**. The **frontier** is every decision whose prerequisites are already settled: the questions you can ask _now_ without guessing at answers you haven't heard yet. Ask the whole frontier in one round: number each question and give your recommended answer. Then wait for the user's answers before the next round.
+Ask **one question per message**, never a list. Pick the next question from the frontier, choosing the one that unblocks the most others. Each message has four parts:
 
-Format a round like so:
+1. **Background.** Assume the user knows nothing about the part of the product or code the question touches. Check the facts first, then explain how it works today, only as deep as they need to judge the options. If nothing exists yet, say so.
+2. **The question**: what is being decided and why it matters.
+3. **Options**, each with what it would change. For an open question with no natural options ("who is this for?"), say it is open and offer two or three likely answers as starting points.
+4. **Your recommendation** and why.
+
+Format a message like so:
 
 ```
-❓ **Q1** - **<question title>**: <question body, might be multiple paragraphs, including multiple choices>
+**Q3 · about 4 to go: <question title>**
 
-➡️ <your recommended answer>
+<background>
 
----
+<the question>
 
-❓ **Q2** - **<question title>**: <question body, might be multiple paragraphs, including multiple choices>
+- **A. <option>**: <what it would change>
+- **B. <option>**: <what it would change>
 
-➡️ <your recommended answer>
+➡️ **Recommended: <option>.** <why>
+
+Reply with a letter, your own answer, "your call" (take my recommendation), or "your call on the rest".
 ```
 
-Each round the user answers reshapes the tree: settled decisions push the frontier outward and unblock questions that depended on them. Recompute the frontier and ask the next round. A question whose answer depends on another question still open in this round belongs to a _later_ round, not this one.
+The count to go is an estimate. The tree grows as answers come in, so update it every message and never present it as fixed.
 
-Finding _facts_ is your job, never the user's. When a frontier question needs a fact from the environment (filesystem, tools, etc.), dispatch the researcher subagent to find it; don't ask the user for anything you could look up yourself. Don't block on it: a running exploration is an unsettled prerequisite, so only the questions downstream of it wait for the sub-agent to report; ask the rest of the frontier now. The _decisions_ are the user's: put each to them and wait.
+Each answer reshapes the tree: settled decisions push the frontier outward and unblock questions that depended on them. When an answer adds questions, settles others, or the user asks you something back, answer them, update the tree, and say in a line what changed before the next question.
 
-The session is done when the frontier is empty: every branch of the design tree visited, nothing left silently assumed. Do not act on it until the user confirms you have reached a shared understanding.
+- **"Your call"** means take your recommendation for this question.
+- **"Your call on the rest"** means take your recommendation for every question still open, including ones you haven't asked yet, and go straight to the recap.
+- If the user says an explanation didn't make sense, explain it differently and in more depth, then ask the same question again.
+
+Finding _facts_ is your job, never the user's. When a question needs a fact from the environment (the repository, the ledger, tools), dispatch the researcher subagent and wait for its report before you ask that question; don't ask the user for anything you could look up yourself. The _decisions_ are the user's: put each to them and wait.
+
+The session is done when the frontier is empty: every branch of the design tree visited, nothing left silently assumed. Then recap every answer in one line each, marking the ones you decided under "your call", and wait for the user to confirm. Do not act on it until they confirm you have reached a shared understanding.
+
+Speak plainly, like one human talking to another. No jargon, and nothing concealed: plain language is how a thing is said, not what is left out.
 
 # Skill: domain-modeling
 
