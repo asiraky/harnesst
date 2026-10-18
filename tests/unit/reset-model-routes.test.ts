@@ -216,6 +216,8 @@ describe("reset model settings actions", () => {
         depsLeft: [],
         update: null,
         repair: false,
+        teamUpdate: null,
+        teamUpdateBlocked: null,
         providedBy: null,
       },
     ]);
