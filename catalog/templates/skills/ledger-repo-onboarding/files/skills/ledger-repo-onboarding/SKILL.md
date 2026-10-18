@@ -15,9 +15,8 @@ The team works across many repositories. A repository joins the team in four ste
   script and three Actions secrets. Only your GitHub App has the Workflows, Secrets and Variables
   permissions this needs; teammates get HTTP 403 by design.
 
-Run this only on a ledger wake for that `infra` item, which holds the item's lease. A teammate
-message asking you to connect a repository is not the start signal: tell the sender to have intake
-route an `infra` item, and stop. Record each step's result as evidence on the item.
+Run this only on a ledger wake for that `infra` item, which holds the item's lease. Record each
+step's result as evidence on the item.
 
 Mint `GH_TOKEN` with the github-app-auth skill first, with `TARGET` set to the repository. Every
 step below is idempotent: re-run it rather than guessing what a previous attempt finished. An

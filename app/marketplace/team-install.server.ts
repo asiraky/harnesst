@@ -188,10 +188,13 @@ export function matchTeamRoster(
   const installed = row.roster ?? [];
   const catalog = team.roster ?? [];
   if (installed.length === 0)
-    return fail(`The installed ${team.name} has no recorded roster.`);
+    return fail(
+      `The installed ${team.name} has no recorded roster. Update its members one at a time instead.`,
+    );
+  const catalogByRole = new Map(catalog.map((c) => [c.role, c]));
   const members: TeamRosterMatch["members"] = [];
   for (const entry of installed) {
-    const wanted = catalog.find((c) => c.role === entry.role);
+    const wanted = catalogByRole.get(entry.role);
     if (!wanted)
       return fail(
         `${team.name} v${team.version} no longer has the "${entry.role}" role. Update its members one at a time instead.`,

@@ -80,7 +80,11 @@ import {
 } from "~/components/ui/select";
 import type { Environment } from "~/data/ports";
 import { deleteRepository } from "~/deploy/repository.server";
-import { listAgentEnvironments, renameProject } from "~/db/queries.server";
+import {
+  agentForPath,
+  listAgentEnvironments,
+  renameProject,
+} from "~/db/queries.server";
 import {
   createIngestToken,
   listIngestTokens,
@@ -352,6 +356,8 @@ interface InstallDisplay {
    * members' agent templates is behind the catalog, else null. Drives the one-click team update.
    */
   teamUpdate: string | null;
+  /** Team rows only: why the team is behind the catalog but can't be updated in one click. */
+  teamUpdateBlocked: string | null;
   /** The parent install that owns this bundled template's lifecycle. */
   providedBy: {
     id: string;
@@ -446,8 +452,11 @@ function buildInstalls(
           ),
       );
     let teamUpdate: string | null = null;
+    let teamUpdateBlocked: string | null = null;
     if (entry.type === "team" && template) {
       const match = matchTeamRoster(lock, template.manifest);
+      if (match.error && !installIsCurrent(entry, template))
+        teamUpdateBlocked = match.error;
       const stale =
         !match.error &&
         (!installIsCurrent(entry, template) ||
@@ -474,6 +483,7 @@ function buildInstalls(
       update,
       repair: !update && (missingFiles || missingIncludes || goneFromDisk),
       teamUpdate,
+      teamUpdateBlocked,
       providedBy: null,
     });
 
@@ -509,6 +519,7 @@ function buildInstalls(
         update: null,
         repair: false,
         teamUpdate: null,
+        teamUpdateBlocked: null,
         providedBy: {
           id: entry.id,
           type: entry.type,
@@ -1287,9 +1298,11 @@ export async function action(args: ActionFunctionArgs) {
       );
       const match = matchTeamRoster(lock, team.manifest);
       if (match.error) return { error: match.error };
+      const agentsByName = new Map(roster.map((a) => [a.name, a]));
+      const draftsByPath = new Map(drafts.map((d) => [d.path, d]));
       const members: TeamUpdateMemberInput[] = [];
       for (const m of match.members) {
-        const agent = roster.find((a) => a.name === m.name);
+        const agent = agentsByName.get(m.name);
         if (!agent)
           return {
             error: `${m.name} is on the team's roster but not in the repository.`,
@@ -1303,8 +1316,12 @@ export async function action(args: ActionFunctionArgs) {
           return {
             error: `${m.name}'s agent template (${m.agentId}) is no longer available in the catalog.`,
           };
+        // A member already on the catalog version is left alone, so it must not need a usable
+        // model (or anything else) for the stale members to update.
+        const installed = findInstall(lock, m.agentId, m.name);
+        if (installed && installIsCurrent(installed, template)) continue;
         const pkgPath = packageJsonPathForRoot(agent.root);
-        const pkgDraft = drafts.find((d) => d.path === pkgPath);
+        const pkgDraft = draftsByPath.get(pkgPath);
         const packageJson =
           pkgDraft !== undefined
             ? pkgDraft.content
@@ -1339,26 +1356,30 @@ export async function action(args: ActionFunctionArgs) {
       });
       if (plan.conflicts.length > 0) {
         return {
-          error: `Team update blocked — these files were changed locally:\n${plan.conflicts.join("\n")}`,
+          error: `Team update blocked; nothing was staged:\n${plan.conflicts.join("\n")}`,
         };
       }
-      await Promise.all(
-        plan.writes.map((w) =>
-          stageDraft({
-            projectId: project.id,
-            path: w.path,
-            content: w.content,
-            createdBy: auth.user.id,
-          }),
-        ),
-      );
-      if (plan.deletions.length > 0) {
-        await stageDeletions({
+      // All-or-nothing, against the drafts the plan was made from: a partial stage would leave the
+      // lock saying a member is current while its files are not, and a retry would skip it.
+      const staged = await getRuntime().data.drafts.compareAndStage(
+        project.id,
+        drafts,
+        [
+          ...plan.writes.map((w) => ({ path: w.path, content: w.content })),
+          ...plan.deletions.map((path) => ({ path, content: null })),
+        ].map((w) => ({
           projectId: project.id,
-          paths: plan.deletions,
+          agentId: agentForPath(roster, w.path)?.id ?? null,
+          path: w.path,
+          content: w.content,
           createdBy: auth.user.id,
-        });
-      }
+        })),
+      );
+      if (staged === null)
+        return {
+          error:
+            "Saved changes changed while preparing the team update. Nothing was staged; try again.",
+        };
       throw redirect(`${back}?updated=${encodeURIComponent(id)}`);
     }
     if (intent === "uninstall") {
@@ -2339,6 +2360,11 @@ function MarketplaceInstallsSection({
                         Update team to {install.teamUpdate}
                       </Button>
                     </Form>
+                  )}
+                  {install.teamUpdateBlocked && (
+                    <span className="text-xs text-muted-foreground">
+                      {install.teamUpdateBlocked}
+                    </span>
                   )}
                   {!install.providedBy &&
                     install.type !== "team" &&

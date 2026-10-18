@@ -30,7 +30,7 @@
       "name": "Ledger Infra",
       "version": "0.5.0",
       "description": "The team’s infrastructure engineer. Owns cloud resources, CI and deployment, and connects the team's repositories to the ledger. The only member whose GitHub App can change CI configuration.",
-      "hash": "6d88229e9333681037d333ff4669144ef199105b"
+      "hash": "dd65ae5f302ed8034a3961ca7fb50604ace0491c"
     },
     {
       "id": "ledger-intake",
@@ -278,7 +278,7 @@
       "name": "Ledger repository onboarding",
       "version": "0.4.0",
       "description": "Connect an existing repository to the team ledger with gh: Actions secrets, the ledger workflow and helper, and the Cloudflare deploy workflow, proposed to the protected default branch as a pull request. For the team's infra agent.",
-      "hash": "c685349f09d90ce705546cea9fce55e720c178e5"
+      "hash": "99dc56acab2cb3097d8a28fc8af11d2b40bf1f17"
     },
     {
       "id": "nextjs-on-cloudflare",
