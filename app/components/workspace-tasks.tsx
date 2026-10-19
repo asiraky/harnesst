@@ -184,7 +184,7 @@ export function TaskRow({
             )}
           </span>
           <Link
-            to={task.originUrl}
+            to={task.resultUrl ?? task.originUrl}
             className="shrink-0 text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
           >
             View →

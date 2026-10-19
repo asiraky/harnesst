@@ -512,6 +512,8 @@ export async function runPublish(
   };
   const task = await store.workspaceTasks.findById(taskId);
   if (!task) throw new Error(`publish: task ${taskId} not found`);
+  // Success and failure both link to this publish's own result in the panel.
+  const resultUrl = publishResultUrl(connected.id, taskId);
 
   const repo = { owner: connected.repoOwner, repo: connected.repoName };
   const installationId = connected.repoInstallationId;
@@ -535,7 +537,7 @@ export async function runPublish(
   // (worker.server.ts) normally settles these before the queue ever re-delivers.
   if (task.status !== "running" || (task.steps ?? []).some((s) => s.status !== "pending")) {
     if (task.status === "running") {
-      await failTask(taskId, PUBLISH_INTERRUPTED_MESSAGE, store);
+      await failTask(taskId, PUBLISH_INTERRUPTED_MESSAGE, store, { resultUrl });
     }
     outcome.error = PUBLISH_INTERRUPTED_MESSAGE;
     return outcome;
@@ -579,7 +581,7 @@ export async function runPublish(
     s.finishedAt = new Date().toISOString();
     delete s.detail;
     await save();
-    await failTask(taskId, error, store);
+    await failTask(taskId, error, store, { resultUrl });
     outcome.status = "failed";
     outcome.failedStep = key;
     outcome.error = error;
@@ -972,7 +974,7 @@ export async function runPublish(
     }
 
     if (assistantConfigOnly) {
-      await completeTask(taskId, { resultUrl: publishResultUrl(connected.id, taskId) }, store);
+      await completeTask(taskId, { resultUrl }, store);
       outcome.status = "succeeded";
       await scheduleUpgrades();
       return outcome;
@@ -1125,7 +1127,7 @@ export async function runPublish(
     deployStep.status = "succeeded";
     deployStep.finishedAt = new Date().toISOString();
     await save();
-    await completeTask(taskId, { resultUrl: publishResultUrl(connected.id, taskId) }, store);
+    await completeTask(taskId, { resultUrl }, store);
     outcome.status = "succeeded";
     await scheduleUpgrades();
     return outcome;
@@ -1140,7 +1142,7 @@ export async function runPublish(
     if (anchor) {
       await failAt(anchor.key, message);
     } else {
-      await failTask(taskId, message, store);
+      await failTask(taskId, message, store, { resultUrl });
       outcome.status = "failed";
       outcome.error = message;
     }

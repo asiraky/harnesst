@@ -64,13 +64,19 @@ export async function completeTask(
 }
 
 /** Resolve a task as failed, recording the error summary for the indicator (the failed step
- * carries the full output). */
+ * carries the full output). `resultUrl` is where the indicator's "View →" opens that output;
+ * without one it goes back to the page the task started from. */
 export async function failTask(
   id: string,
   error: string,
   store: DataStore = getRuntime().data,
+  opts: { resultUrl?: string } = {},
 ): Promise<void> {
-  await store.workspaceTasks.update(id, { status: "failed", error });
+  await store.workspaceTasks.update(id, {
+    status: "failed",
+    error,
+    ...(opts.resultUrl !== undefined && { resultUrl: opts.resultUrl }),
+  });
 }
 
 /** The indicator's read set for a project: running + recent terminal tasks, oldest-first. */

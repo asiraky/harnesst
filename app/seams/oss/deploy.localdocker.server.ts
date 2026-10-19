@@ -88,10 +88,12 @@ const DB_HOST_FROM_CONTAINER =
  * seed workspace files: legitimately minutes, not seconds. A wake (`docker start`) re-runs
  * prewarm but hits the cached-template fast path — an image inspect — so it only needs time
  * for the Nitro server itself (plus a template rebuild in the rare exposed-env-changed case,
- * which the next deploy would absorb anyway). Both env-overridable for slow hosts.
+ * which the next deploy would absorb anyway). A team's first publish builds every member's
+ * templates at once, which took over 10 minutes on the production box, hence 30. Both
+ * env-overridable for slow hosts.
  */
 export const DEPLOY_HEALTH_TIMEOUT_MS = Number(
-  process.env.HARNESST_DEPLOY_HEALTH_TIMEOUT_MS ?? 10 * 60 * 1000,
+  process.env.HARNESST_DEPLOY_HEALTH_TIMEOUT_MS ?? 30 * 60 * 1000,
 );
 export const WAKE_HEALTH_TIMEOUT_MS = Number(
   process.env.HARNESST_WAKE_HEALTH_TIMEOUT_MS ?? 120 * 1000,
@@ -424,12 +426,42 @@ async function dropWorldDb(worldKey: string): Promise<void> {
   }
 }
 
-async function removeIfExists(name: string): Promise<void> {
+/**
+ * Remove an instance container and any sandbox template builds it left behind. A first boot
+ * builds templates in sibling containers (the eve-docker shim labels each with its instance);
+ * killing the instance mid-boot does not stop them, so they would keep running for an instance
+ * that no longer exists and slow every later build. The instance is gone first, so nothing can
+ * still be committing one of them. The reap is best-effort: a leftover build must not fail a
+ * deploy or a teardown.
+ */
+export async function removeInstance(
+  name: string,
+  run: DockerCommand = docker,
+): Promise<void> {
   try {
-    await docker(["rm", "-f", name]);
+    await run(["rm", "-f", name]);
   } catch (error) {
-    if (isMissingDockerObject(error)) return;
-    throw error;
+    if (!isMissingDockerObject(error)) throw error;
+  }
+  try {
+    const ids = (
+      await run([
+        "ps",
+        "-aq",
+        "--filter",
+        "label=eve.sandbox.role=template-build",
+        "--filter",
+        `label=harnesst.instance=${name}`,
+      ])
+    )
+      .split("\n")
+      .map((value) => value.trim())
+      .filter(Boolean);
+    if (ids.length > 0) await run(["rm", "-f", ...ids]);
+  } catch (error) {
+    console.warn(
+      `[deploy] couldn't remove template builds left by ${name}: ${commandErrorText(error)}`,
+    );
   }
 }
 
@@ -684,7 +716,7 @@ export const localDockerTarget: DeployTarget = {
       await retireLegacySessionSandboxes(req.worldKey);
     }
     const name = containerName(req.deploymentId);
-    await removeIfExists(name);
+    await removeInstance(name);
 
     // Keyed by environment (req.worldKey), so a redeploy reuses the same world — sessions and
     // their sandbox containers survive. During a cutover the old-live and new deployments
@@ -709,6 +741,8 @@ export const localDockerTarget: DeployTarget = {
       // environment's agent home. AFTER the req.env spread so user secrets can never shadow them.
       EVE_DOCKER_PATH: "/usr/local/bin/eve-docker",
       HARNESST_HOME_VOLUME: homeVolumeName(req.worldKey),
+      // The shim labels this instance's template builds with it, so removeInstance can reap them.
+      HARNESST_INSTANCE_NAME: name,
       HARNESST_HOME_ROOT: "/workspace/home",
       HARNESST_SESSION_WORKSPACES: req.isolateSessionWorkspace ? "1" : "0",
       // Point world-local at the mounted per-env volume (see WORLD_DATA_DIR for the version
@@ -858,7 +892,7 @@ export const localDockerTarget: DeployTarget = {
     // Per-deployment teardown removes ONLY this deployment's container. The world DB is shared
     // across the environment's deployments now, so dropping it here would orphan siblings'
     // sessions — that is `destroyWorld`'s job, run once after the whole environment is gone.
-    await removeIfExists(containerName(deploymentId));
+    await removeInstance(containerName(deploymentId));
   },
 
   async destroyWorld(worldKey: string): Promise<void> {

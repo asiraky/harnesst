@@ -192,6 +192,32 @@ describe("eve-docker shim", () => {
     );
   });
 
+  it("labels a template-build run with the instance that started it, and nothing else", () => {
+    const argv = [
+      "run",
+      "-d",
+      "--name",
+      "tmpl1",
+      "--label",
+      "eve.sandbox.role=template-build",
+      "ghcr.io/vercel/eve:latest",
+    ];
+    expect(
+      runShim(argv, {
+        HARNESST_HOME_VOLUME: "harnesst-home-x",
+        HARNESST_INSTANCE_NAME: "harnesst-inst-dep1",
+      }),
+    ).toEqual(["run", "--label", "harnesst.instance=harnesst-inst-dep1", ...argv.slice(1)]);
+  });
+
+  it("does not label a session run with the instance", () => {
+    const got = runShim(SESSION_RUN, {
+      HARNESST_HOME_VOLUME: "harnesst-home-x",
+      HARNESST_INSTANCE_NAME: "harnesst-inst-dep1",
+    });
+    expect(got).not.toContain("harnesst.instance=harnesst-inst-dep1");
+  });
+
   it("leaves non-run verbs untouched (start / exec / ps)", () => {
     for (const argv of [
       ["start", "sess1"],

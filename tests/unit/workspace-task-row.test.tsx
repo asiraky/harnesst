@@ -78,4 +78,19 @@ describe("TaskRow", () => {
     // The visible text is the first line only (the full error stays in the tooltip title).
     expect(html).toContain(" — The build failed — nothing was published</span>");
   });
+
+  it("links a failed task to its result, not back to the page it started from", () => {
+    const html = renderRow({
+      ...base,
+      status: "failed",
+      resultUrl: "/repos/proj_1?publish=task_1",
+    });
+    expect(html).toContain('href="/repos/proj_1?publish=task_1"');
+    expect(html).not.toContain('href="/repos/proj_1"');
+  });
+
+  it("falls back to the origin page for a failed task with no result", () => {
+    const html = renderRow({ ...base, status: "failed" });
+    expect(html).toContain('href="/repos/proj_1"');
+  });
 });
