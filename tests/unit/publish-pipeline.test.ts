@@ -142,6 +142,7 @@ function makeDeps(over: Partial<PublishPipelineDeps> = {}): PublishPipelineDeps 
     discardConversationCheckouts: vi.fn().mockResolvedValue(undefined),
     cleanupSubagentOverrides: vi.fn().mockResolvedValue(undefined),
     enqueueJob: enqueue,
+    scheduleUpgrades: vi.fn().mockResolvedValue([]),
     ...over,
   } as PublishPipelineDeps;
 }
@@ -511,6 +512,45 @@ describe("runPublish — parallel builds (issue #375)", () => {
   });
 });
 
+describe("runPublish — provisioner upgrades", () => {
+  it("schedules upgrades for the project once the publish has succeeded", async () => {
+    seedTeam();
+    await stageDrafts({ "agents/ivy/agent/agent.ts": "export default {};" });
+    const task = await seedTask();
+    const deps = makeDeps();
+
+    await runPublish(payload(task.id), deps, store);
+
+    expect((await store.workspaceTasks.findById(task.id))?.status).toBe("succeeded");
+    expect(deps.scheduleUpgrades).toHaveBeenCalledWith(PROJECT);
+  });
+
+  it("a scheduling failure leaves the publish succeeded", async () => {
+    seedTeam();
+    await stageDrafts({ "agents/ivy/agent/agent.ts": "export default {};" });
+    const task = await seedTask();
+    const deps = makeDeps({ scheduleUpgrades: vi.fn().mockRejectedValue(new Error("db down")) });
+
+    await expect(runPublish(payload(task.id), deps, store)).resolves.toMatchObject({
+      status: "succeeded",
+    });
+    expect((await store.workspaceTasks.findById(task.id))?.status).toBe("succeeded");
+  });
+
+  it("a failed publish schedules nothing", async () => {
+    seedTeam();
+    await stageDrafts({ "agents/ivy/agent/agent.ts": "broken" });
+    const task = await seedTask();
+    const deps = makeDeps({
+      checkBuild: vi.fn().mockResolvedValue({ ok: false, output: "TS2304" }),
+    });
+
+    await runPublish(payload(task.id), deps, store);
+
+    expect(deps.scheduleUpgrades).not.toHaveBeenCalled();
+  });
+});
+
 describe("runPublish — failures leave nothing landed", () => {
   it("build failure: no commit, no release, no deploy; drafts kept; later steps pending", async () => {
     seedTeam();
@@ -788,6 +828,45 @@ describe("runPublish — CAS conflict on the commit", () => {
 });
 
 describe("runPublish — §2.8 environment resolution", () => {
+  it("a first member install can pass environment resolution before roster sync", async () => {
+    store.seedProject({
+      id: PROJECT,
+      orgId: "org_1",
+      layout: "team",
+      repoOwner: "acme",
+      repoName: "team",
+      repoInstallationId: "inst_1",
+      defaultBranch: "main",
+    });
+    await stageDrafts({ "agents/intake/agent/agent.ts": "export default {};" });
+    const task = await seedTask();
+    const deps = makeDeps({
+      listRepoPaths: vi.fn().mockResolvedValue(["agents/README.md"]),
+      checkBuild: vi
+        .fn()
+        .mockResolvedValue({
+          ok: false,
+          error: "stop after environment resolution",
+        }),
+    });
+    await runPublish(payload(task.id), deps, store);
+    expect((await stepStatuses(task.id)).check).toBe("succeeded");
+    expect(deps.checkBuild).toHaveBeenCalled();
+    expect((await store.projects.findById(PROJECT))?.liveEnvironmentName).toBe(
+      "default",
+    );
+  });
+
+  it("a team with members but no environments still fails before building", async () => {
+    seedTeam({ envNames: [] });
+    await stageDrafts({ "agents/ivy/agent/agent.ts": "export default {};" });
+    const task = await seedTask();
+    const deps = makeDeps();
+    await runPublish(payload(task.id), deps, store);
+    expect((await stepStatuses(task.id)).check).toBe("failed");
+    expect(deps.checkBuild).not.toHaveBeenCalled();
+  });
+
   it("a single env auto-resolves and persists as the live environment", async () => {
     seedTeam({ envNames: ["production"] });
     await stageDrafts({ "agents/ivy/agent/agent.ts": "export default {};" });

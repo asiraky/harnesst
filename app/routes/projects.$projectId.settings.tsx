@@ -54,7 +54,6 @@ import {
   AppShell,
   PageHeader,
   SectionHeader,
-  repoCrumbs,
   type NavLevel,
 } from "~/components/shell";
 import { Alert, AlertDescription, AlertTitle } from "~/components/ui/alert";
@@ -81,7 +80,11 @@ import {
 } from "~/components/ui/select";
 import type { Environment } from "~/data/ports";
 import { deleteRepository } from "~/deploy/repository.server";
-import { listAgentEnvironments, renameProject } from "~/db/queries.server";
+import {
+  agentForPath,
+  listAgentEnvironments,
+  renameProject,
+} from "~/db/queries.server";
 import {
   createIngestToken,
   listIngestTokens,
@@ -113,6 +116,7 @@ import {
   planUninstall,
 } from "~/marketplace/install.server";
 import {
+  findInstall,
   findTemplateProvider,
   missingOwnedFiles,
   overlayLock,
@@ -128,6 +132,12 @@ import {
   type ResolvedTemplate,
 } from "~/marketplace/compose.server";
 import type { TemplateType } from "~/marketplace/manifest";
+import {
+  installIsCurrent,
+  matchTeamRoster,
+  planTeamUpdate,
+  type TeamUpdateMemberInput,
+} from "~/marketplace/team-install.server";
 import {
   resolveAgentModel,
   resolveTargetModel,
@@ -173,6 +183,7 @@ import {
   type RequiredSecretComputed,
   type SecretIntentInput,
 } from "~/project/secrets.server";
+import { LEDGER_KEYS } from "~/marketplace/provisioning";
 import { SecretsCard } from "~/components/secrets-card";
 import { SharedSecretsSection } from "~/components/shared-secrets-section";
 import { TeamLinksSection } from "~/components/team-links-section";
@@ -205,6 +216,31 @@ const SUBAGENT_INTENTS = new Set<string>([
   "update-install",
   "uninstall",
 ]);
+
+/**
+ * The model an agent-template update installs with. The agent's configured model is workspace
+ * state, resolved by name from the control plane — not read from agent.ts. Fall back to the
+ * workspace default only when that resolved model points at a connection that is no longer
+ * usable. `model` is null when neither is usable.
+ */
+async function resolveInstallModel(
+  orgId: string,
+  agentName: string,
+): Promise<{ model: string | null; effort: ReasoningEffort | null }> {
+  const resolved = await resolveAgentModel(orgId, agentName).catch(() => null);
+  if (resolved && (await ownsWorkspaceModelReference(orgId, resolved.model))) {
+    return { model: resolved.model, effort: resolved.effort };
+  }
+  const workspaceSelection = await getWorkspaceAssistantSelection(orgId).catch(
+    () => ({ model: null, effort: null }),
+  );
+  const model =
+    workspaceSelection.model &&
+    (await ownsWorkspaceModelReference(orgId, workspaceSelection.model))
+      ? workspaceSelection.model
+      : null;
+  return { model, effort: model ? workspaceSelection.effort : null };
+}
 
 const ALL = "all";
 
@@ -315,6 +351,13 @@ interface InstallDisplay {
   update: string | null;
   /** Current catalog version matches, but the installed lock is missing flattened catalog content. */
   repair: boolean;
+  /**
+   * Team rows only: the catalog team version to update to when the team row or any of its
+   * members' agent templates is behind the catalog, else null. Drives the one-click team update.
+   */
+  teamUpdate: string | null;
+  /** Team rows only: why the team is behind the catalog but can't be updated in one click. */
+  teamUpdateBlocked: string | null;
   /** The parent install that owns this bundled template's lifecycle. */
   providedBy: {
     id: string;
@@ -408,6 +451,26 @@ function buildInstalls(
               installed.hash === include.hash,
           ),
       );
+    let teamUpdate: string | null = null;
+    let teamUpdateBlocked: string | null = null;
+    if (entry.type === "team" && template) {
+      const match = matchTeamRoster(lock, template.manifest);
+      if (match.error && !installIsCurrent(entry, template))
+        teamUpdateBlocked = match.error;
+      const stale =
+        !match.error &&
+        (!installIsCurrent(entry, template) ||
+          match.members.some((m) => {
+            const memberTemplate = resolved.get(`agent/${m.agentId}`);
+            const installed = findInstall(lock, m.agentId, m.name);
+            return (
+              !!memberTemplate &&
+              !!installed &&
+              !installIsCurrent(installed, memberTemplate)
+            );
+          }));
+      if (stale) teamUpdate = template.manifest.version;
+    }
     rows.push({
       id: entry.id,
       type: entry.type,
@@ -419,6 +482,8 @@ function buildInstalls(
       depsLeft: Object.keys(entry.dependencies ?? {}),
       update,
       repair: !update && (missingFiles || missingIncludes || goneFromDisk),
+      teamUpdate,
+      teamUpdateBlocked,
       providedBy: null,
     });
 
@@ -453,6 +518,8 @@ function buildInstalls(
         depsLeft: [],
         update: null,
         repair: false,
+        teamUpdate: null,
+        teamUpdateBlocked: null,
         providedBy: {
           id: entry.id,
           type: entry.type,
@@ -1130,33 +1197,8 @@ export async function action(args: ActionFunctionArgs) {
       let installModel: string | null = null;
       let installEffort: ReasoningEffort | null = null;
       if (template.manifest.type === "agent") {
-        // The agent's configured model is workspace state, resolved by name from the control
-        // plane — not read from agent.ts. Fall back to the workspace default only when that
-        // resolved model points at a connection that is no longer usable.
-        const resolved = await resolveAgentModel(
-          project.orgId,
-          active.name,
-        ).catch(() => null);
-        if (
-          resolved &&
-          (await ownsWorkspaceModelReference(project.orgId, resolved.model))
-        ) {
-          installModel = resolved.model;
-          installEffort = resolved.effort;
-        } else {
-          const workspaceSelection = await getWorkspaceAssistantSelection(
-            project.orgId,
-          ).catch(() => ({ model: null, effort: null }));
-          installModel =
-            workspaceSelection.model &&
-            (await ownsWorkspaceModelReference(
-              project.orgId,
-              workspaceSelection.model,
-            ))
-              ? workspaceSelection.model
-              : null;
-          installEffort = installModel ? workspaceSelection.effort : null;
-        }
+        ({ model: installModel, effort: installEffort } =
+          await resolveInstallModel(project.orgId, active.name));
         if (!installModel) {
           return {
             error:
@@ -1225,6 +1267,120 @@ export async function action(args: ActionFunctionArgs) {
         });
       }
       throw redirect(`${back}?${mode}=${encodeURIComponent(id)}`);
+    }
+    // One click for a whole team: every stale member's agent template plus the team row, staged
+    // as one change-set. Roster changes (a role added, dropped or re-templated) are refused.
+    if (intent === "update-team") {
+      const id = String(form.get("id") ?? "");
+      if (!id) return { error: "Missing team to update." };
+      const catalog = getRuntime().catalog;
+      const [team, source, drafts] = await Promise.all([
+        resolveInstalledTemplate(catalog, "team", id),
+        fetchAgentSource(project.repoInstallationId, repo),
+        listDrafts(project.id),
+      ]);
+      if (!team)
+        return {
+          error: "This team template is no longer available in the catalog.",
+        };
+      const { roster } = await resolveSyncedAgentContext(
+        project.id,
+        null,
+        source.paths,
+      );
+      const draftPaths = drafts.map((d) => ({
+        path: d.path,
+        content: d.content,
+      }));
+      const lock = overlayLock(
+        source.files["harnesst-lock.json"] ?? null,
+        draftPaths,
+      );
+      const match = matchTeamRoster(lock, team.manifest);
+      if (match.error) return { error: match.error };
+      const agentsByName = new Map(roster.map((a) => [a.name, a]));
+      const draftsByPath = new Map(drafts.map((d) => [d.path, d]));
+      const members: TeamUpdateMemberInput[] = [];
+      for (const m of match.members) {
+        const agent = agentsByName.get(m.name);
+        if (!agent)
+          return {
+            error: `${m.name} is on the team's roster but not in the repository.`,
+          };
+        const template = await resolveInstalledTemplate(
+          catalog,
+          "agent",
+          m.agentId,
+        );
+        if (!template)
+          return {
+            error: `${m.name}'s agent template (${m.agentId}) is no longer available in the catalog.`,
+          };
+        // A member already on the catalog version is left alone, so it must not need a usable
+        // model (or anything else) for the stale members to update.
+        const installed = findInstall(lock, m.agentId, m.name);
+        if (installed && installIsCurrent(installed, template)) continue;
+        const pkgPath = packageJsonPathForRoot(agent.root);
+        const pkgDraft = draftsByPath.get(pkgPath);
+        const packageJson =
+          pkgDraft !== undefined
+            ? pkgDraft.content
+            : await readAgentFile(project.repoInstallationId, repo, pkgPath);
+        const { model, effort } = await resolveInstallModel(
+          project.orgId,
+          agent.name,
+        );
+        if (!model)
+          return {
+            error: `Choose a connected workspace default model before updating ${m.name}.`,
+          };
+        members.push({
+          role: m.role,
+          name: m.name,
+          template,
+          root: agent.root,
+          packageJson,
+          model,
+          effort,
+        });
+      }
+      const plan = planTeamUpdate({
+        team,
+        members,
+        registry: catalogLocator(),
+        repoPaths: source.paths,
+        drafts: draftPaths,
+        lock,
+        catalogProviders: await catalogProviderEvidence(catalog, lock),
+        rosterNames: roster.map((a) => a.name),
+      });
+      if (plan.conflicts.length > 0) {
+        return {
+          error: `Team update blocked; nothing was staged:\n${plan.conflicts.join("\n")}`,
+        };
+      }
+      // All-or-nothing, against the drafts the plan was made from: a partial stage would leave the
+      // lock saying a member is current while its files are not, and a retry would skip it.
+      const staged = await getRuntime().data.drafts.compareAndStage(
+        project.id,
+        drafts,
+        [
+          ...plan.writes.map((w) => ({ path: w.path, content: w.content })),
+          ...plan.deletions.map((path) => ({ path, content: null })),
+        ].map((w) => ({
+          projectId: project.id,
+          agentId: agentForPath(roster, w.path)?.id ?? null,
+          path: w.path,
+          content: w.content,
+          createdBy: auth.user.id,
+        })),
+      );
+      if (staged === null)
+        return {
+          error:
+            "Saved changes changed while preparing the team update. Nothing was staged; try again.",
+        };
+      throw redirect(`${back}?updated=${encodeURIComponent(id)}`);
     }
     if (intent === "uninstall") {
       const id = String(form.get("id") ?? "");
@@ -1621,22 +1777,7 @@ export default function Settings({
     navigation.formData?.get("intent") === "delete-repository";
 
   return (
-    <AppShell
-      breadcrumbs={repoCrumbs({
-        projectId: project.slug,
-        repoName: project.name,
-        isTeam: memberSegment !== null,
-        agentName: activeAgent,
-        subagentPath,
-        tail: [{ label: "Settings" }],
-      })}
-    >
-      <AgentNav
-        base={base}
-        level={level}
-        roster={roster}
-        activeAgent={memberSegment ?? undefined}
-      />
+    <AppShell nav={<AgentNav base={base} level={level} />}>
       <PageHeader
         icon={Settings2}
         accent="brand"
@@ -1751,6 +1892,18 @@ export default function Settings({
       )}
 
       <div className="space-y-10">
+        {loaderData.requiredSecretNames.includes("LEDGER_ACTOR_KEY") && (
+          <Alert>
+            <AlertTitle>Ledger bundle installation</AlertTitle>
+            <AlertDescription>
+              Harnesst supplies the ledger connection and team credentials
+              during installation.{" "}
+              <Link className="underline" to={`/repos/${project.slug}/setup`}>
+                Continue setup
+              </Link>
+            </AlertDescription>
+          </Alert>
+        )}
         {(showMember || nested) && <ModelSection loaderData={loaderData} />}
         {showRepo && isTeam && roster.length > 0 && (
           <section>
@@ -1779,16 +1932,20 @@ export default function Settings({
             activeAgent={activeAgent}
             isTeam={isTeam}
             envs={loaderData.envs.map((e) => ({ id: e.id, name: e.name }))}
-            secrets={loaderData.secrets}
+            secrets={loaderData.secrets.filter(
+              (s) => !LEDGER_KEYS.includes(s.key),
+            )}
             initialEnvId={loaderData.scope.environmentId}
             secretsConfigured={loaderData.secretsConfigured}
             secretsError={loaderData.secretsError}
-            required={loaderData.requiredSecrets.map((r) => ({
-              ...r,
-              sharedExists: loaderData.sharedSecrets.some(
-                (s) => s.key === r.name,
-              ),
-            }))}
+            required={loaderData.requiredSecrets
+              .filter((r) => !LEDGER_KEYS.includes(r.name))
+              .map((r) => ({
+                ...r,
+                sharedExists: loaderData.sharedSecrets.some(
+                  (s) => s.key === r.name,
+                ),
+              }))}
             dismissed={loaderData.dismissedSecrets.map((d) => ({
               name: d.name,
               sources: d.sources,
@@ -2190,7 +2347,27 @@ function MarketplaceInstallsSection({
                         subagents/{install.subagent}
                       </Link>
                     ))}
+                  {install.teamUpdate && (
+                    <Form method="post">
+                      <input type="hidden" name="intent" value="update-team" />
+                      <input type="hidden" name="id" value={install.id} />
+                      <Button
+                        type="submit"
+                        size="sm"
+                        variant="secondary"
+                        disabled={busy}
+                      >
+                        Update team to {install.teamUpdate}
+                      </Button>
+                    </Form>
+                  )}
+                  {install.teamUpdateBlocked && (
+                    <span className="text-xs text-muted-foreground">
+                      {install.teamUpdateBlocked}
+                    </span>
+                  )}
                   {!install.providedBy &&
+                    install.type !== "team" &&
                     install.update &&
                     install.subagent === viewedSubagent && (
                       <Form method="post">
@@ -2217,6 +2394,7 @@ function MarketplaceInstallsSection({
                       </Form>
                     )}
                   {!install.providedBy &&
+                    install.type !== "team" &&
                     install.repair &&
                     install.subagent === viewedSubagent && (
                       <Form method="post">

@@ -17,6 +17,7 @@ import {
   Package,
   Plug,
   Sparkles,
+  Users,
   Workflow,
   Wrench,
   type LucideIcon,
@@ -61,6 +62,13 @@ interface TypeMeta {
   dot: string;
 }
 const TYPE_META: Record<TemplateType, TypeMeta> = {
+  team: {
+    label: "Team",
+    plural: "Teams",
+    icon: Users,
+    accent: "bg-indigo-500/10 text-indigo-600 dark:text-indigo-400",
+    dot: "bg-indigo-500",
+  },
   agent: {
     label: "Agent",
     plural: "Agents",

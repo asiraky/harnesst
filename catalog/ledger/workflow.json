@@ -1,0 +1,360 @@
+{
+  "version": 2,
+  "human_proxy": "intake",
+  "artifacts": {
+    "by": [
+      "github",
+      "implementer"
+    ]
+  },
+  "kinds": {
+    "feature": {
+      "on_new_commit": "qa",
+      "stages": [
+        {
+          "id": "triage",
+          "owner": "intake",
+          "next": {
+            "design": {},
+            "infra": {},
+            "breakdown": {}
+          }
+        },
+        {
+          "id": "design",
+          "owner": "architect",
+          "next": {
+            "breakdown": {},
+            "infra": {},
+            "triage": {}
+          }
+        },
+        {
+          "id": "infra",
+          "owner": "infra",
+          "next": {
+            "breakdown": {
+              "requires": [
+                "infra_provisioned"
+              ]
+            }
+          },
+          "evidence": {
+            "infra_provisioned": {
+              "by": [
+                "infra"
+              ]
+            }
+          }
+        },
+        {
+          "id": "breakdown",
+          "owner": "intake",
+          "next": {
+            "build": {
+              "requires_tickets": true
+            }
+          }
+        },
+        {
+          "id": "build",
+          "owner": "implementer",
+          "next": {
+            "qa": {
+              "requires_tickets_closed": true,
+              "requires_artifact": [
+                "pr",
+                "preview_url"
+              ]
+            }
+          }
+        },
+        {
+          "id": "qa",
+          "owner": "implementer",
+          "next": {
+            "review": {
+              "requires": [
+                "qa_passed"
+              ],
+              "requires_artifact": [
+                "pr",
+                "preview_url"
+              ]
+            },
+            "build": {}
+          },
+          "evidence": {
+            "qa_passed": {
+              "by": [
+                "implementer"
+              ]
+            },
+            "qa_failed": {
+              "by": [
+                "implementer"
+              ]
+            }
+          }
+        },
+        {
+          "id": "review",
+          "owner": "implementer",
+          "next": {
+            "merge-approval": {
+              "requires": [
+                "review_approved"
+              ]
+            },
+            "build": {}
+          },
+          "evidence": {
+            "review_approved": {
+              "by": [
+                "implementer"
+              ]
+            },
+            "review_changes": {
+              "by": [
+                "implementer"
+              ]
+            }
+          }
+        },
+        {
+          "id": "merge-approval",
+          "gate": {
+            "role": "engineer",
+            "on": "head_sha"
+          },
+          "on_approve": "ready-to-merge",
+          "on_reject": "build"
+        },
+        {
+          "id": "ready-to-merge",
+          "owner": "github",
+          "next": {
+            "merged": {}
+          }
+        },
+        {
+          "id": "merged",
+          "owner": "github",
+          "next": {
+            "deployed": {
+              "requires_artifact": [
+                "deployment"
+              ]
+            }
+          }
+        },
+        {
+          "id": "deployed",
+          "owner": "intake",
+          "next": {},
+          "terminal": true
+        }
+      ]
+    },
+    "bug": {
+      "on_new_commit": "qa",
+      "stages": [
+        {
+          "id": "triage",
+          "owner": "intake",
+          "next": {
+            "design": {},
+            "infra": {},
+            "breakdown": {}
+          }
+        },
+        {
+          "id": "design",
+          "owner": "architect",
+          "next": {
+            "breakdown": {},
+            "infra": {},
+            "triage": {}
+          }
+        },
+        {
+          "id": "infra",
+          "owner": "infra",
+          "next": {
+            "breakdown": {
+              "requires": [
+                "infra_provisioned"
+              ]
+            }
+          },
+          "evidence": {
+            "infra_provisioned": {
+              "by": [
+                "infra"
+              ]
+            }
+          }
+        },
+        {
+          "id": "breakdown",
+          "owner": "intake",
+          "next": {
+            "build": {
+              "requires_tickets": true
+            }
+          }
+        },
+        {
+          "id": "build",
+          "owner": "implementer",
+          "next": {
+            "qa": {
+              "requires_tickets_closed": true,
+              "requires_artifact": [
+                "pr",
+                "preview_url"
+              ]
+            }
+          }
+        },
+        {
+          "id": "qa",
+          "owner": "implementer",
+          "next": {
+            "review": {
+              "requires": [
+                "qa_passed"
+              ],
+              "requires_artifact": [
+                "pr",
+                "preview_url"
+              ]
+            },
+            "build": {}
+          },
+          "evidence": {
+            "qa_passed": {
+              "by": [
+                "implementer"
+              ]
+            },
+            "qa_failed": {
+              "by": [
+                "implementer"
+              ]
+            }
+          }
+        },
+        {
+          "id": "review",
+          "owner": "implementer",
+          "next": {
+            "merge-approval": {
+              "requires": [
+                "review_approved"
+              ]
+            },
+            "build": {}
+          },
+          "evidence": {
+            "review_approved": {
+              "by": [
+                "implementer"
+              ]
+            },
+            "review_changes": {
+              "by": [
+                "implementer"
+              ]
+            }
+          }
+        },
+        {
+          "id": "merge-approval",
+          "gate": {
+            "role": "engineer",
+            "on": "head_sha"
+          },
+          "on_approve": "ready-to-merge",
+          "on_reject": "build"
+        },
+        {
+          "id": "ready-to-merge",
+          "owner": "github",
+          "next": {
+            "merged": {}
+          }
+        },
+        {
+          "id": "merged",
+          "owner": "github",
+          "next": {
+            "deployed": {
+              "requires_artifact": [
+                "deployment"
+              ]
+            }
+          }
+        },
+        {
+          "id": "deployed",
+          "owner": "intake",
+          "next": {},
+          "terminal": true
+        }
+      ]
+    },
+    "ticket": {
+      "stages": [
+        {
+          "id": "open",
+          "owner": "github",
+          "next": {
+            "merged": {}
+          }
+        },
+        {
+          "id": "merged",
+          "owner": "github",
+          "next": {},
+          "terminal": true
+        }
+      ]
+    },
+    "infra": {
+      "stages": [
+        {
+          "id": "triage",
+          "owner": "intake",
+          "next": {
+            "infra": {}
+          }
+        },
+        {
+          "id": "infra",
+          "owner": "infra",
+          "next": {
+            "done": {
+              "requires": [
+                "infra_provisioned"
+              ]
+            }
+          },
+          "evidence": {
+            "infra_provisioned": {
+              "by": [
+                "infra"
+              ]
+            }
+          }
+        },
+        {
+          "id": "done",
+          "owner": "intake",
+          "next": {},
+          "terminal": true
+        }
+      ]
+    }
+  }
+}

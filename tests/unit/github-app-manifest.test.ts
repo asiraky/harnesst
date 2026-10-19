@@ -109,6 +109,7 @@ describe("App installations (Deployment card status)", () => {
             account: { login: "acme-org", type: "Organization" },
             repository_selection: "all",
             html_url: "https://github.com/organizations/acme-org/settings/installations/1",
+            permissions: { contents: "write", metadata: "read" },
           },
           {
             id: 2,
@@ -135,6 +136,7 @@ describe("App installations (Deployment card status)", () => {
         accountType: "Organization",
         repositorySelection: "all",
         htmlUrl: "https://github.com/organizations/acme-org/settings/installations/1",
+        permissions: { contents: "write", metadata: "read" },
       },
       {
         id: 2,
@@ -142,6 +144,7 @@ describe("App installations (Deployment card status)", () => {
         accountType: "User",
         repositorySelection: "selected",
         htmlUrl: "https://github.com/settings/installations/2",
+        permissions: {},
       },
     ]);
   });

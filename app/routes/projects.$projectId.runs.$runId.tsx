@@ -20,7 +20,7 @@ import {
 
 import { RunTranscript, type StepView } from "~/components/run-steps";
 import { LocalizedDateTime } from "~/components/localized-values";
-import { AgentNav, AppShell, PageHeader, repoCrumbs } from "~/components/shell";
+import { AgentNav, AppShell, PageHeader } from "~/components/shell";
 import { Alert, AlertDescription, AlertTitle } from "~/components/ui/alert";
 import { Badge } from "~/components/ui/badge";
 import { Button } from "~/components/ui/button";
@@ -49,7 +49,7 @@ export const loader = (args: LoaderFunctionArgs) =>
         const legacy = agentParamRedirect(args.request, project.id);
         if (legacy) throw legacy;
       }
-      const [result, { roster, active, isTeam }] = await Promise.all([
+      const [result, { active, isTeam }] = await Promise.all([
         getRunWithSteps(project.id, args.params.runId!),
         resolveAgentContext(project.id, agentName),
       ]);
@@ -65,7 +65,6 @@ export const loader = (args: LoaderFunctionArgs) =>
           repoName: project.repoName,
         },
         ...result,
-        roster: roster.map((a) => ({ name: a.name })),
         activeAgent: active.name,
         isTeam,
       };
@@ -100,7 +99,7 @@ function commitUrl(
 export default function RunTranscriptRoute({
   loaderData,
 }: Route.ComponentProps) {
-  const { project, run, steps, release, roster, activeAgent, isTeam } =
+  const { project, run, steps, release, activeAgent, isTeam } =
     loaderData;
   const ctx = contextPath(project.id, isTeam ? activeAgent : null);
   const stepViews = steps as unknown as StepView[];
@@ -139,20 +138,13 @@ export default function RunTranscriptRoute({
 
   return (
     <AppShell
-      breadcrumbs={repoCrumbs({
-        projectId: project.id,
-        repoName: project.name,
-        isTeam,
-        agentName: activeAgent,
-        tail: [{ label: "Run" }],
-      })}
+      nav={
+        <AgentNav
+          base={ctx}
+          level={isTeam ? "member" : "single"}
+        />
+      }
     >
-      <AgentNav
-        base={ctx}
-        level={isTeam ? "member" : "single"}
-        roster={roster}
-        activeAgent={isTeam ? activeAgent : undefined}
-      />
       <PageHeader
         icon={Activity}
         accent="indigo"

@@ -126,6 +126,34 @@ export function narrowedReadTokenParams(
   };
 }
 
+/**
+ * A short-lived token for merging one approved PR: the one repo, contents:write (the merge) and
+ * pull_requests:read (checking the PR first). Same App-level narrowing as the read token; the
+ * caller uses it for that merge and drops it.
+ */
+export async function mintNarrowedMergeToken(input: {
+  installationId: string;
+  repo: string;
+}): Promise<{ token: string; expiresAt: string }> {
+  const grant = await resolveInstallationGrant(input.installationId);
+  const octokit = getGitHubApp().octokit;
+  const res = await octokit.rest.apps.createInstallationAccessToken(
+    narrowedMergeTokenParams(grant.installationId, input.repo),
+  );
+  return { token: res.data.token, expiresAt: res.data.expires_at };
+}
+
+export function narrowedMergeTokenParams(
+  installationId: string | number,
+  repo: string,
+) {
+  return {
+    installation_id: Number(installationId),
+    repositories: [repo],
+    permissions: { contents: "write" as const, pull_requests: "read" as const },
+  };
+}
+
 /** Public URL where a user installs the App on a new org/account. */
 export function getInstallUrl(state?: string): string {
   const base = `https://github.com/apps/${getGitHubConfig().slug}/installations/new`;

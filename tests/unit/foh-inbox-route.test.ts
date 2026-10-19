@@ -14,6 +14,7 @@ const mocks = vi.hoisted(() => ({
   resolveActiveWorkspace: vi.fn(),
   listViewerProjectIds: vi.fn(),
   listFohSessionsByIds: vi.fn(),
+  listApprovalInboxItems: vi.fn(),
 }));
 
 let store: FakeStore;
@@ -33,6 +34,14 @@ vi.mock("~/auth/workspace.server", () => ({
 }));
 vi.mock("~/foh/sidebar.server", () => ({
   listViewerProjectIds: mocks.listViewerProjectIds,
+  listViewerGrants: async (viewer: unknown) =>
+    ((await mocks.listViewerProjectIds(viewer)) as string[]).map((projectId) => ({
+      projectId,
+      role: "write",
+    })),
+}));
+vi.mock("~/approvals/inbox.server", () => ({
+  listApprovalInboxItems: mocks.listApprovalInboxItems,
 }));
 vi.mock("~/playground/sessions.server", () => ({
   clearSessionPendingInput: vi.fn(async () => {}),
@@ -82,6 +91,7 @@ beforeEach(() => {
     member: { id: "m1", organizationId: "org_1", userId: "user_1", role: "member" },
   });
   mocks.listViewerProjectIds.mockResolvedValue(["proj_a"]);
+  mocks.listApprovalInboxItems.mockResolvedValue([]);
   mocks.listFohSessionsByIds.mockImplementation(async (ids: string[]) =>
     ids.map((id) => ({ id, agentId: "agent_ivy", title: `Session ${id}` })),
   );
@@ -151,6 +161,21 @@ describe("GET /api/foh/inbox", () => {
     expect(own.href).toBe("/t/proj_a/agent_ivy/s/sess_1");
     expect(own.sessionTitle).toBe("Session sess_1");
     expect(own.agentName).toBe("ivy");
+  });
+
+  it("lists open approvals ahead of session items, scoped to the viewer's grants", async () => {
+    mocks.listApprovalInboxItems.mockResolvedValue([
+      { id: "approval:abcdefghijkl", kind: "approval", href: "/approvals/abcdefghijkl" },
+    ]);
+    const result = (await loader(loaderArgs())) as {
+      items: Array<{ id: string }>;
+      count: number;
+    };
+    expect(mocks.listApprovalInboxItems).toHaveBeenCalledWith([
+      { projectId: "proj_a", role: "write" },
+    ]);
+    expect(result.items[0].id).toBe("approval:abcdefghijkl");
+    expect(result.count).toBe(5);
   });
 
   it("returns an empty inbox without a workspace", async () => {

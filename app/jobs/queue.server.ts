@@ -24,7 +24,11 @@ export type JobKind =
   // issue #267: keep watching a delegated turn whose relay reply stream died.
   | "reattach_delegation"
   // issue #225: the whole publish pipeline (check → build → commit → version → deploy).
-  | "publish";
+  | "publish"
+  // Provisioners (app/provisioners): install, post-deploy verify, post-publish upgrade.
+  | "provision_bundle"
+  | "verify_bundle"
+  | "upgrade_bundle";
 
 export interface DeployReleasePayload {
   environmentId: string;

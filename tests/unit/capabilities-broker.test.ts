@@ -101,8 +101,8 @@ afterEach(() => {
 });
 
 describe("capabilityAccessToken", () => {
-  it("refuses an unknown provider and every non-capability delivery (google, mayi)", async () => {
-    for (const provider of ["notaprovider", "google", "mayi"]) {
+  it("refuses an unknown provider and a non-capability delivery (google)", async () => {
+    for (const provider of ["notaprovider", "google"]) {
       const out = await capabilityAccessToken(
         { ...SCOPE, provider },
         okFetch,

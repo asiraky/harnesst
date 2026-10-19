@@ -110,7 +110,10 @@ export async function handleSecretIntent(
     case "secret-replace":
     case "shared-secret-set": {
       if (!SECRET_KEY_RE.test(key)) {
-        return { ok: false, error: "Key must be a valid env var name (A–Z, 0–9, _)." };
+        return {
+          ok: false,
+          error: "Key must be a valid env var name (A–Z, 0–9, _).",
+        };
       }
       if (!input.value) return { ok: false, error: "Value is required." };
       const affectedAgents = agentId
@@ -255,7 +258,11 @@ export function computeRequiredSecrets(input: {
   setNames: string[];
   attachedNames: string[];
   dismissedNames: string[];
-}): { missing: RequiredSecretComputed[]; dismissed: RequiredSecretComputed[]; all: RequiredSecretComputed[] } {
+}): {
+  missing: RequiredSecretComputed[];
+  dismissed: RequiredSecretComputed[];
+  all: RequiredSecretComputed[];
+} {
   const byName = new Map<string, RequiredSecretComputed>();
   for (const entry of input.lockSecrets) {
     for (const s of entry.secrets) {
@@ -263,7 +270,8 @@ export function computeRequiredSecrets(input: {
       if (existing) {
         existing.sources.push(entry.templateId);
         // First description wins; sandbox/provisioned/generated true from ANY source sticks.
-        if (!existing.description && s.description) existing.description = s.description;
+        if (!existing.description && s.description)
+          existing.description = s.description;
         if (s.sandbox) existing.sandbox = true;
         if (s.provisioned) existing.provisioned = true;
         if (s.generated) existing.generated = true;
@@ -290,11 +298,17 @@ export function computeRequiredSecrets(input: {
     // Issue #163: generated secrets are harnesst-minted at deploy — same exclusion.
     missing: all.filter(
       (r) =>
-        !r.provisioned && !r.generated && !satisfied.has(r.name) && !dismissedSet.has(r.name),
+        !r.provisioned &&
+        !r.generated &&
+        !satisfied.has(r.name) &&
+        !dismissedSet.has(r.name),
     ),
     dismissed: all.filter(
       (r) =>
-        !r.provisioned && !r.generated && !satisfied.has(r.name) && dismissedSet.has(r.name),
+        !r.provisioned &&
+        !r.generated &&
+        !satisfied.has(r.name) &&
+        dismissedSet.has(r.name),
     ),
   };
 }
@@ -304,7 +318,10 @@ export function lockSecretsForMember(
   lock: HarnesstLock,
   memberName: string,
   isTeam: boolean,
-): Array<{ templateId: string; secrets: NonNullable<HarnesstLock["installs"][number]["secrets"]> }> {
+): Array<{
+  templateId: string;
+  secrets: NonNullable<HarnesstLock["installs"][number]["secrets"]>;
+}> {
   return lock.installs
     .filter(
       (e) =>
@@ -326,7 +343,11 @@ export async function agentRequiredSecretState(input: {
   isTeam: boolean;
   lock: HarnesstLock;
 }): Promise<ReturnType<typeof computeRequiredSecrets>> {
-  const lockSecrets = lockSecretsForMember(input.lock, input.memberName, input.isTeam);
+  const lockSecrets = lockSecretsForMember(
+    input.lock,
+    input.memberName,
+    input.isTeam,
+  );
   if (lockSecrets.length === 0) return { all: [], missing: [], dismissed: [] };
   const [rows, attachments, dismissedNames] = await Promise.all([
     listAgentSecretRows(input.projectId, input.agentId),
@@ -365,7 +386,12 @@ export type InstallSecretOp =
  * Values pass through here transiently; they are never returned to a client or logged.
  */
 export function planInstallSecretOps(input: {
-  secrets: Array<{ name: string; sandbox?: boolean; provisioned?: boolean; generated?: boolean }>;
+  secrets: Array<{
+    name: string;
+    sandbox?: boolean;
+    provisioned?: boolean;
+    generated?: boolean;
+  }>;
   form: Pick<FormData, "get" | "has">;
   sharedNames: string[];
 }): InstallSecretOp[] {
@@ -478,7 +504,9 @@ export async function cleanupOrphanedPendingSecrets(
   const removed: string[] = [];
   for (const name of held) {
     if (roster.has(name)) continue;
-    const hasDraft = input.draftPaths.some((p) => p.startsWith(`agents/${name}/`));
+    const hasDraft = input.draftPaths.some((p) =>
+      p.startsWith(`agents/${name}/`),
+    );
     if (hasDraft) continue;
     await deps.deletePending(input.projectId, name);
     removed.push(name);

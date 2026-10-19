@@ -3,19 +3,22 @@
   "subagentCompatible": true,
   "type": "skill",
   "name": "Developer toolchain",
-  "description": "A broad developer toolchain preinstalled in the agent's sandbox — git, gh, jq, ripgrep, build tools, python3, pnpm/yarn, and friends — plus a skill inventorying what's there. A deliberate superset: install once, stop apt-getting per session.",
-  "version": "0.1.1",
+  "description": "A broad developer toolchain preinstalled in the agent's sandbox \u2014 git, gh, jq, ripgrep, build tools, python3, pnpm/yarn, and friends \u2014 plus a skill inventorying what's there. A deliberate superset: install once, stop apt-getting per session.",
+  "version": "0.1.2",
   "eve": ">=0.1.0",
-  "files": ["skills/dev-toolchain.md"],
+  "files": [
+    "skills/dev-toolchain.md"
+  ],
   "assistantSkill": "assistant-skill.md",
   "sandbox": {
     "bootstrap": [
-      "apt-get update && apt-get install -y --no-install-recommends ca-certificates curl wget git jq unzip zip rsync openssh-client build-essential pkg-config python3 python3-pip python3-venv sqlite3 ripgrep fd-find shellcheck tree file less nano && rm -rf /var/lib/apt/lists/*",
-      "command -v fd >/dev/null || (command -v fdfind >/dev/null && ln -s \"$(command -v fdfind)\" /usr/local/bin/fd) || true",
-      "command -v gh >/dev/null || (mkdir -p -m 755 /etc/apt/keyrings && curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg -o /etc/apt/keyrings/githubcli-archive-keyring.gpg && chmod go+r /etc/apt/keyrings/githubcli-archive-keyring.gpg && echo \"deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main\" > /etc/apt/sources.list.d/github-cli.list && apt-get update && apt-get install -y --no-install-recommends gh && rm -rf /var/lib/apt/lists/*)",
+      "if [ \"$(id -u)\" -eq 0 ]; then bash -lc 'apt-get update && apt-get install -y --no-install-recommends ca-certificates curl wget git jq unzip zip rsync openssh-client build-essential pkg-config python3 python3-pip python3-venv sqlite3 ripgrep fd-find shellcheck tree file less nano && rm -rf /var/lib/apt/lists/*'; else sudo -n bash -lc 'apt-get update && apt-get install -y --no-install-recommends ca-certificates curl wget git jq unzip zip rsync openssh-client build-essential pkg-config python3 python3-pip python3-venv sqlite3 ripgrep fd-find shellcheck tree file less nano && rm -rf /var/lib/apt/lists/*'; fi",
+      "if [ \"$(id -u)\" -eq 0 ]; then bash -lc 'command -v fd >/dev/null || (command -v fdfind >/dev/null && ln -s \"$(command -v fdfind)\" /usr/local/bin/fd) || true'; else sudo -n bash -lc 'command -v fd >/dev/null || (command -v fdfind >/dev/null && ln -s \"$(command -v fdfind)\" /usr/local/bin/fd) || true'; fi",
+      "if [ \"$(id -u)\" -eq 0 ]; then bash -lc 'command -v gh >/dev/null || (mkdir -p -m 755 /etc/apt/keyrings && curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg -o /etc/apt/keyrings/githubcli-archive-keyring.gpg && chmod go+r /etc/apt/keyrings/githubcli-archive-keyring.gpg && echo \"deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main\" > /etc/apt/sources.list.d/github-cli.list && apt-get update && apt-get install -y --no-install-recommends gh && rm -rf /var/lib/apt/lists/*)'; else sudo -n bash -lc 'command -v gh >/dev/null || (mkdir -p -m 755 /etc/apt/keyrings && curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg -o /etc/apt/keyrings/githubcli-archive-keyring.gpg && chmod go+r /etc/apt/keyrings/githubcli-archive-keyring.gpg && echo \"deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main\" > /etc/apt/sources.list.d/github-cli.list && apt-get update && apt-get install -y --no-install-recommends gh && rm -rf /var/lib/apt/lists/*)'; fi",
       "corepack enable || true",
-      "set -e; command -v pnpm >/dev/null 2>&1 || npm install -g pnpm@latest; command -v yarn >/dev/null 2>&1 || npm install -g yarn@latest"
+      "set -e; command -v pnpm >/dev/null 2>&1 || npm install -g pnpm@latest; command -v yarn >/dev/null 2>&1 || npm install -g yarn@latest",
+      "git --version && gh --version && jq --version && rg --version"
     ],
-    "revalidationKey": "dev-toolchain-sandbox@2026-07-11"
+    "revalidationKey": "dev-toolchain-sandbox@2026-09-17"
   }
 }

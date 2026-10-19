@@ -34,7 +34,6 @@ import {
   AppShell,
   PageHeader,
   accentChip,
-  repoCrumbs,
 } from "~/components/shell";
 import { Alert, AlertDescription, AlertTitle } from "~/components/ui/alert";
 import { Badge } from "~/components/ui/badge";
@@ -140,7 +139,7 @@ export const loader = (args: LoaderFunctionArgs) =>
         path: d.path,
         content: d.content,
       }));
-      const { roster, active, isTeam, target } = await resolveConfigTarget({
+      const { active, isTeam, target } = await resolveConfigTarget({
         projectId: project.id,
         agentName,
         subSegments,
@@ -220,7 +219,6 @@ export const loader = (args: LoaderFunctionArgs) =>
       return {
         project,
         category: { key: cat.key, label: cat.label },
-        roster: roster.map((a) => ({ name: a.name })),
         activeAgent: active.name,
         activeRoot: target.root,
         subagentPath: target.kind === "subagent" ? target.subagentPath : [],
@@ -393,7 +391,6 @@ export default function ResourceCategory({
   const {
     project,
     category,
-    roster,
     activeAgent,
     activeRoot,
     subagentPath,
@@ -417,23 +414,15 @@ export default function ResourceCategory({
 
   return (
     <AppShell
-      breadcrumbs={repoCrumbs({
-        projectId: project.id,
-        repoName: project.name,
-        isTeam,
-        agentName: activeAgent,
-        subagentPath,
-        tail: [{ label: category.label }],
-      })}
+      nav={
+        <AgentNav
+          base={ctx}
+          level={
+            subagentPath.length > 0 ? "subagent" : isTeam ? "member" : "single"
+          }
+        />
+      }
     >
-      <AgentNav
-        base={ctx}
-        level={
-          subagentPath.length > 0 ? "subagent" : isTeam ? "member" : "single"
-        }
-        roster={roster}
-        activeAgent={isTeam ? activeAgent : undefined}
-      />
       <PageHeader
         icon={meta.icon}
         accent={meta.accent}

@@ -1,0 +1,1 @@
+ALTER TABLE "artifacts" ADD COLUMN "shown_at" integer[] DEFAULT '{}'::integer[] NOT NULL;

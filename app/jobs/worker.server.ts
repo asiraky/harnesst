@@ -157,6 +157,13 @@ async function execute(job: Job): Promise<void> {
       console.log(`[jobs] reattach_delegation ${p.delegationId}: ${detail}`);
       return;
     }
+    case "verify_bundle":
+    case "provision_bundle":
+    case "upgrade_bundle": {
+      const { runProvisioningJob } = await import("~/provisioners/registry.server");
+      await runProvisioningJob(job.kind, job.payload);
+      return;
+    }
     case "publish": {
       // issue #225: the publish pipeline (check → build → commit → version → deploy). Progress and
       // failures surface through the workspace task's steps, not queue retries (maxAttempts:1).

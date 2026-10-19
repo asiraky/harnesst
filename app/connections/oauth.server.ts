@@ -375,7 +375,7 @@ export async function fetchAccountEmail(
 /**
  * Register a fresh OAuth client with a provider that declares `clientRegistration` (issue #167) —
  * one client PER GRANT, minted at Connect time. RFC 7591-shaped POST; `approval_callback_uris`
- * is the (mayi-shaped) extension carrying the exact instance callback URL of every environment
+ * is a non-standard extension carrying the exact instance callback URL of every environment
  * the agent has (immutable, exact-match — a later environment needs a reconnect, which registers
  * a fresh client). Throws a readable Error on any failure; registration endpoints validate
  * callback URIs as public HTTPS, so the caller appends the local-dev remediation.
@@ -430,7 +430,7 @@ export async function registerOAuthClient(
  * connection file runs at runtime — kept here too so deploy can validate a grant before injecting
  * it.
  *
- * Rotating grants (issue #167): providers like mayi return a NEW `refresh_token` on every refresh
+ * Rotating grants (issue #167): rotating-grant providers return a NEW `refresh_token` on every refresh
  * and revoke the whole token family if the old one is reused. When the response carries one it is
  * returned as `refreshToken` — every harnesst-side caller MUST persist it back onto the grant before
  * using the new access token. Google returns none; the field stays undefined and nothing changes.
@@ -463,10 +463,9 @@ export async function refreshAccessToken(
   });
   if (!res.ok) {
     const body = await res.text().catch(() => "");
-    // RFC 6749 §5.2 names a dead grant `invalid_grant`. May I? (h3 `createError`) reports the same
-    // condition as `statusMessage: "Invalid refresh token"` (expired after 30 days, revoked, or
-    // never issued) or `"Refresh token reuse detected; connection revoked"` — both mean the grant
-    // is gone for good, so retrying only spins (a rollback loop in prod ran for 13 days on this).
+    // RFC 6749 §5.2 names a dead grant `invalid_grant`. Some providers report the same
+    // condition as `"Invalid refresh token"` (expired, revoked, or never issued) or
+    // `"Refresh token reuse detected; connection revoked"` — both mean the grant is gone for good, so retrying only spins (a rollback loop in prod ran for 13 days on this).
     if (res.status === 400 && DEAD_GRANT_BODY.test(body)) {
       throw new InvalidGrantError(
         `${provider.label} refused the refresh token (invalid_grant) — the connection is no longer valid.`,

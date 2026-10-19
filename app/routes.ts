@@ -41,10 +41,13 @@ export default [
       index("routes/foh.agent._index.tsx"),
       route("s/:sessionId", "routes/foh.session.tsx"),
     ]),
+    // A ledger gate's approval: the link the team's proxy agent posts (harnesst approvals).
+    route("approvals/:id", "routes/approvals.$id.tsx"),
   ]),
   // FOH resource routes: the streaming turn + stop for one repo's sessions, and the global
   // inbox badge/flyout endpoint (D12 polling).
   route("api/foh/inbox", "routes/api.foh.inbox.ts"),
+  route("api/approvals/:id", "routes/api.approvals.$id.ts"),
   // Channel park (WS1): a channel-homed agent files its `input.requested` question here. Bearer
   // (HARNESST_TEAM_TOKEN) auth, no browser session — kept above the :projectId routes so the
   // static segment can't be swallowed by them.
@@ -52,6 +55,9 @@ export default [
   // Artifact publish (#290): an agent files an image it produced. Same bearer story as park, and
   // likewise kept above the :projectId routes so the static segment can't be swallowed.
   route("api/foh/artifacts", "routes/api.foh.artifacts.ts"),
+  // Team artifacts: a teammate lists and fetches what any agent in the repo published. Same
+  // bearer and static-segment placement as the publish route above.
+  route("api/foh/team-artifacts", "routes/api.foh.team-artifacts.ts"),
   // Agent-initiated conversations (#288 3c): the baked notify-user tool posts here. Same
   // bearer auth and the same static-segment placement rule as the park route above.
   route("api/foh/notify", "routes/api.foh.notify.ts"),
@@ -110,10 +116,18 @@ export default [
   // Build — every back-of-house page shares one pathless layout whose loader feeds the sidebar
   // (routes/build.tsx). Resource routes are registered outside it: they render nothing.
   layout("routes/build.tsx", [
+    // The setup wizard: everything an install still needs (secrets, ledger, publish, GitHub Apps,
+    // connections, approvals), derived from current state for one repo.
+    route("repos/:projectId/setup", "routes/projects.$projectId.setup.tsx"),
     route("dashboard", "routes/dashboard.tsx"),
     // Recruit — the marketplace (PRD §7.8, M6). Browse (index.json) + a template detail page.
     route("marketplace", "routes/marketplace.tsx"),
     route("marketplace/:type/:id", "routes/marketplace.$type.$id.tsx"),
+    // Team templates install every roster agent at once — static, so it wins over `:type`.
+    route(
+      "marketplace/team/:id/install",
+      "routes/marketplace.team.$id.install.tsx",
+    ),
     route(
       "marketplace/:type/:id/install",
       "routes/marketplace.$type.$id.install.tsx",
@@ -329,7 +343,7 @@ export default [
   route("api/discord/interactions", "routes/api.discord.interactions.ts"),
   route("api/discord/send", "routes/api.discord.send.ts"),
   // Instance token broker (issue #167): instances of access-token-broker providers (rotating
-  // refresh grants — mayi) fetch fresh access tokens here with their HARNESST_TEAM_TOKEN.
+  // refresh grants) fetch fresh access tokens here with their HARNESST_TEAM_TOKEN.
   route("api/connections/token", "routes/api.connections.token.ts"),
   // Brokered capabilities (issue #166): capability providers' whitelisted operations. Instances
   // POST typed inputs with their HARNESST_TEAM_TOKEN; harnesst validates and executes with the

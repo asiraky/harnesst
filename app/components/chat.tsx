@@ -65,6 +65,8 @@ import { useCopy } from "./chat/clipboard";
 import { CodeBlock, languageFromClassName } from "./chat/code-block";
 import { formatBytes, loadIntoComposer } from "./chat/composer";
 import { LightboxHost, openLightbox } from "./chat/lightbox";
+import { ApprovalCard } from "./approvals/approval-card";
+import { approvalIdFromHref } from "~/approvals/view";
 import { artifactBadge } from "./artifacts/artifact-type";
 import { SharePopover } from "./artifacts/share-popover";
 import { TypeBadge } from "./artifacts/type-badge";
@@ -417,6 +419,7 @@ type MarkdownNode = {
   type: string;
   tagName?: string;
   value?: string;
+  properties?: Record<string, unknown>;
   children?: MarkdownNode[];
 };
 
@@ -727,13 +730,27 @@ function nodeText(node: MarkdownNode | undefined): string {
 
 const HEADING_CLASS = "pt-1 font-semibold leading-snug";
 
+/** The approval id when a paragraph is nothing but a link to `/approvals/<id>`. */
+function approvalLinkParagraph(node: MarkdownNode | undefined): string | null {
+  const content = (node?.children ?? []).filter(
+    (child) => !(child.type === "text" && !child.value?.trim()),
+  );
+  const link = content.length === 1 && content[0].tagName === "a" ? content[0] : null;
+  const href = link?.properties?.href;
+  return typeof href === "string" ? approvalIdFromHref(href) : null;
+}
+
 const MARKDOWN_COMPONENTS: Components = {
   a: MarkdownAnchor,
   // `whitespace-pre-wrap` keeps runs of spaces, so a reply that aligns plaintext by hand still
   // lines up — the previous renderer preserved it and agents lean on it.
-  p: ({ children }) => (
-    <p className="leading-relaxed whitespace-pre-wrap">{children}</p>
-  ),
+  p: ({ node, children }) => {
+    // A harnesst approval link on its own line becomes the approval card, so the reader can
+    // decide without leaving the conversation.
+    const approvalId = approvalLinkParagraph(node as MarkdownNode | undefined);
+    if (approvalId) return <ApprovalCard id={approvalId} compact />;
+    return <p className="leading-relaxed whitespace-pre-wrap">{children}</p>;
+  },
   // Chat lives inside a page that owns h1/h2, so markdown headings start at h3 and flatten out
   // rather than competing with the surface's own hierarchy.
   h1: ({ children }) => (

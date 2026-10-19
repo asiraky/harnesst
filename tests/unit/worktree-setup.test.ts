@@ -141,7 +141,7 @@ describe("allocatePorts", () => {
       splitter: 8894,
       instance: 3800,
       tunnelShortId: "abcdef12",
-      tunnelHost: "feature-a-abcdef12.dev.zero8.ai",
+      tunnelHost: "feature-a-abcdef12.dev.example.test",
     };
     expect(allocatePorts({ "feature-a": entry }, "feature-a")).toBe(entry);
   });

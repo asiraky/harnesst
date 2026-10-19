@@ -1,5 +1,5 @@
 /**
- * Per-grant refresh serialization (issue #167). Rotating-grant providers (mayi) revoke the whole
+ * Per-grant refresh serialization (issue #167). Rotating-grant providers revoke the whole
  * token family when a stored refresh token is consumed twice, so EVERY control-plane refresh of a
  * grant — broker calls (broker.server.ts) AND deploy-time validation (deploy.server.ts) — must run
  * on ONE in-process chain per grant scope: each task re-reads the grant row inside the chain, so a

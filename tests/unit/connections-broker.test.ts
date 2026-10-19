@@ -6,7 +6,7 @@
  *    served, refreshes run against the grant's own registered client, rotations persist BEFORE
  *    the access token is released, dead grants flip to "expired" with the reconnect message, and
  *    concurrent calls for one grant are serialized (the second sees the first's rotated token —
- *    the discipline that keeps mayi's family-reuse revocation from firing).
+ *    the discipline that keeps a rotating provider's family-reuse revocation from firing).
  *  - the `/api/connections/token` resource action (mocked seams): HARNESST_TEAM_TOKEN delegation
  *    auth (the Discord-send-proxy pattern), deployment → environment → agent resolution, body
  *    validation, and BrokerResult status passthrough.
@@ -22,6 +22,36 @@ import {
   type ConnectionDeployDeps,
 } from "~/connections/deploy.server";
 import { InvalidGrantError } from "~/connections/oauth.server";
+import type { ProviderDefinition } from "~/connections/providers.server";
+
+/**
+ * A hypothetical rotating-grant provider with brokered delivery and per-grant client
+ * registration, injected into the registry so the generic broker logic has a consumer.
+ */
+const ROTATING = vi.hoisted(
+  (): ProviderDefinition => ({
+    id: "rotating",
+    label: "Rotating Provider",
+    authorizeUrl: "https://auth.rotating.example/oauth/authorize",
+    tokenUrl: "https://auth.rotating.example/oauth/token",
+    pkce: true,
+    envPrefix: "ROTATING",
+    tokenEndpointAuth: "none",
+    credentialDelivery: "access-token-broker",
+    clientRegistration: { endpoint: "https://auth.rotating.example/oauth/register" },
+  }),
+);
+
+vi.mock("~/connections/providers.server", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("~/connections/providers.server")>();
+  return {
+    ...actual,
+    getProvider: (id: string) =>
+      id === "rotating" ? ROTATING : actual.getProvider(id),
+    listProviders: () => [...actual.listProviders(), ROTATING],
+  };
+});
 
 const routeMocks = vi.hoisted(() => ({
   brokerAccessToken: vi.fn(),
@@ -60,10 +90,10 @@ function brokerDeps(over: Partial<BrokerDeps>): BrokerDeps {
     getConfig: () => null,
     openRefreshToken: async () => ({
       grant: {
-        id: "grant_mayi",
+        id: "grant_rotating",
         status: "active",
         scopes: "approval:create approval:read approval:cancel",
-        clientId: "mayi_client_1",
+        clientId: "rotating_client_1",
       },
       refreshToken: "rt_1",
       tokenVersion: "iv_1",
@@ -115,7 +145,7 @@ describe("brokerAccessToken", () => {
     });
     const before = Date.now();
     const out = await realBroker(
-      { ...SCOPE, provider: "mayi" },
+      { ...SCOPE, provider: "rotating" },
       okFetch,
       brokerDeps({
         refreshAccessToken: refreshAccessToken as unknown as BrokerDeps["refreshAccessToken"],
@@ -128,14 +158,14 @@ describe("brokerAccessToken", () => {
     expect(out.expiresAt).toBeGreaterThanOrEqual(before + 3600_000);
     // The rotated token hit the grant row BEFORE the access token was released — a crash after
     // the refresh but before persistence is the only remaining window, never a happy-path replay.
-    expect(order).toEqual(["refresh:mayi_client_1", "rotate:grant_mayi:rt_2"]);
-    expect(rotateRefreshToken).toHaveBeenCalledWith("grant_mayi", "rt_2", "iv_1");
+    expect(order).toEqual(["refresh:rotating_client_1", "rotate:grant_rotating:rt_2"]);
+    expect(rotateRefreshToken).toHaveBeenCalledWith("grant_rotating", "rt_2", "iv_1");
   });
 
   it("does not write the grant when the provider returns no rotation", async () => {
     const rotateRefreshToken = vi.fn(async () => true);
     const out = await realBroker(
-      { ...SCOPE, provider: "mayi" },
+      { ...SCOPE, provider: "rotating" },
       okFetch,
       brokerDeps({
         rotateRefreshToken,
@@ -148,18 +178,18 @@ describe("brokerAccessToken", () => {
 
   it("403s with the reconnect message when the agent has no active grant", async () => {
     const out = await realBroker(
-      { ...SCOPE, provider: "mayi" },
+      { ...SCOPE, provider: "rotating" },
       okFetch,
       brokerDeps({ openRefreshToken: async () => null }),
     );
     expect(out).toMatchObject({ ok: false, status: 403 });
-    expect(out.ok === false && out.error).toMatch(/no active May I\? connection/);
+    expect(out.ok === false && out.error).toMatch(/no active Rotating Provider connection/);
   });
 
   it("marks a dead grant expired (compare-and-set) and 403s with the reconnect message", async () => {
     const markGrantStatus = vi.fn(async () => {});
     const out = await realBroker(
-      { ...SCOPE, provider: "mayi" },
+      { ...SCOPE, provider: "rotating" },
       okFetch,
       brokerDeps({
         markGrantStatus,
@@ -170,13 +200,13 @@ describe("brokerAccessToken", () => {
     );
     expect(out).toMatchObject({ ok: false, status: 403 });
     expect(out.ok === false && out.error).toMatch(/has expired — reconnect/);
-    expect(markGrantStatus).toHaveBeenCalledWith("grant_mayi", "expired", "iv_1");
+    expect(markGrantStatus).toHaveBeenCalledWith("grant_rotating", "expired", "iv_1");
   });
 
   it("502s on a transient refresh failure without touching the grant", async () => {
     const markGrantStatus = vi.fn(async () => {});
     const out = await realBroker(
-      { ...SCOPE, provider: "mayi" },
+      { ...SCOPE, provider: "rotating" },
       okFetch,
       brokerDeps({
         markGrantStatus,
@@ -191,7 +221,7 @@ describe("brokerAccessToken", () => {
 
   it("drops a rotation a concurrent cross-process write beat (retryable 503)", async () => {
     const out = await realBroker(
-      { ...SCOPE, provider: "mayi" },
+      { ...SCOPE, provider: "rotating" },
       okFetch,
       brokerDeps({ rotateRefreshToken: async () => false }),
     );
@@ -208,10 +238,10 @@ describe("brokerAccessToken", () => {
         events.push(`open:${stored}`);
         return {
           grant: {
-            id: "grant_mayi",
+            id: "grant_rotating",
             status: "active",
             scopes: "approval:create",
-            clientId: "mayi_client_1",
+            clientId: "rotating_client_1",
           },
           refreshToken: stored,
           tokenVersion: `iv:${stored}`,
@@ -231,8 +261,8 @@ describe("brokerAccessToken", () => {
       },
     });
     const [a, b] = await Promise.all([
-      realBroker({ ...SCOPE, provider: "mayi" }, okFetch, deps),
-      realBroker({ ...SCOPE, provider: "mayi" }, okFetch, deps),
+      realBroker({ ...SCOPE, provider: "rotating" }, okFetch, deps),
+      realBroker({ ...SCOPE, provider: "rotating" }, okFetch, deps),
     ]);
     expect(a.ok).toBe(true);
     expect(b.ok).toBe(true);
@@ -250,7 +280,7 @@ describe("brokerAccessToken", () => {
   it("serializes a broker call against a concurrent DEPLOY validation — one shared per-grant chain", async () => {
     // The scenario the chain exists for: a deployed instance asks the broker for a token while a
     // redeploy validates the same grant. Unserialized, both would read rt_1 and refresh it twice
-    // — mayi's family-reuse revocation would kill the grant. The shared chain
+    // — the provider's family-reuse revocation would kill the grant. The shared chain
     // (refresh-serialization.server.ts) makes the second task re-read and consume the first's
     // rotated token, whichever side wins the race.
     const events: string[] = [];
@@ -260,10 +290,10 @@ describe("brokerAccessToken", () => {
       events.push(`open:${stored}`);
       return {
         grant: {
-          id: "grant_mayi",
+          id: "grant_rotating",
           status: "active" as const,
           scopes: "approval:create",
-          clientId: "mayi_client_1",
+          clientId: "rotating_client_1",
         },
         refreshToken: stored,
         tokenVersion: `iv:${stored}`,
@@ -284,7 +314,7 @@ describe("brokerAccessToken", () => {
     const deployDeps: ConnectionDeployDeps = {
       getConfig: () => null,
       listGrantsForAgent: async () => [
-        { provider: "mayi", status: "active" as const },
+        { provider: "rotating", status: "active" as const },
       ],
       openRefreshToken,
       markGrantStatus: async () => {},
@@ -299,7 +329,7 @@ describe("brokerAccessToken", () => {
         deployDeps,
       ),
       realBroker(
-        { ...SCOPE, provider: "mayi" },
+        { ...SCOPE, provider: "rotating" },
         okFetch,
         brokerDeps({
           openRefreshToken,
@@ -310,7 +340,7 @@ describe("brokerAccessToken", () => {
       ),
     ]);
     expect(brokered.ok).toBe(true);
-    expect(env.MAYI_OAUTH_SCOPES).toBe("approval:create");
+    expect(env.ROTATING_OAUTH_SCOPES).toBe("approval:create");
     // Strictly sequential regardless of which side entered the chain first: the second task
     // opened the FIRST's rotated token — never two refreshes of one stored token.
     expect(events).toEqual([
@@ -380,8 +410,8 @@ describe("POST /api/connections/token", () => {
     routeMocks.verifyDelegationToken.mockReturnValue(null);
     const { action } = await import("~/routes/api.connections.token");
     for (const request of [
-      tokenRequest({ provider: "mayi" }),
-      tokenRequest({ provider: "mayi" }, "Bearer forged"),
+      tokenRequest({ provider: "rotating" }),
+      tokenRequest({ provider: "rotating" }, "Bearer forged"),
     ]) {
       const thrown = await action(actionArgs(request))
         .then(() => null)
@@ -403,13 +433,13 @@ describe("POST /api/connections/token", () => {
   it("resolves deployment → environment → agent from the token and brokers for THAT agent", async () => {
     const { action } = await import("~/routes/api.connections.token");
     const result = await action(
-      actionArgs(tokenRequest({ provider: "mayi" }, "Bearer good")),
+      actionArgs(tokenRequest({ provider: "rotating" }, "Bearer good")),
     );
     expect(routeMocks.store.deployments.findById).toHaveBeenCalledWith("dep_1");
     expect(routeMocks.brokerAccessToken).toHaveBeenCalledWith({
       projectId: "proj_1",
       agentId: "agnt_1",
-      provider: "mayi",
+      provider: "rotating",
     });
     expect(unwrap(result)).toEqual({
       payload: { ok: true, accessToken: "at_1", expiresAt: 1_800_000_000_000 },
@@ -421,7 +451,7 @@ describe("POST /api/connections/token", () => {
     routeMocks.store.deployments.findById.mockResolvedValue(null);
     const { action } = await import("~/routes/api.connections.token");
     const result = await action(
-      actionArgs(tokenRequest({ provider: "mayi" }, "Bearer good")),
+      actionArgs(tokenRequest({ provider: "rotating" }, "Bearer good")),
     );
     expect(unwrap(result).status).toBe(403);
     expect(routeMocks.brokerAccessToken).not.toHaveBeenCalled();
@@ -431,16 +461,16 @@ describe("POST /api/connections/token", () => {
     routeMocks.brokerAccessToken.mockResolvedValue({
       ok: false,
       status: 403,
-      error: "The May I? connection for this agent has expired — reconnect it.",
+      error: "The Rotating Provider connection for this agent has expired — reconnect it.",
     });
     const { action } = await import("~/routes/api.connections.token");
     const result = await action(
-      actionArgs(tokenRequest({ provider: "mayi" }, "Bearer good")),
+      actionArgs(tokenRequest({ provider: "rotating" }, "Bearer good")),
     );
     expect(unwrap(result)).toEqual({
       payload: {
         ok: false,
-        error: "The May I? connection for this agent has expired — reconnect it.",
+        error: "The Rotating Provider connection for this agent has expired — reconnect it.",
       },
       status: 403,
     });

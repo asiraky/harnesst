@@ -219,6 +219,7 @@ export async function recordArtifact(
         files,
         keepVersions,
       });
+      await markArtifactShown(artifact, row.sessionId, row.streamIndex);
       return { ok: true, artifact: settled, version: latest, appended: false };
     }
     if (latest && latest.versionNumber >= maxVersions) {
@@ -252,9 +253,41 @@ export async function recordArtifact(
       files,
       keepVersions,
     });
+    await markArtifactShown(artifact, row.sessionId, row.streamIndex);
     return { ok: true, artifact: settled, version, appended: true };
   }
   return { ok: false, reason: "contended" };
+}
+
+/** How many later positions one artifact remembers (`artifacts.shown_at`); the oldest drop off. */
+export const MAX_ARTIFACT_SHOWINGS = 50;
+
+/**
+ * Record that a conversation's artifact was published again at `streamIndex`, so the transcript
+ * shows its card there as well as at the first publish (`mergeArtifactEntries`). Runs on the
+ * dedupe path too: an unchanged republish is how the agent answers "show me it again".
+ *
+ * One conditional UPDATE, idempotent under the tool's retries: a position already recorded, the
+ * first publish's own position, and a session-less row all write nothing. The array keeps the
+ * newest `MAX_ARTIFACT_SHOWINGS` positions, which bounds the row against a republishing loop.
+ */
+async function markArtifactShown(
+  artifact: Artifact,
+  sessionId: string | null,
+  streamIndex: number,
+): Promise<void> {
+  if (!sessionId || streamIndex <= artifact.streamIndex) return;
+  await db
+    .update(artifacts)
+    .set({
+      shownAt: sql`(array_append(${artifacts.shownAt}, ${streamIndex}::integer))[greatest(cardinality(${artifacts.shownAt}) + 2 - ${MAX_ARTIFACT_SHOWINGS}::integer, 1):]`,
+    })
+    .where(
+      and(
+        eq(artifacts.id, artifact.id),
+        sql`not (${streamIndex}::integer = any(${artifacts.shownAt}))`,
+      ),
+    );
 }
 
 /**

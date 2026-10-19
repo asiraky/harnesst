@@ -8,7 +8,7 @@
  *    / `<PREFIX>_OAUTH_REFRESH_TOKEN` — no per-turn control-plane dependency: once these vars are
  *    in the container, eve's `getToken` exchanges the refresh token for access tokens on its own.
  *  - "access-token-broker" (issue #167): the refresh token NEVER ships — rotating-grant providers
- *    (mayi) revoke the whole token family if two writers race a rotation, so harnesst stays the
+ *    revoke the whole token family if two writers race a rotation, so harnesst stays the
  *    single writer and the instance fetches short-lived access tokens from the control-plane
  *    broker (`POST <HARNESST_API_URL>/api/connections/token`, see broker.server.ts). Deploy injects
  *    only `<PREFIX>_OAUTH_SCOPES` plus the provider's static `deployEnv` constants; the broker

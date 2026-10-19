@@ -22,7 +22,6 @@ import {
   AppShell,
   PageHeader,
   accentText,
-  repoCrumbs,
   type Accent,
 } from "~/components/shell";
 import {
@@ -94,7 +93,7 @@ export const loader = (args: LoaderFunctionArgs) =>
         const legacy = agentParamRedirect(args.request, project.id);
         if (legacy) throw legacy;
       }
-      const { roster, active, isTeam } = await resolveAgentContext(
+      const { active, isTeam } = await resolveAgentContext(
         project.id,
         agentName,
       );
@@ -148,7 +147,6 @@ export const loader = (args: LoaderFunctionArgs) =>
 
       return {
         project: { id: project.id, name: project.name },
-        roster: roster.map((a) => ({ name: a.name })),
         activeAgent: active.name,
         isTeam,
         runs: runsList,
@@ -196,7 +194,6 @@ type RunRow = Route.ComponentProps["loaderData"]["runs"][number];
 export default function Runs({ loaderData }: Route.ComponentProps) {
   const {
     project,
-    roster,
     activeAgent,
     isTeam,
     runs,
@@ -225,20 +222,13 @@ export default function Runs({ loaderData }: Route.ComponentProps) {
 
   return (
     <AppShell
-      breadcrumbs={repoCrumbs({
-        projectId: project.id,
-        repoName: project.name,
-        isTeam,
-        agentName: activeAgent,
-        tail: [{ label: "Runs" }],
-      })}
+      nav={
+        <AgentNav
+          base={ctx}
+          level={isTeam ? "member" : "single"}
+        />
+      }
     >
-      <AgentNav
-        base={ctx}
-        level={isTeam ? "member" : "single"}
-        roster={roster}
-        activeAgent={isTeam ? activeAgent : undefined}
-      />
       <PageHeader
         icon={Activity}
         accent="indigo"

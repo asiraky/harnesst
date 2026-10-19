@@ -1,0 +1,8 @@
+{
+  "name": "harnesst-ledger-backend",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "postgres": "^3.4.9"
+  }
+}

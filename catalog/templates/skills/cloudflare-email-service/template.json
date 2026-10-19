@@ -1,0 +1,20 @@
+{
+  "id": "cloudflare-email-service",
+  "type": "skill",
+  "name": "Cloudflare Email Service",
+  "description": "Implement or troubleshoot Cloudflare Email Sending and Email Routing integrations and their delivery configuration.",
+  "version": "0.1.0",
+  "eve": ">=0.22.0",
+  "subagentCompatible": true,
+  "files": [
+    "skills/cloudflare-email-service/LICENSE",
+    "skills/cloudflare-email-service/SKILL.md",
+    "skills/cloudflare-email-service/VENDORED.md",
+    "skills/cloudflare-email-service/references/cli-and-mcp.md",
+    "skills/cloudflare-email-service/references/deliverability.md",
+    "skills/cloudflare-email-service/references/rest-api.md",
+    "skills/cloudflare-email-service/references/routing.md",
+    "skills/cloudflare-email-service/references/sending.md"
+  ],
+  "assistantSkill": "assistant-skill.md"
+}

@@ -151,6 +151,19 @@ KMS-backed (or Vault) secret store; encrypted at rest; injected as **container e
 per instance/environment; **never written to the repo**. The authoring assistant references secrets by
 name only.
 
+**Workspace service connections and provisioners.** Some templates need external infrastructure that
+harnesst sets up and maintains for the team (the ledger's Supabase database). The operator credential
+for that is a workspace **service connection** (`service_connections`, Settings → Connections): sealed
+with the secrets key, verified with the provider on save, labelled, several per provider. It is used
+only by control-plane code, sent only to the provider's API, and never given to agents or the browser.
+A **provisioner** (`app/provisioners/`, e.g. `supabase-ledger`, declared by a template's
+`provisioning`) owns install, verification and upgrade; its per-team state lives in
+`bundle_provisioning` keyed by (project, provisioner) with a link to the connection it uses. A
+single connection for the provider is used automatically and saved as the team's link on first
+use; a rejected token marks the connection invalid and Setup asks to reconnect. After every
+successful publish harnesst queues an upgrade job for installed provisioners with pending work;
+upgrades are idempotent, serialised per team, and never affect the publish result.
+
 ### 3.6 Ingress / routing
 
 A reverse proxy (**Caddy or Traefik**) on the box with **wildcard TLS** (`*.harnesst.app`), routing

@@ -75,7 +75,9 @@ const INSTANCE_PORT = Number(process.env.HARNESST_INSTANCE_PORT ?? 3000);
  * the assistant image runs a sidecar; regular agent images ignore the
  * extra published port. Kept in sync with `HARNESST_AUX_PORT` the sidecar reads.
  */
-const AUX_PORT = Number(process.env.HARNESST_AUX_PORT ?? 3100);
+const AUX_PORT = Number(
+  process.env.HARNESST_AUX_PORT ?? (INSTANCE_PORT === 3100 ? 3101 : 3100),
+);
 /** How the container reaches the host's Postgres (Docker Desktop). */
 const DB_HOST_FROM_CONTAINER =
   process.env.HARNESST_DB_HOST_FROM_CONTAINER ?? "host.docker.internal";
