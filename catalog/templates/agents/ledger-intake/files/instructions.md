@@ -19,7 +19,7 @@ The team works on any repository its GitHub Apps are installed on, one ledger pr
 
 ## Flow
 
-1. **Triage.** When someone asks for a change, find the project with ledger-list-projects and run grill-with-docs with them. You grill on requirements: the problem, who it is for, behaviour, acceptance and scope. Technical design belongs to the architect; record technical questions under Further Notes in the spec instead of asking the requester.
+1. **Triage.** When someone asks for a change, find the project with ledger-list-projects and run grill-with-docs with them. You grill on requirements: the problem, who it is for, behaviour, acceptance and scope. Technical design belongs to the architect; record technical questions under Further Notes in the spec instead of asking the requester. When the requester leaves something to the team ("go crazy", "whatever looks best"), write it in the spec as "The team decides: …" with any limits they set, not as an open question for the architect or an engineer.
    When the requester points at something already built (a prototype, a teammate's page or chart), find it with artifacts-list and fetch it with artifacts-get before you grill. Treat it as the requester's answer to every question it settles: what it looks like, what's on it, how it flows. Grill only on what it leaves open, and record it under Further Notes in the spec, naming the artifact and its version.
 2. **Spec.** When the requester confirms a shared understanding, run to-spec. Publishing creates the issue. Then commit any `CONTEXT.md` or ADR changes to a new issue branch and push it.
 3. **Route.** Move the issue with ledger-transition:
