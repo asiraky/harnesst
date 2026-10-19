@@ -114,8 +114,10 @@ const DOCKER_CLI_VERSION = "27.5.1";
  * mode it captures the container name (Eve derives it from the sandbox identity), creates that
  * volume subdirectory through the instance's full-volume mount, and injects two subpath mounts:
  * the private root at /workspace/home and an explicit environment-level area at /workspace/shared.
- * Template-build runs are shared across sessions and must NOT capture either mount, so they pass
- * through unmodified — as does every non-`run` verb.
+ * Template-build runs are shared across sessions and must NOT capture either mount. They get one
+ * thing only: a `harnesst.instance=<instance container>` label (from HARNESST_INSTANCE_NAME), so
+ * the deploy target can remove a killed instance's half-finished builds instead of leaving them
+ * running. Every non-`run` verb passes through unmodified.
  *
  * FAILURE MODE: if a future Eve upgrade renames the role label, no persistent mount is injected and
  * the sandbox falls back to its private container filesystem. That loses durability but never
@@ -144,6 +146,7 @@ HOME_ROOT="\${HARNESST_HOME_ROOT:-/workspace/home}"
 # identity (harnesst's stable conversation id on the private HTTP channel), so it is the durable
 # volume-subpath key rather than Eve's replaceable workflow session id.
 is_session=0
+is_template_build=0
 sbx_container=""
 sbx_channel=""
 sbx_session=""
@@ -154,6 +157,7 @@ for a in "$@"; do
   fi
   if [ "$prev" = "--label" ]; then
     [ "$a" = "eve.sandbox.role=session" ] && is_session=1
+    [ "$a" = "eve.sandbox.role=template-build" ] && is_template_build=1
     case "$a" in
       eve.sandbox.tag.channel=*) sbx_channel="\${a#eve.sandbox.tag.channel=}" ;;
       eve.sandbox.tag.sessionId=*) sbx_session="\${a#eve.sandbox.tag.sessionId=}" ;;
@@ -193,6 +197,12 @@ if [ "$1" = "run" ] && [ "$is_session" = "1" ]; then
     set -- run -v "$HARNESST_HOME_VOLUME:/workspace/home" "$@"
     exec "$REAL" "$@"
   fi
+fi
+
+# Name the instance that started a template build, so its teardown can reap a half-finished one.
+if [ "$1" = "run" ] && [ "$is_template_build" = "1" ] && [ -n "$HARNESST_INSTANCE_NAME" ]; then
+  shift
+  set -- run --label "harnesst.instance=$HARNESST_INSTANCE_NAME" "$@"
 fi
 
 exec "$REAL" "$@"
