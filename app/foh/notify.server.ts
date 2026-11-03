@@ -10,10 +10,16 @@
  * everything about who the caller is — environment, agent, project — is derived server-side
  * from that id, and collaborators are injected so the whole flow unit-tests with zero I/O.
  *
- * A notice is not a blocking ask: `pendingInputAt` stays null (the agent is not waiting), so
- * the row reads "done" in the list — `lastEventAt` drives the unread badge and the `notice`
- * inbox item drives the bell. No idempotency: the tool is fire-and-forget with a generous
- * timeout, and a duplicated notification is an annoyance, not a correctness problem.
+ * A notice never parks the run: `pendingInputAt` stays null, `lastEventAt` drives the unread
+ * badge and the `notice` inbox item drives the bell. By default the row reads "done". With
+ * `awaitsReply` (the agent's work waits on a human answering in the conversation, e.g. an
+ * engineer starting a design session) it reads "needs you" until a human replies, and the
+ * inbox item is a `reply` that counts toward the needs-you badge.
+ *
+ * Duplicates: an agent woken repeatedly can send the same notification many times. While an
+ * earlier one with the same explicit title is still unreplied and unarchived, a repeat opens
+ * nothing new and returns that conversation with `alreadyOpen`, so a dozen wakes leave one
+ * thread. Inferred titles are not compared: they vary run to run, so they would rarely match.
  */
 import type { DataStore } from "~/data/ports";
 import { recordInboxNotice } from "~/foh/inbox.server";
@@ -22,6 +28,8 @@ import {
   countAgentInitiatedFohSessions,
   createPlaygroundSession,
   deleteBareNotificationSession,
+  listUnrepliedAgentNotifications,
+  markNotificationAwaitingReply,
 } from "~/playground/sessions.server";
 import { getRuntime } from "~/seams/index.server";
 
@@ -42,6 +50,8 @@ export interface NotifyDeps {
   /** Compensation when the notice write fails after the session write succeeded. */
   deleteBareSession: typeof deleteBareNotificationSession;
   inferTitle: typeof inferFohSessionTitle;
+  listUnreplied: typeof listUnrepliedAgentNotifications;
+  markAwaitingReply: typeof markNotificationAwaitingReply;
   now: () => Date;
 }
 
@@ -53,6 +63,8 @@ export function defaultNotifyDeps(): NotifyDeps {
     openNotice: recordInboxNotice,
     deleteBareSession: deleteBareNotificationSession,
     inferTitle: inferFohSessionTitle,
+    listUnreplied: listUnrepliedAgentNotifications,
+    markAwaitingReply: markNotificationAwaitingReply,
     now: () => new Date(),
   };
 }
@@ -62,11 +74,21 @@ export interface NotifyInput {
   deploymentId: string;
   message: string;
   title?: string | null;
+  /** The agent is waiting on a human to reply in this conversation. */
+  awaitsReply?: boolean;
 }
 
 export type NotifyResult =
   | { ok: true; sessionId: string; inboxItemId: string }
+  | { ok: true; sessionId: string; alreadyOpen: true; note: string }
   | { ok: false; error: string };
+
+/** Titles compare case-, spacing- and trailing-punctuation-insensitively. */
+export function sameNotificationTitle(a: string | null, b: string): boolean {
+  const norm = (t: string) =>
+    t.toLowerCase().replace(/\s+/g, " ").replace(/[\s.!?:…-]+$/u, "").trim();
+  return a !== null && norm(a) === norm(b);
+}
 
 function deny(error: string): NotifyResult {
   return { ok: false, error };
@@ -99,6 +121,24 @@ export async function notifyHumans(
   const project = await store.projects.findById(agent.projectId);
   if (!project) return deny("This repository is no longer connected.");
 
+  // Before the ceiling: a repeat of an open conversation costs nothing, so it is never refused.
+  if (title) {
+    const open = (await deps.listUnreplied(agent.id)).find((row) =>
+      sameNotificationTitle(row.title, title),
+    );
+    if (open) {
+      if (input.awaitsReply && !open.awaitingReplyAt) {
+        await deps.markAwaitingReply(open.id, deps.now());
+      }
+      return {
+        ok: true,
+        sessionId: open.id,
+        alreadyOpen: true,
+        note: "A conversation with this title is already open and nobody has replied yet. Nothing new was sent; do not send it again.",
+      };
+    }
+  }
+
   if ((await deps.countOpenAgentSessions(agent.id)) >= MAX_OPEN_AGENT_SESSIONS) {
     return deny(
       "You have too many open conversations with your humans — wait for them to tidy up before sending more notifications.",
@@ -126,9 +166,10 @@ export async function notifyHumans(
     version: withRelease?.version ?? null,
     title: sessionTitle,
     openingMessage: message,
-    // NO eve handles and NO pending-input park: the notice is not a blocking ask, so the row
-    // reads "done" while `lastEventAt` (set to creation) drives the unread badge.
+    // NO eve handles and NO pending-input park: the run is not paused. `lastEventAt` (set to
+    // creation) drives the unread badge; `awaitingReplyAt` alone makes the row "needs you".
     lastEventAt: now,
+    awaitingReplyAt: input.awaitsReply ? now : null,
   });
 
   let item;
@@ -139,6 +180,7 @@ export async function notifyHumans(
         sessionId: session.id,
         agentId: agent.id,
         prompt: sessionTitle,
+        awaitsReply: input.awaitsReply === true,
       },
       store,
     );

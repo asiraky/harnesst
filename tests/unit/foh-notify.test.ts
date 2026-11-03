@@ -74,6 +74,7 @@ function makeDeps(over: Partial<NotifyDeps> = {}): NotifyDeps & {
         status: input.status ?? "new",
         pendingInputAt: input.pendingInputAt ?? null,
         lastEventAt: input.lastEventAt ?? null,
+        awaitingReplyAt: input.awaitingReplyAt ?? null,
         streamIndex: 0,
       } as unknown as PlaygroundSession;
     },
@@ -83,6 +84,8 @@ function makeDeps(over: Partial<NotifyDeps> = {}): NotifyDeps & {
       deleted.push(id);
     },
     inferTitle: async ({ message }) => titleFromMessage(message),
+    listUnreplied: async () => [],
+    markAwaitingReply: async () => {},
     now: () => NOW,
     ...over,
   };
@@ -103,7 +106,7 @@ describe("notifyHumans", () => {
     );
 
     expect(result.ok).toBe(true);
-    if (!result.ok) return;
+    if (!result.ok || !("inboxItemId" in result)) throw new Error("expected a new row");
     expect(deps.created).toHaveLength(1);
     const created = deps.created[0];
     // `created_by IS NULL` is what makes the row visible to every FOH member (D5): an
@@ -146,7 +149,7 @@ describe("notifyHumans", () => {
     );
 
     expect(result.ok).toBe(true);
-    if (!result.ok) return;
+    if (!result.ok || !("inboxItemId" in result)) throw new Error("expected a new row");
     expect(deps.created[0].title).toBe("Nightly import report");
     expect(store.getInboxItem(result.inboxItemId)!.prompt).toBe(
       "Nightly import report",
@@ -166,7 +169,7 @@ describe("notifyHumans", () => {
     const result = await notifyHumans({ deploymentId, message }, deps);
 
     expect(result.ok).toBe(true);
-    if (!result.ok) return;
+    if (!result.ok || !("inboxItemId" in result)) throw new Error("expected a new row");
     expect(inferTitle).toHaveBeenCalledWith({
       message,
       project: expect.objectContaining({ id: PROJECT }),
@@ -175,6 +178,93 @@ describe("notifyHumans", () => {
     expect(store.getInboxItem(result.inboxItemId)!.prompt).toBe(
       "Fix empty session heading",
     );
+  });
+
+  it("an awaits-reply notification opens a row awaiting a reply and a reply inbox item", async () => {
+    const deploymentId = await seedDeployment();
+    const deps = makeDeps();
+
+    const result = await notifyHumans(
+      {
+        deploymentId,
+        message: "Reply here to start the design session.",
+        title: "Engineer needed: Boat Inspector",
+        awaitsReply: true,
+      },
+      deps,
+    );
+
+    expect(result.ok).toBe(true);
+    if (!result.ok || !("inboxItemId" in result)) throw new Error("expected a new row");
+    expect(deps.created[0].awaitingReplyAt).toEqual(NOW);
+    // Still never parks the run.
+    expect(deps.created[0].pendingInputAt).toBeUndefined();
+    expect(store.getInboxItem(result.inboxItemId)!.kind).toBe("reply");
+  });
+
+  it("a plain notification does not await a reply", async () => {
+    const deploymentId = await seedDeployment();
+    const deps = makeDeps();
+
+    await notifyHumans({ deploymentId, message: "FYI", title: "FYI" }, deps);
+
+    expect(deps.created[0].awaitingReplyAt).toBeNull();
+  });
+
+  it("a repeat of an unreplied notification with the same title opens nothing new", async () => {
+    const deploymentId = await seedDeployment();
+    const listUnreplied = vi.fn(async () => [
+      { id: "ps_old", title: "Other subject", awaitingReplyAt: null },
+      { id: "ps_open", title: "engineer needed:  Boat Inspector.", awaitingReplyAt: NOW },
+    ]);
+    const countOpenAgentSessions = vi.fn(async () => 1_000);
+    const openNotice = vi.fn(recordInboxNotice);
+    const deps = makeDeps({ listUnreplied, countOpenAgentSessions, openNotice });
+
+    const result = await notifyHumans(
+      {
+        deploymentId,
+        message: "Reply here.",
+        title: "Engineer needed: Boat Inspector",
+        awaitsReply: true,
+      },
+      deps,
+    );
+
+    expect(listUnreplied).toHaveBeenCalledWith("agent_1");
+    expect(result).toMatchObject({ ok: true, sessionId: "ps_open", alreadyOpen: true });
+    expect(deps.created).toHaveLength(0);
+    expect(openNotice).not.toHaveBeenCalled();
+    // A repeat is never refused by the open-conversation ceiling: it costs nothing.
+    expect(countOpenAgentSessions).not.toHaveBeenCalled();
+  });
+
+  it("a repeat that now awaits a reply marks the open conversation as awaiting one", async () => {
+    const deploymentId = await seedDeployment();
+    const markAwaitingReply = vi.fn(async () => {});
+    const deps = makeDeps({
+      listUnreplied: async () => [{ id: "ps_open", title: "Design", awaitingReplyAt: null }],
+      markAwaitingReply,
+    });
+
+    await notifyHumans({ deploymentId, message: "m", title: "Design" }, deps);
+    expect(markAwaitingReply).not.toHaveBeenCalled();
+
+    await notifyHumans({ deploymentId, message: "m", title: "Design", awaitsReply: true }, deps);
+    expect(markAwaitingReply).toHaveBeenCalledWith("ps_open", NOW);
+  });
+
+  it("does not dedupe on an inferred title", async () => {
+    const deploymentId = await seedDeployment();
+    const listUnreplied = vi.fn(async () => [
+      { id: "ps_open", title: "Same words", awaitingReplyAt: null },
+    ]);
+    const deps = makeDeps({ listUnreplied, inferTitle: async () => "Same words" });
+
+    const result = await notifyHumans({ deploymentId, message: "Same words" }, deps);
+
+    expect(result).toMatchObject({ ok: true, sessionId: "ps_1" });
+    expect(listUnreplied).not.toHaveBeenCalled();
   });
 
   it("refuses an empty message", async () => {

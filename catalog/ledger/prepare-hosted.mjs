@@ -30,6 +30,10 @@ for (const [source, destination] of [
     "0011_harnesst_approvals.sql",
     "supabase/migrations/20260917000011_harnesst_approvals.sql",
   ],
+  [
+    "0012_awaiting_human.sql",
+    "supabase/migrations/20260917000012_awaiting_human.sql",
+  ],
   ["supabase/config.toml", "supabase/config.toml"],
   ["0003_workflow.sql", "supabase/migrations/20260917000003_workflow.sql"],
   [

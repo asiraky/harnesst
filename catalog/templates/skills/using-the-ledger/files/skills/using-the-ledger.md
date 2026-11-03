@@ -8,7 +8,11 @@ The ledger is the state of record. Read ledger-get-item before acting and use it
 
 Pass the version you read on every mutation. A stale refusal means re-read and reconsider; never retry a write blindly. Evidence and preview artifacts must name the current binding. New code needs new verification.
 
-Questions for humans use ledger-block. Intake relays the durable question and records the answer with ledger-resolve-block. Ledger-woken sessions do not support durable ask_question parking.
+Questions for humans use ledger-block. The block is your message to the human: put everything they need in the question (the ask, links, what you already checked) and do not also send notify-user about it, or they get the same ask twice. Intake relays the durable question in one notify-user message with `awaits_reply` set to true and records the answer with ledger-resolve-block. Ledger-woken sessions do not support durable ask_question parking.
+
+Inviting a human into a conversation you will run yourself (the architect calling in an engineer) is not a block. Send the notify-user message with `awaits_reply` set to true, then call ledger-complete-wake with `awaiting`: the role you are waiting on and one sentence saying what they must do and where. The ledger stops waking you and records an `awaiting_human` event. On any later wake, that event after the item's latest stage change means the ask has already gone out: send nothing and finish the turn.
+
+When anyone asks where an item is up to, an `awaiting_human` event after its latest stage change is the outstanding action. Name the role and repeat its request, so the person knows exactly what to do.
 
 The only human gate is merge approval on the parent issue. harnesst shows the request with its spec, evidence and links, and records who decided.
 
@@ -28,6 +32,6 @@ Cloudflare credentials belong to infra; their absence from implementer is expect
 
 A delivery lease can expire while work is running. Re-read before each side effect and reuse existing branches, PRs and deployments. Claiming is not a guarantee of exactly-once external work.
 
-On an escalation wake, tell the human which item could not reach its owner. For a sweep, list mine=true and inspect unfinished items with no recent event. Terminal deployed/done items need a human completion notice, not another transition.
+On an escalation wake, read the item first. An escalation means the owner was woken repeatedly and the item did not move, not that the owner is offline. If an `awaiting_human` event follows the latest stage change, tell that person what is waiting on them. Otherwise tell the human which item is stuck and with which owner; do not call it a delivery failure. For a sweep, list mine=true and inspect unfinished items with no recent event. Terminal deployed/done items need a human completion notice, not another transition.
 
-After delivering a terminal, gate, block or escalation notice, call ledger-complete-wake with the wake ID. Ordinary work wakes complete through the stage transition.
+After delivering a terminal, gate, block or escalation notice, call ledger-complete-wake with the wake ID. Ordinary work wakes complete through the stage transition, or with `awaiting` when you own the stage and are waiting on a human.

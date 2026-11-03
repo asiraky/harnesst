@@ -229,7 +229,11 @@ describe("notify-user tool template", () => {
   interface NotifyConfig {
     description: string;
     inputSchema: Record<string, unknown>;
-    execute: (args: { message: string; title?: string }) => Promise<unknown>;
+    execute: (args: {
+      message: string;
+      title?: string;
+      awaits_reply?: boolean;
+    }) => Promise<unknown>;
   }
   const evalNotify = (env: Record<string, string>) =>
     evalTool(NOTIFY_USER_TOOL_SOURCE, env) as unknown as NotifyConfig;
@@ -245,12 +249,13 @@ describe("notify-user tool template", () => {
     expect(imports).toEqual(["eve/tools"]);
   });
 
-  it("requires a message; the title is optional", () => {
+  it("requires a message; the title and awaits_reply are optional", () => {
     const config = evalNotify({});
     expect(config.inputSchema.required).toEqual(["message"]);
     expect(Object.keys(config.inputSchema.properties as object)).toEqual([
       "message",
       "title",
+      "awaits_reply",
     ]);
   });
 
@@ -297,6 +302,12 @@ describe("notify-user tool template", () => {
 
     await config.execute({ message: "no title" });
     expect(body).toEqual({ message: "no title" });
+
+    await config.execute({ message: "reply please", awaits_reply: true });
+    expect(body).toEqual({ message: "reply please", awaits_reply: true });
+
+    await config.execute({ message: "fyi", awaits_reply: false });
+    expect(body).toEqual({ message: "fyi" });
   });
 
   it("returns the readable relay error for a failed HTTP response", async () => {
