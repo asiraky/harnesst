@@ -190,6 +190,8 @@ function inboxKindLabel(kind: string): string {
   if (kind === "finished") return "finished";
   // Agent-initiated conversation (#288 3c) — nothing is blocked on the reader.
   if (kind === "notice") return "sent you a message";
+  // A notification the agent wants answered: it is waiting on the reader.
+  if (kind === "reply") return "wants your reply";
   return "needs an answer";
 }
 
@@ -199,7 +201,7 @@ function InboxKindIcon({ kind }: { kind: string }) {
       ? ShieldQuestion
       : kind === "finished"
         ? CircleCheck
-        : kind === "notice"
+        : kind === "notice" || kind === "reply"
           ? MessageSquare
           : CircleHelp;
   return (

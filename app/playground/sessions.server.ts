@@ -771,6 +771,8 @@ export async function createPlaygroundSession(input: {
   lastEventAt?: Date | null;
   /** Agent-initiated rows (#288 3c): the notify-user notification that opened the session. */
   openingMessage?: string | null;
+  /** The notify-user asked for a reply: the row reads "needs you" until a human answers. */
+  awaitingReplyAt?: Date | null;
 }): Promise<PlaygroundSession> {
   const [row] = await db
     .insert(playgroundSessions)
@@ -795,9 +797,53 @@ export async function createPlaygroundSession(input: {
       pendingInputAt: input.pendingInputAt ?? null,
       lastEventAt: input.lastEventAt ?? null,
       openingMessage: input.openingMessage ?? null,
+      awaitingReplyAt: input.awaitingReplyAt ?? null,
     })
     .returning();
   return row;
+}
+
+/**
+ * The agent's live notifications nobody has replied to yet (no eve session), unarchived —
+ * what `notifyHumans` checks before opening a duplicate conversation on the same subject.
+ */
+export async function listUnrepliedAgentNotifications(
+  agentId: string,
+): Promise<Array<Pick<PlaygroundSession, "id" | "title" | "awaitingReplyAt">>> {
+  return db
+    .select({
+      id: playgroundSessions.id,
+      title: playgroundSessions.title,
+      awaitingReplyAt: playgroundSessions.awaitingReplyAt,
+    })
+    .from(playgroundSessions)
+    .where(
+      and(
+        eq(playgroundSessions.agentId, agentId),
+        surfaceScope("foh"),
+        isNull(playgroundSessions.createdBy),
+        isNull(playgroundSessions.delegationId),
+        isNotNull(playgroundSessions.openingMessage),
+        isNull(playgroundSessions.externalSessionId),
+        isNull(playgroundSessions.archivedAt),
+      ),
+    );
+}
+
+/** A repeat notification asked for a reply the original did not: mark the row as awaiting one. */
+export async function markNotificationAwaitingReply(
+  id: string,
+  at: Date,
+): Promise<void> {
+  await db
+    .update(playgroundSessions)
+    .set({ awaitingReplyAt: at, updatedAt: new Date() })
+    .where(
+      and(
+        eq(playgroundSessions.id, id),
+        isNull(playgroundSessions.awaitingReplyAt),
+      ),
+    );
 }
 
 /**

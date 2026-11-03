@@ -15,6 +15,19 @@ export interface FohStatusInput {
   /** new | running | waiting | completed | failed | stopped */
   status: string;
   pendingInputAt: Date | null;
+  /** A `notify-user` that asked for a reply (see `awaitingReplyAt` in the schema). */
+  awaitingReplyAt?: Date | null;
+  /** Set once a human replied; ends an `awaitingReplyAt` wait. */
+  externalSessionId?: string | null;
+}
+
+/** When this row started needing a human, or null when it does not. */
+function needsYouSince(session: FohStatusInput): Date | null {
+  if (session.pendingInputAt) return session.pendingInputAt;
+  if (session.status === "failed") return null;
+  if (session.awaitingReplyAt && !session.externalSessionId)
+    return session.awaitingReplyAt;
+  return null;
 }
 
 export function fohSessionStatus(session: FohStatusInput): FohSessionStatus {
@@ -23,6 +36,8 @@ export function fohSessionStatus(session: FohStatusInput): FohSessionStatus {
   if (session.status === "running") return "working";
   if (session.pendingInputAt) return "needs_you";
   if (session.status === "failed") return "error";
+  // An agent asked for a reply and nobody has answered yet.
+  if (needsYouSince(session)) return "needs_you";
   // waiting | completed | stopped | new (and any unknown value) settle as done.
   return "done";
 }
@@ -40,7 +55,7 @@ export function sortSessionsForList<
     if (aNeeds !== bNeeds) return aNeeds ? -1 : 1;
     if (aNeeds && bNeeds) {
       return (
-        (a.pendingInputAt?.getTime() ?? 0) - (b.pendingInputAt?.getTime() ?? 0)
+        (needsYouSince(a)?.getTime() ?? 0) - (needsYouSince(b)?.getTime() ?? 0)
       );
     }
     return b.updatedAt.getTime() - a.updatedAt.getTime();

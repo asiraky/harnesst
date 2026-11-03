@@ -1415,6 +1415,12 @@ export const playgroundSessions = pgTable(
      * session with it as strippable context. Null for every other row.
      */
     openingMessage: text("opening_message"),
+    /**
+     * Set when the agent's `notify-user` asked for a reply (`awaits_reply`): the row reads
+     * "needs you" until a human answers, i.e. until it has an eve session. Never cleared —
+     * `externalSessionId` being set is what ends the wait. Null for every other row.
+     */
+    awaitingReplyAt: timestamp("awaiting_reply_at", { withTimezone: true }),
     title: text("title"),
     /**
      * A human-edited title is authoritative. Turn drains and channel/delegation adoption can

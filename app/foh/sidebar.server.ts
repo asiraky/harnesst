@@ -136,7 +136,12 @@ export async function loadFohSidebar(
 
   const needsYouByAgent = new Map<string, string[]>();
   for (const item of pending) {
-    if (item.kind !== "question" && item.kind !== "approval") continue;
+    if (
+      item.kind !== "question" &&
+      item.kind !== "approval" &&
+      item.kind !== "reply"
+    )
+      continue;
     if (!item.agentId) continue;
     const sessionIds = needsYouByAgent.get(item.agentId) ?? [];
     sessionIds.push(item.sessionId);

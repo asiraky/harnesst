@@ -100,6 +100,7 @@ describe("POST /api/foh/notify", () => {
       deploymentId: "dep_real",
       message: "done!",
       title: "report",
+      awaitsReply: false,
     });
   });
 
@@ -137,7 +138,20 @@ describe("POST /api/foh/notify", () => {
       deploymentId: "dep_real",
       message: "hi",
       title: null,
+      awaitsReply: false,
     });
+  });
+
+  it("asks for a reply only on a literal true awaits_reply", async () => {
+    const token = mintDelegationToken("dep_real");
+
+    await run(post({ token, json: { message: "hi", awaits_reply: true } }));
+    await run(post({ token, json: { message: "hi", awaits_reply: "true" } }));
+
+    expect(notifyHumans.mock.calls.map((c) => c[0].awaitsReply)).toEqual([
+      true,
+      false,
+    ]);
   });
 
   it("lets an infrastructure failure propagate as a 500 — a retry IS the fix there", async () => {

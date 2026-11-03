@@ -18,6 +18,7 @@ import {
   resolveInboxForSession,
   unansweredInboxRequests,
   acknowledgeVisibleInboxOnRead,
+  recordInboxNotice,
 } from "~/foh/inbox.server";
 import { makeFakeStore, type FakeStore } from "../fakes/store";
 
@@ -244,6 +245,27 @@ describe("resolveInboxForArchivedSession (#278)", () => {
 });
 
 describe("acknowledgeVisibleInboxOnRead (D13)", () => {
+  it("reading a notice resolves it; reading one awaiting a reply keeps it pending until answered", async () => {
+    const notice = await recordInboxNotice(
+      { projectId: PROJECT, sessionId: SESSION, prompt: "FYI" },
+      store,
+    );
+    const reply = await recordInboxNotice(
+      { projectId: PROJECT, sessionId: SESSION, prompt: "Engineer needed", awaitsReply: true },
+      store,
+    );
+
+    await acknowledgeVisibleInboxOnRead(SESSION, USER, store);
+
+    expect(store.getInboxItem(notice.id)?.status).toBe("resolved");
+    expect(store.getInboxItem(reply.id)).toMatchObject({
+      kind: "reply",
+      status: "pending",
+      acknowledgedAt: expect.any(Date),
+    });
+  });
+
+
   it("resolves read-only items, acknowledges asks, and leaves another user's item alone", async () => {
     const mine = await recordInboxFinished(
       { projectId: PROJECT, sessionId: SESSION, userId: USER },

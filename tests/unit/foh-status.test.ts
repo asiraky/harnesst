@@ -49,6 +49,31 @@ describe("fohSessionStatus", () => {
   });
 });
 
+describe("fohSessionStatus for a notification awaiting a reply", () => {
+  const notice = (
+    status: string,
+    externalSessionId: string | null,
+  ): FohStatusInput => ({
+    status,
+    pendingInputAt: null,
+    awaitingReplyAt: at(1_000),
+    externalSessionId,
+  });
+
+  it("needs you until a human replies", () => {
+    expect(fohSessionStatus(notice("new", null))).toBe("needs_you");
+  });
+
+  it("is working while the first reply runs, then done once the reply opened a session", () => {
+    expect(fohSessionStatus(notice("running", null))).toBe("working");
+    expect(fohSessionStatus(notice("waiting", "eve_1"))).toBe("done");
+  });
+
+  it("shows a failed first reply as an error, not as still waiting", () => {
+    expect(fohSessionStatus(notice("failed", null))).toBe("error");
+  });
+});
+
 describe("sortSessionsForList", () => {
   const row = (
     id: string,
@@ -77,6 +102,22 @@ describe("sortSessionsForList", () => {
       "done-recent",
       "working",
       "done-old",
+    ]);
+  });
+
+  it("orders an unanswered notification among the asks by when it started waiting", () => {
+    const ask = row("ask", "waiting", at(5_000), at(5_000));
+    const notice = {
+      ...row("notice", "new", null, at(9_000)),
+      awaitingReplyAt: at(2_000),
+      externalSessionId: null,
+    };
+    const done = row("done", "waiting", null, at(10_000));
+
+    expect(sortSessionsForList([done, ask, notice]).map((s) => s.id)).toEqual([
+      "notice",
+      "ask",
+      "done",
     ]);
   });
 

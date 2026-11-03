@@ -12,9 +12,9 @@
       "id": "ledger-architect",
       "type": "agent",
       "name": "Ledger Architect",
-      "version": "0.5.1",
+      "version": "0.6.0",
       "description": "The team’s technical designer. For non-trivial issues, call in an engineer, grill them on the technical design, and finalise the spec before breakdown.",
-      "hash": "12ddcbe3936c5dd8a7dd0965c57e5e83e7e09746"
+      "hash": "c8c2f8fdb4ba4877051777b77d729f2c58618d72"
     },
     {
       "id": "ledger-implementer",
@@ -76,9 +76,9 @@
       "id": "ledger",
       "type": "bundle",
       "name": "Ledger",
-      "version": "0.5.0",
+      "version": "0.6.0",
       "description": "A shared work ledger with authenticated wakes, evidence and human approval gates.",
-      "hash": "0b9ea9e2f538cfb28ce3d14ef4d95200fff356e3"
+      "hash": "5391eaba501aaf4309a027fbbbffaa3a26784009"
     },
     {
       "id": "vercel-bundle",
@@ -108,9 +108,9 @@
       "id": "ledger-wake",
       "type": "channel",
       "name": "Ledger wake",
-      "version": "0.4.0",
+      "version": "0.4.1",
       "description": "Authenticated ledger delivery: one session per issue lease, heartbeated while it works, released at turn end.",
-      "hash": "5fe14bcb44c2178269ee5eb918ae3b67e7777f0c"
+      "hash": "cd17eabb7e8f89e55f4945bcb613b9353f7c4c23"
     },
     {
       "id": "agentmail",
@@ -332,9 +332,9 @@
       "id": "using-the-ledger",
       "type": "skill",
       "name": "Using The Ledger",
-      "version": "0.4.0",
+      "version": "0.5.0",
       "description": "Use when a ledger wake arrives or before recording evidence, handing code to infra for a preview, moving work, resolving a block, or relaying human approval.",
-      "hash": "da5304c51e95c09a7257d9f8d0949b679b0c8958"
+      "hash": "f8ccc0a7b3f1c2b53d81c171c983423f2e4ccb99"
     },
     {
       "id": "web-perf",
@@ -404,9 +404,9 @@
       "id": "ledger-tools",
       "type": "tool",
       "name": "Ledger tools",
-      "version": "0.6.0",
+      "version": "0.7.0",
       "description": "Read and move team work through database-enforced stages, evidence and human gates.",
-      "hash": "3e4c14fd92ba764e2ec09e7661630d56dbc07615"
+      "hash": "5d5e6ecf65ef6afa5b71aec060dc43a2da7996cf"
     },
     {
       "id": "publish-artifact",

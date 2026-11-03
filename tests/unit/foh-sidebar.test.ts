@@ -127,6 +127,15 @@ describe("loadFohSidebar", () => {
       agentId: "agent_ivy",
       userId: "u2",
     });
+    // A notification awaiting a reply is waiting on the humans, like a question.
+    store.seedInboxItem({
+      id: "i_reply",
+      projectId: "proj_a",
+      sessionId: "s6",
+      kind: "reply",
+      agentId: "agent_sam",
+      userId: null,
+    });
     // Finished: counts toward the bell, not the per-agent needs-you badge.
     store.seedInboxItem({
       id: "i_fin",
@@ -159,7 +168,7 @@ describe("loadFohSidebar", () => {
     const agents = Object.fromEntries(
       sidebar.teams[0].agents.map((a) => [a.name, [...a.needsYouSessionIds].sort()]),
     );
-    expect(agents).toEqual({ ivy: ["s1", "s2"], sam: [] });
-    expect(sidebar.inboxCount).toBe(3);
+    expect(agents).toEqual({ ivy: ["s1", "s2"], sam: ["s6"] });
+    expect(sidebar.inboxCount).toBe(4);
   });
 });

@@ -3,7 +3,7 @@
  *
  * An inbox item is the durable "a human should look at this" record behind the FOH bell:
  * a parked eve `input.requested` (kind `question`/`approval`, D19), a finished turn
- * (kind `finished`, D13), or an agent-initiated conversation (kind `notice`, #288 3c). Items
+ * (kind `finished`, D13), or an agent-initiated conversation (kind `notice`, or `reply` when it wants an answer, #288 3c). Items
  * are written only at the needs-you chokepoints (drain, reconcile, relay, notify). They resolve
  * on continuation send, terminal failure, or supersession by a newer turn; opening separately
  * acknowledges the notification without answering or resuming a parked question/approval.
@@ -182,13 +182,18 @@ export async function recordInboxNotice(
     sessionId: string;
     agentId?: string | null;
     prompt?: string | null;
+    /**
+     * The agent asked for a reply: file a `reply` item, which behaves like a question — opening
+     * the conversation acknowledges it, and only the human's first reply resolves it.
+     */
+    awaitsReply?: boolean;
   },
   store: DataStore = getRuntime().data,
 ): Promise<InboxItem> {
   return store.inboxItems.insert({
     projectId: input.projectId,
     sessionId: input.sessionId,
-    kind: "notice",
+    kind: input.awaitsReply ? "reply" : "notice",
     prompt: input.prompt ?? null,
     agentId: input.agentId ?? null,
     userId: null,
@@ -293,7 +298,7 @@ export async function listInboxForViewer(
 
 /**
  * Acknowledge every notification a viewer can see when they open the session. Finished/notice
- * items resolve; a parked question/approval remains pending and answerable but loses its claim on
+ * items resolve; a parked question/approval (or a notice awaiting a reply) remains pending and answerable but loses its claim on
  * the bell/sidebar. Personal items belonging to another user stay untouched, while a team-wide
  * (`userId` null) item is acknowledged by the first eligible viewer who opens it.
  */
@@ -307,7 +312,9 @@ export async function acknowledgeVisibleInboxOnRead(
   for (const item of pending) {
     if (item.userId !== null && item.userId !== userId) continue;
     writes.push(
-      item.kind === "question" || item.kind === "approval"
+      item.kind === "question" ||
+        item.kind === "approval" ||
+        item.kind === "reply"
         ? store.inboxItems.acknowledge(item.id)
         : store.inboxItems.resolve(item.id),
     );

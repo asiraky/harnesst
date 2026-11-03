@@ -1,0 +1,1 @@
+ALTER TABLE "playground_sessions" ADD COLUMN "awaiting_reply_at" timestamp with time zone;

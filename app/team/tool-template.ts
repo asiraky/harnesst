@@ -244,13 +244,22 @@ export default defineTool({
       },
       title: {
         type: "string",
-        description: "An optional short Front of House conversation title.",
+        description:
+          "A short Front of House conversation title. While an earlier notification with the " +
+          "same title is still unanswered, sending it again opens nothing new.",
+      },
+      awaits_reply: {
+        type: "boolean",
+        description:
+          "Set true when your work waits on a human replying in this conversation (for example " +
+          "an engineer starting a design session). The conversation shows as needing the " +
+          "humans until someone replies. Leave it out for information only.",
       },
     },
     required: ["message"],
     additionalProperties: false,
   },
-  async execute({ message, title }) {
+  async execute({ message, title, awaits_reply }) {
     const url = process.env.HARNESST_FOH_NOTIFY_URL;
     const token = process.env.HARNESST_TEAM_TOKEN;
     if (!url || !token) {
@@ -263,7 +272,11 @@ export default defineTool({
           "content-type": "application/json",
           authorization: "Bearer " + token,
         },
-        body: JSON.stringify(title ? { message, title } : { message }),
+        body: JSON.stringify({
+          message,
+          ...(title ? { title } : {}),
+          ...(awaits_reply === true ? { awaits_reply: true } : {}),
+        }),
         signal: AbortSignal.timeout(30000),
       });
       const body = await res.json().catch(() => null);

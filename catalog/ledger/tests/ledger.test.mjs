@@ -16,7 +16,7 @@ try {
   await connection.unsafe(
     await readFile(new URL("../local/roles.sql", import.meta.url), "utf8"),
   );
-  for (const file of ["0001_ledger.sql", "0004_mayi_approvals.sql", "0005_hosted_authorization.sql", "0006_oauth_recovery.sql", "0007_scoped_oauth_writes.sql", "0008_review_content.sql", "0009_tickets.sql", "0010_leases.sql", "0011_harnesst_approvals.sql"])
+  for (const file of ["0001_ledger.sql", "0004_mayi_approvals.sql", "0005_hosted_authorization.sql", "0006_oauth_recovery.sql", "0007_scoped_oauth_writes.sql", "0008_review_content.sql", "0009_tickets.sql", "0010_leases.sql", "0011_harnesst_approvals.sql", "0012_awaiting_human.sql"])
     await connection.unsafe(
       await readFile(new URL("../" + file, import.meta.url), "utf8"),
     );
@@ -449,6 +449,50 @@ test("notifications can be acknowledged; ordinary work cannot be silently comple
   });
   const [done] = await sql`select status from ledger.outbox where id=${o.id}`;
   assert.equal(done.status, "done");
+});
+test("a stage owner waiting on a human closes its wake without redelivery, escalation or a block", async () => {
+  let i = await create();
+  i = await change("intake", "transition", i, { to_stage: "design" });
+  const [o] =
+    await sql`select * from ledger.outbox where item_id=${i.id} and actor_id=${actors.architect.actor_id} and status='pending'`;
+  const claim = await rpc("claim", actors.architect.wake_token, { outbox_id: o.id });
+  await rpc("renew_lease", actors.architect.wake_token, {
+    lease_token: claim.lease_token,
+    session_id: "test-architect",
+  });
+  await assert.rejects(
+    call("architect", "complete_wake", {
+      outbox_id: o.id,
+      note: "Asked",
+      awaiting: { role: "engineer", request: " " },
+    }),
+    /awaiting needs a role and a request/,
+  );
+  await call("architect", "complete_wake", {
+    outbox_id: o.id,
+    note: "Engineer invited",
+    awaiting: { role: "engineer", request: "Reply in the design conversation" },
+  });
+  // The turn ends and its lease lapses: the delivery sweep must not wake the architect again.
+  await sql`update ledger.leases set expires_at=now()-interval '1 second' where scope_id=${i.id}`;
+  await sql`update ledger.outbox set lease_until=now()-interval '1 second' where item_id=${i.id}`;
+  await sql`select public.ledger_delivery_batch()`;
+  const rows = await sql`select status,kind from ledger.outbox where item_id=${i.id}`;
+  assert.ok(rows.every((r) => r.status === "done" && r.kind === "wake"));
+  const read = await get(i, "architect");
+  const last = read.events.at(-1);
+  assert.equal(last.kind, "awaiting_human");
+  assert.equal(last.payload.role, "engineer");
+  assert.equal(read.blocked_on, null);
+  // Waiting is not a block: once the engineer has answered, the architect carries on.
+  const designed = await change("architect", "update_spec", read, {
+    spec: { body: "## Design\n\nAgreed with the engineer." },
+    note: "Technical grilling",
+  });
+  assert.equal(
+    (await change("architect", "transition", designed, { to_stage: "breakdown" })).stage,
+    "breakdown",
+  );
 });
 test("unresolved questions keep a spec in triage until intake resolves them", async () => {
   let i = await create("feature", {
