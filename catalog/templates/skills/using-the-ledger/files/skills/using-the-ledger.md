@@ -8,6 +8,8 @@ The ledger is the state of record. Read ledger-get-item before acting and use it
 
 Pass the version you read on every mutation. A stale refusal means re-read and reconsider; never retry a write blindly. Evidence and preview artifacts must name the current binding. New code needs new verification.
 
+Every notify-user message about ledger work sets `topic` to the issue id (for a ticket, its parent_id). A new message on a topic retires the older unanswered updates on it, so the humans see the latest word on each issue instead of its history. Send one message when something changes for the humans; do not narrate routine progress.
+
 Questions for humans use ledger-block. The block is your message to the human: put everything they need in the question (the ask, links, what you already checked) and do not also send notify-user about it, or they get the same ask twice. Intake relays the durable question in one notify-user message with `awaits_reply` set to true and records the answer with ledger-resolve-block. Ledger-woken sessions do not support durable ask_question parking.
 
 Inviting a human into a conversation you will run yourself (the architect calling in an engineer) is not a block. Send the notify-user message with `awaits_reply` set to true, then call ledger-complete-wake with `awaiting`: the role you are waiting on and one sentence saying what they must do and where. The ledger stops waking you and records an `awaiting_human` event. On any later wake, that event after the item's latest stage change means the ask has already gone out: send nothing and finish the turn.

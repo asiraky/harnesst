@@ -29,7 +29,6 @@ import type { Target } from "~/chat/playground.server";
 import type { DataStore } from "~/data/ports";
 import {
   openInboxQuestion,
-  recordInboxFinished,
   resolveInboxForSession,
 } from "~/foh/inbox.server";
 import type { FohTurnOutcome } from "~/foh/needs-you";
@@ -108,7 +107,6 @@ export interface ReattachDeps {
   clearPending: typeof clearSessionPendingInput;
   openQuestion: typeof openInboxQuestion;
   resolveAsks: typeof resolveInboxForSession;
-  recordFinished: typeof recordInboxFinished;
   recordFinish: typeof recordTurnFinish;
   resolveRunId: (
     projectId: string,
@@ -129,7 +127,6 @@ export function defaultReattachDeps(): ReattachDeps {
     clearPending: clearSessionPendingInput,
     openQuestion: openInboxQuestion,
     resolveAsks: resolveInboxForSession,
-    recordFinished: recordInboxFinished,
     recordFinish: recordTurnFinish,
     resolveRunId: getRunIdByExternal,
     enqueueJob: enqueue,
@@ -367,8 +364,6 @@ export async function reattachDelegation(
  *                         clearing it is recoverable by the loader reconcile, so that one logs
  *   4. questions        — MUST throw; idempotent on requestId, so a retry cannot duplicate them
  *   5. delegation       — MUST throw, and last: closing it disarms every retry above
- *   6. finished notice  — after the point of no return precisely BECAUSE it has no dedupe key;
- *                         a retry would post a second one, so it must never be the reason for one
  */
 async function settle(
   session: PlaygroundSession,
@@ -517,23 +512,6 @@ async function settle(
     runId,
   });
 
-  // 6. The team-wide "finished" notice. Deliberately after the delegation closed: it has no dedupe
-  //    key, so a retry would post a duplicate — and now no retry can reach it.
-  if (status === "completed") {
-    try {
-      await deps.recordFinished(
-        {
-          projectId: payload.projectId,
-          sessionId: session.id,
-          agentId: session.agentId,
-          userId: null,
-          // A finish summary, not the full reply — the inbox row is a pointer.
-          prompt: result?.reply ? result.reply.slice(0, 500) : null,
-        },
-        store,
-      );
-    } catch (e) {
-      console.error("[team] reattach finished notice failed:", e);
-    }
-  }
+  // No team-wide "finished" notice: a delegated turn that settled without asking a human is
+  //    agents briefing each other. Its caller gets the result; the humans' bell is for them.
 }

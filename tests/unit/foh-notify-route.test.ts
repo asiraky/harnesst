@@ -101,6 +101,7 @@ describe("POST /api/foh/notify", () => {
       message: "done!",
       title: "report",
       awaitsReply: false,
+      topic: null,
     });
   });
 
@@ -139,6 +140,7 @@ describe("POST /api/foh/notify", () => {
       message: "hi",
       title: null,
       awaitsReply: false,
+      topic: null,
     });
   });
 
@@ -152,6 +154,15 @@ describe("POST /api/foh/notify", () => {
       true,
       false,
     ]);
+  });
+
+  it("passes a string topic through and drops anything else", async () => {
+    const token = mintDelegationToken("dep_real");
+
+    await run(post({ token, json: { message: "hi", topic: "issue-1" } }));
+    await run(post({ token, json: { message: "hi", topic: 7 } }));
+
+    expect(notifyHumans.mock.calls.map((c) => c[0].topic)).toEqual(["issue-1", null]);
   });
 
   it("lets an infrastructure failure propagate as a 500 — a retry IS the fix there", async () => {

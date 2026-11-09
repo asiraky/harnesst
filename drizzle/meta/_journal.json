@@ -316,6 +316,13 @@
       "when": 1793666847251,
       "tag": "0044_notify_awaiting_reply",
       "breakpoints": true
+    },
+    {
+      "idx": 45,
+      "version": "7",
+      "when": 1794191915992,
+      "tag": "0045_notify_topic",
+      "breakpoints": true
     }
   ]
 }

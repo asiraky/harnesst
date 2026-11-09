@@ -60,12 +60,20 @@ export const loader = (args: LoaderFunctionArgs) =>
         access.project.id,
         args.params.agentId,
       );
-      const sessions = await listFohSessionsForAgent({
+      const listed = await listFohSessionsForAgent({
         projectId: access.project.id,
         agentId: agent.id,
         viewerId: auth.user.id,
         includeAll: access.backOfHouse,
       });
+      // Quiet rows (agents briefing each other, empty drafts, updates already read) fold away
+      // unless asked for. The open conversation always stays, so a bell link never lands on a
+      // conversation missing from its own list.
+      const showQuiet = new URL(args.request.url).searchParams.get("quiet") === "1";
+      const quietCount = listed.filter((s) => s.quiet).length;
+      const sessions = showQuiet
+        ? listed
+        : listed.filter((s) => !s.quiet || s.id === args.params.sessionId);
       // #278: the archived shelf is admin-only, and so is knowing how full it is — a plain
       // member never learns that conversations they can't see exist.
       const archivedCount = access.backOfHouse
@@ -78,6 +86,8 @@ export const loader = (args: LoaderFunctionArgs) =>
         agentName: agent.name,
         backOfHouse: access.backOfHouse,
         archivedCount,
+        quietCount,
+        showQuiet,
         archivedHref: access.backOfHouse
           ? `/repos/${access.project.id}/sessions/archived`
           : null,
@@ -171,6 +181,8 @@ export default function FohAgent({ loaderData }: Route.ComponentProps) {
     bohHref,
     archivedCount,
     archivedHref,
+    quietCount,
+    showQuiet,
   } = loaderData;
   const params = useParams();
   const newSessionFetcher = useFetcher<typeof action>();
@@ -251,7 +263,9 @@ export default function FohAgent({ loaderData }: Route.ComponentProps) {
         )}
         {sessions.length === 0 ? (
           <p className="px-3 py-6 text-center text-sm text-muted-foreground">
-            No sessions with {agentName} yet.
+            {quietCount > 0
+              ? `Nothing with ${agentName} needs you.`
+              : `No sessions with ${agentName} yet.`}
           </p>
         ) : (
           <SessionList
@@ -265,15 +279,26 @@ export default function FohAgent({ loaderData }: Route.ComponentProps) {
         )}
         {/* Outside the empty-state ternary on purpose: archiving the last conversation is
             exactly when an admin needs the way back to the shelf. */}
-        {archivedHref && archivedCount > 0 && (
-          <div className="shrink-0 border-t px-3 py-2">
-            <Link
-              to={archivedHref}
-              prefetch="intent"
-              className="text-xs text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
-            >
-              {archivedCount} archived
-            </Link>
+        {(quietCount > 0 || (archivedHref && archivedCount > 0)) && (
+          <div className="flex shrink-0 gap-3 border-t px-3 py-2">
+            {quietCount > 0 && (
+              <Link
+                to={showQuiet ? "?" : "?quiet=1"}
+                replace
+                className="text-xs text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
+              >
+                {showQuiet ? "Hide" : "Show"} {quietCount} quiet
+              </Link>
+            )}
+            {archivedHref && archivedCount > 0 && (
+              <Link
+                to={archivedHref}
+                prefetch="intent"
+                className="text-xs text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
+              >
+                {archivedCount} archived
+              </Link>
+            )}
           </div>
         )}
       </section>

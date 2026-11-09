@@ -1421,6 +1421,12 @@ export const playgroundSessions = pgTable(
      * `externalSessionId` being set is what ends the wait. Null for every other row.
      */
     awaitingReplyAt: timestamp("awaiting_reply_at", { withTimezone: true }),
+    /**
+     * What a `notify-user` notification is about (the ledger issue id, typically). A newer
+     * notification on the same topic archives the older unreplied ones it supersedes, so a
+     * subject leaves one live thread rather than one per update. Null for every other row.
+     */
+    topic: text("topic"),
     title: text("title"),
     /**
      * A human-edited title is authoritative. Turn drains and channel/delegation adoption can

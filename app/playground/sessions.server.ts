@@ -36,6 +36,7 @@ import { db } from "~/db/client.server";
 import {
   agents,
   conversationReads,
+  inboxItems,
   playgroundSessions,
   type SessionResumeVia,
 } from "~/db/schema";
@@ -52,6 +53,7 @@ import {
   unansweredInboxRequests,
 } from "~/foh/inbox.server";
 import { reconcileNeedsYouFromTail } from "~/foh/needs-you";
+import { isQuietFohSession } from "~/foh/quiet";
 import { fohSessionStatus, sortSessionsForList } from "~/foh/status";
 import type { FohSessionStatus } from "~/foh/status";
 import {
@@ -262,17 +264,26 @@ export async function renameFohSession(input: {
  * Archived rows are absent (#278). That also re-aims the caller's row-spam guard — it counts
  * what this returns — at UNARCHIVED conversations, which is the intent: tidying up must make
  * room for new work.
+ *
+ * Every row carries `quiet` (`isQuietFohSession`); the list page folds those away by default.
  */
 export async function listFohSessionsForAgent(input: {
   projectId: string;
   agentId: string;
   viewerId: string;
   includeAll?: boolean;
-}): Promise<Array<PlaygroundSession & { unread: boolean }>> {
+  now?: Date;
+}): Promise<Array<PlaygroundSession & { unread: boolean; quiet: boolean }>> {
+  const now = input.now ?? new Date();
   const rows = await db
     .select({
       session: playgroundSessions,
       lastReadAt: conversationReads.lastReadAt,
+      hadHumanAsk: sql<boolean>`exists (
+        select 1 from ${inboxItems}
+        where ${inboxItems.sessionId} = ${playgroundSessions.id}
+          and ${inboxItems.kind} in ('question', 'approval')
+      )`,
     })
     .from(playgroundSessions)
     .leftJoin(
@@ -297,6 +308,14 @@ export async function listFohSessionsForAgent(input: {
       unread:
         row.session.lastEventAt != null &&
         (row.lastReadAt == null || row.session.lastEventAt > row.lastReadAt),
+      quiet: isQuietFohSession(
+        {
+          ...row.session,
+          lastReadAt: row.lastReadAt,
+          hadHumanAsk: row.hadHumanAsk === true,
+        },
+        now,
+      ),
     })),
   );
 }
@@ -773,6 +792,8 @@ export async function createPlaygroundSession(input: {
   openingMessage?: string | null;
   /** The notify-user asked for a reply: the row reads "needs you" until a human answers. */
   awaitingReplyAt?: Date | null;
+  /** The notify-user's topic: a newer notification on it supersedes this one. */
+  topic?: string | null;
 }): Promise<PlaygroundSession> {
   const [row] = await db
     .insert(playgroundSessions)
@@ -798,6 +819,7 @@ export async function createPlaygroundSession(input: {
       lastEventAt: input.lastEventAt ?? null,
       openingMessage: input.openingMessage ?? null,
       awaitingReplyAt: input.awaitingReplyAt ?? null,
+      topic: input.topic ?? null,
     })
     .returning();
   return row;
@@ -828,6 +850,50 @@ export async function listUnrepliedAgentNotifications(
         isNull(playgroundSessions.archivedAt),
       ),
     );
+}
+
+/**
+ * Archive the project's unreplied notifications on `topic` that a newer one (`keepId`)
+ * replaces, and resolve their bell items. An FYI from any agent is superseded. A row still
+ * awaiting a reply is superseded only by a newer ask from the SAME agent (`supersedeAsksOf`):
+ * another agent's update must never bury the question a human still owes an answer to.
+ * Returns the archived ids.
+ */
+export async function supersedeTopicNotifications(input: {
+  projectId: string;
+  topic: string;
+  keepId: string;
+  /** Set when the new notification awaits a reply: that agent's older asks go too. */
+  supersedeAsksOf: string | null;
+  now: Date;
+}): Promise<string[]> {
+  const rows = await db
+    .update(playgroundSessions)
+    .set({ archivedAt: input.now, updatedAt: input.now })
+    .where(
+      and(
+        eq(playgroundSessions.projectId, input.projectId),
+        eq(playgroundSessions.topic, input.topic),
+        ne(playgroundSessions.id, input.keepId),
+        surfaceScope("foh"),
+        isNull(playgroundSessions.createdBy),
+        isNull(playgroundSessions.delegationId),
+        isNotNull(playgroundSessions.openingMessage),
+        isNull(playgroundSessions.externalSessionId),
+        isNull(playgroundSessions.archivedAt),
+        input.supersedeAsksOf
+          ? or(
+              isNull(playgroundSessions.awaitingReplyAt),
+              eq(playgroundSessions.agentId, input.supersedeAsksOf),
+            )
+          : isNull(playgroundSessions.awaitingReplyAt),
+      ),
+    )
+    .returning({ id: playgroundSessions.id });
+  for (const row of rows) {
+    await resolveInboxForArchivedSession(row.id, input.now);
+  }
+  return rows.map((row) => row.id);
 }
 
 /** A repeat notification asked for a reply the original did not: mark the row as awaiting one. */

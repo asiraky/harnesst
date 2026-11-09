@@ -81,7 +81,6 @@ interface Captured {
   enqueued: Array<{ kind: string; payload: Record<string, unknown> }>;
   finishes: Array<Parameters<ReattachDeps["recordFinish"]>[0]>;
   questions: Array<Parameters<ReattachDeps["openQuestion"]>[0]>;
-  finished: Array<Parameters<ReattachDeps["recordFinished"]>[0]>;
   cleared: string[];
   failed: string[];
 }
@@ -94,7 +93,6 @@ function makeDeps(
     enqueued: [],
     finishes: [],
     questions: [],
-    finished: [],
     cleared: [],
     failed: [],
   };
@@ -120,10 +118,6 @@ function makeDeps(
       return { id: "inbox_1" } as never;
     },
     resolveAsks: async () => {},
-    recordFinished: async (input) => {
-      cap.finished.push(input);
-      return { id: "inbox_2" } as never;
-    },
     recordFinish: async (input) => {
       cap.finishes.push(input);
     },
@@ -273,7 +267,6 @@ describe("reattachDelegation", () => {
       reply: "PR opened: #20.",
     });
     expect(deps.cleared).toEqual([SESSION_ID]);
-    expect(deps.finished).toHaveLength(1);
     expect(deps.questions).toHaveLength(0);
   });
 
@@ -532,8 +525,6 @@ describe("reattachDelegation", () => {
     expect(await store.delegations.findById(delegationId)).toMatchObject({
       status: "running",
     });
-    // ...and nothing downstream ran, so the retry cannot double-post the finish notice.
-    expect(deps.finished).toHaveLength(0);
     error.mockRestore();
   });
 
