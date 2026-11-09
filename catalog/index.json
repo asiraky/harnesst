@@ -12,9 +12,9 @@
       "id": "ledger-architect",
       "type": "agent",
       "name": "Ledger Architect",
-      "version": "0.6.0",
+      "version": "0.7.0",
       "description": "The team’s technical designer. For non-trivial issues, call in an engineer, grill them on the technical design, and finalise the spec before breakdown.",
-      "hash": "c8c2f8fdb4ba4877051777b77d729f2c58618d72"
+      "hash": "b1fd3f614a20b94aa59b8735d450f93b192c81d1"
     },
     {
       "id": "ledger-implementer",
@@ -332,9 +332,9 @@
       "id": "using-the-ledger",
       "type": "skill",
       "name": "Using The Ledger",
-      "version": "0.5.0",
+      "version": "0.6.0",
       "description": "Use when a ledger wake arrives or before recording evidence, handing code to infra for a preview, moving work, resolving a block, or relaying human approval.",
-      "hash": "f8ccc0a7b3f1c2b53d81c171c983423f2e4ccb99"
+      "hash": "b854e52a28dee89231084b7e9c0da787401df8a1"
     },
     {
       "id": "web-perf",

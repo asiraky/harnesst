@@ -261,4 +261,122 @@ describe.runIf(LIVE)("playground session rows against real Postgres", () => {
     await db.delete(organization).where(eq(organization.id, ORG));
     await db.delete(user).where(eq(user.id, USER));
   });
+
+  it("a newer notification on a topic archives the older ones it supersedes", async () => {
+    const { db } = await import("~/db/client.server");
+    const { organization } = await import("~/db/auth-schema");
+    const { projects, agents, playgroundSessions } = await import("~/db/schema");
+    const { drizzleDataStore } = await import("~/data/drizzle.server");
+    const { recordInboxNotice } = await import("~/foh/inbox.server");
+    const {
+      createPlaygroundSession,
+      listFohSessionsForAgent,
+      supersedeTopicNotifications,
+    } = await import("~/playground/sessions.server");
+
+    const ORG = "org_topic_smoke";
+    const now = new Date();
+    await db.delete(organization).where(eq(organization.id, ORG));
+    await db.insert(organization).values({
+      id: ORG,
+      name: "topic smoke",
+      slug: "topic-smoke",
+      createdAt: now,
+    });
+    const [project] = await db
+      .insert(projects)
+      .values({ orgId: ORG, name: "topic", slug: "topic-smoke" })
+      .returning();
+    const [architect, intake] = await db
+      .insert(agents)
+      .values([
+        { projectId: project.id, name: "architect", root: "agents/architect/agent" },
+        { projectId: project.id, name: "intake", root: "agents/intake/agent" },
+      ])
+      .returning();
+
+    const notify = async (
+      agentId: string,
+      topic: string | null,
+      opts: { awaiting?: boolean; replied?: boolean } = {},
+    ) => {
+      const row = await createPlaygroundSession({
+        projectId: project.id,
+        agentId,
+        userId: null,
+        surface: "foh",
+        openedByAgentId: agentId,
+        openingMessage: "update",
+        lastEventAt: now,
+        awaitingReplyAt: opts.awaiting ? now : null,
+        externalSessionId: opts.replied ? "wrun_topic_replied" : null,
+        topic,
+      });
+      await recordInboxNotice(
+        { projectId: project.id, sessionId: row.id, agentId, prompt: "update", awaitsReply: opts.awaiting },
+        drizzleDataStore,
+      );
+      return row.id;
+    };
+
+    const oldFyi = await notify(intake.id, "issue-1");
+    const architectAsk = await notify(architect.id, "issue-1", { awaiting: true });
+    const intakeAsk = await notify(intake.id, "issue-1", { awaiting: true });
+    const replied = await notify(intake.id, "issue-1", { replied: true });
+    const otherTopic = await notify(intake.id, "issue-2");
+    const noTopic = await notify(intake.id, null);
+
+    const archivedOf = async (id: string) =>
+      (
+        await db
+          .select({ archivedAt: playgroundSessions.archivedAt })
+          .from(playgroundSessions)
+          .where(eq(playgroundSessions.id, id))
+      )[0].archivedAt;
+
+    // An FYI retires only earlier FYIs: every open ask survives it.
+    const newFyi = await notify(architect.id, "issue-1");
+    const later = new Date(now.getTime() + 1000);
+    expect(
+      await supersedeTopicNotifications({
+        projectId: project.id,
+        topic: "issue-1",
+        keepId: newFyi,
+        supersedeAsksOf: null,
+        now: later,
+      }),
+    ).toEqual([oldFyi]);
+    expect(await drizzleDataStore.inboxItems.findPendingBySession(oldFyi)).toEqual([]);
+
+    // A new ask from intake retires intake's own earlier ask and the FYI, never the
+    // architect's ask, a conversation a human already replied in, or another topic.
+    const newAsk = await notify(intake.id, "issue-1", { awaiting: true });
+    const archived = await supersedeTopicNotifications({
+      projectId: project.id,
+      topic: "issue-1",
+      keepId: newAsk,
+      supersedeAsksOf: intake.id,
+      now: later,
+    });
+    expect(archived.sort()).toEqual([intakeAsk, newFyi].sort());
+    for (const id of [architectAsk, replied, otherTopic, noTopic, newAsk]) {
+      expect(await archivedOf(id)).toBeNull();
+    }
+    expect(await drizzleDataStore.inboxItems.findPendingBySession(intakeAsk)).toEqual([]);
+    expect(await drizzleDataStore.inboxItems.findPendingBySession(newAsk)).toHaveLength(1);
+
+    // The list still carries every unarchived row, each flagged; fresh unread ones are not quiet.
+    const listed = await listFohSessionsForAgent({
+      projectId: project.id,
+      agentId: intake.id,
+      viewerId: "nobody",
+      includeAll: true,
+    });
+    expect(listed.map((row) => row.id).sort()).toEqual(
+      [replied, otherTopic, noTopic, newAsk].sort(),
+    );
+    expect(listed.every((row) => !row.quiet)).toBe(true);
+
+    await db.delete(organization).where(eq(organization.id, ORG));
+  });
 });

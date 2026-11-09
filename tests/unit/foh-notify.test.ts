@@ -86,6 +86,7 @@ function makeDeps(over: Partial<NotifyDeps> = {}): NotifyDeps & {
     inferTitle: async ({ message }) => titleFromMessage(message),
     listUnreplied: async () => [],
     markAwaitingReply: async () => {},
+    supersedeTopic: async () => [],
     now: () => NOW,
     ...over,
   };
@@ -252,6 +253,70 @@ describe("notifyHumans", () => {
 
     await notifyHumans({ deploymentId, message: "m", title: "Design", awaitsReply: true }, deps);
     expect(markAwaitingReply).toHaveBeenCalledWith("ps_open", NOW);
+  });
+
+  it("a notification on a topic supersedes older ones once it is open", async () => {
+    const deploymentId = await seedDeployment();
+    const supersedeTopic = vi.fn(async (_input: Parameters<NotifyDeps["supersedeTopic"]>[0]) => ["ps_old"]);
+    const deps = makeDeps({ supersedeTopic });
+
+    await notifyHumans({ deploymentId, message: "FYI", topic: "  issue-1 " }, deps);
+    await notifyHumans(
+      { deploymentId, message: "Reply here.", topic: "issue-1", awaitsReply: true },
+      deps,
+    );
+    await notifyHumans({ deploymentId, message: "one-off", topic: "  " }, deps);
+
+    expect(deps.created.map((c) => c.topic)).toEqual(["issue-1", "issue-1", null]);
+    // An FYI never retires an ask; an ask retires its own agent's earlier asks.
+    expect(supersedeTopic.mock.calls.map((c) => c[0])).toEqual([
+      { projectId: PROJECT, topic: "issue-1", keepId: "ps_1", supersedeAsksOf: null, now: NOW },
+      { projectId: PROJECT, topic: "issue-1", keepId: "ps_2", supersedeAsksOf: "agent_1", now: NOW },
+    ]);
+  });
+
+  it("a failed supersede still delivers the new notification", async () => {
+    const deploymentId = await seedDeployment();
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+    const deps = makeDeps({
+      supersedeTopic: async () => {
+        throw new Error("db down");
+      },
+    });
+
+    const result = await notifyHumans({ deploymentId, message: "FYI", topic: "issue-1" }, deps);
+
+    expect(result).toMatchObject({ ok: true, sessionId: "ps_1" });
+    errors.mockRestore();
+  });
+
+  it("does not supersede when the notification could not be delivered", async () => {
+    const deploymentId = await seedDeployment();
+    const supersedeTopic = vi.fn(async () => []);
+    const deps = makeDeps({
+      supersedeTopic,
+      openNotice: async () => {
+        throw new Error("inbox down");
+      },
+    });
+
+    await expect(
+      notifyHumans({ deploymentId, message: "FYI", topic: "issue-1" }, deps),
+    ).rejects.toThrow("inbox down");
+    expect(supersedeTopic).not.toHaveBeenCalled();
+  });
+
+  it("refuses an oversized topic before any write", async () => {
+    const deploymentId = await seedDeployment();
+    const deps = makeDeps();
+
+    const result = await notifyHumans(
+      { deploymentId, message: "FYI", topic: "x".repeat(201) },
+      deps,
+    );
+
+    expect(result.ok).toBe(false);
+    expect(deps.created).toHaveLength(0);
   });
 
   it("does not dedupe on an inferred title", async () => {

@@ -93,7 +93,7 @@ export async function resolveInboxForSession(
   sessionId: string,
   store: DataStore = getRuntime().data,
 ): Promise<void> {
-  await store.inboxItems.resolveBySession(sessionId, ["question", "approval"]);
+  await store.inboxItems.resolveBySession(sessionId, ["question", "approval", "reply"]);
 }
 
 /** Resolve only the request identities actually delivered to eve. */

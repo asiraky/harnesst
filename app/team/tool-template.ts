@@ -255,11 +255,18 @@ export default defineTool({
           "an engineer starting a design session). The conversation shows as needing the " +
           "humans until someone replies. Leave it out for information only.",
       },
+      topic: {
+        type: "string",
+        description:
+          "What this is about, as a stable id: the ledger issue id when the work is on the " +
+          "ledger. A new notification on a topic retires the older unanswered updates on it, " +
+          "so the humans see only the latest. Leave it out for a one-off message.",
+      },
     },
     required: ["message"],
     additionalProperties: false,
   },
-  async execute({ message, title, awaits_reply }) {
+  async execute({ message, title, awaits_reply, topic }) {
     const url = process.env.HARNESST_FOH_NOTIFY_URL;
     const token = process.env.HARNESST_TEAM_TOKEN;
     if (!url || !token) {
@@ -276,6 +283,7 @@ export default defineTool({
           message,
           ...(title ? { title } : {}),
           ...(awaits_reply === true ? { awaits_reply: true } : {}),
+          ...(topic ? { topic } : {}),
         }),
         signal: AbortSignal.timeout(30000),
       });

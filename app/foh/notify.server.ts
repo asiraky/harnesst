@@ -20,6 +20,11 @@
  * earlier one with the same explicit title is still unreplied and unarchived, a repeat opens
  * nothing new and returns that conversation with `alreadyOpen`, so a dozen wakes leave one
  * thread. Inferred titles are not compared: they vary run to run, so they would rarely match.
+ *
+ * Topics: a notification may name what it is about (`topic`, the ledger issue id). Once the new
+ * conversation is open, older unreplied ones on that topic are archived: a status update
+ * replaces earlier updates, and a new ask also replaces the same agent's earlier asks. A
+ * human therefore sees the latest word on each subject, not its history.
  */
 import type { DataStore } from "~/data/ports";
 import { recordInboxNotice } from "~/foh/inbox.server";
@@ -30,12 +35,14 @@ import {
   deleteBareNotificationSession,
   listUnrepliedAgentNotifications,
   markNotificationAwaitingReply,
+  supersedeTopicNotifications,
 } from "~/playground/sessions.server";
 import { getRuntime } from "~/seams/index.server";
 
 /** Refuse absurd payloads before they reach the database. */
 const MAX_MESSAGE_BYTES = 20_000;
 const MAX_TITLE_BYTES = 500;
+const MAX_TOPIC_BYTES = 200;
 /**
  * Ceiling on live agent-initiated conversations per agent — the `foh.agent.tsx` new-session
  * row-spam guard, applied to the writer that never sees a form. Archiving frees rows.
@@ -52,6 +59,7 @@ export interface NotifyDeps {
   inferTitle: typeof inferFohSessionTitle;
   listUnreplied: typeof listUnrepliedAgentNotifications;
   markAwaitingReply: typeof markNotificationAwaitingReply;
+  supersedeTopic: typeof supersedeTopicNotifications;
   now: () => Date;
 }
 
@@ -65,6 +73,7 @@ export function defaultNotifyDeps(): NotifyDeps {
     inferTitle: inferFohSessionTitle,
     listUnreplied: listUnrepliedAgentNotifications,
     markAwaitingReply: markNotificationAwaitingReply,
+    supersedeTopic: supersedeTopicNotifications,
     now: () => new Date(),
   };
 }
@@ -76,6 +85,8 @@ export interface NotifyInput {
   title?: string | null;
   /** The agent is waiting on a human to reply in this conversation. */
   awaitsReply?: boolean;
+  /** What the notification is about; a newer one on the same topic supersedes it. */
+  topic?: string | null;
 }
 
 export type NotifyResult =
@@ -108,6 +119,10 @@ export async function notifyHumans(
   const title = input.title?.trim() || null;
   if (title && Buffer.byteLength(title, "utf8") > MAX_TITLE_BYTES) {
     return deny("That title is too long — keep it under 500 bytes.");
+  }
+  const topic = input.topic?.trim() || null;
+  if (topic && Buffer.byteLength(topic, "utf8") > MAX_TOPIC_BYTES) {
+    return deny("That topic is too long — pass the ledger item id.");
   }
 
   // Caller resolution — deployment → environment → agent → project, all from the token's
@@ -170,6 +185,7 @@ export async function notifyHumans(
     // creation) drives the unread badge; `awaitingReplyAt` alone makes the row "needs you".
     lastEventAt: now,
     awaitingReplyAt: input.awaitsReply ? now : null,
+    topic,
   });
 
   let item;
@@ -193,6 +209,22 @@ export async function notifyHumans(
       console.error("[foh] notify compensation delete failed:", cleanupError);
     });
     throw error;
+  }
+
+  // After the new conversation exists, so a failed write above never leaves the subject with
+  // no thread at all. Best-effort: a missed supersede only leaves an older thread showing.
+  if (topic) {
+    try {
+      await deps.supersedeTopic({
+        projectId: project.id,
+        topic,
+        keepId: session.id,
+        supersedeAsksOf: input.awaitsReply ? agent.id : null,
+        now,
+      });
+    } catch (error) {
+      console.error("[foh] notify topic supersede failed:", error);
+    }
   }
 
   return { ok: true, sessionId: session.id, inboxItemId: item.id };
