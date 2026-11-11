@@ -34,6 +34,10 @@ for (const [source, destination] of [
     "0012_awaiting_human.sql",
     "supabase/migrations/20260917000012_awaiting_human.sql",
   ],
+  [
+    "0013_lease_idle_cap.sql",
+    "supabase/migrations/20260917000013_lease_idle_cap.sql",
+  ],
   ["supabase/config.toml", "supabase/config.toml"],
   ["0003_workflow.sql", "supabase/migrations/20260917000003_workflow.sql"],
   [

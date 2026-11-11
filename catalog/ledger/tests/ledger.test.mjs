@@ -16,7 +16,7 @@ try {
   await connection.unsafe(
     await readFile(new URL("../local/roles.sql", import.meta.url), "utf8"),
   );
-  for (const file of ["0001_ledger.sql", "0004_mayi_approvals.sql", "0005_hosted_authorization.sql", "0006_oauth_recovery.sql", "0007_scoped_oauth_writes.sql", "0008_review_content.sql", "0009_tickets.sql", "0010_leases.sql", "0011_harnesst_approvals.sql", "0012_awaiting_human.sql"])
+  for (const file of ["0001_ledger.sql", "0004_mayi_approvals.sql", "0005_hosted_authorization.sql", "0006_oauth_recovery.sql", "0007_scoped_oauth_writes.sql", "0008_review_content.sql", "0009_tickets.sql", "0010_leases.sql", "0011_harnesst_approvals.sql", "0012_awaiting_human.sql", "0013_lease_idle_cap.sql"])
     await connection.unsafe(
       await readFile(new URL("../" + file, import.meta.url), "utf8"),
     );
@@ -905,4 +905,38 @@ test("the heartbeat binds a claimed lease to one session and keeps every lease o
   await wake("implementer", "release_lease", { lease_token: claim.lease_token });
   assert.equal((await lease(other)).token, null);
   assert.equal((await wake("implementer", "renew_lease", { lease_token: claim.lease_token, session_id: "wake-1" })).renewed, false);
+});
+
+test("a session that stops making progress stops renewing, and the waiting wake takes over", async () => {
+  const { i, claim } = await claimedBuild("wake-1");
+  const other = await toBuild();
+  await as("wake-1", "implementer", "set_head", await get(other), head("1"));
+  const idle = (item) =>
+    sql`update ledger.leases set progressed_at=now()-interval '4 hours' where scope_id=${item.id} and actor_id=${actors.implementer.actor_id}`;
+  const renew = () => wake("implementer", "renew_lease", { lease_token: claim.lease_token, session_id: "wake-1" });
+
+  // Only the idle issue stops renewing; the session's busy issue keeps its lease.
+  await idle(other);
+  await sql`update ledger.leases set expires_at=now()+interval '1 second' where session_id='wake-1'`;
+  assert.equal((await renew()).renewed, true);
+  assert.ok((await lease(i)).expires_at > new Date(Date.now() + 9 * 60_000));
+  assert.ok((await lease(other)).expires_at < new Date(Date.now() + 60_000));
+
+  // A write is progress: it restores the heartbeat.
+  await idle(i);
+  assert.deepEqual(await renew(), { renewed: false, idle: true });
+  let item = await as("wake-1", "implementer", "set_head", await get(i), head("2"));
+  assert.equal((await renew()).renewed, true);
+
+  // Idle again: heartbeats no longer hold it, so once it runs out a waiting wake claims it.
+  await idle(i);
+  assert.deepEqual(await renew(), { renewed: false, idle: true });
+  const second = await extraWake(i);
+  assert.equal((await wake("implementer", "claim", { outbox_id: second.id })).deferred, true);
+  await sql`update ledger.leases set expires_at=now()-interval '1 second' where token=${claim.lease_token}`;
+  const takeover = await wake("implementer", "claim", { outbox_id: second.id });
+  assert.equal(takeover.fence, claim.fence + 1);
+  await wake("implementer", "renew_lease", { lease_token: takeover.lease_token, session_id: "wake-2" });
+  await assert.rejects(as("wake-1", "implementer", "set_head", item, head("3")), /LEASE_LOST/);
+  await wake("implementer", "release_lease", { lease_token: takeover.lease_token });
 });

@@ -2,6 +2,7 @@ import { mkdir } from "node:fs/promises";
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import { BASH_TOOL_SOURCE } from "~/deploy/bash-tool-template";
 import { NOTIFY_USER_TOOL_SOURCE } from "~/team/tool-template";
 
 type ExecCallback = (
@@ -630,6 +631,83 @@ describe("harnesst-runs hook injection (WS2)", () => {
     expect(
       writes.find(([p]) => String(p).endsWith("agent/hooks/harnesst-runs.ts")),
     ).toBeUndefined();
+  });
+});
+
+/** Every agent root gets the timed bash tool; a repo's own bash tool is left alone. */
+describe("bash tool injection", () => {
+  beforeEach(() => {
+    execFile.mockClear();
+    execFile.mockImplementation(defaultExecFile);
+  });
+
+  async function buildWithTree(files: Record<string, string>) {
+    const { mkdir: realMkdir, writeFile: realWriteFile } =
+      await vi.importActual<typeof import("node:fs/promises")>(
+        "node:fs/promises",
+      );
+    const path = await import("node:path");
+    execFile.mockImplementation(
+      (cmd, args, optionsOrCallback, maybeCallback) => {
+        if (cmd === "tar") {
+          const target = args[args.indexOf("-C") + 1];
+          const callback = execCallback(optionsOrCallback, maybeCallback);
+          Promise.all(
+            Object.entries(files).map(async ([file, content]) => {
+              await realMkdir(path.dirname(path.join(target, file)), {
+                recursive: true,
+              });
+              await realWriteFile(path.join(target, file), content);
+            }),
+          ).then(
+            () => callback(null, "", ""),
+            (error: Error) => callback(error, "", ""),
+          );
+          return;
+        }
+        defaultExecFile(cmd, args, optionsOrCallback, maybeCallback);
+      },
+    );
+    const { buildEveImage } = await import("~/deploy/eve-image.server");
+    const fsp = await import("node:fs/promises");
+    (fsp.writeFile as unknown as ReturnType<typeof vi.fn>).mockClear();
+    await buildEveImage({
+      projectId: "proj_1",
+      repo: { owner: "acme", repo: "agents" },
+      ref: "abc123",
+      installationId: "inst_1",
+    }).catch(() => {});
+    const writes = (fsp.writeFile as unknown as ReturnType<typeof vi.fn>).mock
+      .calls as [string, string][];
+    return writes
+      .filter(([, source]) => source === BASH_TOOL_SOURCE)
+      .map(([p]) => String(p).replace(/^.*?\/agent\//, "agent/"))
+      .sort();
+  }
+
+  it("writes it at the root and into every declared subagent, nested ones included", async () => {
+    expect(
+      await buildWithTree({
+        "agent/agent.ts": "export default {};",
+        "agent/subagents/qa/instructions.md": "qa",
+        "agent/subagents/reviewer/instructions.md": "review",
+        "agent/subagents/reviewer/subagents/linter/instructions.md": "lint",
+      }),
+    ).toEqual([
+      "agent/subagents/qa/tools/bash.ts",
+      "agent/subagents/reviewer/subagents/linter/tools/bash.ts",
+      "agent/subagents/reviewer/tools/bash.ts",
+      "agent/tools/bash.ts",
+    ]);
+  });
+
+  it("keeps a repo's own bash tool wherever it has one", async () => {
+    expect(
+      await buildWithTree({
+        "agent/tools/bash.ts": "// the repo's own",
+        "agent/subagents/qa/instructions.md": "qa",
+      }),
+    ).toEqual(["agent/subagents/qa/tools/bash.ts"]);
   });
 });
 
