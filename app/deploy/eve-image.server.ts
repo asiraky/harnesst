@@ -67,6 +67,7 @@ import {
   TELL_TEAMMATE_TOOL_PATH,
   TELL_TEAMMATE_TOOL_SOURCE,
 } from "~/team/tool-template";
+import { BASH_TOOL_FILE, BASH_TOOL_SOURCE } from "./bash-tool-template";
 import {
   assertDockerDaemonReady,
   commandErrorText,
@@ -432,6 +433,18 @@ async function prepareSource(input: EveImageBuildInput, srcDir: string) {
     await writeFile(notifyUserPath, NOTIFY_USER_TOOL_SOURCE);
   }
 
+  // A shell command with a wall clock: eve's framework bash never times out and nothing aborts a
+  // turn, so one command that never exits parks the agent for good. Replaces the framework tool
+  // in the root agent and in every declared subagent (they do not inherit the root's tools).
+  // Same override rule as above: a repo file already at a path wins, always.
+  for (const agentDir of await agentRootsIn(path.join(buildDir, "agent"))) {
+    const bashPath = path.join(agentDir, BASH_TOOL_FILE);
+    if (!existsSync(bashPath)) {
+      await mkdir(path.dirname(bashPath), { recursive: true });
+      await writeFile(bashPath, BASH_TOOL_SOURCE);
+    }
+  }
+
   // Session workspace isolation (#315): this channel exists only in the build context. Harnesst
   // drives it over the instance's private/authenticated route so a trusted conversation id reaches
   // Eve's sandbox state before the sandbox container is created. Always replace the reserved build
@@ -456,6 +469,21 @@ async function prepareSource(input: EveImageBuildInput, srcDir: string) {
     runtimeDigest: "",
     buildDigest: "",
   };
+}
+
+/**
+ * An agent root and every declared subagent under it (`subagents/<id>/`, nested to any depth):
+ * each is its own eve agent root with its own `tools/`.
+ */
+async function agentRootsIn(agentDir: string): Promise<string[]> {
+  const roots = [agentDir];
+  const subagents = path.join(agentDir, "subagents");
+  if (!existsSync(subagents)) return roots;
+  for (const entry of await readdir(subagents, { withFileTypes: true })) {
+    if (entry.isDirectory())
+      roots.push(...(await agentRootsIn(path.join(subagents, entry.name))));
+  }
+  return roots;
 }
 
 async function writeSessionWorkspaceChannel(buildDir: string): Promise<void> {
