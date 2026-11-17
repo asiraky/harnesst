@@ -14,7 +14,7 @@
  * Deps-injectable (like `drainDeployment`): a `ReconcileDeps` interface with a `getRuntime()` +
  * drizzle + real-fetch default factory, so the orchestration unit-tests with fakes and no I/O.
  */
-import { and, eq, isNotNull, like, sql } from "drizzle-orm";
+import { and, eq, isNotNull, like, lt, ne, sql } from "drizzle-orm";
 
 import { db } from "~/db/client.server";
 import {
@@ -185,8 +185,23 @@ export interface DiscordPlaceholder {
   startedAt: Date;
 }
 
+/** A `running` row reported by push that may have been left behind by a session eve failed. */
+export interface StaleRun {
+  runId: string;
+  externalRunId: string;
+  channel: string;
+  metadata: Record<string, unknown>;
+  startedAt: Date;
+}
+
 export interface ReconcileDeps {
   listTargets(): Promise<ReconcileTarget[]>;
+  /** `running` non-http rows on this deployment that started before `startedBefore`, oldest first. */
+  listStaleRuns(
+    projectId: string,
+    deploymentId: string,
+    startedBefore: Date,
+  ): Promise<StaleRun[]>;
   /** null when the target has no world access (nomad/vercel) — the deployment is then skipped. */
   listWorldSessions(
     worldKey: string,
@@ -237,6 +252,40 @@ export function reconcileDeps(): ReconcileDeps {
           url: r.url,
           worldKey: r.worldKey,
           projectId: r.projectId,
+        }));
+    },
+    async listStaleRuns(projectId, deploymentId, startedBefore) {
+      const rows = await db
+        .select({
+          runId: runs.id,
+          externalRunId: runs.externalRunId,
+          channel: runs.channel,
+          metadata: runs.metadata,
+          startedAt: runs.startedAt,
+        })
+        .from(runs)
+        .where(
+          and(
+            eq(runs.projectId, projectId),
+            eq(runs.deploymentId, deploymentId),
+            eq(runs.status, "running"),
+            isNotNull(runs.externalRunId),
+            ne(runs.channel, "http"),
+            lt(runs.startedAt, startedBefore),
+          ),
+        )
+        .orderBy(runs.startedAt);
+      return rows
+        .filter(
+          (r): r is typeof r & { externalRunId: string; channel: string } =>
+            !!r.externalRunId && !!r.channel,
+        )
+        .map((r) => ({
+          runId: r.runId,
+          externalRunId: r.externalRunId,
+          channel: r.channel,
+          metadata: (r.metadata as Record<string, unknown> | null) ?? {},
+          startedAt: r.startedAt,
         }));
     },
     async listWorldSessions(worldKey, since) {
@@ -531,6 +580,172 @@ export async function reconcileDeploymentSessions(
   }
 }
 
+/* ── settling runs eve failed without telling the run hook ── */
+
+/** A pushed `running` row younger than this is left to the hook. */
+export const STALE_RUN_AFTER_MS = 10 * 60 * 1000;
+/** How often one stale row's session is re-read while it stays unsettled. */
+export const STALE_RUN_RECHECK_MS = 10 * 60 * 1000;
+/** A turn whose stream has been silent this long is not coming back. */
+export const ABANDONED_TURN_MS = 6 * 60 * 60 * 1000;
+/** A row whose session cannot be read at all is given up on after this long. */
+export const UNREADABLE_SESSION_MS = 24 * 60 * 60 * 1000;
+/** Bounds the stream reads one deployment does per tick. */
+const MAX_STALE_CHECKS_PER_TICK = 5;
+
+/** runId -> when its session was last read. Process-local; a restart just re-reads once. */
+const staleChecks = new Map<string, number>();
+
+export function resetStaleRunChecks(): void {
+  staleChecks.clear();
+}
+
+function splitExternalRunId(id: string): { sessionId: string; turnId: string } | null {
+  const at = id.lastIndexOf(":");
+  if (at <= 0 || at === id.length - 1) return null;
+  return { sessionId: id.slice(0, at), turnId: id.slice(at + 1) };
+}
+
+/** Latest event time in a stream, or `fallback` when none carries one. */
+function lastEventAt(events: IndexedEveEvent[], fallback: number): number {
+  let latest = fallback;
+  for (const e of events) {
+    const at = e.meta?.at ? Date.parse(e.meta.at) : NaN;
+    if (Number.isFinite(at) && at > latest) latest = at;
+  }
+  return latest;
+}
+
+/** Why an unsettled row should be failed now, or null to leave it and look again later. */
+function giveUpReason(
+  run: StaleRun,
+  events: IndexedEveEvent[] | null,
+  hasTurn: boolean,
+  now: number,
+): string | null {
+  const age = now - run.startedAt.getTime();
+  if (events === null) {
+    return age >= UNREADABLE_SESSION_MS
+      ? "harnesst could not read this session from the agent for a day, so it marked the turn failed."
+      : null;
+  }
+  if (!hasTurn) {
+    return age >= UNREADABLE_SESSION_MS
+      ? "The agent has no record of this turn, so harnesst marked it failed."
+      : null;
+  }
+  return now - lastEventAt(events, run.startedAt.getTime()) >= ABANDONED_TURN_MS
+    ? "The turn reported nothing for 6 hours (the agent probably restarted mid-turn), so harnesst marked it failed."
+    : null;
+}
+
+/** The stream (or a stand-in opening when it has no turn) with a `turn.failed` appended. */
+function withFailure(
+  run: StaleRun,
+  turnId: string,
+  events: IndexedEveEvent[] | null,
+  hasTurn: boolean,
+  reason: string,
+  now: number,
+): IndexedEveEvent[] {
+  const base: IndexedEveEvent[] =
+    hasTurn && events
+      ? events
+      : [
+          {
+            type: "message.received",
+            data: { turnId, message: String(run.metadata.input ?? "") },
+            meta: { at: run.startedAt.toISOString() },
+            streamIndex: 1,
+          },
+        ];
+  const failedAt = hasTurn && events ? lastEventAt(events, run.startedAt.getTime()) : now;
+  return [
+    ...base,
+    {
+      type: "turn.failed",
+      data: { turnId, message: reason },
+      meta: { at: new Date(failedAt).toISOString() },
+      streamIndex: base.length + 1,
+    },
+  ];
+}
+
+/**
+ * Settle `running` rows the run hook can never settle.
+ *
+ * When eve's session workflow throws (a model call that fails after its retries, say), eve runs
+ * `emitTerminalSessionFailureStep`. That step tells the channel adapter and writes
+ * `session.failed` to the session's durable stream, but it does not dispatch stream-event hooks,
+ * so the run hook never sees the failure and the row stays `running` forever. The stream does
+ * have it, so read the stream, fold it, and settle the row from what it says.
+ *
+ * Two more cases end the same way. A stream that holds the turn but has been silent for
+ * ABANDONED_TURN_MS means the process died mid-turn (a container restart, say). A session that
+ * cannot be read at all for UNREADABLE_SESSION_MS is gone. Both settle as failed with a message
+ * that says so. Anything else (a live turn, a read error on a young row, a read that hit the event
+ * cap) is left alone and checked again later.
+ */
+export async function settleStaleRuns(
+  target: ReconcileTarget,
+  deps: ReconcileDeps,
+  now: number = Date.now(),
+): Promise<void> {
+  const stale = await deps.listStaleRuns(
+    target.projectId,
+    target.deploymentId,
+    new Date(now - STALE_RUN_AFTER_MS),
+  );
+  let checked = 0;
+  for (const run of stale) {
+    if (checked >= MAX_STALE_CHECKS_PER_TICK) break;
+    const last = staleChecks.get(run.runId);
+    if (last !== undefined && now - last < STALE_RUN_RECHECK_MS) continue;
+    const ids = splitExternalRunId(run.externalRunId);
+    if (!ids) continue;
+    checked += 1;
+    staleChecks.set(run.runId, now);
+
+    let events: IndexedEveEvent[] | null;
+    try {
+      events = await deps.readSessionEvents(target.url, ids.sessionId, 0);
+    } catch {
+      events = null;
+    }
+    // Hit the event cap: the read may have stopped before the turn's end, so don't guess.
+    if (events && events.length >= MAX_EVENTS) continue;
+
+    let turn = events
+      ? foldSessionEvents(events).turns.find((t) => t.turnId === ids.turnId)
+      : undefined;
+    if (!turn?.settled) {
+      const reason = giveUpReason(run, events, turn !== undefined, now);
+      if (!reason) continue;
+      turn = foldSessionEvents(
+        withFailure(run, ids.turnId, events, turn !== undefined, reason, now),
+      ).turns.find((t) => t.turnId === ids.turnId);
+      if (!turn?.settled) continue;
+    }
+
+    const finishedAt = turn.finishedAt ?? turn.startedAt;
+    await deps.recordFinish({
+      projectId: target.projectId,
+      deploymentId: target.deploymentId,
+      releaseId: target.releaseId,
+      externalRunId: run.externalRunId,
+      externalSessionId: ids.sessionId,
+      result: turn.result,
+      userMessage: turn.userMessage,
+      channel: run.channel,
+      metadata: { ...run.metadata, settledBy: "stale-run-sweep" },
+      startedAt: run.startedAt,
+      finishedAt,
+      wallClockMs: Math.max(0, finishedAt.getTime() - run.startedAt.getTime()),
+    });
+    staleChecks.delete(run.runId);
+  }
+}
+
 /** One sweep across every live managed deployment. A bad instance warns and is skipped. */
 export async function reconcileTick(
   deps: ReconcileDeps = reconcileDeps(),
@@ -548,6 +763,14 @@ export async function reconcileTick(
     } catch (error) {
       console.warn(
         `[reconcile] deployment ${target.deploymentId} sweep failed`,
+        error,
+      );
+    }
+    try {
+      await settleStaleRuns(target, deps);
+    } catch (error) {
+      console.warn(
+        `[reconcile] deployment ${target.deploymentId} stale-run sweep failed`,
         error,
       );
     }

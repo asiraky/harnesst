@@ -24,6 +24,7 @@ import {
   resolveModelConnectionId,
   getFreshAccessToken,
   markConnectionStatus,
+  type FreshAccess,
 } from "~/models/provider-connections.server";
 import {
   aggregateChunks,
@@ -149,7 +150,7 @@ export async function action({ request }: ActionFunctionArgs) {
     return errorResponse("This model connection is not available to you.", 403);
   }
 
-  let access;
+  let access: FreshAccess;
   try {
     access = await getFreshAccessToken(resolvedId);
   } catch (error) {
@@ -175,21 +176,43 @@ export async function action({ request }: ActionFunctionArgs) {
       `[gateway] dropped content parts with no Responses equivalent: ${[...dropped].join(", ")}`,
     );
   }
-  const headers: Record<string, string> = {
-    authorization: `Bearer ${access.accessToken}`,
-    "content-type": "application/json",
-    "OpenAI-Beta": "responses=experimental",
-    session_id: crypto.randomUUID(),
-  };
-  if (access.accountId) headers["ChatGPT-Account-ID"] = access.accountId;
-
-  let upstream: Response;
-  try {
-    upstream = await fetch(`${codexApiBase()}/responses`, {
+  const send = (grant: FreshAccess) => {
+    const headers: Record<string, string> = {
+      authorization: `Bearer ${grant.accessToken}`,
+      "content-type": "application/json",
+      "OpenAI-Beta": "responses=experimental",
+      session_id: crypto.randomUUID(),
+    };
+    if (grant.accountId) headers["ChatGPT-Account-ID"] = grant.accountId;
+    return fetch(`${codexApiBase()}/responses`, {
       method: "POST",
       headers,
       body: JSON.stringify(payload),
     });
+  };
+
+  let upstream: Response;
+  try {
+    upstream = await send(access);
+    // The provider can revoke a token before its stored expiry (a plan change does). Refresh once
+    // and retry before telling anyone to reconnect: the refresh token usually still works.
+    if (upstream.status === 401) {
+      let renewed: FreshAccess | null = null;
+      try {
+        renewed = await getFreshAccessToken(
+          resolvedId,
+          {},
+          { rejectedVersion: access.credentialVersion },
+        );
+      } catch (error) {
+        if (!(error instanceof InvalidGrantError)) throw error;
+      }
+      if (renewed && renewed.accessToken !== access.accessToken) {
+        await upstream.body?.cancel().catch(() => {});
+        access = renewed;
+        upstream = await send(access);
+      }
+    }
   } catch (error) {
     await releaseEvalCall();
     return errorResponse(

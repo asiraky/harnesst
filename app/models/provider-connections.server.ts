@@ -826,6 +826,11 @@ const inflightRefresh = new Map<string, Promise<FreshAccess>>();
  * within REFRESH_MARGIN_MS of expiry or already expired. On `invalid_grant` the connection is
  * marked `expired` and `InvalidGrantError` is rethrown so the gateway can tell the user to
  * reconnect. `deps` is injected in tests to count refresh calls / avoid real I/O.
+ *
+ * `rejectedVersion`: the provider refused the access token of that credential generation (HTTP
+ * 401) although it had not reached its stored expiry, e.g. after a plan change revoked it. If the
+ * connection is still on that generation, refresh regardless of expiry; if another request has
+ * already rotated it, return the newer token.
  */
 export async function getFreshAccessToken(
   connectionId: string,
@@ -840,6 +845,7 @@ export async function getFreshAccessToken(
     ) => Promise<boolean | void>;
     now?: () => number;
   } = {},
+  options: { rejectedVersion?: number } = {},
 ): Promise<FreshAccess> {
   const load = deps.load ?? getConnectionForGateway;
   const refresh = deps.refresh ?? refreshCodexTokens;
@@ -856,8 +862,11 @@ export async function getFreshAccessToken(
   }
 
   const expiresAt = conn.accessTokenExpiresAt?.getTime() ?? 0;
+  const rejected = options.rejectedVersion === conn.credentialVersion;
   const fresh =
-    conn.accessToken != null && expiresAt - now() > REFRESH_MARGIN_MS;
+    !rejected &&
+    conn.accessToken != null &&
+    expiresAt - now() > REFRESH_MARGIN_MS;
   if (fresh && conn.accessToken) {
     return {
       accessToken: conn.accessToken,

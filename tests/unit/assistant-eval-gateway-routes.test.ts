@@ -237,3 +237,123 @@ describe("upstream authentication mapping", () => {
     },
   );
 });
+
+describe("revoked access token", () => {
+  const request = () =>
+    new Request("http://localhost/api/gateway/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        authorization: "Bearer gateway",
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        model: MODEL,
+        messages: [{ role: "user", content: "hello" }],
+        stream: false,
+      }),
+    });
+  const completed = () =>
+    new Response(
+      `event: response.completed\ndata: ${JSON.stringify({ type: "response.completed", response: { usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 } } })}\n\n`,
+      { status: 200, headers: { "content-type": "text/event-stream" } },
+    );
+
+  beforeEach(() => {
+    mocks.verifyGatewayToken.mockReturnValue("org_1");
+    mocks.getConnectionForGateway.mockResolvedValue({
+      id: "abcdefghijkl",
+      orgId: "org_1",
+      provider: "codex",
+    });
+    mocks.markConnectionStatus.mockResolvedValue(true);
+  });
+
+  it("refreshes once and retries before expiring the connection", async () => {
+    mocks.getFreshAccessToken
+      .mockResolvedValueOnce({
+        accessToken: "revoked",
+        accountId: "account_1",
+        credentialVersion: 7,
+      })
+      .mockResolvedValueOnce({
+        accessToken: "renewed",
+        accountId: "account_1",
+        credentialVersion: 8,
+      });
+    const fetch = vi
+      .fn()
+      .mockResolvedValueOnce(new Response("token_expired", { status: 401 }))
+      .mockResolvedValueOnce(completed());
+    vi.stubGlobal("fetch", fetch);
+    const response = await chat({
+      request: request(),
+      params: {},
+      context: {},
+    } as never);
+    expect(response.status).toBe(200);
+    expect(mocks.getFreshAccessToken).toHaveBeenLastCalledWith(
+      "abcdefghijkl",
+      {},
+      { rejectedVersion: 7 },
+    );
+    expect(fetch.mock.calls[1][1].headers.authorization).toBe("Bearer renewed");
+    expect(mocks.markConnectionStatus).not.toHaveBeenCalled();
+  });
+
+  it("expires the renewed generation when the provider rejects it too", async () => {
+    mocks.getFreshAccessToken
+      .mockResolvedValueOnce({
+        accessToken: "revoked",
+        accountId: null,
+        credentialVersion: 7,
+      })
+      .mockResolvedValueOnce({
+        accessToken: "renewed",
+        accountId: null,
+        credentialVersion: 8,
+      });
+    const fetch = vi
+      .fn()
+      .mockImplementation(async () => new Response("nope", { status: 401 }));
+    vi.stubGlobal("fetch", fetch);
+    const response = await chat({
+      request: request(),
+      params: {},
+      context: {},
+    } as never);
+    expect(response.status).toBe(401);
+    expect(fetch).toHaveBeenCalledTimes(2);
+    expect(mocks.markConnectionStatus).toHaveBeenCalledWith(
+      "abcdefghijkl",
+      "expired",
+      8,
+    );
+  });
+
+  it("expires the connection when the refresh token is dead too", async () => {
+    const { InvalidGrantError } = await import("~/connections/codex.server");
+    mocks.getFreshAccessToken
+      .mockResolvedValueOnce({
+        accessToken: "revoked",
+        accountId: null,
+        credentialVersion: 7,
+      })
+      .mockRejectedValueOnce(new InvalidGrantError("dead"));
+    const fetch = vi
+      .fn()
+      .mockImplementation(async () => new Response("nope", { status: 401 }));
+    vi.stubGlobal("fetch", fetch);
+    const response = await chat({
+      request: request(),
+      params: {},
+      context: {},
+    } as never);
+    expect(response.status).toBe(401);
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(mocks.markConnectionStatus).toHaveBeenCalledWith(
+      "abcdefghijkl",
+      "expired",
+      7,
+    );
+  });
+});

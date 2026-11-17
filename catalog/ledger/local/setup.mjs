@@ -90,6 +90,7 @@ try {
   await apply("0011_harnesst_approvals.sql");
   await apply("0012_awaiting_human.sql");
   await apply("0013_lease_idle_cap.sql");
+  await apply("0014_github_progress.sql");
   const workflow = JSON.parse(
     await readFile(new URL("workflow.json", root), "utf8"),
   );

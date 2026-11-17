@@ -76,9 +76,9 @@
       "id": "ledger",
       "type": "bundle",
       "name": "Ledger",
-      "version": "0.7.0",
+      "version": "0.8.0",
       "description": "A shared work ledger with authenticated wakes, evidence and human approval gates.",
-      "hash": "4e4cccbef0d87b41bf995e7e04ec7e1a049f51db"
+      "hash": "61c332f403caca2c137b6ecb63f776b87b159281"
     },
     {
       "id": "vercel-bundle",

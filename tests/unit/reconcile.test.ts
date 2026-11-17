@@ -8,8 +8,14 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
+  ABANDONED_TURN_MS,
   reconcileTick,
   resetReconcileWarnings,
+  resetStaleRunChecks,
+  settleStaleRuns,
+  STALE_RUN_RECHECK_MS,
+  UNREADABLE_SESSION_MS,
+  type StaleRun,
   type DiscordPlaceholder,
   type ReconcileCursor,
   type ReconcileDeps,
@@ -70,6 +76,9 @@ interface FakeConfig {
   streams: Record<string, IndexedEveEvent[]>;
   placeholders?: DiscordPlaceholder[];
   recordStartResult?: boolean;
+  staleRuns?: StaleRun[];
+  /** Sessions whose stream read throws (eve hangs on an unknown id until the connect timeout). */
+  unreadable?: string[];
 }
 
 function makeDeps(config: FakeConfig) {
@@ -78,6 +87,7 @@ function makeDeps(config: FakeConfig) {
   const startCalls: { ids: unknown; startedAt: Date }[] = [];
   const readSessionEvents = vi.fn(
     async (_url: string, sessionId: string, startIndex: number) => {
+      if (config.unreadable?.includes(sessionId)) throw new Error("aborted");
       const all = config.streams[sessionId] ?? [];
       return all.filter((e) => e.streamIndex > startIndex);
     },
@@ -89,6 +99,7 @@ function makeDeps(config: FakeConfig) {
 
   const deps: ReconcileDeps = {
     listTargets: async () => [TARGET],
+    listStaleRuns: async () => config.staleRuns ?? [],
     listWorldSessions,
     readSessionEvents,
     getCursor: async (projectId, sid) => cursors.get(`${projectId}:${sid}`) ?? null,
@@ -316,5 +327,128 @@ describe("empty-world diagnostics", () => {
     ]);
 
     expect(lines).toHaveLength(0);
+  });
+});
+
+describe("settleStaleRuns", () => {
+  const STARTED = new Date("2026-07-12T00:00:00.000Z");
+  const staleRun = (sessionId: string): StaleRun => ({
+    runId: `run_${sessionId}`,
+    externalRunId: `${sessionId}:turn_0`,
+    channel: "ledger-wake",
+    metadata: { eveSessionId: sessionId, source: "push", input: "Ledger: item x" },
+    startedAt: STARTED,
+  });
+  const at = (ms: number) => STARTED.getTime() + ms;
+
+  beforeEach(() => {
+    resetStaleRunChecks();
+  });
+
+  it("settles a row as failed from the session.failed eve wrote only to the stream", async () => {
+    const { deps, finishCalls } = makeDeps({
+      sessions: [],
+      staleRuns: [staleRun("wrun_a")],
+      streams: {
+        wrun_a: indexed([
+          { type: "message.received", data: { turnId: "turn_0", message: "Ledger: item x" }, meta: { at: "2026-07-12T00:00:00.000Z" } },
+          { type: "step.started", data: { turnId: "turn_0", sequence: 1 }, meta: { at: "2026-07-12T00:00:01.000Z" } },
+          {
+            type: "session.failed",
+            data: { code: "AI_RetryError", message: "Codex backend error (HTTP 429): usage_limit_reached" },
+            meta: { at: "2026-07-12T00:05:00.000Z" },
+          },
+        ]),
+      },
+    });
+
+    await settleStaleRuns(TARGET, deps, at(20 * 60_000));
+
+    expect(finishCalls).toHaveLength(1);
+    const call = finishCalls[0];
+    expect(call.externalRunId).toBe("wrun_a:turn_0");
+    expect(call.channel).toBe("ledger-wake");
+    expect(call.result.ok).toBe(false);
+    expect(call.result.error).toContain("usage_limit_reached");
+    expect(call.finishedAt?.toISOString()).toBe("2026-07-12T00:05:00.000Z");
+    expect(call.metadata).toMatchObject({ source: "push", settledBy: "stale-run-sweep" });
+  });
+
+  it("settles a row as completed when the stream shows the turn finished", async () => {
+    const { deps, finishCalls } = makeDeps({
+      sessions: [],
+      staleRuns: [staleRun("wrun_done")],
+      streams: { wrun_done: completedTurn("go", "all done") },
+    });
+
+    await settleStaleRuns(TARGET, deps, at(20 * 60_000));
+
+    expect(finishCalls[0]?.result.ok).toBe(true);
+    expect(finishCalls[0]?.result.reply).toBe("all done");
+  });
+
+  it("leaves a live turn alone and does not re-read it until the recheck interval passes", async () => {
+    const { deps, finishCalls, readSessionEvents } = makeDeps({
+      sessions: [],
+      staleRuns: [staleRun("wrun_live")],
+      streams: { wrun_live: hungTurn("long job") },
+    });
+
+    const now = at(60 * 60_000); // an hour in, last event at +0.5s: well under the abandon cap
+    await settleStaleRuns(TARGET, deps, now);
+    await settleStaleRuns(TARGET, deps, now + STALE_RUN_RECHECK_MS - 1);
+    expect(readSessionEvents).toHaveBeenCalledTimes(1);
+    await settleStaleRuns(TARGET, deps, now + STALE_RUN_RECHECK_MS);
+    expect(readSessionEvents).toHaveBeenCalledTimes(2);
+    expect(finishCalls).toHaveLength(0);
+  });
+
+  it("fails a turn whose stream went silent past the abandon cap", async () => {
+    const { deps, finishCalls } = makeDeps({
+      sessions: [],
+      staleRuns: [staleRun("wrun_dead")],
+      streams: { wrun_dead: hungTurn("long job") },
+    });
+
+    await settleStaleRuns(TARGET, deps, at(500 + ABANDONED_TURN_MS));
+
+    expect(finishCalls).toHaveLength(1);
+    expect(finishCalls[0].result.ok).toBe(false);
+    expect(finishCalls[0].result.error).toContain("restarted mid-turn");
+    // Finished when it last reported, not when harnesst noticed.
+    expect(finishCalls[0].finishedAt?.toISOString()).toBe("2026-07-12T00:00:00.500Z");
+  });
+
+  it("gives up on an unreadable session only after a day", async () => {
+    const config: FakeConfig = {
+      sessions: [],
+      staleRuns: [staleRun("wrun_gone")],
+      streams: {},
+      unreadable: ["wrun_gone"],
+    };
+    const { deps, finishCalls } = makeDeps(config);
+
+    await settleStaleRuns(TARGET, deps, at(UNREADABLE_SESSION_MS - 1));
+    expect(finishCalls).toHaveLength(0);
+
+    resetStaleRunChecks();
+    await settleStaleRuns(TARGET, deps, at(UNREADABLE_SESSION_MS));
+    expect(finishCalls).toHaveLength(1);
+    expect(finishCalls[0].result.ok).toBe(false);
+    expect(finishCalls[0].userMessage).toBe("Ledger: item x");
+  });
+
+  it("caps the stream reads one deployment does per tick", async () => {
+    const ids = ["s1", "s2", "s3", "s4", "s5", "s6", "s7"];
+    const { deps, readSessionEvents } = makeDeps({
+      sessions: [],
+      staleRuns: ids.map(staleRun),
+      streams: Object.fromEntries(ids.map((id) => [id, hungTurn("job")])),
+    });
+
+    await settleStaleRuns(TARGET, deps, at(60 * 60_000));
+    expect(readSessionEvents).toHaveBeenCalledTimes(5);
+    await settleStaleRuns(TARGET, deps, at(60 * 60_000 + 1));
+    expect(readSessionEvents.mock.calls.slice(5).map((c) => c[1])).toEqual(["s6", "s7"]);
   });
 });
