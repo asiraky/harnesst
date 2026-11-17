@@ -2081,8 +2081,8 @@ interface TurnProjection {
   effort: ReasoningEffort | null;
   steps: ChatStep[];
   error: string | null;
-  stepStarts: Map<number, number>;
-  actionsBySeq: Map<number, TurnAction[]>;
+  stepStarts: Map<string, number>;
+  actionsBySeq: Map<string, TurnAction[]>;
   actionByCallId: Map<string, TurnAction>;
   errorModelId?: string | null;
 }
@@ -2168,6 +2168,10 @@ export function projectEventsToEntries(
     const stepIndex = typeof data.stepIndex === "number" ? data.stepIndex : 0;
     const sequence =
       typeof data.sequence === "number" ? data.sequence : stepIndex;
+    // eve reports `sequence` as the turn number and `stepIndex` as the step within it; older
+    // eve had stepIndex stuck at 0 and sequence per step. Keyed on one alone, every step of a
+    // turn shared one bucket and carried the whole turn's tool calls. The pair is unique on both.
+    const stepKey = `${sequence}:${stepIndex}`;
 
     switch (event.type) {
       case "session.started": {
@@ -2240,12 +2244,12 @@ export function projectEventsToEntries(
         break;
       }
       case "step.started":
-        turn?.stepStarts.set(sequence, at);
+        turn?.stepStarts.set(stepKey, at);
         break;
       case "actions.requested": {
         if (!turn) break;
         const actions = Array.isArray(data.actions) ? data.actions : [];
-        const seqActions = turn.actionsBySeq.get(sequence) ?? [];
+        const seqActions = turn.actionsBySeq.get(stepKey) ?? [];
         for (const rawAction of actions) {
           if (typeof rawAction !== "object" || rawAction === null) continue;
           const action = rawAction as Record<string, unknown>;
@@ -2258,7 +2262,7 @@ export function projectEventsToEntries(
             turn.actionByCallId.set(action.callId, record);
           }
         }
-        turn.actionsBySeq.set(sequence, seqActions);
+        turn.actionsBySeq.set(stepKey, seqActions);
         break;
       }
       case "action.result": {
@@ -2317,8 +2321,8 @@ export function projectEventsToEntries(
           turn.errorModelId = modelConnectionFailureReference(data);
         }
         const usage = data.usage as Record<string, unknown> | undefined;
-        const started = turn.stepStarts.get(sequence);
-        const actions = turn.actionsBySeq.get(sequence);
+        const started = turn.stepStarts.get(stepKey);
+        const actions = turn.actionsBySeq.get(stepKey);
         const primary = actions?.[0];
         turn.steps.push({
           type: event.type,

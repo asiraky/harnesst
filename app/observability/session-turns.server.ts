@@ -191,8 +191,8 @@ interface TurnState {
   reply: string | null;
   error: string | null;
   lastStepFailure: string | null;
-  stepStarts: Map<number, number>;
-  actionsBySeq: Map<number, TurnAction[]>;
+  stepStarts: Map<string, number>;
+  actionsBySeq: Map<string, TurnAction[]>;
   actionByCallId: Map<string, TurnAction>;
 }
 
@@ -255,6 +255,10 @@ export function foldSessionEvents(
     const atMs = at.getTime();
     const stepIndex = typeof data.stepIndex === "number" ? data.stepIndex : 0;
     const sequence = typeof data.sequence === "number" ? data.sequence : stepIndex;
+    // eve reports `sequence` as the turn number and `stepIndex` as the step within it; older
+    // eve had stepIndex stuck at 0 and sequence per step. Keyed on one alone, every step of a
+    // turn shared one bucket and carried the whole turn's tool calls. The pair is unique on both.
+    const stepKey = `${sequence}:${stepIndex}`;
     const turnId = typeof data.turnId === "string" ? data.turnId : null;
 
     switch (type) {
@@ -280,14 +284,14 @@ export function foldSessionEvents(
       case "step.started": {
         if (!turnId) break;
         const turn = ensureTurn(turnId, evt.streamIndex, at);
-        turn.stepStarts.set(sequence, atMs);
+        turn.stepStarts.set(stepKey, atMs);
         break;
       }
       case "actions.requested": {
         if (!turnId) break;
         const turn = ensureTurn(turnId, evt.streamIndex, at);
         const list = Array.isArray(data.actions) ? data.actions : [];
-        const seqActions = turn.actionsBySeq.get(sequence) ?? [];
+        const seqActions = turn.actionsBySeq.get(stepKey) ?? [];
         for (const rawAction of list) {
           if (typeof rawAction !== "object" || rawAction === null) continue;
           const a = rawAction as Record<string, unknown>;
@@ -300,7 +304,7 @@ export function foldSessionEvents(
           seqActions.push(record);
           if (typeof a.callId === "string") turn.actionByCallId.set(a.callId, record);
         }
-        turn.actionsBySeq.set(sequence, seqActions);
+        turn.actionsBySeq.set(stepKey, seqActions);
         break;
       }
       case "action.result": {
@@ -340,10 +344,10 @@ export function foldSessionEvents(
         if (!turnId) break;
         const turn = ensureTurn(turnId, evt.streamIndex, at);
         const usage = data.usage as Record<string, unknown> | undefined;
-        const started = turn.stepStarts.get(sequence);
+        const started = turn.stepStarts.get(stepKey);
         const failure = type === "step.failed" ? failureOf(data, "The agent step failed.") : null;
         if (failure) turn.lastStepFailure = failure.text;
-        const actions = turn.actionsBySeq.get(sequence);
+        const actions = turn.actionsBySeq.get(stepKey);
         const primary = actions?.[0];
         turn.steps.push({
           type,

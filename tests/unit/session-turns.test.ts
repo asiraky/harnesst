@@ -191,6 +191,36 @@ describe("foldSessionEvents", () => {
     });
   });
 
+  it("gives each step only its own actions when sequence is the turn number (current eve)", () => {
+    const iso = (ms: number) => new Date(Date.parse("2026-07-12T00:00:00.000Z") + ms).toISOString();
+    const fold = foldSessionEvents(indexed([
+      { type: "message.received", data: { turnId: "turn_0", message: "hi" }, meta: { at: iso(0) } },
+      { type: "step.started", data: { turnId: "turn_0", sequence: 0, stepIndex: 0 }, meta: { at: iso(0) } },
+      {
+        type: "actions.requested",
+        data: { turnId: "turn_0", sequence: 0, stepIndex: 0, actions: [{ callId: "c1", toolName: "bash", input: { command: "ls" } }] },
+        meta: { at: iso(100) },
+      },
+      { type: "step.completed", data: { turnId: "turn_0", sequence: 0, stepIndex: 0 }, meta: { at: iso(1000) } },
+      { type: "step.started", data: { turnId: "turn_0", sequence: 0, stepIndex: 1 }, meta: { at: iso(2000) } },
+      {
+        type: "actions.requested",
+        data: { turnId: "turn_0", sequence: 0, stepIndex: 1, actions: [{ callId: "c2", toolName: "read_file", input: { path: "/a" } }] },
+        meta: { at: iso(2100) },
+      },
+      { type: "step.completed", data: { turnId: "turn_0", sequence: 0, stepIndex: 1 }, meta: { at: iso(4000) } },
+      { type: "message.completed", data: { turnId: "turn_0", message: "ok" }, meta: { at: iso(4000) } },
+      { type: "turn.completed", data: { turnId: "turn_0" }, meta: { at: iso(4000) } },
+    ]));
+
+    const steps = fold.turns[0].result.steps;
+    expect(steps.map((s) => s.actions?.map((a) => a.toolName))).toEqual([["bash"], ["read_file"]]);
+    expect(steps.map((s) => s.durationMs)).toEqual([1000, 2000]);
+    // One run_steps row per tool call, not one per tool call per model call.
+    const rows = turnToSteps(fold.turns[0].result, { userMessage: "hi" });
+    expect(rows.filter((r) => r.type === "tool_call")).toHaveLength(2);
+  });
+
   it("carries the model id in from opts when session.started is behind the cursor", () => {
     const events = indexed([
       evt("message.received", { turnId: "turn_5", message: "later" }, "2026-07-12T00:00:00.000Z"),

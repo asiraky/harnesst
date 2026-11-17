@@ -748,8 +748,8 @@ interface DrainCarry {
   lastStepFailure: string | null;
   errorModelId: string | null;
   modelId: string | null;
-  stepStarts: Map<number, number>;
-  actionsBySeq: Map<number, TurnAction[]>;
+  stepStarts: Map<string, number>;
+  actionsBySeq: Map<string, TurnAction[]>;
   actionByCallId: Map<string, TurnAction>;
   /** The HTTP status the latest slice's stream request got; null when it never got one. */
   streamStatus: number | null;
@@ -1063,11 +1063,9 @@ async function* drainTurnStream(input: {
     const decoder = new TextDecoder();
     let buf = "";
     let settled = false;
-    // step.started timestamps by sequence, to compute durations at step.completed.
-    // NOTE: eve's stepIndex stays 0 for the whole turn; `sequence` is the real per-step
-    // counter — key on it (falling back to stepIndex on older instances).
+    // step.started timestamps by step (see `stepKey`), to compute durations at step.completed.
     const stepStarts = carry.stepStarts;
-    // Tool calls per sequence, correlated request → result by callId (attached to the step).
+    // Tool calls per step, correlated request → result by callId (attached to the step).
     const actionsBySeq = carry.actionsBySeq;
     const actionByCallId = carry.actionByCallId;
 
@@ -1107,6 +1105,10 @@ async function* drainTurnStream(input: {
           typeof data.stepIndex === "number" ? data.stepIndex : 0;
         const sequence =
           typeof data.sequence === "number" ? data.sequence : stepIndex;
+        // eve reports `sequence` as the turn number and `stepIndex` as the step within it; older
+        // eve had stepIndex stuck at 0 and sequence per step. Keyed on one alone, every step of a
+        // turn shared one bucket and carried the whole turn's tool calls. The pair is unique on both.
+        const stepKey = `${sequence}:${stepIndex}`;
         const turnId = typeof data.turnId === "string" ? data.turnId : null;
         // Reattach with no known turn id: the first turn the stream shows past the cursor is the
         // one we lost. (On the live path `matchMessage` is set, so this never fires and turn
@@ -1152,14 +1154,14 @@ async function* drainTurnStream(input: {
             break;
           case "step.started":
             if (ours) {
-              stepStarts.set(sequence, at);
+              stepStarts.set(stepKey, at);
               yield { kind: "thinking" };
             }
             break;
           case "actions.requested": {
             if (!ours) break;
             const list = Array.isArray(data.actions) ? data.actions : [];
-            const seqActions = actionsBySeq.get(sequence) ?? [];
+            const seqActions = actionsBySeq.get(stepKey) ?? [];
             for (const rawAction of list) {
               if (typeof rawAction !== "object" || rawAction === null) continue;
               const a = rawAction as Record<string, unknown>;
@@ -1174,7 +1176,7 @@ async function* drainTurnStream(input: {
                 actionByCallId.set(a.callId, record);
               yield { kind: "action", toolName, summary };
             }
-            actionsBySeq.set(sequence, seqActions);
+            actionsBySeq.set(stepKey, seqActions);
             break;
           }
           case "action.result": {
@@ -1227,7 +1229,7 @@ async function* drainTurnStream(input: {
           case "step.failed": {
             if (!ours) break;
             const usage = data.usage as Record<string, unknown> | undefined;
-            const started = stepStarts.get(sequence);
+            const started = stepStarts.get(stepKey);
             const failure =
               type === "step.failed"
                 ? failureOf(data, "The agent step failed.")
@@ -1236,7 +1238,7 @@ async function* drainTurnStream(input: {
               lastStepFailure = failure.text;
               errorModelId = modelConnectionFailureReference(data);
             }
-            const actions = actionsBySeq.get(sequence);
+            const actions = actionsBySeq.get(stepKey);
             const primary = actions?.[0];
             const step: TurnStep = {
               type,
