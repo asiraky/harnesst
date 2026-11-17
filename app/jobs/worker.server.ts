@@ -16,6 +16,7 @@ import type { DataStore } from "~/data/ports";
 import { deployRelease, rollbackTo } from "~/deploy/controller.server";
 import { reconcileLiveDeployments } from "~/deploy/liveness.server";
 import { ensureSandboxReaperStarted } from "~/deploy/sandbox-reaper.server";
+import { ensureCallLogPrunerStarted } from "~/gateway/call-log.server";
 import { concurrencyFromEnv } from "~/lib/concurrency";
 import { PUBLISH_INTERRUPTED_MESSAGE } from "~/publish/pipeline.server";
 import { getRuntime } from "~/seams/index.server";
@@ -354,6 +355,8 @@ const globalForWorker = globalThis as unknown as {
 export function ensureWorkerStarted(): void {
   if (process.env.HARNESST_DISABLE_WORKER !== "1") {
     globalForWorker.__harnesstJobWorker ??= startWorker();
+    // Gateway call log retention (issue #416): rows past 90 days are deleted every six hours.
+    ensureCallLogPrunerStarted();
   }
   // The sandbox reaper (issue #118) is a sibling periodic sweep with its own env gate and the
   // local-docker guard. Start it here so every existing worker call site gets it; it is a no-op on

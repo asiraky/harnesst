@@ -138,13 +138,20 @@ function harnesstSelectedModel(
 // connection credential. Codex OAuth alone uses harnesst's translating gateway. A bare id is an old
 // OpenRouter reference and remains runnable so repos created before the connection model can be
 // upgraded on their next model save.
-function harnesstModel(id: string, effort?: 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh') {
+// \`callHeaders\` label a Codex call for harnesst's gateway call log (agent, session, turn, step);
+// the gateway treats them as labels only, never as authority.
+function harnesstModel(id: string, effort?: 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh', callHeaders?: Record<string, string>) {
   const qualified = id.match(/^(anthropic|codex|openai|openrouter)\\/([a-z]{12})\\/(.+)$/);
   if (!qualified) return harnesstReasoningModel(openrouter.chatModel(id), effort);
   const provider = qualified[1];
   const connectionId = qualified[2];
   const upstreamModelId = qualified[3];
-  if (provider === 'codex') return harnesstReasoningModel(harnesstGateway.chatModel(id), effort);
+  if (provider === 'codex') {
+    const gateway = callHeaders
+      ? createOpenAICompatible({ name: 'harnesst', baseURL: process.env.HARNESST_MODEL_GATEWAY_URL ?? '', apiKey: process.env.HARNESST_MODEL_GATEWAY_TOKEN ?? '', headers: callHeaders })
+      : harnesstGateway;
+    return harnesstReasoningModel(gateway.chatModel(id), effort);
+  }
   const envName =
     'HARNESST_PROVIDER_' + provider.toUpperCase() + '_' + connectionId.toUpperCase() + '_API_KEY';
   const apiKey = process.env[envName];

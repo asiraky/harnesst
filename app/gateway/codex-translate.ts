@@ -311,11 +311,16 @@ export interface ChatCompletionChunk {
     delta: Record<string, unknown>;
     finish_reason: string | null;
   }>;
-  usage?: {
-    prompt_tokens: number;
-    completion_tokens: number;
-    total_tokens: number;
-  };
+  usage?: ChatUsage;
+}
+
+/** OpenAI chat-completions usage, with the cache and reasoning details the AI SDK reads. */
+export interface ChatUsage {
+  prompt_tokens: number;
+  completion_tokens: number;
+  total_tokens: number;
+  prompt_tokens_details?: { cached_tokens: number };
+  completion_tokens_details?: { reasoning_tokens: number };
 }
 
 /** Raised when the upstream Responses stream reports a failure (`response.failed` / `error`). */
@@ -326,21 +331,62 @@ export class CodexUpstreamError extends Error {
   }
 }
 
-function mapUsage(
-  usage: unknown,
-):
-  | { prompt_tokens: number; completion_tokens: number; total_tokens: number }
-  | undefined {
+/** Token counts from a Responses `usage` object; details are null when upstream omits them. */
+export interface CodexUsage {
+  inputTokens: number;
+  cachedInputTokens: number | null;
+  outputTokens: number;
+  reasoningTokens: number | null;
+  totalTokens: number;
+}
+
+function count(value: unknown): number | null {
+  const n = Number(value);
+  return value !== undefined && value !== null && Number.isFinite(n) && n >= 0
+    ? n
+    : null;
+}
+
+export function readCodexUsage(usage: unknown): CodexUsage | undefined {
   if (!usage || typeof usage !== "object") return undefined;
   const u = usage as Record<string, unknown>;
-  const input = Number(u.input_tokens ?? 0);
-  const output = Number(u.output_tokens ?? 0);
-  const total = Number(u.total_tokens ?? input + output);
+  const input = count(u.input_tokens) ?? 0;
+  const output = count(u.output_tokens) ?? 0;
+  const inputDetails = u.input_tokens_details as
+    | Record<string, unknown>
+    | undefined;
+  const outputDetails = u.output_tokens_details as
+    | Record<string, unknown>
+    | undefined;
   return {
-    prompt_tokens: input,
-    completion_tokens: output,
-    total_tokens: total,
+    inputTokens: input,
+    cachedInputTokens: count(inputDetails?.cached_tokens),
+    outputTokens: output,
+    reasoningTokens: count(outputDetails?.reasoning_tokens),
+    totalTokens: count(u.total_tokens) ?? input + output,
   };
+}
+
+/**
+ * Responses usage → chat-completions usage. Cached input and reasoning tokens ride along in the
+ * OpenAI detail fields, which `@ai-sdk/openai-compatible` reads, so eve's `step.completed` reports
+ * `cacheReadTokens` for Codex calls too.
+ */
+export function mapUsage(usage: unknown): ChatUsage | undefined {
+  const u = readCodexUsage(usage);
+  if (!u) return undefined;
+  const mapped: ChatUsage = {
+    prompt_tokens: u.inputTokens,
+    completion_tokens: u.outputTokens,
+    total_tokens: u.totalTokens,
+  };
+  if (u.cachedInputTokens !== null)
+    mapped.prompt_tokens_details = { cached_tokens: u.cachedInputTokens };
+  if (u.reasoningTokens !== null)
+    mapped.completion_tokens_details = {
+      reasoning_tokens: u.reasoningTokens,
+    };
+  return mapped;
 }
 
 /**
@@ -578,11 +624,7 @@ export interface ChatCompletion {
     };
     finish_reason: string | null;
   }>;
-  usage?: {
-    prompt_tokens: number;
-    completion_tokens: number;
-    total_tokens: number;
-  };
+  usage?: ChatUsage;
 }
 
 /** Fold streamed chunks into a single non-streaming `chat.completion` (for `stream:false`). */

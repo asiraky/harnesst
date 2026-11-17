@@ -3,6 +3,10 @@ import { mkdir } from "node:fs/promises";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { BASH_TOOL_SOURCE } from "~/deploy/bash-tool-template";
+import {
+  ORG_MODEL_MODULE_MARKER,
+  orgModelModuleSource,
+} from "~/eve/org-model-module";
 import { NOTIFY_USER_TOOL_SOURCE } from "~/team/tool-template";
 
 type ExecCallback = (
@@ -708,6 +712,85 @@ describe("bash tool injection", () => {
         "agent/subagents/qa/instructions.md": "qa",
       }),
     ).toEqual(["agent/subagents/qa/tools/bash.ts"]);
+  });
+});
+
+describe("generated model module upgrade (#416)", () => {
+  beforeEach(() => {
+    execFile.mockClear();
+    execFile.mockImplementation(defaultExecFile);
+  });
+
+  async function modelModuleWrites(files: Record<string, string>) {
+    const { mkdir: realMkdir, writeFile: realWriteFile } =
+      await vi.importActual<typeof import("node:fs/promises")>(
+        "node:fs/promises",
+      );
+    const path = await import("node:path");
+    execFile.mockImplementation(
+      (cmd, args, optionsOrCallback, maybeCallback) => {
+        if (cmd === "tar") {
+          const target = args[args.indexOf("-C") + 1];
+          const callback = execCallback(optionsOrCallback, maybeCallback);
+          Promise.all(
+            Object.entries(files).map(async ([file, content]) => {
+              await realMkdir(path.dirname(path.join(target, file)), {
+                recursive: true,
+              });
+              await realWriteFile(path.join(target, file), content);
+            }),
+          ).then(
+            () => callback(null, "", ""),
+            (error: Error) => callback(error, "", ""),
+          );
+          return;
+        }
+        defaultExecFile(cmd, args, optionsOrCallback, maybeCallback);
+      },
+    );
+    const { buildEveImage } = await import("~/deploy/eve-image.server");
+    const fsp = await import("node:fs/promises");
+    (fsp.writeFile as unknown as ReturnType<typeof vi.fn>).mockClear();
+    await buildEveImage({
+      projectId: "proj_1",
+      repo: { owner: "acme", repo: "agents" },
+      ref: "abc123",
+      installationId: "inst_1",
+    }).catch(() => {});
+    return (
+      (fsp.writeFile as unknown as ReturnType<typeof vi.fn>).mock.calls as [
+        string,
+        string,
+      ][]
+    ).filter(([p]) => String(p).endsWith("/harnesst/model.ts"));
+  }
+
+  it("builds an older generation of the module with the current one", async () => {
+    const writes = await modelModuleWrites({
+      "agent/agent.ts": "export default {};",
+      "harnesst/model.ts": `${ORG_MODEL_MODULE_MARKER} An older generation.\nexport {};\n`,
+    });
+    expect(writes.map(([, source]) => source)).toEqual([
+      orgModelModuleSource(),
+    ]);
+  });
+
+  it("leaves a module without the generated header alone", async () => {
+    expect(
+      await modelModuleWrites({
+        "agent/agent.ts": "export default {};",
+        "harnesst/model.ts": "// written by hand\nexport {};\n",
+      }),
+    ).toEqual([]);
+  });
+
+  it("does not rewrite a module that is already current", async () => {
+    expect(
+      await modelModuleWrites({
+        "agent/agent.ts": "export default {};",
+        "harnesst/model.ts": orgModelModuleSource(),
+      }),
+    ).toEqual([]);
   });
 });
 

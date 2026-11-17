@@ -28,8 +28,14 @@ function runtime(
         config ?? { error: { message: "Set a workspace default first." } },
     };
   });
-  const provider = ({ name }: { name: string }) => ({
-    chatModel: (modelId: string) => ({ provider: name, modelId }),
+  const provider = ({
+    name,
+    headers,
+  }: {
+    name: string;
+    headers?: Record<string, string>;
+  }) => ({
+    chatModel: (modelId: string) => ({ provider: name, modelId, headers }),
   });
   const exports: Record<string, unknown> = {};
   const js = ts.transpileModule(orgModelModuleSource(), {
@@ -74,7 +80,7 @@ function runtime(
         event: unknown,
         ctx: { messages: unknown[] },
       ) => Promise<{
-        model: { modelId: string };
+        model: { modelId: string; headers?: Record<string, string> };
         modelContextWindowTokens?: number;
       }>;
     };
@@ -86,6 +92,12 @@ function runtime(
     },
     step: (agent: string, subagent?: string) =>
       create(agent, subagent).events["step.started"]({}, { messages: [] }),
+    stepWith: (
+      agent: string,
+      subagent: string | undefined,
+      event: unknown,
+      ctx: { messages: unknown[]; session?: { id: string } },
+    ) => create(agent, subagent).events["step.started"](event, ctx),
   };
 }
 
@@ -163,5 +175,54 @@ describe("generated workspace resolver at runtime", () => {
       "Set a workspace default first",
     );
     expect(env.fetch).toHaveBeenCalledTimes(3);
+  });
+
+  it("labels each Codex step with the agent, session, turn, step and project for the call log", async () => {
+    const env = runtime(() => ({
+      model: "codex/abcdefghijkl/default",
+      contextWindowTokens: 128000,
+    }));
+    const result = await env.stepWith(
+      "ledger bot",
+      "qa/fact-checker",
+      { type: "step.started", data: { turnId: "turn_9", stepIndex: 3 } },
+      { messages: [], session: { id: "sess/1" } },
+    );
+    expect(result.model.headers).toEqual({
+      "x-harnesst-agent": "ledger%20bot",
+      "x-harnesst-subagent": "qa%2Ffact-checker",
+      "x-harnesst-session": "sess%2F1",
+      "x-harnesst-turn": "turn_9",
+      "x-harnesst-step": "3",
+      "x-harnesst-project": "project-392",
+    });
+  });
+
+  it("omits labels the step event does not carry", async () => {
+    const env = runtime(() => ({
+      model: "codex/abcdefghijkl/default",
+      contextWindowTokens: 128000,
+    }));
+    const result = await env.stepWith("ledger", undefined, null, {
+      messages: [],
+    });
+    expect(result.model.headers).toEqual({
+      "x-harnesst-agent": "ledger",
+      "x-harnesst-project": "project-392",
+    });
+  });
+
+  it("sends no call-log labels to providers other than the Codex gateway", async () => {
+    const env = runtime(() => ({
+      model: "openrouter/abcdefghijkl/some-model",
+      contextWindowTokens: 128000,
+    }));
+    const result = await env.stepWith(
+      "ledger",
+      undefined,
+      { data: { turnId: "t", stepIndex: 0 } },
+      { messages: [], session: { id: "s" } },
+    );
+    expect(result.model.headers).toBeUndefined();
   });
 });

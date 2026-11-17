@@ -323,6 +323,13 @@
       "when": 1794191915992,
       "tag": "0045_notify_topic",
       "breakpoints": true
+    },
+    {
+      "idx": 46,
+      "version": "7",
+      "when": 1794958435985,
+      "tag": "0046_gateway_call_log",
+      "breakpoints": true
     }
   ]
 }
