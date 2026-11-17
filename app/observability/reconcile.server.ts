@@ -85,16 +85,19 @@ function parseEveLine(raw: string): RawEveEvent | null {
 }
 
 /**
- * Read a session's durable stream from `startIndex`, labelling each event with its absolute
- * stream position. Unlike the playground tail reader this does NOT stop at the first
- * waiting/failed marker (a replay carries many turns); it reads until the stream goes idle, ends,
- * or reports `session.completed`, with hard event/time caps as backstops.
+ * Stream a session's durable stream from `startIndex`, handing each event (labelled with its
+ * absolute stream position) to `onEvent`; `onEvent` returning true stops the read. Unlike the
+ * playground tail reader this does NOT stop at the first waiting/failed marker (a replay carries
+ * many turns); it reads until the stream goes idle, ends, or reports `session.completed`, with a
+ * hard time cap as a backstop. `complete` is false when the cap or `onEvent` cut the read short,
+ * so the caller knows it may not have seen the end.
  */
-async function readSessionEvents(
+async function streamSessionEvents(
   baseUrl: string,
   sessionId: string,
   startIndex: number,
-): Promise<IndexedEveEvent[]> {
+  onEvent: (event: IndexedEveEvent) => boolean,
+): Promise<{ complete: boolean }> {
   const base = baseUrl.replace(/\/+$/, "");
   const connectController = new AbortController();
   const connectTimer = setTimeout(() => connectController.abort(), CONNECT_TIMEOUT_MS);
@@ -111,11 +114,9 @@ async function readSessionEvents(
 
   const reader = res.body.getReader();
   const decoder = new TextDecoder();
-  const events: IndexedEveEvent[] = [];
   const deadline = Date.now() + HARD_READ_MS;
   let buf = "";
   let position = 0;
-  let stop = false;
   let idleTimer: ReturnType<typeof setTimeout> | null = null;
   const read = async () =>
     Promise.race([
@@ -129,15 +130,15 @@ async function readSessionEvents(
     });
 
   try {
-    while (!stop && events.length < MAX_EVENTS && Date.now() < deadline) {
+    while (Date.now() < deadline) {
       let chunk: ReadableStreamReadResult<Uint8Array>;
       try {
         chunk = await read();
       } catch (error) {
-        if ((error as Error).message === "idle") break;
+        if ((error as Error).message === "idle") return { complete: true };
         throw error;
       }
-      if (chunk.done) break;
+      if (chunk.done) return { complete: true };
       buf += decoder.decode(chunk.value, { stream: true });
       const lines = buf.split("\n");
       buf = lines.pop() ?? "";
@@ -146,18 +147,71 @@ async function readSessionEvents(
         if (!event) continue;
         position += 1;
         // 1-based labelling matches streamTurn: first event at startIndex gets startIndex+1.
-        events.push({ ...event, streamIndex: startIndex + position });
-        if (event.type === "session.completed") {
-          stop = true;
-          break;
-        }
-        if (events.length >= MAX_EVENTS) break;
+        const indexed = { ...event, streamIndex: startIndex + position };
+        if (onEvent(indexed)) return { complete: false };
+        if (event.type === "session.completed") return { complete: true };
       }
     }
+    return { complete: false };
   } finally {
     reader.cancel().catch(() => {});
   }
+}
+
+/** Read a session's stream from `startIndex` for the pull, capped at MAX_EVENTS. */
+async function readSessionEvents(
+  baseUrl: string,
+  sessionId: string,
+  startIndex: number,
+): Promise<IndexedEveEvent[]> {
+  const events: IndexedEveEvent[] = [];
+  await streamSessionEvents(baseUrl, sessionId, startIndex, (event) => {
+    events.push(event);
+    return events.length >= MAX_EVENTS;
+  });
   return events;
+}
+
+/** Caps for the stale-run sweep's read; the same shape as the run hook's own buffer caps. */
+const SETTLE_KEEP_HEAD = 200;
+const SETTLE_MAX_TAIL_BYTES = 1_000_000;
+
+function eventBytes(event: IndexedEveEvent): number {
+  try {
+    return JSON.stringify(event).length;
+  } catch {
+    return 0;
+  }
+}
+
+/**
+ * Read a whole session in bounded memory: keep its first SETTLE_KEEP_HEAD events and as many of
+ * its last events as fit in SETTLE_MAX_TAIL_BYTES, dropping the middle. That keeps what settling a
+ * row needs (the opening message and the outcome) and is what the run hook pushes for a long turn
+ * anyway. A long agent turn's stream runs to tens of megabytes; holding it whole is what took the
+ * control plane down.
+ */
+export async function readSessionBounded(
+  baseUrl: string,
+  sessionId: string,
+): Promise<{ events: IndexedEveEvent[]; complete: boolean }> {
+  const head: IndexedEveEvent[] = [];
+  const tail: { event: IndexedEveEvent; bytes: number }[] = [];
+  let tailBytes = 0;
+  const { complete } = await streamSessionEvents(baseUrl, sessionId, 0, (event) => {
+    if (head.length < SETTLE_KEEP_HEAD) {
+      head.push(event);
+      return false;
+    }
+    const bytes = eventBytes(event);
+    tail.push({ event, bytes });
+    tailBytes += bytes;
+    while (tail.length > 1 && tailBytes > SETTLE_MAX_TAIL_BYTES) {
+      tailBytes -= tail.shift()!.bytes;
+    }
+    return false;
+  });
+  return { events: [...head, ...tail.map((t) => t.event)], complete };
 }
 
 /* ── deps ── */
@@ -212,6 +266,11 @@ export interface ReconcileDeps {
     sessionId: string,
     startIndex: number,
   ): Promise<IndexedEveEvent[]>;
+  /** A whole session with its middle dropped; `complete` is false if the read was cut short. */
+  readSessionBounded(
+    baseUrl: string,
+    sessionId: string,
+  ): Promise<{ events: IndexedEveEvent[]; complete: boolean }>;
   getCursor(
     projectId: string,
     externalSessionId: string,
@@ -294,6 +353,7 @@ export function reconcileDeps(): ReconcileDeps {
       return target.listWorldSessions(worldKey, { since });
     },
     readSessionEvents,
+    readSessionBounded,
     async getCursor(projectId, externalSessionId) {
       const [row] = await db
         .select()
@@ -708,12 +768,14 @@ export async function settleStaleRuns(
 
     let events: IndexedEveEvent[] | null;
     try {
-      events = await deps.readSessionEvents(target.url, ids.sessionId, 0);
+      const read = await deps.readSessionBounded(target.url, ids.sessionId);
+      // Cut short: the read may have stopped before the turn's end (and before its latest event,
+      // which the abandon check relies on), so don't guess.
+      if (!read.complete) continue;
+      events = read.events;
     } catch {
       events = null;
     }
-    // Hit the event cap: the read may have stopped before the turn's end, so don't guess.
-    if (events && events.length >= MAX_EVENTS) continue;
 
     let turn = events
       ? foldSessionEvents(events).turns.find((t) => t.turnId === ids.turnId)

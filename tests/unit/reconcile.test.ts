@@ -5,10 +5,11 @@
  * hung turn surfaced as `running`, cursor saves + the no-activity short-circuit on a second tick,
  * and graceful skips when world access is null or throws.
  */
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   ABANDONED_TURN_MS,
+  readSessionBounded,
   reconcileTick,
   resetReconcileWarnings,
   resetStaleRunChecks,
@@ -79,6 +80,8 @@ interface FakeConfig {
   staleRuns?: StaleRun[];
   /** Sessions whose stream read throws (eve hangs on an unknown id until the connect timeout). */
   unreadable?: string[];
+  /** Sessions whose bounded read is cut short before the stream ends. */
+  incomplete?: string[];
 }
 
 function makeDeps(config: FakeConfig) {
@@ -92,6 +95,13 @@ function makeDeps(config: FakeConfig) {
       return all.filter((e) => e.streamIndex > startIndex);
     },
   );
+  const readSessionBounded = vi.fn(async (_url: string, sessionId: string) => {
+    if (config.unreadable?.includes(sessionId)) throw new Error("aborted");
+    return {
+      events: config.streams[sessionId] ?? [],
+      complete: !config.incomplete?.includes(sessionId),
+    };
+  });
   const listWorldSessions = vi.fn(async () => {
     if (typeof config.sessions === "function") return config.sessions();
     return config.sessions;
@@ -102,6 +112,7 @@ function makeDeps(config: FakeConfig) {
     listStaleRuns: async () => config.staleRuns ?? [],
     listWorldSessions,
     readSessionEvents,
+    readSessionBounded,
     getCursor: async (projectId, sid) => cursors.get(`${projectId}:${sid}`) ?? null,
     saveCursor: async (projectId, sid, cursor) => {
       cursors.set(`${projectId}:${sid}`, cursor);
@@ -116,7 +127,15 @@ function makeDeps(config: FakeConfig) {
     },
   };
 
-  return { deps, cursors, finishCalls, startCalls, readSessionEvents, listWorldSessions };
+  return {
+    deps,
+    cursors,
+    finishCalls,
+    startCalls,
+    readSessionEvents,
+    readSessionBounded,
+    listWorldSessions,
+  };
 }
 
 function session(
@@ -388,7 +407,7 @@ describe("settleStaleRuns", () => {
   });
 
   it("leaves a live turn alone and does not re-read it until the recheck interval passes", async () => {
-    const { deps, finishCalls, readSessionEvents } = makeDeps({
+    const { deps, finishCalls, readSessionBounded } = makeDeps({
       sessions: [],
       staleRuns: [staleRun("wrun_live")],
       streams: { wrun_live: hungTurn("long job") },
@@ -397,9 +416,9 @@ describe("settleStaleRuns", () => {
     const now = at(60 * 60_000); // an hour in, last event at +0.5s: well under the abandon cap
     await settleStaleRuns(TARGET, deps, now);
     await settleStaleRuns(TARGET, deps, now + STALE_RUN_RECHECK_MS - 1);
-    expect(readSessionEvents).toHaveBeenCalledTimes(1);
+    expect(readSessionBounded).toHaveBeenCalledTimes(1);
     await settleStaleRuns(TARGET, deps, now + STALE_RUN_RECHECK_MS);
-    expect(readSessionEvents).toHaveBeenCalledTimes(2);
+    expect(readSessionBounded).toHaveBeenCalledTimes(2);
     expect(finishCalls).toHaveLength(0);
   });
 
@@ -438,17 +457,82 @@ describe("settleStaleRuns", () => {
     expect(finishCalls[0].userMessage).toBe("Ledger: item x");
   });
 
+  it("does not act on a read that was cut short, even past the abandon cap", async () => {
+    const { deps, finishCalls } = makeDeps({
+      sessions: [],
+      staleRuns: [staleRun("wrun_big")],
+      streams: { wrun_big: hungTurn("long job") },
+      incomplete: ["wrun_big"],
+    });
+
+    await settleStaleRuns(TARGET, deps, at(500 + ABANDONED_TURN_MS));
+
+    expect(finishCalls).toHaveLength(0);
+  });
+
   it("caps the stream reads one deployment does per tick", async () => {
     const ids = ["s1", "s2", "s3", "s4", "s5", "s6", "s7"];
-    const { deps, readSessionEvents } = makeDeps({
+    const { deps, readSessionBounded } = makeDeps({
       sessions: [],
       staleRuns: ids.map(staleRun),
       streams: Object.fromEntries(ids.map((id) => [id, hungTurn("job")])),
     });
 
     await settleStaleRuns(TARGET, deps, at(60 * 60_000));
-    expect(readSessionEvents).toHaveBeenCalledTimes(5);
+    expect(readSessionBounded).toHaveBeenCalledTimes(5);
     await settleStaleRuns(TARGET, deps, at(60 * 60_000 + 1));
-    expect(readSessionEvents.mock.calls.slice(5).map((c) => c[1])).toEqual(["s6", "s7"]);
+    expect(readSessionBounded.mock.calls.slice(5).map((c) => c[1])).toEqual(["s6", "s7"]);
+  });
+});
+
+describe("readSessionBounded", () => {
+  function ndjsonResponse(lines: string[], close: boolean): Response {
+    const encoder = new TextEncoder();
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(encoder.encode(lines.join("\n") + "\n"));
+        if (close) controller.close();
+      },
+    });
+    return new Response(body, { status: 200 });
+  }
+  const event = (i: number, pad = 0) =>
+    JSON.stringify({ type: "action.result", data: { i, pad: "x".repeat(pad) } });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.useRealTimers();
+  });
+
+  it("keeps the opening and the end of a long stream and drops the middle", async () => {
+    // 200 head events, then 3000 ~1KB events: only the last ~1MB of them can be kept.
+    const lines = [
+      ...Array.from({ length: 200 }, (_, i) => event(i)),
+      ...Array.from({ length: 3000 }, (_, i) => event(200 + i, 1000)),
+    ];
+    vi.stubGlobal("fetch", vi.fn(async () => ndjsonResponse(lines, true)));
+
+    const { events, complete } = await readSessionBounded("http://inst", "wrun_x");
+
+    expect(complete).toBe(true);
+    const ids = events.map((e) => e.data.i as number);
+    expect(ids.slice(0, 200)).toEqual(Array.from({ length: 200 }, (_, i) => i));
+    expect(ids.at(-1)).toBe(3199);
+    expect(events.length).toBeLessThan(1500);
+    // Stream positions survive the trim, so the tail still knows where it sits.
+    expect(events.at(-1)?.streamIndex).toBe(3200);
+    // What is kept is contiguous: only the middle went.
+    const tail = ids.slice(200);
+    expect(tail).toEqual(Array.from({ length: tail.length }, (_, i) => 3200 - tail.length + i));
+  });
+
+  it("counts a stream that goes quiet as read to the end", async () => {
+    // eve keeps a finished session's stream open; the idle cutoff is how a read ends.
+    vi.stubGlobal("fetch", vi.fn(async () => ndjsonResponse([event(0), event(1)], false)));
+
+    const { events, complete } = await readSessionBounded("http://inst", "wrun_open");
+
+    expect(complete).toBe(true);
+    expect(events).toHaveLength(2);
   });
 });

@@ -141,7 +141,7 @@ describe("streamTurn", () => {
     ]);
   });
 
-  it("keys step durations on sequence, not the always-zero stepIndex", async () => {
+  it("keys step durations on sequence when stepIndex stays zero (older eve)", async () => {
     const t0 = Date.now();
     const iso = (ms: number) => new Date(t0 + ms).toISOString();
     const out = await drain([
@@ -187,6 +187,35 @@ describe("streamTurn", () => {
     expect(steps).toHaveLength(2);
     expect(steps[0].durationMs).toBe(1000);
     expect(steps[1].durationMs).toBe(1000);
+  });
+
+  it("gives each step only its own actions when sequence is the turn number (current eve)", async () => {
+    const t0 = Date.now();
+    const iso = (ms: number) => new Date(t0 + ms).toISOString();
+    const out = await drain([
+      { type: "message.received", data: { turnId: "turn_1", message: "hi" }, meta: { at: iso(0) } },
+      { type: "step.started", data: { turnId: "turn_1", sequence: 0, stepIndex: 0 }, meta: { at: iso(0) } },
+      {
+        type: "actions.requested",
+        data: { turnId: "turn_1", sequence: 0, stepIndex: 0, actions: [{ callId: "c1", toolName: "bash", input: { command: "ls" } }] },
+        meta: { at: iso(100) },
+      },
+      { type: "step.completed", data: { turnId: "turn_1", sequence: 0, stepIndex: 0 }, meta: { at: iso(1000) } },
+      { type: "step.started", data: { turnId: "turn_1", sequence: 0, stepIndex: 1 }, meta: { at: iso(2000) } },
+      {
+        type: "actions.requested",
+        data: { turnId: "turn_1", sequence: 0, stepIndex: 1, actions: [{ callId: "c2", toolName: "read_file", input: { path: "/a" } }] },
+        meta: { at: iso(2100) },
+      },
+      { type: "step.completed", data: { turnId: "turn_1", sequence: 0, stepIndex: 1 }, meta: { at: iso(4000) } },
+      { type: "message.completed", data: { turnId: "turn_1", message: "ok" }, meta: { at: iso(4000) } },
+      { type: "turn.completed", data: { turnId: "turn_1" }, meta: { at: iso(4000) } },
+    ]);
+
+    const done = out.at(-1);
+    const steps = done?.kind === "done" ? done.result.steps : [];
+    expect(steps.map((s) => s.actions?.map((a) => a.toolName))).toEqual([["bash"], ["read_file"]]);
+    expect(steps.map((s) => s.durationMs)).toEqual([1000, 2000]);
   });
 
   it("correlates actions to their step, including a failed action", async () => {
