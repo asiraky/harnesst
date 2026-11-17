@@ -16,7 +16,7 @@ try {
   await connection.unsafe(
     await readFile(new URL("../local/roles.sql", import.meta.url), "utf8"),
   );
-  for (const file of ["0001_ledger.sql", "0004_mayi_approvals.sql", "0005_hosted_authorization.sql", "0006_oauth_recovery.sql", "0007_scoped_oauth_writes.sql", "0008_review_content.sql", "0009_tickets.sql", "0010_leases.sql", "0011_harnesst_approvals.sql", "0012_awaiting_human.sql", "0013_lease_idle_cap.sql"])
+  for (const file of ["0001_ledger.sql", "0004_mayi_approvals.sql", "0005_hosted_authorization.sql", "0006_oauth_recovery.sql", "0007_scoped_oauth_writes.sql", "0008_review_content.sql", "0009_tickets.sql", "0010_leases.sql", "0011_harnesst_approvals.sql", "0012_awaiting_human.sql", "0013_lease_idle_cap.sql", "0014_github_progress.sql"])
     await connection.unsafe(
       await readFile(new URL("../" + file, import.meta.url), "utf8"),
     );
@@ -939,4 +939,29 @@ test("a session that stops making progress stops renewing, and the waiting wake 
   await wake("implementer", "renew_lease", { lease_token: takeover.lease_token, session_id: "wake-2" });
   await assert.rejects(as("wake-1", "implementer", "set_head", item, head("3")), /LEASE_LOST/);
   await wake("implementer", "release_lease", { lease_token: takeover.lease_token });
+});
+
+test("GitHub activity on the issue keeps the stage owner's lease from going idle", async () => {
+  const { i, claim } = await claimedBuild("wake-1");
+  const [ticket] = await call("intake", "list_items", { parent_id: i.id });
+  const other = await toBuild();
+  const [otherTicket] = await call("intake", "list_items", { parent_id: other.id });
+  const idle = () =>
+    sql`update ledger.leases set progressed_at=now()-interval '4 hours' where scope_id=${i.id} and actor_id=${actors.implementer.actor_id}`;
+  const renew = () => wake("implementer", "renew_lease", { lease_token: claim.lease_token, session_id: "wake-1" });
+
+  // GitHub recording a push on a different issue is not progress here.
+  await idle();
+  await change("github", "set_head", await get(otherTicket), head("7"));
+  assert.deepEqual(await renew(), { renewed: false, idle: true });
+
+  // A push on one of this issue's tickets is.
+  await change("github", "set_head", await get(ticket), head("8"));
+  assert.equal((await renew()).renewed, true);
+
+  // So is GitHub merging that ticket.
+  await idle();
+  await change("github", "transition", await get(ticket), { to_stage: "merged" });
+  assert.equal((await renew()).renewed, true);
+  await wake("implementer", "release_lease", { lease_token: claim.lease_token });
 });

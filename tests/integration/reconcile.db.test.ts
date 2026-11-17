@@ -181,6 +181,8 @@ describe.runIf(LIVE)("run reconciler against real Postgres", () => {
         ...base,
         listTargets: async () => [target],
         listWorldSessions: async () => worldSessions(),
+        // This test covers the pull; the stale-run sweep would fail the fixture's 2026-07 hung turn.
+        listStaleRuns: async () => [],
         readSessionEvents: async (_url, sessionId, startIndex) => {
           const all = streams[sessionId] ?? [];
           return fullRead.has(sessionId)

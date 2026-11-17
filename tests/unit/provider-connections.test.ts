@@ -145,6 +145,48 @@ describe("getFreshAccessToken", () => {
     expect(refresh).not.toHaveBeenCalled();
   });
 
+  it("refreshes a not-yet-expired token the provider rejected", async () => {
+    const refresh = vi.fn(async () => ({
+      accessToken: "new-access",
+      refreshToken: "refresh-2",
+      idToken: null,
+      expiresIn: 3600,
+    }));
+    const result = await getFreshAccessToken(
+      "conn_1",
+      {
+        load: async () => conn({ credentialVersion: 3 }),
+        refresh: refresh as never,
+        persist: async () => true,
+        now: () => NOW,
+      },
+      { rejectedVersion: 3 },
+    );
+    expect(refresh).toHaveBeenCalledTimes(1);
+    expect(result).toMatchObject({
+      accessToken: "new-access",
+      credentialVersion: 4,
+    });
+  });
+
+  it("returns the already-rotated token when a rejected generation was replaced meanwhile", async () => {
+    const refresh = vi.fn();
+    const result = await getFreshAccessToken(
+      "conn_1",
+      {
+        load: async () => conn({ credentialVersion: 4 }),
+        refresh: refresh as never,
+        now: () => NOW,
+      },
+      { rejectedVersion: 3 },
+    );
+    expect(refresh).not.toHaveBeenCalled();
+    expect(result).toMatchObject({
+      accessToken: "fresh-access",
+      credentialVersion: 4,
+    });
+  });
+
   it("refreshes an expiring token and persists the rotated refresh token", async () => {
     const persisted: unknown[] = [];
     const result = await getFreshAccessToken("conn_1", {
