@@ -342,6 +342,9 @@ export interface ConnectionTotals {
   calls: number;
   input: number | null;
   cached: number | null;
+  /** Input and calls on rows that report cached tokens: the base for a cache hit rate. */
+  cacheInput: number | null;
+  cacheCalls: number;
   output: number | null;
   reasoning: number | null;
   rateLimited: number;
@@ -355,6 +358,8 @@ export async function connectionTotals(orgId: string, since: Date): Promise<Conn
   const result = await rows<Row>(sql`
     select connection_id, count(*)::int as calls,
       sum(input_tokens)::float8 as input, sum(cached_input_tokens)::float8 as cached,
+      sum(input_tokens) filter (where cached_input_tokens is not null)::float8 as cache_input,
+      count(*) filter (where cached_input_tokens is not null)::int as cache_calls,
       sum(output_tokens)::float8 as output, sum(reasoning_tokens)::float8 as reasoning,
       count(*) filter (where http_status = 429)::int as limited,
       count(*) filter (where http_status >= 400 and http_status <> 429)::int as errors,
@@ -370,6 +375,8 @@ export async function connectionTotals(orgId: string, since: Date): Promise<Conn
     calls: n0(r.calls),
     input: n(r.input),
     cached: n(r.cached),
+    cacheInput: n(r.cache_input),
+    cacheCalls: n0(r.cache_calls),
     output: n(r.output),
     reasoning: n(r.reasoning),
     rateLimited: n0(r.limited),
@@ -756,12 +763,14 @@ export async function warningSignals(input: {
           case when s.type = 'compaction' then coalesce(s.turn_id, '')
             else coalesce(s.tool_name, '(unnamed)') end as grp,
           case when s.type = 'tool_call' and not (s.result_tokens >= 1000 and s.data ? 'withheld')
-            then coalesce('exit ' || (s.data->>'exitCode'), s.data->>'code', 'error') end as error_kind,
+            then coalesce('exit ' || (s.data->>'exitCode'), 'error') end as error_kind,
           count(*)::int as n,
           count(*) filter (where s.type = 'compaction' and s.data->>'completed' = 'true')::int as completed,
           min(s.seq)::int as first_seq,
           max(s.result_tokens)::int as max_tokens,
-          max(case when jsonb_typeof(s.data->'withheld'->'limitTokens') = 'number'
+          -- Only withheld rows (large results already matched above) have their payload read here.
+          max(case when s.result_tokens >= 1000 and s.data ? 'withheld'
+              and jsonb_typeof(s.data->'withheld'->'limitTokens') = 'number'
             then (s.data->'withheld'->>'limitTokens')::float8 end) as limit_tokens
         from run_steps s
         where s.run_id = p.id

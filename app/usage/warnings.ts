@@ -271,6 +271,8 @@ export function runOccurrences(runsIn: RunSignal[], steps: StepSignal[]): Occurr
 export interface ConnectionSignal {
   connectionId: string;
   calls: number;
+  /** Calls that reported cached tokens, and their input: the cache rule ignores the rest. */
+  cacheCalls: number;
   input: number | null;
   cached: number | null;
   rateLimited: number;
@@ -279,8 +281,14 @@ export interface ConnectionSignal {
   windows: { label: string; pct: number | null; resetsAt: string | null; observedAt: string }[];
 }
 
-/** Platform occurrences for connections: plan windows over 80%, 429s, low cache. */
-export function connectionOccurrences(list: ConnectionSignal[]): Occurrence[] {
+/**
+ * Platform occurrences for connections: plan windows over 80%, 429s, low cache. A plan reading
+ * whose window has since reset, or taken before `since`, no longer says anything about now.
+ */
+export function connectionOccurrences(
+  list: ConnectionSignal[],
+  at: { now: Date; since: Date } = { now: new Date(), since: new Date(0) },
+): Occurrence[] {
   const out: Occurrence[] = [];
   const conn = (c: ConnectionSignal) => ({
     projectId: null,
@@ -293,6 +301,8 @@ export function connectionOccurrences(list: ConnectionSignal[]): Occurrence[] {
   for (const c of list) {
     for (const w of c.windows) {
       if (w.pct == null || w.pct <= PLAN_WARN_PCT) continue;
+      if (w.resetsAt && Date.parse(w.resetsAt) <= at.now.getTime()) continue;
+      if (Date.parse(w.observedAt) < at.since.getTime()) continue;
       out.push({
         ...conn(c),
         rule: "plan",
@@ -312,14 +322,14 @@ export function connectionOccurrences(list: ConnectionSignal[]): Occurrence[] {
         evidence: { rateLimited: c.rateLimited, calls: c.calls },
       });
     }
-    if (lowCache(c.calls, c.cached, c.input)) {
+    if (lowCache(c.cacheCalls, c.cached, c.input)) {
       out.push({
         ...conn(c),
         rule: "low_cache",
         severity: "warn",
         at: c.lastAt ?? new Date(0).toISOString(),
         group: "",
-        evidence: { hitRate: ratio(c.cached, c.input), calls: c.calls, input: c.input, cached: c.cached },
+        evidence: { hitRate: ratio(c.cached, c.input), calls: c.cacheCalls, input: c.input, cached: c.cached },
       });
     }
   }

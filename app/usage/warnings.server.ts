@@ -61,7 +61,8 @@ export async function loadWarnings(input: {
       return {
         connectionId: c.id,
         calls: t?.calls ?? 0,
-        input: t?.input ?? null,
+        cacheCalls: t?.cacheCalls ?? 0,
+        input: t?.cacheInput ?? null,
         cached: t?.cached ?? null,
         rateLimited: t?.rateLimited ?? 0,
         lastAt: t?.lastAt ?? null,
@@ -75,7 +76,7 @@ export async function loadWarnings(input: {
       };
     });
 
-  let occurrences = [...runOccurrences(signals.runs, signals.steps), ...connectionOccurrences(connSignals)];
+  let occurrences = [...runOccurrences(signals.runs, signals.steps), ...connectionOccurrences(connSignals, { now: new Date(), since: input.since })];
   if (input.overrideOccurrences) occurrences = input.overrideOccurrences(occurrences);
   const warnings = groupWarnings(occurrences);
 

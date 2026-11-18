@@ -200,7 +200,8 @@ export default function ConnectionUsage({ loaderData }: Route.ComponentProps) {
 
   const t = codex.totals;
   const h = codex.headroom;
-  const cacheHit = ratio(t?.cached, t?.input);
+  // Over calls that report cached tokens, so calls without the field don't drag the rate down.
+  const cacheHit = ratio(t?.cached, t?.cacheInput);
   return (
     <AppShell>
       <UsageCrumbs items={crumbs} days={days} />
@@ -217,7 +218,7 @@ export default function ConnectionUsage({ loaderData }: Route.ComponentProps) {
       <TileGrid>
         <StatTile label="Calls" value={(t?.calls ?? 0).toLocaleString()} sub={t?.lastAt ? <>last <LocalizedDateTime value={t.lastAt} options={{ month: "short", day: "numeric", hour: "numeric", minute: "numeric" }} /></> : undefined} />
         <StatTile label="Input" value={<Tokens value={t?.input ?? null} />} sub={<>output <Tokens value={t?.output ?? null} short /></>} />
-        <StatTile label="Cache hit" value={<Pct value={cacheHit} />} tone={cacheHit != null && cacheHit < 0.2 && (t?.calls ?? 0) >= 50 ? "warn" : null} />
+        <StatTile label="Cache hit" value={<Pct value={cacheHit} />} tone={cacheHit != null && cacheHit < 0.2 && (t?.cacheCalls ?? 0) >= 50 ? "warn" : null} />
         <StatTile label="Reasoning" value={<Tokens value={t?.reasoning ?? null} />} />
         <StatTile label="429s" value={t?.rateLimited ?? 0} tone={t?.rateLimited ? "crit" : null} />
         <StatTile label="Other errors" value={t?.errors ?? 0} tone={t?.errors ? "warn" : null} />

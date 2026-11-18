@@ -4,7 +4,7 @@
  */
 import { describe, expect, it } from "vitest";
 
-import { assistantDraftHref } from "~/components/usage-warnings";
+import { assistantDraftHref, fitDraft } from "~/components/usage-warnings";
 import {
   compactionSeverity,
   connectionOccurrences,
@@ -59,6 +59,7 @@ function conn(over: Partial<ConnectionSignal> = {}): ConnectionSignal {
   return {
     connectionId: "c1",
     calls: 10,
+    cacheCalls: 10,
     input: 1000,
     cached: 900,
     rateLimited: 0,
@@ -190,9 +191,32 @@ describe("connectionOccurrences", () => {
   });
 
   it("flags low cache on a busy connection", () => {
-    const out = connectionOccurrences([conn({ calls: 60, input: 1000, cached: 100 })]);
+    const out = connectionOccurrences([conn({ calls: 60, cacheCalls: 60, input: 1000, cached: 100 })]);
     expect(out.map((o) => o.rule)).toEqual(["low_cache"]);
     expect(out[0].evidence.hitRate).toBeCloseTo(0.1);
+  });
+
+  it("counts only calls that report cache toward the 50-call minimum", () => {
+    expect(connectionOccurrences([conn({ calls: 400, cacheCalls: 49, input: 1000, cached: 100 })])).toEqual([]);
+  });
+
+  it("drops plan readings whose window has reset or that predate the window", () => {
+    const at = { now: new Date("2026-11-10T12:00:00.000Z"), since: new Date("2026-11-03T12:00:00.000Z") };
+    const reading = (resetsAt: string | null, observedAt: string) => ({ label: "5h", pct: 95, resetsAt, observedAt });
+    const out = connectionOccurrences(
+      [
+        conn({
+          windows: [
+            reading("2026-11-10T11:00:00.000Z", "2026-11-10T08:00:00.000Z"),
+            reading("2026-11-10T14:00:00.000Z", "2026-11-01T08:00:00.000Z"),
+            reading("2026-11-10T14:00:00.000Z", "2026-11-10T10:00:00.000Z"),
+            reading(null, "2026-11-10T10:00:00.000Z"),
+          ],
+        }),
+      ],
+      at,
+    );
+    expect(out.map((o) => o.evidence.resetsAt)).toEqual(["2026-11-10T14:00:00.000Z", null]);
   });
 });
 
@@ -328,9 +352,23 @@ describe("toolRepeats", () => {
 });
 
 describe("assistantDraftHref", () => {
-  it("carries the draft encoded and cut to the URL budget", () => {
-    const href = assistantDraftHref("p1", `a&b ${"x".repeat(7000)}`);
-    expect(href.startsWith("/repos/p1/assistant?draft=a%26b%20")).toBe(true);
-    expect(decodeURIComponent(href.split("draft=")[1]).length).toBe(6000);
+  it("carries a short draft whole and encoded", () => {
+    expect(assistantDraftHref("p1", "a&b c")).toBe("/repos/p1/assistant?draft=a%26b%20c");
+    expect(fitDraft("a&b c").truncated).toBe(false);
+  });
+
+  it("cuts plain text at the loader's 6000 characters", () => {
+    const fit = fitDraft("x".repeat(7000));
+    expect(fit).toMatchObject({ truncated: true });
+    expect(fit.text.length).toBe(6000);
+  });
+
+  it("cuts encoding-heavy text at the URL budget, on whole code points", () => {
+    const fit = fitDraft("×😀".repeat(3000));
+    expect(fit.truncated).toBe(true);
+    expect(fit.encoded.length).toBeLessThanOrEqual(8000);
+    expect(decodeURIComponent(fit.encoded)).toBe(fit.text);
+    expect(fit.text.endsWith("\ud83d")).toBe(false);
+    expect(() => assistantDraftHref("p1", "😀".repeat(5000))).not.toThrow();
   });
 });

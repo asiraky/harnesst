@@ -31,11 +31,32 @@ export interface WarningView extends Warning {
   connectionLabel: string | null;
 }
 
-/** The longest draft carried to the assistant in its URL. */
-const MAX_DRAFT = 6000;
+/**
+ * The most encoded draft carried in the assistant URL: well under the server's 16 KB header limit
+ * (the client navigation repeats it in a `.data` request), and under the loader's 6000 characters.
+ */
+const MAX_ENCODED = 8000;
+const MAX_CHARS = 6000;
+
+/** The draft as it fits in the URL, cut on whole code points (a split emoji can't be encoded). */
+export function fitDraft(draft: string): { text: string; encoded: string; truncated: boolean } {
+  let text = "";
+  let encoded = "";
+  let chars = 0;
+  for (const ch of draft) {
+    const next = encodeURIComponent(ch);
+    if (encoded.length + next.length > MAX_ENCODED || chars + ch.length > MAX_CHARS) {
+      return { text, encoded, truncated: true };
+    }
+    text += ch;
+    encoded += next;
+    chars += ch.length;
+  }
+  return { text, encoded, truncated: false };
+}
 
 export function assistantDraftHref(projectId: string, draft: string): string {
-  return `/repos/${projectId}/assistant?draft=${encodeURIComponent(draft.slice(0, MAX_DRAFT))}`;
+  return `/repos/${projectId}/assistant?draft=${fitDraft(draft).encoded}`;
 }
 
 function SevDot({ severity }: { severity: Severity }) {
@@ -116,6 +137,7 @@ function DraftBody({ w, onClose }: { w: WarningView; onClose: () => void }) {
   const [text, setText] = useState(w.draft);
   const [copied, setCopied] = useState(false);
   const target = !w.platform && w.projectId ? w.projectId : null;
+  const truncated = target != null && fitDraft(text).truncated;
   const e = w.worst.evidence;
   const chips = [
     w.worst.runId ? `run ${w.worst.runId}${w.worst.callSeq != null ? ` · step ${w.worst.callSeq}` : ""}` : null,
@@ -172,6 +194,11 @@ function DraftBody({ w, onClose }: { w: WarningView; onClose: () => void }) {
           <span className="normal-case tracking-normal">Edit before sending. Nothing is sent automatically.</span>
         </label>
         <Textarea id={`draft-${w.id}`} rows={16} value={text} onChange={(ev) => setText(ev.target.value)} className="font-mono text-xs leading-relaxed" />
+        {truncated && (
+          <p className="mt-1.5 text-xs text-amber-700 dark:text-amber-400">
+            Too long to carry over in full: the assistant gets the start of it. Copy the draft to keep the rest.
+          </p>
+        )}
       </div>
       <div className="flex items-center justify-between gap-2 border-t px-5 py-3">
         <button type="button" className="text-xs text-muted-foreground hover:text-foreground" onClick={() => setText(w.draft)}>

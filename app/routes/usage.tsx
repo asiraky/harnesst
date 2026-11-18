@@ -130,7 +130,7 @@ export default function UsageOverview({ loaderData }: Route.ComponentProps) {
             <div className="grid gap-3 md:grid-cols-2">
               {connections.map((c) => {
                 const t = c.totals;
-                const hit = ratio(t?.cached, t?.input);
+                const hit = ratio(t?.cached, t?.cacheInput);
                 return (
                   <Link
                     key={c.id}

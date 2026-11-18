@@ -234,6 +234,9 @@ async function ingestRunWith(
         peakContextTokens: p.peakContextTokens ?? null,
         wallClockMs: p.wallClockMs ?? null,
         error,
+        // Merged, not replaced: a finish's keys (e.g. the stale sweep's `settledBy`) land on the
+        // row, and keys written after ingest (`toolRepeats`) survive a replayed start.
+        metadata: sql`coalesce(${runs.metadata}, '{}'::jsonb) || excluded.metadata`,
         finishedAt: p.finishedAt ? new Date(p.finishedAt) : null,
       },
     })
