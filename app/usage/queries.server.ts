@@ -146,6 +146,7 @@ export async function listRunRows(input: {
   since: Date;
   agentId?: string;
   limit: number;
+  offset?: number;
   orderBy?: "recent" | "input";
 }): Promise<RunRow[]> {
   if (input.projectIds.length === 0) return [];
@@ -154,14 +155,23 @@ export async function listRunRows(input: {
     input.orderBy === "input"
       ? sql`r.tokens_input desc nulls last, r.started_at desc`
       : sql`r.started_at desc`;
+  // Pick the page of runs first, then count steps for those runs only.
   const result = await rows<Row>(sql`
+    with picked as materialized (
+      select r.* from runs r
+      where r.project_id in (${idList(input.projectIds)})
+        and r.started_at >= ${ts(input.since)}
+        ${agentFilter}
+      order by ${order}
+      limit ${input.limit} offset ${input.offset ?? 0}
+    )
     select r.id, r.project_id, r.agent_id, r.external_run_id, r.status, r.channel,
       r.started_at, r.finished_at, r.tokens_input, r.tokens_cached_input, r.tokens_output,
       r.cost_usd, r.peak_context_tokens, r.compaction_count, r.wall_clock_ms,
       r.metadata->>'settledBy' as settled_by,
       st.calls, st.tool_calls, st.tool_errors, st.call_errors, st.compactions_requested,
       st.context_window, st.median_ctx
-    from runs r
+    from picked r
     left join lateral (
       select
         count(*) filter (where s.type = 'model_call')::int as calls,
@@ -174,11 +184,7 @@ export async function listRunRows(input: {
           filter (where s.type = 'model_call'))::float8 as median_ctx
       from run_steps s where s.run_id = r.id
     ) st on true
-    where r.project_id in (${idList(input.projectIds)})
-      and r.started_at >= ${ts(input.since)}
-      ${agentFilter}
     order by ${order}
-    limit ${input.limit}
   `);
   return result.map((r) => ({
     id: String(r.id),
@@ -379,7 +385,7 @@ export async function connectionBurn(
   const result = await rows<Row>(sql`
     select date_trunc('hour', started_at) as hour, project_id, agent_name,
       count(*)::int as calls, coalesce(sum(input_tokens), 0)::float8 as input,
-      coalesce(sum(cached_input_tokens), 0)::float8 as cached,
+      sum(cached_input_tokens)::float8 as cached,
       coalesce(sum(output_tokens), 0)::float8 as output,
       count(*) filter (where http_status = 429)::int as limited
     from gateway_calls
@@ -392,7 +398,7 @@ export async function connectionBurn(
     agentName: str(r.agent_name),
     calls: n0(r.calls),
     input: n0(r.input),
-    cached: n0(r.cached),
+    cached: n(r.cached),
     output: n0(r.output),
     rateLimited: n0(r.limited),
   }));
@@ -433,7 +439,7 @@ export async function rateLimitedCalls(orgId: string, connectionId: string, sinc
     where connection_id = ${connectionId} and org_id = ${orgId} and started_at >= ${ts(since)}
       and http_status = 429
     order by started_at desc
-    limit 50
+    limit 51
   `);
   return result.map((r) => ({
     startedAt: iso(r.started_at)!,
@@ -486,17 +492,27 @@ const withheldOf = (v: unknown): WithheldMark | null => {
 };
 
 /** A run's steps as scalar columns plus small extracts; never the tool payloads. */
-export async function traceSteps(runId: string): Promise<TraceStepRow[]> {
+export async function traceSteps(
+  runId: string,
+  opts: { toolExtracts?: boolean } = {},
+): Promise<TraceStepRow[]> {
+  // Reading any key of `data` detoasts the whole payload, so tool rows' extracts are opt-in (the
+  // run page lists them; the call page doesn't need them) and only a large result can have been
+  // withheld, so the size test keeps that read off ordinary results.
+  const extracts = opts.toolExtracts !== false;
+  const toolSelect = extracts
+    ? sql`case when type = 'tool_call' and result_tokens >= 1000 then data->'withheld' end as withheld,
+      case when type = 'tool_call' then left(data->>'summary', 160) end as summary,
+      case when type = 'tool_call' then md5((data->'input')::text) end as input_hash`
+    : sql`null::jsonb as withheld, null::text as summary, null::text as input_hash`;
   const result = await rows<Row>(sql`
     select seq, type, model, tool_name, tokens_input, tokens_output, tokens_cache_read,
       tokens_cache_write, cost_usd, context_window, eve_session_id, turn_id, step_index,
       subagent_name, call_id, child_session_id, result_tokens, result_capped, duration_ms,
       is_error, started_at,
-      case when type = 'tool_call' then data->'withheld' end as withheld,
       case when type = 'compaction' then data end as compaction,
       case when type = 'model_call' and is_error then data->>'code' end as error_code,
-      case when type = 'tool_call' then left(data->>'summary', 160) end as summary,
-      case when type = 'tool_call' then md5((data->'input')::text) end as input_hash
+      ${toolSelect}
     from run_steps
     where run_id = ${runId} and type in ('model_call', 'tool_call', 'compaction')
     order by seq
@@ -534,6 +550,7 @@ export async function traceSteps(runId: string): Promise<TraceStepRow[]> {
 /** Gateway call-log rows for a run's model calls, by eve session and turn (org-pinned). */
 export async function traceGatewayRows(
   orgId: string,
+  projectId: string,
   steps: Pick<TraceStepRow, "eveSessionId" | "turnId">[],
 ): Promise<TraceGatewayRow[]> {
   const sessionIds = [...new Set(steps.map((s) => s.eveSessionId).filter((v): v is string => !!v))];
@@ -547,6 +564,9 @@ export async function traceGatewayRows(
     where org_id = ${orgId}
       and session_id in (${idList(sessionIds)})
       and turn_id in (${idList(turnIds)})
+      -- Identity headers are unverified labels: a row naming another repository never joins.
+      and (project_id = ${projectId} or project_id is null)
+    order by started_at
     limit 5000
   `);
   return result.map((r) => ({
@@ -629,14 +649,16 @@ export async function headroomAround(orgId: string, connectionId: string, at: Da
     db
       .select()
       .from(codexRateLimitSamples)
-      .where(and(scope, sql`${codexRateLimitSamples.observedAt} <= ${ts(at)}`))
+      .where(and(scope, sql`${codexRateLimitSamples.observedAt} < ${ts(at)}`))
       .orderBy(desc(codexRateLimitSamples.observedAt))
       .limit(1),
+    // Samples are stored only when a value changes, observed when the response headers arrive
+    // (inside the call). The latest one by the call's end is what the plan stood at after it.
     db
       .select()
       .from(codexRateLimitSamples)
-      .where(and(scope, gte(codexRateLimitSamples.observedAt, end)))
-      .orderBy(codexRateLimitSamples.observedAt)
+      .where(and(scope, sql`${codexRateLimitSamples.observedAt} <= ${ts(new Date(end.getTime() + 5000))}`))
+      .orderBy(desc(codexRateLimitSamples.observedAt))
       .limit(1),
   ]);
   const pick = (s: (typeof before)[number] | undefined) =>

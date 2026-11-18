@@ -125,6 +125,22 @@ describe("buildTrace", () => {
     expect(t.metrics.callErrors).toBe(1);
   });
 
+  it("leaves calls unjoined when several share one gateway key", () => {
+    const t = buildTrace(
+      [
+        step({ seq: 1, type: "model_call", stepIndex: 0 }),
+        step({ seq: 2, type: "model_call", stepIndex: 0 }),
+        step({ seq: 3, type: "model_call", stepIndex: 1 }),
+      ],
+      [gw({ stepIndex: 0, httpStatus: 429 }), gw({ stepIndex: 0, inputTokens: 5 }), gw({ stepIndex: 1, inputTokens: 7 })],
+    );
+    expect(t.calls.map((c) => [c.input, c.retries, c.hit429])).toEqual([
+      [null, 0, false],
+      [null, 0, false],
+      [7, 0, false],
+    ]);
+  });
+
   it("does not join a gateway row from another session", () => {
     const t = buildTrace(
       [step({ seq: 1, type: "model_call", stepIndex: 0 })],
@@ -134,7 +150,7 @@ describe("buildTrace", () => {
     expect(t.calls[0].connectionId).toBeNull();
   });
 
-  it("counts a withheld result as a tool error", () => {
+  it("counts withheld results apart from tool errors", () => {
     const t = buildTrace(
       [
         step({ seq: 1, type: "model_call", stepIndex: 0 }),
@@ -145,7 +161,7 @@ describe("buildTrace", () => {
       [],
     );
     expect(t.metrics.withheld).toBe(1);
-    expect(t.metrics.toolErrors).toBe(2);
+    expect(t.metrics.toolErrors).toBe(1);
   });
 
   it("counts compactions requested and completed separately", () => {

@@ -54,3 +54,9 @@ export async function resolveUsageViewer(
     visible: new Set(projects.map((p) => p.id)),
   };
 }
+
+/** Whether the viewer administers the active workspace (plan headroom, connection accounts). */
+export async function isUsageAdmin(auth: SessionAuth): Promise<boolean> {
+  const active = await resolveActiveWorkspace(auth);
+  return active ? isWorkspaceAdmin(active.member.role) : false;
+}

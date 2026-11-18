@@ -59,7 +59,7 @@ export const loader = (args: LoaderFunctionArgs) =>
       const scope = { projectId: project.id, agentId: agent.id, since };
       const [aggs, runRows, tools, subagents] = await Promise.all([
         runAggregates({ projectIds: [project.id], since, agentId: agent.id }),
-        listRunRows({ projectIds: [project.id], since, agentId: agent.id, limit: RUN_LIMIT }),
+        listRunRows({ projectIds: [project.id], since, agentId: agent.id, limit: RUN_LIMIT + 1 }),
         toolRanking(scope),
         subagentUsage(scope),
       ]);
@@ -71,8 +71,8 @@ export const loader = (args: LoaderFunctionArgs) =>
         agent: { id: agent.id, name: agent.name },
         totals: aggs.reduce((acc, g) => addTotals(acc, g), emptyTotals()),
         window: runRows.find((r) => r.window != null)?.window ?? null,
-        runs: runRows,
-        truncated: runRows.length >= RUN_LIMIT,
+        runs: runRows.slice(0, RUN_LIMIT),
+        truncated: runRows.length > RUN_LIMIT,
         tools,
         subagents,
       };

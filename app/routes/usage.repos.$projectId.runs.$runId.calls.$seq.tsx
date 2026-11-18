@@ -25,6 +25,7 @@ import { Button } from "~/components/ui/button";
 import { noindexMeta } from "~/lib/seo";
 import { formatMs } from "~/lib/time";
 import { requireProject } from "~/project/guard.server";
+import { isUsageAdmin } from "~/usage/access.server";
 import {
   formatPercent,
   formatTokens,
@@ -54,8 +55,11 @@ export const loader = (args: LoaderFunctionArgs) =>
       if (!run) throw data("Run not found", { status: 404 });
       const seq = Number(args.params.seq);
       const days = parseWindowDays(new URL(args.request.url).searchParams.get("days"));
-      const steps = await traceSteps(run.id);
-      const trace = buildTrace(steps, await traceGatewayRows(project.orgId, steps));
+      const [steps, isAdmin] = await Promise.all([
+        traceSteps(run.id, { toolExtracts: false }),
+        isUsageAdmin(auth),
+      ]);
+      const trace = buildTrace(steps, await traceGatewayRows(project.orgId, project.id, steps));
       const at = trace.calls.findIndex((c) => c.seq === seq);
       if (at < 0) throw data("Call not found", { status: 404 });
       const call = trace.calls[at];
@@ -65,7 +69,8 @@ export const loader = (args: LoaderFunctionArgs) =>
         toolPayloads(run.id, call.seq, nextSeq),
         agentNames([project.id]),
         call.connectionId ? getConnection(project.orgId, call.connectionId) : Promise.resolve(null),
-        call.connectionId && started
+        // Plan headroom and the account are the workspace's, admins only (as on the connection page).
+        isAdmin && call.connectionId && started
           ? headroomAround(project.orgId, call.connectionId, started, new Date(started.getTime() + (call.durationMs ?? 0)))
           : Promise.resolve(null),
       ]);
@@ -82,8 +87,11 @@ export const loader = (args: LoaderFunctionArgs) =>
         nextSeq,
         strip: trace.calls.map((c) => ({ seq: c.seq, input: c.input, window: c.window, isError: c.status !== "ok" })),
         tools,
-        connection,
+        connection: connection
+          ? { ...connection, accountEmail: isAdmin ? connection.accountEmail : null }
+          : null,
         headroom,
+        isAdmin,
       };
     },
     { ensureSignedIn: true },
@@ -139,7 +147,7 @@ function Plan({ label, before, after, resetsAt }: { label: string; before: numbe
 }
 
 export default function CallPage({ loaderData }: Route.ComponentProps) {
-  const { days, project, agentName, run, call: c, turnNumber, total, prevSeq, nextSeq, strip, tools, connection, headroom } = loaderData;
+  const { days, project, agentName, run, call: c, turnNumber, total, prevSeq, nextSeq, strip, tools, connection, headroom, isAdmin } = loaderData;
   const base = `/usage/repos/${project.id}`;
   const runHref = usageHref(`${base}/runs/${run.id}`, days);
   const callHref = (seq: number) => usageHref(`${base}/runs/${run.id}/calls/${seq}`, days);
@@ -209,8 +217,8 @@ export default function CallPage({ loaderData }: Route.ComponentProps) {
           <Group title="Subscription & cost">
             <Row label="Connection">{connection ? <>{connection.label} <Badge variant="outline">{connection.provider}</Badge></> : <NotAvailable />}</Row>
             <Row label="Plan type">{c.planType ? <Badge variant="secondary">{c.planType}</Badge> : <NotAvailable />}</Row>
-            <Row label="Account">{connection?.accountEmail ?? <NotAvailable />}</Row>
-            {connection?.provider === "codex" && (
+            {isAdmin && <Row label="Account">{connection?.accountEmail ?? <NotAvailable />}</Row>}
+            {isAdmin && connection?.provider === "codex" && (
               <>
                 <Plan label="5h window" before={headroom?.before?.primary} after={headroom?.after?.primary} resetsAt={headroom?.after?.primaryResetsAt ?? headroom?.before?.primaryResetsAt} />
                 <Plan label="Weekly window" before={headroom?.before?.secondary} after={headroom?.after?.secondary} resetsAt={headroom?.after?.secondaryResetsAt ?? headroom?.before?.secondaryResetsAt} />

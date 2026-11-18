@@ -88,6 +88,16 @@ describe("burnBy", () => {
       ["Other repositories", 100, 0.25, 2],
     ]);
   });
+
+  it("keeps cached input unknown for a group where no call reported it", () => {
+    const out = burnBy(
+      [burn({ projectId: "p1", cached: null }), burn({ projectId: "p1", cached: null }), burn({ projectId: "p2", cached: 40 }), burn({ projectId: "p2", cached: null })],
+      "project",
+      new Set(["p1", "p2"]),
+      new Map(),
+    );
+    expect(Object.fromEntries(out.map((g) => [g.projectId, g.cached]))).toEqual({ p1: null, p2: 40 });
+  });
 });
 
 describe("hourlySeries", () => {

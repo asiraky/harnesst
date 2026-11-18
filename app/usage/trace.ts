@@ -318,6 +318,14 @@ export function buildTrace(steps: TraceStepRow[], gateway: TraceGatewayRow[]): T
   }
 
   const ordered = [...steps].sort((a, b) => a.seq - b.seq);
+  // Older eve kept stepIndex at 0, so several model calls share one key; joining any of them
+  // would hand every call the turn's last attempt. Those calls go unjoined instead.
+  const keyUses = new Map<string, number>();
+  for (const step of ordered) {
+    if (step.type !== "model_call") continue;
+    const key = gatewayKey(step.eveSessionId, step.turnId, step.stepIndex);
+    if (key) keyUses.set(key, (keyUses.get(key) ?? 0) + 1);
+  }
   const items: TraceItem[] = [];
   const calls: TraceCall[] = [];
   const compactions: TraceCompaction[] = [];
@@ -327,7 +335,7 @@ export function buildTrace(steps: TraceStepRow[], gateway: TraceGatewayRow[]): T
   for (const step of ordered) {
     if (step.type === "model_call") {
       const key = gatewayKey(step.eveSessionId, step.turnId, step.stepIndex);
-      const attempts = (key && byKey.get(key)) || [];
+      const attempts = (key && keyUses.get(key) === 1 && byKey.get(key)) || [];
       const gw = attempts.length ? pickAttempt(attempts) : null;
       const hit429 = attempts.some((a) => a.httpStatus === 429);
       const input = step.tokensInput ?? gw?.inputTokens ?? null;
@@ -371,7 +379,7 @@ export function buildTrace(steps: TraceStepRow[], gateway: TraceGatewayRow[]): T
         resultTokens: step.resultTokens,
         capped: step.resultCapped === true,
         durationMs: step.durationMs,
-        isError: step.isError || step.withheld != null,
+        isError: step.isError,
         withheld: step.withheld,
         summary: step.summary,
         childSessionId: step.childSessionId,

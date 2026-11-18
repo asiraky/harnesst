@@ -83,7 +83,8 @@ export interface BurnHour {
   agentName: string | null;
   calls: number;
   input: number;
-  cached: number;
+  /** Null when no call in the group reported cached input. */
+  cached: number | null;
   output: number;
   rateLimited: number;
 }
@@ -137,7 +138,7 @@ export function attribute(
 export interface BurnShare extends Attribution {
   calls: number;
   input: number;
-  cached: number;
+  cached: number | null;
   output: number;
   rateLimited: number;
   /** Share of all input tokens in the window. */
@@ -156,10 +157,10 @@ export function burnBy(
     const a = attribute(row, by, visible, projectNames);
     const g =
       groups.get(a.key) ??
-      { ...a, calls: 0, input: 0, cached: 0, output: 0, rateLimited: 0, share: 0 };
+      { ...a, calls: 0, input: 0, cached: null, output: 0, rateLimited: 0, share: 0 };
     g.calls += row.calls;
     g.input += row.input;
-    g.cached += row.cached;
+    g.cached = addNullable(g.cached, row.cached);
     g.output += row.output;
     g.rateLimited += row.rateLimited;
     groups.set(a.key, g);

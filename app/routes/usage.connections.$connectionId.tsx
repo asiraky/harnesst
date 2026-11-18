@@ -89,7 +89,8 @@ export const loader = (args: LoaderFunctionArgs) =>
           byRepo,
           byAgent,
           // A 429 from a repository the viewer can't open is shown without its identity.
-          limited: limited.map((r) => {
+          limitedMore: limited.length > 50,
+          limited: limited.slice(0, 50).map((r) => {
             const who = attribute(r, "agent", viewer.visible, names);
             return {
               startedAt: r.startedAt,
@@ -231,7 +232,7 @@ export default function ConnectionUsage({ loaderData }: Route.ComponentProps) {
         </Panel>
       </div>
 
-      <Panel title={`Rate limited (429) · ${codex.limited.length}${codex.limited.length >= 50 ? "+" : ""}`} icon={<AlertTriangle className="size-4" aria-hidden />}>
+      <Panel title={`Rate limited (429) · ${codex.limited.length}${codex.limitedMore ? "+" : ""}`} icon={<AlertTriangle className="size-4" aria-hidden />}>
         {codex.limited.length === 0 ? (
           <p className="text-sm text-muted-foreground">No 429s in this window.</p>
         ) : (

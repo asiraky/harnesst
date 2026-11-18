@@ -57,7 +57,7 @@ export const loader = (args: LoaderFunctionArgs) =>
       const steps = await traceSteps(run.id);
       const childIds = [...new Set(steps.map((s) => s.childSessionId).filter((v): v is string => !!v))];
       const [gateway, names, roster, children, connections] = await Promise.all([
-        traceGatewayRows(project.orgId, steps),
+        traceGatewayRows(project.orgId, project.id, steps),
         agentNames([project.id]),
         listAgents(project.id),
         childRuns(project.id, childIds),
@@ -96,6 +96,11 @@ type CallSort = "order" | "context" | "latency" | "tokens";
 const PAGE = 120;
 
 export default function RunTrace({ loaderData }: Route.ComponentProps) {
+  // Following a subagent link keeps this route mounted; a fresh body per run resets zoom and filters.
+  return <RunTraceBody key={loaderData.run.id} loaderData={loaderData} />;
+}
+
+function RunTraceBody({ loaderData }: Pick<Route.ComponentProps, "loaderData">) {
   const { days, project, agentName, agentInRoster, run, calls, compactions, metrics, repeats, children, connections } = loaderData;
   const [mode, setMode] = useState<"order" | "time">("order");
   const [range, setRange] = useState<[number, number]>([1, Math.max(1, calls.length)]);
