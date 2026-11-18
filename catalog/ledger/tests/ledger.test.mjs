@@ -16,7 +16,7 @@ try {
   await connection.unsafe(
     await readFile(new URL("../local/roles.sql", import.meta.url), "utf8"),
   );
-  for (const file of ["0001_ledger.sql", "0004_mayi_approvals.sql", "0005_hosted_authorization.sql", "0006_oauth_recovery.sql", "0007_scoped_oauth_writes.sql", "0008_review_content.sql", "0009_tickets.sql", "0010_leases.sql", "0011_harnesst_approvals.sql", "0012_awaiting_human.sql", "0013_lease_idle_cap.sql", "0014_github_progress.sql"])
+  for (const file of ["0001_ledger.sql", "0004_mayi_approvals.sql", "0005_hosted_authorization.sql", "0006_oauth_recovery.sql", "0007_scoped_oauth_writes.sql", "0008_review_content.sql", "0009_tickets.sql", "0010_leases.sql", "0011_harnesst_approvals.sql", "0012_awaiting_human.sql", "0013_lease_idle_cap.sql", "0014_github_progress.sql", "0015_lease_view.sql"])
     await connection.unsafe(
       await readFile(new URL("../" + file, import.meta.url), "utf8"),
     );
@@ -964,4 +964,28 @@ test("GitHub activity on the issue keeps the stage owner's lease from going idle
   await change("github", "transition", await get(ticket), { to_stage: "merged" });
   assert.equal((await renew()).renewed, true);
   await wake("implementer", "release_lease", { lease_token: claim.lease_token });
+});
+
+test("the item view shows who holds the issue's lease, on the issue and its tickets", async () => {
+  const { i, claim } = await claimedBuild("wake-1");
+  const [ticket] = await call("intake", "list_items", { parent_id: i.id });
+  const implementer = (view) => view.leases.find((l) => l.role === "implementer");
+
+  const held = implementer(await get(i));
+  assert.equal(held.held, true);
+  assert.equal(held.session_id, "wake-1");
+  assert.ok(new Date(held.until) > new Date());
+  assert.deepEqual(implementer(await get(ticket)), held);
+
+  // Released at turn end: still listed, but nobody holds it and no session is named.
+  await wake("implementer", "release_lease", { lease_token: claim.lease_token });
+  assert.deepEqual(implementer(await get(i)), { role: "implementer", held: false, session_id: null, until: null });
+
+  // A lapsed lease reads as free too, even before anyone takes it over.
+  await as("wake-2", "implementer", "set_head", await get(i), head("9"));
+  await sql`update ledger.leases set expires_at=now()-interval '1 second' where scope_id=${i.id} and actor_id=${actors.implementer.actor_id}`;
+  assert.equal(implementer(await get(i)).held, false);
+
+  // An issue nobody has worked on has no leases.
+  assert.deepEqual((await get(await toBuild())).leases.filter((l) => l.role === "implementer"), []);
 });

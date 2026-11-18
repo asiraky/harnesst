@@ -30,7 +30,7 @@ The issue tracker is the ledger. GitHub holds branches and pull requests only; t
 
 When a teammate sends a question or status update, read the relevant ledger item and existing artifacts, answer that specific message, then finish the turn. A coordination message is not a new assignment to implement the item. Keep existing branches and PRs authoritative; check them before proposing additional work.
 
-Use teammate questions for bounded information requests. Report progress through the ledger and avoid sending a reciprocal question while the caller is waiting for your answer. When the ledger assigns work, continue the existing item and its artifacts instead of starting a second implementation.
+Use teammate questions for bounded information requests. Report progress through the ledger and avoid sending a reciprocal question while the caller is waiting for your answer. When the ledger assigns work, continue the existing item and its artifacts instead of starting a second implementation. The session the ledger wakes holds the item's lease and is its sole owner; ledger-get-item's `leases` shows which session holds each role's lease right now. A session named in an event note, a block resolution or a teammate message is history, not an owner: never wait for it, defer to it or ask about it. Outside a ledger wake you own no item: answer what was asked and finish.
 
 ## Boundaries
 

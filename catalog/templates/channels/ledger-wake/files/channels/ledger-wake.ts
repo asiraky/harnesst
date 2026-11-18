@@ -65,7 +65,7 @@ export default defineChannel({
       try {
         const session = await send(
           {
-            message: `Ledger: item ${item.id} is at ${item.stage} (${claim.data.kind}). Read it with ledger-get-item and act from your instructions. The channel has already claimed wake ${body.outbox_id}. After a human notification, or once you have asked a human for something you are now waiting on, use ledger-complete-wake with that ID.`,
+            message: `Ledger: item ${item.id} is at ${item.stage} (${claim.data.kind}). Read it with ledger-get-item and act from your instructions. This session holds the item's lease and is its sole owner; the item's leases field confirms it. Sessions named in earlier events, notes or resolutions are history: do not wait for, defer to or ask about them. The channel has already claimed wake ${body.outbox_id}. After a human notification, or once you have asked a human for something you are now waiting on, use ledger-complete-wake with that ID.`,
           },
           {
             auth: null,
