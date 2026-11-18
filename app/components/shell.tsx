@@ -10,6 +10,7 @@
  * ones, and single-agent repos collapse both levels into one merged row.
  */
 import {
+  Activity,
   Bot,
   FolderGit2,
   Menu,
@@ -249,6 +250,16 @@ function BuildNav({ sidebar }: { sidebar: BuildSidebarData }) {
         >
           <Store className="size-3.5" aria-hidden />
           Marketplace
+        </NavLink>
+        <NavLink
+          to="/usage"
+          prefetch="intent"
+          className={({ isActive }) =>
+            cn(item, "text-muted-foreground hover:text-foreground", isActive && "bg-muted font-medium text-foreground")
+          }
+        >
+          <Activity className="size-3.5" aria-hidden />
+          Usage
         </NavLink>
       </div>
     </div>

@@ -120,6 +120,22 @@ export default [
     // connections, approvals), derived from current state for one repo.
     route("repos/:projectId/setup", "routes/projects.$projectId.setup.tsx"),
     route("dashboard", "routes/dashboard.tsx"),
+    // Usage (issue #418): org → connection / repository → agent → run → model call.
+    route("usage", "routes/usage.tsx"),
+    route("usage/connections/:connectionId", "routes/usage.connections.$connectionId.tsx"),
+    route("usage/repos/:projectId", "routes/usage.repos.$projectId.tsx"),
+    route(
+      "usage/repos/:projectId/agents/:agentName",
+      "routes/usage.repos.$projectId.agents.$agentName.tsx",
+    ),
+    route(
+      "usage/repos/:projectId/runs/:runId",
+      "routes/usage.repos.$projectId.runs.$runId.tsx",
+    ),
+    route(
+      "usage/repos/:projectId/runs/:runId/calls/:seq",
+      "routes/usage.repos.$projectId.runs.$runId.calls.$seq.tsx",
+    ),
     // Recruit — the marketplace (PRD §7.8, M6). Browse (index.json) + a template detail page.
     route("marketplace", "routes/marketplace.tsx"),
     route("marketplace/:type/:id", "routes/marketplace.$type.$id.tsx"),
