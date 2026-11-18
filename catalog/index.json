@@ -76,9 +76,9 @@
       "id": "ledger",
       "type": "bundle",
       "name": "Ledger",
-      "version": "0.9.0",
+      "version": "0.10.0",
       "description": "A shared work ledger with authenticated wakes, evidence and human approval gates.",
-      "hash": "53cbd513ff7e471efcc3f578b43a0e4be3828fc0"
+      "hash": "d8f3ab39edf3da47af147e086e9100b93bc5be83"
     },
     {
       "id": "vercel-bundle",
@@ -404,9 +404,9 @@
       "id": "ledger-tools",
       "type": "tool",
       "name": "Ledger tools",
-      "version": "0.7.0",
+      "version": "0.8.0",
       "description": "Read and move team work through database-enforced stages, evidence and human gates.",
-      "hash": "5d5e6ecf65ef6afa5b71aec060dc43a2da7996cf"
+      "hash": "c34fbb9f6e532ca1210cb17cbeb767a2cce17890"
     },
     {
       "id": "publish-artifact",

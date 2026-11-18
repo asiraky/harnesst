@@ -46,6 +46,10 @@ for (const [source, destination] of [
     "0015_lease_view.sql",
     "supabase/migrations/20260917000015_lease_view.sql",
   ],
+  [
+    "0016_compact_item_view.sql",
+    "supabase/migrations/20260917000016_compact_item_view.sql",
+  ],
   ["supabase/config.toml", "supabase/config.toml"],
   ["0003_workflow.sql", "supabase/migrations/20260917000003_workflow.sql"],
   [

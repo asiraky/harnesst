@@ -16,7 +16,7 @@ try {
   await connection.unsafe(
     await readFile(new URL("../local/roles.sql", import.meta.url), "utf8"),
   );
-  for (const file of ["0001_ledger.sql", "0004_mayi_approvals.sql", "0005_hosted_authorization.sql", "0006_oauth_recovery.sql", "0007_scoped_oauth_writes.sql", "0008_review_content.sql", "0009_tickets.sql", "0010_leases.sql", "0011_harnesst_approvals.sql", "0012_awaiting_human.sql", "0013_lease_idle_cap.sql", "0014_github_progress.sql", "0015_lease_view.sql"])
+  for (const file of ["0001_ledger.sql", "0004_mayi_approvals.sql", "0005_hosted_authorization.sql", "0006_oauth_recovery.sql", "0007_scoped_oauth_writes.sql", "0008_review_content.sql", "0009_tickets.sql", "0010_leases.sql", "0011_harnesst_approvals.sql", "0012_awaiting_human.sql", "0013_lease_idle_cap.sql", "0014_github_progress.sql", "0015_lease_view.sql", "0016_compact_item_view.sql"])
     await connection.unsafe(
       await readFile(new URL("../" + file, import.meta.url), "utf8"),
     );
@@ -988,4 +988,129 @@ test("the item view shows who holds the issue's lease, on the issue and its tick
 
   // An issue nobody has worked on has no leases.
   assert.deepEqual((await get(await toBuild())).leases.filter((l) => l.role === "implementer"), []);
+});
+
+// History written straight into the log: the shape agents produce, at volumes a test can't drive.
+const logEvents = async (i, payloads, kind = "blocked") => {
+  for (const payload of payloads)
+    await sql`insert into ledger.events(item_id,kind,payload,spec_version) values(${i.id},${kind},${sql.json(payload)},${i.spec_version})`;
+};
+const bigSpec = (n) => ({ problem: "p".repeat(20000), acceptance_criteria: ["Works"], n });
+const bytes = (value) => Buffer.byteLength(JSON.stringify(value));
+
+test("the item view stays bounded however long the history, cutting long text and spec copies", async () => {
+  let i = await create();
+  i = await change("intake", "update_spec", i, { spec: bigSpec(1), note: "Rewrite" });
+  await logEvents(i, Array.from({ length: 80 }, (_, n) => ({ question: `q${n} ` + "x".repeat(3000), role: "engineer" })));
+  // A payload that is long only in total: many strings under the cut.
+  await logEvents(i, [{ notes: Array.from({ length: 10 }, () => "y".repeat(700)) }], "evidence");
+  await logEvents(i, [{ answer: "short" }], "resolved");
+
+  const view = await get(i);
+  assert.ok(bytes(view) - bytes(view.spec) < 30000, `view without its spec is ${bytes(view) - bytes(view.spec)} bytes`);
+  assert.ok(view.events.length > 0 && view.events.length <= 30);
+  assert.equal(view.event_count, 84);
+  const seqs = view.events.map((e) => Number(e.seq));
+  assert.deepEqual(seqs, [...seqs].sort((a, b) => a - b));
+  assert.match(view.events_note, new RegExp(`before_seq=${seqs[0]}`));
+  assert.deepEqual(view.events.at(-1).payload.answer, "short");
+
+  const collapsed = view.events.find((e) => e.kind === "evidence");
+  assert.deepEqual(Object.keys(collapsed.payload), ["cut"]);
+  assert.match(collapsed.payload.cut, new RegExp(`before_seq=${Number(collapsed.seq) + 1}, limit=1`));
+
+  const cut = view.events.find((e) => e.kind === "blocked");
+  assert.equal(cut.payload.role, "engineer");
+  assert.ok(cut.payload.question.startsWith("q"));
+  assert.match(cut.payload.question, /… \[cut: 800 of \d+ characters shown; full text: ledger-get-events with before_seq=\d+, limit=1\]$/);
+  const before = Number(cut.payload.question.match(/before_seq=(\d+)/)[1]);
+  const [full] = (await call("intake", "get_events", { item_id: i.id, before_seq: before, limit: 1 })).events;
+  assert.equal(full.seq, cut.seq);
+  assert.equal(cut.payload.question.indexOf("…"), 800);
+  assert.ok(full.payload.question.startsWith(cut.payload.question.slice(0, 800)));
+  assert.equal(full.payload.question.length, Number(cut.payload.question.match(/of (\d+) characters/)[1]));
+
+  // Old events are out of the view but the spec copy never rides along with an event.
+  const [specEvent] = (await call("intake", "get_events", { item_id: i.id, kinds: ["spec_updated"] })).events;
+  assert.equal(typeof specEvent.payload.spec, "string");
+  assert.match(specEvent.payload.spec, /include_spec=true/);
+  assert.equal(specEvent.spec_version, 2);
+
+  // Mutations return the same compact view.
+  const blocked = await change("intake", "block", view, { role: "engineer", question: "z".repeat(5000) });
+  assert.ok(bytes(blocked) - bytes(blocked.spec) - bytes(blocked.blocked_on) < 30000);
+});
+
+test("an issue with a short history shows every event in full, with no note", async () => {
+  let i = await create();
+  i = await change("intake", "transition", i, { to_stage: "breakdown" });
+  const view = await get(i);
+  assert.equal(view.event_count, view.events.length);
+  assert.equal(view.events_note, null);
+  assert.equal(view.events.at(-1).payload.to_stage, "breakdown");
+});
+
+test("get_events filters by kind and seq, pages both ways, caps its size and keeps spec copies out unless asked", async () => {
+  let i = await create();
+  i = await change("intake", "update_spec", i, { spec: bigSpec(1), note: "One" });
+  i = await change("intake", "update_spec", i, { spec: bigSpec(2), note: "Two" });
+  await logEvents(i, Array.from({ length: 30 }, (_, n) => ({ answer: `a${n}` })), "resolved");
+  await logEvents(i, Array.from({ length: 5 }, (_, n) => ({ question: `b${n}` })), "blocked");
+  const events = (args) => call("implementer", "get_events", { item_id: i.id, ...args });
+
+  // Newest first by default, returned in seq order, 10 unless asked, never more than 20.
+  const latest = await events({});
+  assert.equal(latest.events.length, 10);
+  assert.equal(latest.has_more, true);
+  assert.deepEqual(latest.events.map((e) => e.payload.question ?? e.payload.answer).slice(-5), ["b0", "b1", "b2", "b3", "b4"]);
+  assert.equal((await events({ limit: 500 })).events.length, 20);
+  assert.equal((await events({ limit: 0 })).events.length, 1);
+
+  const resolved = await events({ kinds: ["resolved"], limit: 20 });
+  assert.ok(resolved.events.every((e) => e.kind === "resolved"));
+  assert.equal(resolved.events.at(-1).payload.answer, "a29");
+
+  // Backward from the oldest seen, forward from a seq: no overlap, no gap.
+  const older = await events({ kinds: ["resolved"], before_seq: resolved.events[0].seq, limit: 20 });
+  assert.deepEqual(older.events.map((e) => e.payload.answer), Array.from({ length: 10 }, (_, n) => `a${n}`));
+  assert.equal(older.has_more, false);
+  const forward = await events({ kinds: ["resolved"], since_seq: older.events[4].seq, limit: 3 });
+  assert.deepEqual(forward.events.map((e) => e.payload.answer), ["a5", "a6", "a7"]);
+  assert.equal(forward.has_more, true);
+  const window = await events({ since_seq: older.events[0].seq, before_seq: older.events[3].seq });
+  assert.deepEqual(window.events.map((e) => e.payload.answer), ["a1", "a2"]);
+
+  // Spec copies: a note by default; the copy itself only on request, one event per call.
+  const specs = await events({ kinds: ["spec_updated"] });
+  assert.equal(specs.events.length, 2);
+  assert.ok(specs.events.every((e) => typeof e.payload.spec === "string" && e.payload.note));
+  const copy = await events({ kinds: ["spec_updated"], include_spec: true, limit: 20 });
+  assert.equal(copy.events.length, 1);
+  assert.equal(copy.has_more, true);
+  assert.equal(copy.events[0].payload.spec.n, 2);
+  assert.equal((await events({ kinds: ["spec_updated"], include_spec: true, before_seq: copy.events[0].seq })).events[0].payload.spec.n, 1);
+
+  assert.equal(latest.event_count, 38);
+});
+
+test("get_events stops at its byte budget but always returns at least one event", async () => {
+  const i = await create();
+  await logEvents(i, Array.from({ length: 20 }, () => ({ answer: "x".repeat(5000) })), "resolved");
+  const page = await call("intake", "get_events", { item_id: i.id, limit: 20 });
+  assert.ok(page.events.length > 1 && page.events.length < 20);
+  assert.ok(bytes(page) < 50000);
+  assert.equal(page.has_more, true);
+  await logEvents(i, [{ answer: "y".repeat(60000) }], "resolved");
+  const huge = await call("intake", "get_events", { item_id: i.id, limit: 20 });
+  assert.equal(huge.events.length, 1);
+  assert.equal(huge.events[0].payload.answer.length, 60000);
+});
+
+test("get_events reads like get_item: any actor key, an existing item, well-formed filters", async () => {
+  const i = await create();
+  for (const role of ["intake", "implementer", "architect", "github"])
+    assert.equal((await call(role, "get_events", { item_id: i.id })).events[0].kind, "created");
+  await assert.rejects(rpc("get_events", "bad", { item_id: i.id }), /unauthorized/);
+  await assert.rejects(call("intake", "get_events", { item_id: "00000000-0000-0000-0000-000000000000" }), /item not found/);
+  await assert.rejects(call("intake", "get_events", { item_id: i.id, kinds: "blocked" }), /kinds must be an array/);
 });
