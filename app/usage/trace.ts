@@ -422,7 +422,8 @@ export function buildTrace(steps: TraceStepRow[], gateway: TraceGatewayRow[]): T
     toolCalls: tools.length,
     toolResultTokens: sumOrNull(tools.map((t) => t.resultTokens)),
     withheld: tools.filter((t) => t.withheld).length,
-    toolErrors: tools.filter((t) => t.isError).length,
+    // A withheld step is stored as an error too; it counts under `withheld` only.
+    toolErrors: tools.filter((t) => t.isError && !t.withheld).length,
     callErrors: calls.filter((c) => c.status !== "ok").length,
     rateLimited: calls.filter((c) => c.hit429).length,
     activeMs: sumOrNull(durations),

@@ -15,12 +15,15 @@ import {
   agents,
   deployments,
   ingestTokens,
+  projects,
   releases,
   runSteps,
   runs,
   sessions,
 } from "~/db/schema";
+import { withheldByCallId } from "~/gateway/withheld-results.server";
 import { redactSecrets } from "~/observability/capture.server";
+import { markWithheldSteps, toolCallIds } from "~/observability/withheld-steps";
 import { toolRepeats } from "~/usage/warnings";
 import { intColumn, intKey } from "./int-column";
 
@@ -158,6 +161,31 @@ async function resolveRunAgent(
 }
 
 /** Shared ingest implementation so a managed start can hold its deployment lock throughout. */
+/**
+ * Mark tool steps whose result the model gateway withheld for size. The gateway records them
+ * while the turn runs, before its steps are ingested. Best effort: on a failed lookup the steps
+ * are stored unmarked.
+ */
+async function markGatewayWithheld(
+  projectId: string,
+  steps: IngestStep[],
+): Promise<IngestStep[]> {
+  const callIds = toolCallIds(steps);
+  if (callIds.length === 0) return steps;
+  try {
+    const [project] = await db
+      .select({ orgId: projects.orgId })
+      .from(projects)
+      .where(eq(projects.id, projectId))
+      .limit(1);
+    if (!project) return steps;
+    return markWithheldSteps(steps, await withheldByCallId(project.orgId, callIds));
+  } catch (error) {
+    console.error("[runs] failed to load withheld tool results", error);
+    return steps;
+  }
+}
+
 async function ingestRunWith(
   client: IngestDb,
   projectId: string,
@@ -255,7 +283,8 @@ async function ingestRunWith(
   if (p.steps && p.steps.length > 0) {
     // Replace steps for idempotency (a later event carries the full step list).
     await client.delete(runSteps).where(eq(runSteps.runId, run.id));
-    const stepRows = p.steps.map((st) => ({
+    const steps = await markGatewayWithheld(projectId, p.steps);
+    const stepRows = steps.map((st) => ({
         runId: run.id,
         seq: st.seq,
         type: st.type,

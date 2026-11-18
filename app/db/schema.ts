@@ -820,6 +820,30 @@ export const runReconcileCursors = pgTable(
 );
 
 /**
+ * Tool results the model gateway withheld for being over the size limit
+ * (app/gateway/tool-result-limit.ts). The model saw an error in place of the output, but eve
+ * records the call as a success, so run ingest matches steps on `call_id` and stores them as
+ * errors with `data.withheld`. One row per tool call: the gateway sees the same result on every
+ * later model call in the session and inserts with on-conflict-do-nothing.
+ */
+export const withheldToolResults = pgTable(
+  "withheld_tool_results",
+  {
+    id: varchar("id", { length: 12 }).primaryKey().$defaultFn(newId),
+    orgId: text("org_id")
+      .notNull()
+      .references(() => organization.id, { onDelete: "cascade" }),
+    callId: text("call_id").notNull(),
+    toolName: text("tool_name").notNull(),
+    tokens: integer("tokens").notNull(),
+    limitTokens: integer("limit_tokens").notNull(),
+    model: text("model").notNull(),
+    createdAt: createdAt(),
+  },
+  (t) => [unique("withheld_tool_results_call_uq").on(t.orgId, t.callId)],
+);
+
+/**
  * Per-project ingest tokens for the authenticated OTLP/runs endpoint (ARCH §3.7). BYO
  * instances ship telemetry back with one of these Bearer tokens. Only the hash is stored.
  */

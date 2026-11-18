@@ -154,7 +154,7 @@ describe("buildTrace", () => {
     const t = buildTrace(
       [
         step({ seq: 1, type: "model_call", stepIndex: 0 }),
-        step({ seq: 2, type: "tool_call", withheld: { tokens: 40000, limitTokens: 25000 } }),
+        step({ seq: 2, type: "tool_call", isError: true, withheld: { tokens: 40000, limitTokens: 25000 } }),
         step({ seq: 3, type: "tool_call", isError: true }),
         step({ seq: 4, type: "tool_call" }),
       ],

@@ -19,6 +19,7 @@
  */
 import { CODEX_BASE_INSTRUCTIONS } from "./codex-base-instructions";
 import type { ReasoningEffort } from "~/models/reasoning";
+import { checkToolResult, type WithheldToolResult } from "./tool-result-limit";
 
 // ── Loose chat-completions input types (we accept anything OpenAI-ish) ─────────
 
@@ -152,14 +153,23 @@ function toText(content: unknown): string {
  * The remaining messages map turn-for-turn: user → input_text/image/file parts, assistant text →
  * output_text plus a `function_call` item per tool call, tool results → `function_call_output`.
  * `onDropped` hears about every content part type that had no Responses equivalent.
+ *
+ * With `toolResultLimitTokens` set, a tool result over the limit is replaced by an error saying it
+ * was withheld (see tool-result-limit.ts), and `onWithheld` hears about each one. The whole
+ * history is resent on every call, so the same result is withheld, and reported, every time.
  */
 export function buildResponsesPayload(
   body: ChatCompletionsBody,
   slug: string,
-  options: { onDropped?: (type: string) => void } = {},
+  options: {
+    onDropped?: (type: string) => void;
+    toolResultLimitTokens?: number;
+    onWithheld?: (withheld: WithheldToolResult) => void;
+  } = {},
 ): Record<string, unknown> {
   const leading: Array<Record<string, unknown>> = [];
   const rest: Array<Record<string, unknown>> = [];
+  const toolNames = new Map<string, string>();
 
   for (const msg of body.messages ?? []) {
     if (msg.role === "system" || msg.role === "developer") {
@@ -188,6 +198,7 @@ export function buildResponsesPayload(
         });
       }
       for (const call of msg.tool_calls ?? []) {
+        if (call.id && call.function?.name) toolNames.set(call.id, call.function.name);
         rest.push({
           type: "function_call",
           call_id: call.id ?? "",
@@ -198,11 +209,19 @@ export function buildResponsesPayload(
       continue;
     }
     if (msg.role === "tool") {
-      rest.push({
-        type: "function_call_output",
-        call_id: msg.tool_call_id ?? "",
-        output: toText(msg.content),
-      });
+      const callId = msg.tool_call_id ?? "";
+      let output = toText(msg.content);
+      if (options.toolResultLimitTokens !== undefined) {
+        const over = checkToolResult(output, options.toolResultLimitTokens, {
+          callId,
+          toolName: toolNames.get(callId) ?? "The tool",
+        });
+        if (over) {
+          output = over.message;
+          options.onWithheld?.(over.withheld);
+        }
+      }
+      rest.push({ type: "function_call_output", call_id: callId, output });
       continue;
     }
   }
