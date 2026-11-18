@@ -41,7 +41,7 @@ describe.runIf(LIVE)("run metadata against real Postgres", () => {
         steps: [call(1), call(2), call(3)],
       });
       const read = async () => (await db.select().from(runs).where(eq(runs.externalRunId, externalRunId)))[0];
-      expect(await read()).toMatchObject({ peakContextTokens: 288662, wallClockMs: 3_369_109, tokensInput: null });
+      expect(await read()).toMatchObject({ peakContextTokens: 288662, wallClockMs: 3_369_109, tokensInput: 2_147_483_647 });
       expect((await read()).metadata).toMatchObject({
         input: "hello",
         settledBy: "stale-run-sweep",

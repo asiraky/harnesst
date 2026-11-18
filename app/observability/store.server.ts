@@ -22,7 +22,7 @@ import {
 } from "~/db/schema";
 import { redactSecrets } from "~/observability/capture.server";
 import { toolRepeats } from "~/usage/warnings";
-import { intColumn } from "./int-column";
+import { intColumn, intKey } from "./int-column";
 
 type IngestDb = Pick<typeof db, "delete" | "insert" | "select" | "update">;
 
@@ -191,14 +191,22 @@ async function ingestRunWith(
     (redactSecrets(p.metadata ?? {}) as Record<string, unknown>) ?? {};
 
   const incomingStatus = p.status ?? "running";
+  // Integer columns: rounded or capped rather than failing the insert, with a warning so a
+  // producer sending odd values is still visible.
+  const adjusted = new Set<string>();
+  const int = (field: string, value: number | null | undefined) => {
+    const out = intColumn(value);
+    if (value != null && out !== value) adjusted.add(field);
+    return out;
+  };
   const totals = {
-    tokensInput: intColumn(p.tokensInput),
-    tokensOutput: intColumn(p.tokensOutput),
-    tokensCachedInput: intColumn(p.tokensCachedInput),
+    tokensInput: int(`run.tokensInput`, p.tokensInput),
+    tokensOutput: int(`run.tokensOutput`, p.tokensOutput),
+    tokensCachedInput: int(`run.tokensCachedInput`, p.tokensCachedInput),
     costUsd: p.costUsd ?? null,
-    compactionCount: intColumn(p.compactionCount),
-    peakContextTokens: intColumn(p.peakContextTokens),
-    wallClockMs: intColumn(p.wallClockMs),
+    compactionCount: int(`run.compactionCount`, p.compactionCount),
+    peakContextTokens: int(`run.peakContextTokens`, p.peakContextTokens),
+    wallClockMs: int(`run.wallClockMs`, p.wallClockMs),
   };
   const [run] = await client
     .insert(runs)
@@ -249,27 +257,27 @@ async function ingestRunWith(
     await client.delete(runSteps).where(eq(runSteps.runId, run.id));
     const stepRows = p.steps.map((st) => ({
         runId: run.id,
-        seq: intColumn(st.seq) ?? st.seq,
+        seq: st.seq,
         type: st.type,
         model: st.model ?? null,
         toolName: st.toolName ?? null,
-        tokensInput: intColumn(st.tokensInput),
-        tokensOutput: intColumn(st.tokensOutput),
-        tokensCacheRead: intColumn(st.tokensCacheRead),
-        tokensCacheWrite: intColumn(st.tokensCacheWrite),
+        tokensInput: int(`step.tokensInput`, st.tokensInput),
+        tokensOutput: int(`step.tokensOutput`, st.tokensOutput),
+        tokensCacheRead: int(`step.tokensCacheRead`, st.tokensCacheRead),
+        tokensCacheWrite: int(`step.tokensCacheWrite`, st.tokensCacheWrite),
         costUsd: st.costUsd ?? null,
-        contextWindow: intColumn(st.contextWindow),
+        contextWindow: int(`step.contextWindow`, st.contextWindow),
         eveSessionId: st.eveSessionId ?? null,
         turnId: st.turnId ?? null,
-        stepIndex: intColumn(st.stepIndex),
+        stepIndex: intKey(st.stepIndex),
         subagentName: st.subagentName ?? null,
         parentCallId: st.parentCallId ?? null,
         callId: st.callId ?? null,
         childSessionId: st.childSessionId ?? null,
-        resultBytes: intColumn(st.resultBytes),
-        resultTokens: intColumn(st.resultTokens),
+        resultBytes: int(`step.resultBytes`, st.resultBytes),
+        resultTokens: int(`step.resultTokens`, st.resultTokens),
         resultCapped: st.resultCapped ?? null,
-        durationMs: intColumn(st.durationMs),
+        durationMs: int(`step.durationMs`, st.durationMs),
         isError: st.isError ?? false,
         approvalGated: st.approvalGated ?? false,
         // Redact obvious credentials for BOTH producers (playground + BYO) at this chokepoint.
@@ -278,13 +286,18 @@ async function ingestRunWith(
       }));
     await client.insert(runSteps).values(stepRows);
     // Repeated identical tool calls (#419), kept on the run so usage warnings never read payloads.
-    // Merged into metadata: the upsert above leaves an existing run's metadata alone.
+    // Merged into the run's metadata, keeping its other keys.
     await client
       .update(runs)
       .set({
         metadata: sql`coalesce(${runs.metadata}, '{}'::jsonb) || ${JSON.stringify({ toolRepeats: toolRepeats(stepRows) })}::jsonb`,
       })
       .where(eq(runs.id, run.id));
+  }
+  if (adjusted.size > 0) {
+    console.warn(
+      `[ingest] run ${p.externalRunId}: rounded or capped non-integer values for ${[...adjusted].join(", ")}`,
+    );
   }
 }
 
