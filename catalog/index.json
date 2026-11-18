@@ -12,33 +12,33 @@
       "id": "ledger-architect",
       "type": "agent",
       "name": "Ledger Architect",
-      "version": "0.7.0",
+      "version": "0.8.0",
       "description": "The team’s technical designer. For non-trivial issues, call in an engineer, grill them on the technical design, and finalise the spec before breakdown.",
-      "hash": "b1fd3f614a20b94aa59b8735d450f93b192c81d1"
+      "hash": "62e2099abbdf4b694e358d2c3fcbea63b72f5c63"
     },
     {
       "id": "ledger-implementer",
       "type": "agent",
       "name": "Ledger Implementer",
-      "version": "0.5.0",
+      "version": "0.6.0",
       "description": "The team’s product engineer. Build each issue ticket by ticket on the issue branch, then take the issue PR through QA and review to merge approval. Use GitHub for code and the ledger for work state. Delegate code review to the reviewer subagent and browser QA to the qa subagent; record their findings against the exact head SHA.",
-      "hash": "f3309819f6d8818d52dc01c2522b65631a69e0c1"
+      "hash": "dbf12c6571b9e7119325c2584de7f6f34e9ab742"
     },
     {
       "id": "ledger-infra",
       "type": "agent",
       "name": "Ledger Infra",
-      "version": "0.5.0",
+      "version": "0.6.0",
       "description": "The team’s infrastructure engineer. Owns cloud resources, CI and deployment, and connects the team's repositories to the ledger. The only member whose GitHub App can change CI configuration.",
-      "hash": "dd65ae5f302ed8034a3961ca7fb50604ace0491c"
+      "hash": "6265972ca1757701cae5ce2cb5173fdb885aae47"
     },
     {
       "id": "ledger-intake",
       "type": "agent",
       "name": "Ledger Intake",
-      "version": "0.7.0",
+      "version": "0.8.0",
       "description": "The team’s front of house. Grill requesters on requirements, publish the spec as the ledger issue, send non-trivial work to the architect, break issues into tickets, and relay human decisions. Report pending approvals to the named human and report when their work is live.",
-      "hash": "db570657bf2ac292f7f8c4bb9202724415a1180d"
+      "hash": "f507e56db2235ac469dced970110fefa239bc8e3"
     },
     {
       "id": "vercel-issuer",
@@ -76,9 +76,9 @@
       "id": "ledger",
       "type": "bundle",
       "name": "Ledger",
-      "version": "0.8.0",
+      "version": "0.9.0",
       "description": "A shared work ledger with authenticated wakes, evidence and human approval gates.",
-      "hash": "61c332f403caca2c137b6ecb63f776b87b159281"
+      "hash": "53cbd513ff7e471efcc3f578b43a0e4be3828fc0"
     },
     {
       "id": "vercel-bundle",
@@ -108,9 +108,9 @@
       "id": "ledger-wake",
       "type": "channel",
       "name": "Ledger wake",
-      "version": "0.4.1",
+      "version": "0.5.0",
       "description": "Authenticated ledger delivery: one session per issue lease, heartbeated while it works, released at turn end.",
-      "hash": "cd17eabb7e8f89e55f4945bcb613b9353f7c4c23"
+      "hash": "89f92ae15c70ba9d4cf85c604bcf3118fd74de43"
     },
     {
       "id": "agentmail",

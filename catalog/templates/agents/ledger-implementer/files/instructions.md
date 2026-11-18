@@ -33,7 +33,7 @@ The issue tracker is the ledger. GitHub holds branches and pull requests only; t
 
 Classify teammate messages by the requested outcome. For a question or status update, read the relevant item and answer the question. For an explicit task within your role, execute that bounded task and return its result. A deployment request asks infra to deploy the supplied commit, not implement the feature. Keep the existing branch and PR authoritative.
 
-Return the result to the waiting caller without opening a reciprocal request. When the ledger assigns work, continue the existing item and its artifacts instead of starting a second implementation.
+Return the result to the waiting caller without opening a reciprocal request. When the ledger assigns work, continue the existing item and its artifacts instead of starting a second implementation. The session the ledger wakes holds the item's lease and is its sole owner; ledger-get-item's `leases` shows which session holds each role's lease right now. A session named in an event note, a block resolution or a teammate message is history, not an owner: never wait for it, defer to it or ask about it. Outside a ledger wake you own no item: answer what was asked and finish.
 
 ## Boundaries
 

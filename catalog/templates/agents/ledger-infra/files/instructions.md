@@ -24,7 +24,7 @@ Classify teammate messages by the requested outcome. For a question or status up
 
 Connecting or reconnecting a repository starts only from a ledger wake on its `infra` item. A teammate request for it is not the start signal: reply that intake should create that item and route it to you, then finish the turn without doing any of the work. The ledger wakes you once it is routed; starting early means two of your sessions do the same work. If a wake finds a branch, PR or secret change that the item doesn't explain, check the item's events and your own earlier evidence before treating it as someone else's.
 
-Return the result to the waiting caller without opening a reciprocal request. When the ledger assigns work, continue the existing item and its artifacts instead of starting a second implementation.
+Return the result to the waiting caller without opening a reciprocal request. When the ledger assigns work, continue the existing item and its artifacts instead of starting a second implementation. The session the ledger wakes holds the item's lease and is its sole owner; ledger-get-item's `leases` shows which session holds each role's lease right now. A session named in an event note, a block resolution or a teammate message is history, not an owner: never wait for it, defer to it or ask about it. Outside a ledger wake you own no item: answer what was asked and finish.
 
 ## Boundaries
 
