@@ -21,6 +21,7 @@ import { chooseRunModel, type RunModel } from "~/observability/run-model";
 import { resolveRunModel } from "~/observability/run-model.server";
 import {
   linkChildRuns,
+  parentCallForChild,
   parentCallName,
 } from "~/observability/subagent-link.server";
 import type { SubagentCall } from "~/observability/turn-usage";
@@ -234,6 +235,37 @@ export function subagentCallsOf(result: TurnResult): SubagentCall[] {
   );
 }
 
+/** The run channel eve's subagent sessions are recorded under. */
+const SUBAGENT_CHANNEL = "subagent";
+
+/**
+ * Which lookup completes a turn's subagent link at record time, if any:
+ *   - `name`: the child knows its parent call (the hook forwarded it) but not the subagent's
+ *     name, which the parent's tool call carries;
+ *   - `child`: a subagent-channel turn that knows no parent (an agent image built before the
+ *     hook forwarded one) looks for the parent call that recorded its session.
+ * Other turns are not subagent children, so they pay for no lookup.
+ */
+export function parentLookupFor(
+  result: TurnResult,
+  channel: string,
+):
+  | { kind: "name"; parentSessionId: string; parentCallId: string }
+  | { kind: "child" }
+  | null {
+  const parent = result.subagent;
+  if (parent) {
+    return !parent.name && parent.parentSessionId
+      ? {
+          kind: "name",
+          parentSessionId: parent.parentSessionId,
+          parentCallId: parent.parentCallId,
+        }
+      : null;
+  }
+  return channel === SUBAGENT_CHANNEL ? { kind: "child" } : null;
+}
+
 export interface RunTotals {
   tokensInput?: number;
   tokensOutput?: number;
@@ -392,17 +424,24 @@ export async function recordTurnFinish(input: {
 }): Promise<void> {
   const finishedAt = input.finishedAt ?? new Date();
   const channel = input.channel ?? "playground";
-  // A pushed child knows its parent call but not the subagent's name: the parent's tool call
-  // has it when the parent was recorded first (`./subagent-link.server`).
+  // Complete a subagent child's link to its parent call (`./subagent-link.server`).
   let result = input.result;
-  const parent = result.subagent;
-  if (parent && !parent.name && parent.parentSessionId) {
+  const lookup = parentLookupFor(result, channel);
+  if (lookup?.kind === "name") {
     const name = await parentCallName(
       input.projectId,
-      parent.parentSessionId,
-      parent.parentCallId,
+      lookup.parentSessionId,
+      lookup.parentCallId,
     );
-    if (name) result = { ...result, subagent: { ...parent, name } };
+    if (name && result.subagent)
+      result = { ...result, subagent: { ...result.subagent, name } };
+  } else if (lookup?.kind === "child") {
+    const found = await parentCallForChild(
+      input.projectId,
+      result.sessionId ?? input.externalSessionId,
+      input.startedAt,
+    );
+    if (found) result = { ...result, subagent: found };
   }
   const model = await resolveRunModel({
     projectId: input.projectId,

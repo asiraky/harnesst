@@ -4,6 +4,7 @@ import type { TurnResult } from "~/agent/talk.server";
 import { FIELD_CAP } from "~/observability/capture.server";
 import {
   externalRunId,
+  parentLookupFor,
   runTotals,
   subagentCallsOf,
   turnToSteps,
@@ -466,5 +467,32 @@ describe("runTotals", () => {
 
   it("reports nothing for a run with no usage at all", () => {
     expect(runTotals(result({ steps: [{ type: "s", isError: false }] }))).toEqual({});
+  });
+});
+
+describe("parentLookupFor", () => {
+  const parent = {
+    name: null,
+    parentCallId: "c1",
+    parentSessionId: "wrun_parent",
+    parentTurnId: "turn_2",
+  };
+
+  it("reads the name off the parent call when the child knows its parent but not the name", () => {
+    expect(parentLookupFor(result({ subagent: parent }), "subagent")).toEqual({
+      kind: "name",
+      parentSessionId: "wrun_parent",
+      parentCallId: "c1",
+    });
+  });
+
+  it("looks for the parent call by session for a subagent turn that knows no parent", () => {
+    expect(parentLookupFor(result(), "subagent")).toEqual({ kind: "child" });
+  });
+
+  it("looks nothing up for a linked child, a parent without a session, or a top-level turn", () => {
+    expect(parentLookupFor(result({ subagent: { ...parent, name: "writer" } }), "subagent")).toBeNull();
+    expect(parentLookupFor(result({ subagent: { ...parent, parentSessionId: null } }), "subagent")).toBeNull();
+    expect(parentLookupFor(result(), "cron")).toBeNull();
   });
 });
