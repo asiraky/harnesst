@@ -92,6 +92,7 @@ try {
   await apply("0013_lease_idle_cap.sql");
   await apply("0014_github_progress.sql");
   await apply("0015_lease_view.sql");
+  await apply("0016_compact_item_view.sql");
   const workflow = JSON.parse(
     await readFile(new URL("workflow.json", root), "utf8"),
   );
