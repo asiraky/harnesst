@@ -21,6 +21,7 @@ import {
 } from "~/components/usage";
 import { Badge } from "~/components/ui/badge";
 import { RunTable } from "~/components/usage-run-table";
+import { WarningsPanel } from "~/components/usage-warnings";
 import { noindexMeta } from "~/lib/seo";
 import { resolveUsageViewer } from "~/usage/access.server";
 import {
@@ -40,6 +41,7 @@ import {
   runAggregates,
 } from "~/usage/queries.server";
 import { addTotals, emptyTotals, rollupRuns } from "~/usage/rollup";
+import { loadWarnings } from "~/usage/warnings.server";
 import type { Route } from "./+types/usage";
 
 export const loader = (args: LoaderFunctionArgs) =>
@@ -51,13 +53,14 @@ export const loader = (args: LoaderFunctionArgs) =>
       const now = new Date();
       const since = windowSince(days, now);
       const ids = viewer.projects.map((p) => p.id);
-      const [aggs, recent, names, connections, headroom, totals] = await Promise.all([
+      const [aggs, recent, names, connections, headroom, totals, warnings] = await Promise.all([
         runAggregates({ projectIds: ids, since }),
         listRunRows({ projectIds: ids, since, limit: 12 }),
         agentNames(ids),
         viewer.isAdmin ? listConnections(viewer.orgId) : Promise.resolve([]),
         viewer.isAdmin ? latestHeadroom(viewer.orgId) : Promise.resolve(new Map()),
         viewer.isAdmin ? connectionTotals(viewer.orgId, since) : Promise.resolve([]),
+        loadWarnings({ orgId: viewer.orgId, projects: viewer.projects, since, connections: viewer.isAdmin }),
       ]);
       const byProject = rollupRuns(aggs, (a) => a.projectId);
       const org = aggs.reduce((acc, a) => addTotals(acc, a), emptyTotals());
@@ -68,6 +71,7 @@ export const loader = (args: LoaderFunctionArgs) =>
         now: now.toISOString(),
         orgName: viewer.orgName,
         isAdmin: viewer.isAdmin,
+        warnings,
         org,
         projects: viewer.projects
           .map((p) => ({ ...p, totals: byProject.get(p.id) ?? emptyTotals() }))
@@ -92,7 +96,7 @@ export function meta() {
 }
 
 export default function UsageOverview({ loaderData }: Route.ComponentProps) {
-  const { days, org, projects, connections, recent, isAdmin, orgName } = loaderData;
+  const { days, org, projects, connections, recent, isAdmin, orgName, warnings } = loaderData;
   const cacheHit = ratio(org.cached, org.inputWithCacheInfo);
   return (
     <AppShell>
@@ -115,6 +119,8 @@ export default function UsageOverview({ loaderData }: Route.ComponentProps) {
         <StatTile label="Peak context" value={<Tokens value={org.peakContext} />} sub="largest single call" />
         <StatTile label="Compactions" value={org.compactions ?? <NotAvailable />} sub={`${org.compactedRuns} runs affected`} tone={org.compactedRuns > 0 ? "warn" : null} />
       </TileGrid>
+
+      <WarningsPanel warnings={warnings} days={days} grid max={6} id="warnings" />
 
       {isAdmin ? (
         <Panel title="Connections" icon={<Plug className="size-4" aria-hidden />} aside="Plan headroom and calls through the harnesst gateway">

@@ -21,8 +21,9 @@ import {
   sessions,
 } from "~/db/schema";
 import { redactSecrets } from "~/observability/capture.server";
+import { toolRepeats } from "~/usage/warnings";
 
-type IngestDb = Pick<typeof db, "delete" | "insert" | "select">;
+type IngestDb = Pick<typeof db, "delete" | "insert" | "select" | "update">;
 
 /** Mint a project ingest token. Returns the plaintext ONCE; only the hash is stored. */
 export async function createIngestToken(projectId: string, name: string) {
@@ -245,8 +246,7 @@ async function ingestRunWith(
   if (p.steps && p.steps.length > 0) {
     // Replace steps for idempotency (a later event carries the full step list).
     await client.delete(runSteps).where(eq(runSteps.runId, run.id));
-    await client.insert(runSteps).values(
-      p.steps.map((st) => ({
+    const stepRows = p.steps.map((st) => ({
         runId: run.id,
         seq: st.seq,
         type: st.type,
@@ -274,8 +274,16 @@ async function ingestRunWith(
         // Redact obvious credentials for BOTH producers (playground + BYO) at this chokepoint.
         data: (redactSecrets(st.data ?? {}) as Record<string, unknown>) ?? {},
         startedAt: st.startedAt ? new Date(st.startedAt) : null,
-      })),
-    );
+      }));
+    await client.insert(runSteps).values(stepRows);
+    // Repeated identical tool calls (#419), kept on the run so usage warnings never read payloads.
+    // Merged into metadata: the upsert above leaves an existing run's metadata alone.
+    await client
+      .update(runs)
+      .set({
+        metadata: sql`coalesce(${runs.metadata}, '{}'::jsonb) || ${JSON.stringify({ toolRepeats: toolRepeats(stepRows) })}::jsonb`,
+      })
+      .where(eq(runs.id, run.id));
   }
 }
 

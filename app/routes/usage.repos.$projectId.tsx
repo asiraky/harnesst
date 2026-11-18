@@ -19,8 +19,10 @@ import {
   usageHref,
 } from "~/components/usage";
 import { RunTable } from "~/components/usage-run-table";
+import { WarningsPanel } from "~/components/usage-warnings";
 import { listAgents, listAllAgents } from "~/db/queries.server";
 import { noindexMeta } from "~/lib/seo";
+import { loadWarnings } from "~/usage/warnings.server";
 import { requireProject } from "~/project/guard.server";
 import { parseWindowDays, ratio, windowSince } from "~/usage/format";
 import {
@@ -46,11 +48,12 @@ export const loader = (args: LoaderFunctionArgs) =>
       }
       const now = new Date();
       const since = windowSince(days, now);
-      const [aggs, daily, top, names] = await Promise.all([
+      const [aggs, daily, top, names, warnings] = await Promise.all([
         runAggregates({ projectIds: [project.id], since }),
         dailyInputByAgent(project.id, since),
         listRunRows({ projectIds: [project.id], since, limit: 10, orderBy: "input" }),
         agentNames([project.id]),
+        loadWarnings({ orgId: project.orgId, projects: [project], since }),
       ]);
       const nameOf = (id: string | null) => (id ? (names.get(id)?.name ?? "removed agent") : "Unattributed");
       const members = [
@@ -90,6 +93,7 @@ export const loader = (args: LoaderFunctionArgs) =>
           keys: members.map((m) => m.key),
           labels: Object.fromEntries(members.map((m) => [m.key, m.name])),
         },
+        warnings,
         top: top.map((r) => ({ ...r, projectName: project.name, agentName: r.agentId ? (names.get(r.agentId)?.name ?? null) : null })),
       };
     },
@@ -101,7 +105,7 @@ export function meta({ loaderData: data }: Route.MetaArgs) {
 }
 
 export default function RepoUsage({ loaderData }: Route.ComponentProps) {
-  const { days, project, totals, members, series, top } = loaderData;
+  const { days, project, totals, members, series, top, warnings } = loaderData;
   return (
     <AppShell>
       <UsageCrumbs items={[{ label: "Usage", to: "/usage" }, { label: project.name }]} days={days} />
@@ -114,6 +118,8 @@ export default function RepoUsage({ loaderData }: Route.ComponentProps) {
         <StatTile label="Peak context" value={<Tokens value={totals.peakContext} />} />
         <StatTile label="Compactions" value={totals.compactions ?? <NotAvailable />} sub={`${totals.compactedRuns} runs affected`} tone={totals.compactedRuns ? "warn" : null} />
       </TileGrid>
+
+      <WarningsPanel warnings={warnings} days={days} grid max={4} />
 
       <Panel title="Input tokens by member, per day" icon={<BarChart3 className="size-4" aria-hidden />}>
         <StackedDays days={series.days} keys={series.keys} labels={series.labels} />
