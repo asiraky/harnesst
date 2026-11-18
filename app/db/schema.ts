@@ -28,6 +28,7 @@ import {
 } from "./auth-schema";
 import {
   boolean,
+  doublePrecision,
   foreignKey,
   index,
   integer,
@@ -1570,6 +1571,121 @@ export const assistantEvalGrants = pgTable(
   (t) => [
     uniqueIndex("assistant_eval_grants_project_uq").on(t.projectId),
     index("assistant_eval_grants_expiry_idx").on(t.expiresAt),
+  ],
+);
+
+/**
+ * The gateway call log (issue #416): one row per upstream Codex call the model gateway made, for
+ * every caller (agents, the assistant, the playground, evals). Written after the stream ends,
+ * never on the response path. Identity columns are labels the agent's generated model module
+ * sends; the org comes from the gateway token and `projectId` is kept only when it belongs to
+ * that org. Rows older than 90 days are deleted by a periodic job.
+ */
+export const gatewayCalls = pgTable(
+  "gateway_calls",
+  {
+    id: varchar("id", { length: 12 }).primaryKey().$defaultFn(newId),
+    orgId: text("org_id")
+      .notNull()
+      .references(() => organization.id, { onDelete: "cascade" }),
+    projectId: varchar("project_id", { length: 12 }).references(
+      () => projects.id,
+      { onDelete: "set null" },
+    ),
+    /** `gateway` (org token) | `eval` (assistant eval grant). */
+    tokenKind: varchar("token_kind", { length: 16 }).notNull(),
+    agentName: text("agent_name"),
+    subagentPath: text("subagent_path"),
+    sessionId: text("session_id"),
+    turnId: text("turn_id"),
+    stepIndex: integer("step_index"),
+    /** No foreign key: a disconnected connection's history still says which subscription paid. */
+    connectionId: varchar("connection_id", { length: 12 }).notNull(),
+    accountId: text("account_id"),
+    /** `chatgpt_plan_type` from the access token (`pro`, `plus`, ...). */
+    planType: text("plan_type"),
+    model: text("model").notNull(),
+    reasoningEffort: text("reasoning_effort"),
+    streamed: boolean("streamed").notNull(),
+    startedAt: timestamp("started_at", { withTimezone: true }).notNull(),
+    ttftMs: integer("ttft_ms"),
+    durationMs: integer("duration_ms").notNull(),
+    httpStatus: integer("http_status"),
+    finishReason: text("finish_reason"),
+    errorCode: text("error_code"),
+    errorMessage: text("error_message"),
+    upstreamRequestId: text("upstream_request_id"),
+    inputTokens: integer("input_tokens"),
+    cachedInputTokens: integer("cached_input_tokens"),
+    outputTokens: integer("output_tokens"),
+    reasoningTokens: integer("reasoning_tokens"),
+    contextWindow: integer("context_window"),
+    /** Estimated tokens by part: see `ContextComposition` in `~/gateway/context-composition`. */
+    composition: jsonb("composition")
+      .$type<Record<string, unknown>>()
+      .default(sql`'{}'::jsonb`),
+  },
+  (t) => [
+    index("gateway_calls_org_started_idx").on(t.orgId, t.startedAt),
+    index("gateway_calls_project_started_idx").on(t.projectId, t.startedAt),
+    index("gateway_calls_session_turn_step_idx").on(
+      t.sessionId,
+      t.turnId,
+      t.stepIndex,
+    ),
+    index("gateway_calls_connection_started_idx").on(
+      t.connectionId,
+      t.startedAt,
+    ),
+    index("gateway_calls_started_idx").on(t.startedAt),
+  ],
+);
+
+/**
+ * Latest Codex plan headroom per connection (issue #416), from the `x-codex-*` headers on every
+ * upstream response. A row in `codex_rate_limit_samples` is added whenever a value changes.
+ */
+export const codexRateLimits = pgTable("codex_rate_limits", {
+  connectionId: varchar("connection_id", { length: 12 }).primaryKey(),
+  orgId: text("org_id")
+    .notNull()
+    .references(() => organization.id, { onDelete: "cascade" }),
+  primaryUsedPercent: doublePrecision("primary_used_percent"),
+  primaryWindowMinutes: integer("primary_window_minutes"),
+  primaryResetsAt: timestamp("primary_resets_at", { withTimezone: true }),
+  secondaryUsedPercent: doublePrecision("secondary_used_percent"),
+  secondaryWindowMinutes: integer("secondary_window_minutes"),
+  secondaryResetsAt: timestamp("secondary_resets_at", { withTimezone: true }),
+  /** Last response that carried the headers. */
+  observedAt: timestamp("observed_at", { withTimezone: true }).notNull(),
+  /** Last time a value changed (and a sample was added). */
+  changedAt: timestamp("changed_at", { withTimezone: true }).notNull(),
+});
+
+export const codexRateLimitSamples = pgTable(
+  "codex_rate_limit_samples",
+  {
+    id: varchar("id", { length: 12 }).primaryKey().$defaultFn(newId),
+    connectionId: varchar("connection_id", { length: 12 }).notNull(),
+    orgId: text("org_id")
+      .notNull()
+      .references(() => organization.id, { onDelete: "cascade" }),
+    primaryUsedPercent: doublePrecision("primary_used_percent"),
+    primaryWindowMinutes: integer("primary_window_minutes"),
+    primaryResetsAt: timestamp("primary_resets_at", { withTimezone: true }),
+    secondaryUsedPercent: doublePrecision("secondary_used_percent"),
+    secondaryWindowMinutes: integer("secondary_window_minutes"),
+    secondaryResetsAt: timestamp("secondary_resets_at", {
+      withTimezone: true,
+    }),
+    observedAt: timestamp("observed_at", { withTimezone: true }).notNull(),
+  },
+  (t) => [
+    index("codex_rate_limit_samples_connection_observed_idx").on(
+      t.connectionId,
+      t.observedAt,
+    ),
+    index("codex_rate_limit_samples_observed_idx").on(t.observedAt),
   ],
 );
 

@@ -9,7 +9,7 @@ import {
 import {
   orgModelModulePath,
   orgModelModuleSource,
-  preCompactionOrgModelModuleSource,
+  previousOrgModelModuleSources,
   scaffoldOrgModelAgentModule,
 } from "~/eve/org-model-module";
 import { subagentRootFor } from "~/eve/parse";
@@ -156,7 +156,7 @@ export async function resetModelsToWorkspaceDefault(
         return tokens;
       })());
     const planned = new Map<string, string>();
-    const previousPlan = new Map<string, string>();
+    const previousPlan = new Map<string, string[]>();
     const changes = new Map<string, string>();
     const keys: ModelTargetKey[] = [];
     const roots = new Set<string>();
@@ -177,10 +177,9 @@ export async function resetModelsToWorkspaceDefault(
         // instruction-only subagent would change the delegation metadata eve derives for it.
         const source =
           before ?? scaffoldOrgModelAgentModule(name, { subagentPath });
-        previousPlan.set(
-          path,
+        previousPlan.set(path, [
           resetAgentModelSource(source, name, subagentPath),
-        );
+        ]);
         after = resetAgentModelSource(
           source,
           name,
@@ -259,7 +258,7 @@ export async function resetModelsToWorkspaceDefault(
       const module = orgModelModuleSource();
       const currentModule = await read(modulePath);
       planned.set(modulePath, module);
-      previousPlan.set(modulePath, preCompactionOrgModelModuleSource());
+      previousPlan.set(modulePath, previousOrgModelModuleSources());
       if (currentModule !== module) changes.set(modulePath, module);
       const packagePath = packageJsonPathForRoot(root);
       const currentPackage = await read(packagePath);
@@ -280,7 +279,10 @@ export async function resetModelsToWorkspaceDefault(
       drafts.some(
         (draft) =>
           planned.get(draft.path) !== draft.content &&
-          previousPlan.get(draft.path) !== draft.content,
+          !(
+            draft.content !== null &&
+            previousPlan.get(draft.path)?.includes(draft.content)
+          ),
       )
     ) {
       return {

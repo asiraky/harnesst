@@ -11,6 +11,13 @@ const mocks = vi.hoisted(() => ({
   getConnectionForGateway: vi.fn(),
   getFreshAccessToken: vi.fn(),
   markConnectionStatus: vi.fn(),
+  writeGatewayCall: vi.fn(),
+  recordRateLimits: vi.fn(),
+}));
+
+vi.mock("~/gateway/call-log.server", () => ({
+  writeGatewayCall: mocks.writeGatewayCall,
+  recordRateLimits: mocks.recordRateLimits,
 }));
 
 vi.mock("~/gateway/token.server", () => ({
@@ -47,6 +54,7 @@ vi.mock("~/models/provider-connections.server", () => ({
 
 vi.mock("~/connections/codex.server", () => ({
   codexApiBase: () => "https://codex.invalid",
+  decodeJwtClaims: () => null,
   InvalidGrantError: class InvalidGrantError extends Error {},
 }));
 
@@ -56,7 +64,12 @@ import { loader as modelConfig } from "~/routes/api.gateway.model-config";
 
 const MODEL = "codex/abcdefghijkl/gpt-5.5";
 
-beforeEach(() => {
+/** Call-log rows are built on a later tick, off the response path. */
+const flushCallLog = () => new Promise((resolve) => setImmediate(resolve));
+
+beforeEach(async () => {
+  // Let call-log writes deferred by the previous test land before its mocks are cleared.
+  await flushCallLog();
   vi.clearAllMocks();
   mocks.verifyGatewayToken.mockReturnValue(null);
   mocks.verifyEvalGatewayToken.mockReturnValue("grantabcdefg");
@@ -166,6 +179,284 @@ describe("eval-scoped chat gateway", () => {
     expect(await response.text()).toMatch(/token spend limit/i);
     expect(mocks.getConnectionForGateway).not.toHaveBeenCalled();
     expect(mocks.getFreshAccessToken).not.toHaveBeenCalled();
+  });
+});
+
+describe("call log", () => {
+  const sse = (events: Array<Record<string, unknown>>) =>
+    events
+      .map((e) => `event: ${e.type}\ndata: ${JSON.stringify(e)}\n\n`)
+      .join("");
+  const completedStream = (headers: Record<string, string> = {}) =>
+    new Response(
+      sse([
+        { type: "response.output_text.delta", delta: "Hi" },
+        {
+          type: "response.completed",
+          response: {
+            id: "resp_1",
+            usage: {
+              input_tokens: 50,
+              input_tokens_details: { cached_tokens: 40 },
+              output_tokens: 5,
+            },
+          },
+        },
+      ]),
+      {
+        status: 200,
+        headers: { "content-type": "text/event-stream", ...headers },
+      },
+    );
+  const chatRequest = (
+    authorization: string,
+    headers: Record<string, string> = {},
+  ) =>
+    new Request("http://localhost/api/gateway/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        authorization,
+        "content-type": "application/json",
+        ...headers,
+      },
+      body: JSON.stringify({
+        model: MODEL,
+        stream: true,
+        messages: [{ role: "user", content: "hello" }],
+      }),
+    });
+
+  beforeEach(() => {
+    mocks.getConnectionForGateway.mockResolvedValue({
+      id: "abcdefghijkl",
+      orgId: "org_1",
+      provider: "codex",
+    });
+    mocks.getFreshAccessToken.mockResolvedValue({
+      accessToken: "grant",
+      accountId: "account_1",
+      credentialVersion: 1,
+    });
+  });
+
+  it("writes one row for a streamed call once the stream ends, labelled by the agent's headers", async () => {
+    mocks.verifyGatewayToken.mockReturnValue("org_1");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        completedStream({
+          "x-request-id": "req_9",
+          "x-codex-primary-used-percent": "12.5",
+          "x-codex-primary-window-minutes": "300",
+        }),
+      ),
+    );
+    const response = await chat({
+      request: chatRequest("Bearer gateway", {
+        "x-harnesst-agent": "ledger",
+        "x-harnesst-step": "4",
+        "x-harnesst-project": "abcdefghijkl",
+      }),
+      params: {},
+      context: {},
+    } as never);
+    expect(mocks.writeGatewayCall).not.toHaveBeenCalled();
+    expect(await response.text()).toContain("[DONE]");
+    await flushCallLog();
+    expect(mocks.writeGatewayCall).toHaveBeenCalledTimes(1);
+    expect(mocks.writeGatewayCall.mock.calls[0][0]).toMatchObject({
+      orgId: "org_1",
+      tokenKind: "gateway",
+      agentName: "ledger",
+      stepIndex: 4,
+      projectId: "abcdefghijkl",
+      connectionId: "abcdefghijkl",
+      httpStatus: 200,
+      upstreamRequestId: "req_9",
+      inputTokens: 50,
+      cachedInputTokens: 40,
+      outputTokens: 5,
+      finishReason: "stop",
+      streamed: true,
+    });
+    expect(mocks.recordRateLimits).toHaveBeenCalledWith({
+      orgId: "org_1",
+      connectionId: "abcdefghijkl",
+      limits: {
+        primary: { usedPercent: 12.5, windowMinutes: 300, resetsAt: null },
+        secondary: null,
+      },
+    });
+  });
+
+  it("labels an eval call from its grant, not from the caller's headers", async () => {
+    mocks.beginEvalModelCall.mockResolvedValue({
+      id: "grantabcdefg",
+      orgId: "org_1",
+      projectId: "projgrant123",
+      memberName: "researcher",
+    } as never);
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(completedStream()));
+    const response = await chat({
+      request: chatRequest("Bearer edne_scoped", {
+        "x-harnesst-agent": "someone-else",
+        "x-harnesst-project": "projother123",
+      }),
+      params: {},
+      context: {},
+    } as never);
+    await response.text();
+    await flushCallLog();
+    expect(mocks.writeGatewayCall.mock.calls[0][0]).toMatchObject({
+      tokenKind: "eval",
+      agentName: "researcher",
+      projectId: "projgrant123",
+    });
+  });
+
+  it("records the upstream's error code for a refused call", async () => {
+    mocks.verifyGatewayToken.mockReturnValue("org_1");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            error: { type: "usage_limit_reached", message: "Limit hit" },
+          }),
+          { status: 429 },
+        ),
+      ),
+    );
+    const response = await chat({
+      request: chatRequest("Bearer gateway"),
+      params: {},
+      context: {},
+    } as never);
+    expect(response.status).toBe(429);
+    await flushCallLog();
+    expect(mocks.writeGatewayCall.mock.calls[0][0]).toMatchObject({
+      httpStatus: 429,
+      errorCode: "usage_limit_reached",
+      errorMessage: "Limit hit",
+      inputTokens: null,
+    });
+  });
+
+  it("records a network failure that never reached the upstream", async () => {
+    mocks.verifyGatewayToken.mockReturnValue("org_1");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockRejectedValue(new Error("ECONNRESET")),
+    );
+    const response = await chat({
+      request: chatRequest("Bearer gateway"),
+      params: {},
+      context: {},
+    } as never);
+    expect(response.status).toBe(502);
+    await flushCallLog();
+    expect(mocks.writeGatewayCall.mock.calls[0][0]).toMatchObject({
+      httpStatus: null,
+      errorCode: "network_error",
+      errorMessage: "ECONNRESET",
+    });
+  });
+
+  it("still answers when the call log cannot be written", async () => {
+    mocks.verifyGatewayToken.mockReturnValue("org_1");
+    mocks.writeGatewayCall.mockImplementationOnce(() => {
+      throw new Error("db down");
+    });
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(completedStream()));
+    const response = await chat({
+      request: chatRequest("Bearer gateway"),
+      params: {},
+      context: {},
+    } as never);
+    expect(await response.text()).toContain("Hi");
+    await flushCallLog();
+  });
+
+  it("logs the rejected attempt when refreshing its token fails", async () => {
+    mocks.verifyGatewayToken.mockReturnValue("org_1");
+    mocks.getFreshAccessToken
+      .mockResolvedValueOnce({
+        accessToken: "revoked",
+        accountId: null,
+        credentialVersion: 3,
+      })
+      .mockRejectedValueOnce(new Error("refresh endpoint down"));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(new Response("nope", { status: 401 })),
+    );
+    const response = await chat({
+      request: chatRequest("Bearer gateway"),
+      params: {},
+      context: {},
+    } as never);
+    expect(response.status).toBe(502);
+    await flushCallLog();
+    expect(mocks.writeGatewayCall).toHaveBeenCalledTimes(1);
+    expect(mocks.writeGatewayCall.mock.calls[0][0]).toMatchObject({
+      httpStatus: 401,
+      errorCode: "token_refresh_failed",
+    });
+  });
+
+  it("times the first token of a non-streamed call when it arrives, not when the body ends", async () => {
+    mocks.verifyGatewayToken.mockReturnValue("org_1");
+    const encoder = new TextEncoder();
+    let finish!: () => void;
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(
+          encoder.encode(
+            `event: response.output_text.delta\ndata: ${JSON.stringify({ type: "response.output_text.delta", delta: "Hi" })}\n\n`,
+          ),
+        );
+        finish = () => {
+          controller.enqueue(
+            encoder.encode(
+              `event: response.completed\ndata: ${JSON.stringify({ type: "response.completed", response: {} })}\n\n`,
+            ),
+          );
+          controller.close();
+        };
+      },
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(new Response(body, { status: 200 })),
+    );
+    let now = 1_000;
+    const clock = vi.spyOn(Date, "now").mockImplementation(() => now);
+    const pending = chat({
+      request: new Request("http://localhost/api/gateway/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          authorization: "Bearer gateway",
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          model: MODEL,
+          stream: false,
+          messages: [{ role: "user", content: "hello" }],
+        }),
+      }),
+      params: {},
+      context: {},
+    } as never);
+    await flushCallLog();
+    now = 6_000;
+    finish();
+    const response = await pending;
+    expect(response.status).toBe(200);
+    await flushCallLog();
+    clock.mockRestore();
+    const row = mocks.writeGatewayCall.mock.calls[0][0];
+    expect(row.ttftMs).toBe(0);
+    expect(row.durationMs).toBe(5_000);
   });
 });
 
@@ -298,6 +589,18 @@ describe("revoked access token", () => {
     );
     expect(fetch.mock.calls[1][1].headers.authorization).toBe("Bearer renewed");
     expect(mocks.markConnectionStatus).not.toHaveBeenCalled();
+    // Both upstream attempts land in the call log: the rejected one and the retry.
+    await flushCallLog();
+    expect(
+      mocks.writeGatewayCall.mock.calls.map(([row]) => ({
+        httpStatus: row.httpStatus,
+        errorCode: row.errorCode,
+        inputTokens: row.inputTokens,
+      })),
+    ).toEqual([
+      { httpStatus: 401, errorCode: "token_rejected", inputTokens: null },
+      { httpStatus: 200, errorCode: null, inputTokens: 1 },
+    ]);
   });
 
   it("expires the renewed generation when the provider rejects it too", async () => {

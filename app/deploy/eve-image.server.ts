@@ -69,6 +69,12 @@ import {
 } from "~/team/tool-template";
 import { BASH_TOOL_FILE, BASH_TOOL_SOURCE } from "./bash-tool-template";
 import {
+  ORG_MODEL_MODULE_FILENAME,
+  ORG_MODEL_MODULE_MARKER,
+  upgradedOrgModelModuleSource,
+} from "~/eve/org-model-module";
+import { PLATFORM_ROOT } from "~/eve/parse";
+import {
   assertDockerDaemonReady,
   commandErrorText,
   isDockerUnavailableError,
@@ -445,6 +451,13 @@ async function prepareSource(input: EveImageBuildInput, srcDir: string) {
     }
   }
 
+  // The generated model module is platform-owned and only rewritten on create or reset, so a repo
+  // keeps whatever generation it was created with. Build with the current generation instead, so
+  // every deploy picks up model-module changes (#416: call-log identity headers) without a commit.
+  // Only a file that still carries the generated header is replaced, and context validation stays
+  // as the repo had it (reset opts into that, not a deploy).
+  await upgradeGeneratedModelModule(buildDir);
+
   // Session workspace isolation (#315): this channel exists only in the build context. Harnesst
   // drives it over the instance's private/authenticated route so a trusted conversation id reaches
   // Eve's sandbox state before the sandbox container is created. Always replace the reserved build
@@ -484,6 +497,15 @@ async function agentRootsIn(agentDir: string): Promise<string[]> {
       roots.push(...(await agentRootsIn(path.join(subagents, entry.name))));
   }
   return roots;
+}
+
+async function upgradeGeneratedModelModule(buildDir: string): Promise<void> {
+  const modulePath = path.join(buildDir, PLATFORM_ROOT, ORG_MODEL_MODULE_FILENAME);
+  if (!existsSync(modulePath)) return;
+  const current = await readFile(modulePath, "utf8");
+  if (!current.startsWith(ORG_MODEL_MODULE_MARKER)) return;
+  const next = upgradedOrgModelModuleSource(current);
+  if (current !== next) await writeFile(modulePath, next);
 }
 
 async function writeSessionWorkspaceChannel(buildDir: string): Promise<void> {

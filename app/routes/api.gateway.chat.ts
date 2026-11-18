@@ -18,7 +18,7 @@ import type { ActionFunctionArgs } from "react-router";
 
 import { codexApiBase, InvalidGrantError } from "~/connections/codex.server";
 import { modelSelectionFailure } from "~/models/provider-reference";
-import { parseCodexModelId } from "~/models/codex-catalog";
+import { findCodexSpec, parseCodexModelId } from "~/models/codex-catalog";
 import {
   getConnectionForGateway,
   resolveModelConnectionId,
@@ -43,6 +43,28 @@ import {
   finishEvalModelCall,
 } from "~/gateway/eval-grant.server";
 import { verifyEvalGatewayToken } from "~/gateway/eval-token.server";
+import {
+  EMPTY_CALL_IDENTITY,
+  parseCallIdentity,
+  type CallIdentity,
+} from "~/gateway/call-identity";
+import {
+  buildGatewayCallRow,
+  createCallObserver,
+  NO_OUTCOME,
+  parseUpstreamError,
+  planTypeFromAccessToken,
+  upstreamRequestId,
+  type CallAttempt,
+  type CallContext,
+  type CallOutcome,
+} from "~/gateway/call-record";
+import { recordRateLimits, writeGatewayCall } from "~/gateway/call-log.server";
+import {
+  estimateContextComposition,
+  type ContextComposition,
+} from "~/gateway/context-composition";
+import { parseCodexRateLimits } from "~/gateway/rate-limits";
 
 function errorResponse(
   message: string,
@@ -64,6 +86,10 @@ export async function action({ request }: ActionFunctionArgs) {
   const evalGrantId = !orgId && token ? verifyEvalGatewayToken(token) : null;
   if (!orgId && !evalGrantId)
     return errorResponse("Missing or invalid gateway token.", 401);
+  // Labels for the call log only (issue #416); nothing here is trusted for authorization.
+  let identity: CallIdentity = evalGrantId
+    ? EMPTY_CALL_IDENTITY
+    : parseCallIdentity(request.headers);
 
   let body: ChatCompletionsBody;
   try {
@@ -111,6 +137,12 @@ export async function action({ request }: ActionFunctionArgs) {
       });
       orgId = grant.orgId;
       activeEvalGrantId = grant.id;
+      // The grant row, not the caller, says which project and member an eval call is for.
+      identity = {
+        ...EMPTY_CALL_IDENTITY,
+        projectId: grant.projectId ?? null,
+        agentName: grant.memberName ?? null,
+      };
     } catch (error) {
       if (error instanceof EvalGrantError) {
         return errorResponse(error.message, error.status);
@@ -176,7 +208,45 @@ export async function action({ request }: ActionFunctionArgs) {
       `[gateway] dropped content parts with no Responses equivalent: ${[...dropped].join(", ")}`,
     );
   }
-  const send = (grant: FreshAccess) => {
+  // The call log (issue #416): one row per upstream call, written after the call ends and never
+  // awaited. The row is built on a later tick so the composition estimate (which serializes the
+  // whole request body) stays off the response path; it is computed once per request.
+  let composition: ContextComposition | null = null;
+  const logCall = (attempt: CallAttempt, outcome: CallOutcome) => {
+    const endedAt = Date.now();
+    // Snapshot what can change before the deferred write runs (a retry replaces `access`).
+    const grant = access;
+    setImmediate(() => {
+      try {
+        composition ??= estimateContextComposition(body);
+        const context: CallContext = {
+          orgId: orgId!,
+          tokenKind: evalGrantId ? "eval" : "gateway",
+          identity,
+          connectionId: resolvedId,
+          accountId: grant.accountId ?? null,
+          planType: planTypeFromAccessToken(grant.accessToken),
+          model: body.model as string,
+          reasoningEffort: body.reasoning_effort ?? null,
+          streamed: wantsStreaming(body),
+          contextWindow: findCodexSpec(parsed.slug)?.contextWindow ?? null,
+          composition,
+        };
+        void writeGatewayCall(
+          buildGatewayCallRow(context, attempt, outcome, endedAt),
+        );
+      } catch (error) {
+        console.error("[gateway] failed to build the call log row", error);
+      }
+    });
+  };
+  const failed = (message: string, code: string | null): CallOutcome => ({
+    ...NO_OUTCOME,
+    errorCode: code,
+    errorMessage: message,
+  });
+
+  const send = async (grant: FreshAccess) => {
     const headers: Record<string, string> = {
       authorization: `Bearer ${grant.accessToken}`,
       "content-type": "application/json",
@@ -184,16 +254,45 @@ export async function action({ request }: ActionFunctionArgs) {
       session_id: crypto.randomUUID(),
     };
     if (grant.accountId) headers["ChatGPT-Account-ID"] = grant.accountId;
-    return fetch(`${codexApiBase()}/responses`, {
-      method: "POST",
-      headers,
-      body: JSON.stringify(payload),
-    });
+    const attempt: CallAttempt = {
+      startedAt: Date.now(),
+      httpStatus: null,
+      upstreamRequestId: null,
+    };
+    let response: Response;
+    try {
+      response = await fetch(`${codexApiBase()}/responses`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify(payload),
+      });
+    } catch (error) {
+      logCall(
+        attempt,
+        failed(
+          error instanceof Error ? error.message : String(error),
+          "network_error",
+        ),
+      );
+      throw error;
+    }
+    attempt.httpStatus = response.status;
+    attempt.upstreamRequestId = upstreamRequestId(response.headers);
+    const limits = parseCodexRateLimits(response.headers);
+    if (limits) {
+      void recordRateLimits({
+        orgId: orgId!,
+        connectionId: resolvedId,
+        limits,
+      });
+    }
+    return { response, attempt };
   };
 
   let upstream: Response;
+  let attempt: CallAttempt;
   try {
-    upstream = await send(access);
+    ({ response: upstream, attempt } = await send(access));
     // The provider can revoke a token before its stored expiry (a plan change does). Refresh once
     // and retry before telling anyone to reconnect: the refresh token usually still works.
     if (upstream.status === 401) {
@@ -205,12 +304,28 @@ export async function action({ request }: ActionFunctionArgs) {
           { rejectedVersion: access.credentialVersion },
         );
       } catch (error) {
-        if (!(error instanceof InvalidGrantError)) throw error;
+        if (!(error instanceof InvalidGrantError)) {
+          logCall(
+            attempt,
+            failed(
+              `Access token rejected and the refresh failed: ${error instanceof Error ? error.message : String(error)}`,
+              "token_refresh_failed",
+            ),
+          );
+          throw error;
+        }
       }
       if (renewed && renewed.accessToken !== access.accessToken) {
         await upstream.body?.cancel().catch(() => {});
+        logCall(
+          attempt,
+          failed(
+            "Access token rejected; refreshed it and retried.",
+            "token_rejected",
+          ),
+        );
         access = renewed;
-        upstream = await send(access);
+        ({ response: upstream, attempt } = await send(access));
       }
     }
   } catch (error) {
@@ -223,6 +338,14 @@ export async function action({ request }: ActionFunctionArgs) {
 
   if (!upstream.ok || !upstream.body) {
     const text = await upstream.text().catch(() => "");
+    const upstreamError = parseUpstreamError(text);
+    logCall(
+      attempt,
+      failed(
+        upstreamError.message ?? `HTTP ${upstream.status}`,
+        upstreamError.code ?? (upstream.ok ? "empty_body" : `http_${upstream.status}`),
+      ),
+    );
     await releaseEvalCall();
     if (upstream.status === 401) {
       // Expire only the credential generation that actually received the rejection.
@@ -251,17 +374,30 @@ export async function action({ request }: ActionFunctionArgs) {
     // Non-streaming client: drain the upstream SSE, translate, and aggregate to one completion.
     const parser = new SseParser();
     const translator = createChunkTranslator(model);
+    const observer = createCallObserver(attempt.startedAt);
     const collected: ReturnType<typeof translator.translate> = [];
+    const decoder = new TextDecoder();
+    const reader = upstream.body.getReader();
     try {
-      const text = await upstream.text();
-      for (const record of parser.push(text)) {
-        for (const chunk of translator.translate(record)) collected.push(chunk);
+      // Read incrementally, not with text(), so the first token is timed when it arrives.
+      for (;;) {
+        const { done, value } = await reader.read();
+        const text = done ? decoder.decode() : decoder.decode(value, { stream: true });
+        for (const record of parser.push(text)) {
+          observer.observe(record);
+          const chunks = translator.translate(record);
+          observer.emitted(chunks);
+          for (const chunk of chunks) collected.push(chunk);
+        }
+        if (done) break;
       }
     } catch (error) {
+      observer.fail(error);
       if (error instanceof CodexUpstreamError)
         return errorResponse(error.message, 502);
       throw error;
     } finally {
+      logCall(attempt, observer.outcome());
       await releaseEvalCall();
     }
     const completion = aggregateChunks(collected, model);
@@ -273,13 +409,16 @@ export async function action({ request }: ActionFunctionArgs) {
   // Streaming: parse upstream SSE, translate each event, re-emit as chat.completion.chunk SSE.
   const parser = new SseParser();
   const translator = createChunkTranslator(model);
+  const observer = createCallObserver(attempt.startedAt);
+  const streamAttempt = attempt;
   const upstreamBody = upstream.body;
   const encoder = new TextEncoder();
   const decoder = new TextDecoder();
+  const reader = upstreamBody.getReader();
+  let clientCancelled = false;
 
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
-      const reader = upstreamBody.getReader();
       const send = (chunk: unknown) =>
         controller.enqueue(
           encoder.encode(`data: ${JSON.stringify(chunk)}\n\n`),
@@ -290,12 +429,20 @@ export async function action({ request }: ActionFunctionArgs) {
           if (done) break;
           const records = parser.push(decoder.decode(value, { stream: true }));
           for (const record of records) {
-            for (const chunk of translator.translate(record)) send(chunk);
+            observer.observe(record);
+            const chunks = translator.translate(record);
+            observer.emitted(chunks);
+            for (const chunk of chunks) send(chunk);
           }
         }
         controller.enqueue(encoder.encode("data: [DONE]\n\n"));
         controller.close();
       } catch (error) {
+        if (clientCancelled) {
+          observer.fail("The client closed the stream.", "client_cancelled");
+          return;
+        }
+        observer.fail(error);
         const message =
           error instanceof CodexUpstreamError
             ? error.message
@@ -303,14 +450,23 @@ export async function action({ request }: ActionFunctionArgs) {
               ? error.message
               : String(error);
         // Surface the failure inline so the client stream ends with a readable error.
-        controller.enqueue(
-          encoder.encode(`data: ${JSON.stringify({ error: { message } })}\n\n`),
-        );
-        controller.enqueue(encoder.encode("data: [DONE]\n\n"));
-        controller.close();
+        try {
+          controller.enqueue(
+            encoder.encode(`data: ${JSON.stringify({ error: { message } })}\n\n`),
+          );
+          controller.enqueue(encoder.encode("data: [DONE]\n\n"));
+          controller.close();
+        } catch {
+          // The client is gone; nothing left to tell it.
+        }
       } finally {
+        logCall(streamAttempt, observer.outcome());
         await releaseEvalCall();
       }
+    },
+    cancel() {
+      clientCancelled = true;
+      return reader.cancel().catch(() => {});
     },
   });
 

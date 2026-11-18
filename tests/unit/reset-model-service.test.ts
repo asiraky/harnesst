@@ -5,6 +5,7 @@ import { ensureModelProviderDependencies } from "~/eve/agentModule";
 import {
   orgModelModuleSource,
   preCompactionOrgModelModuleSource,
+  previousOrgModelModuleSources,
   scaffoldOrgModelAgentModule,
 } from "~/eve/org-model-module";
 import {
@@ -130,6 +131,36 @@ describe("explicit model reset", () => {
       },
     );
     expect(exports.default!.modelContextWindowTokens * 0.75).toBe(150_000);
+  });
+
+  it.each(previousOrgModelModuleSources().map((source, i) => [i, source]))(
+    "accepts a model-module draft left by a failed reset of an earlier generation (%i)",
+    async (_i, source) => {
+      const { run, store } = setup();
+      await store.drafts.upsert({
+        projectId: "p",
+        agentId: "a",
+        path: "agents/ledger/harnesst/model.ts",
+        content: source,
+        createdBy: "user",
+      });
+      expect(await run()).toMatchObject({ ok: true, mode: "publishing" });
+    },
+  );
+
+  it("refuses a model-module draft that is not a generation it wrote", async () => {
+    const { run, store } = setup();
+    await store.drafts.upsert({
+      projectId: "p",
+      agentId: "a",
+      path: "agents/ledger/harnesst/model.ts",
+      content: `${previousOrgModelModuleSources()[0]}// edited\n`,
+      createdBy: "user",
+    });
+    expect(await run()).toMatchObject({
+      ok: false,
+      error: expect.stringContaining("Publish or discard"),
+    });
   });
 
   it("requires a workspace default before any writes", async () => {
