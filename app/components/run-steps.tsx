@@ -171,7 +171,23 @@ type ToolData = {
   summary?: string;
   exitCode?: number;
   truncated?: boolean;
+  /** Set when the model gateway withheld this result for size; the model saw an error. */
+  withheld?: { tokens: number; limitTokens: number };
 };
+
+/** The model never saw this output: the gateway replaced it with an error for being too large. */
+function WithheldNote({ data }: { data: ToolData }) {
+  if (!data.withheld) return null;
+  const { tokens, limitTokens } = data.withheld;
+  return (
+    <p className="mb-3 rounded-lg border border-rose-300 bg-rose-50 p-3 text-xs text-rose-800 dark:border-rose-900 dark:bg-rose-950 dark:text-rose-200">
+      Output withheld from the agent: about {tokens.toLocaleString()} tokens, over the{" "}
+      {limitTokens.toLocaleString()}-token limit for one tool result. The agent was told to
+      request less. If this keeps happening, change the agent's instructions or the tool so it
+      fetches a smaller slice.
+    </p>
+  );
+}
 
 function TruncatedNote({ data }: { data: ToolData }) {
   if (!data.truncated) return null;
@@ -383,7 +399,11 @@ function ToolCall({
             </span>
           )}
           <span className="ml-auto flex shrink-0 items-center gap-2 text-xs text-muted-foreground">
-            {step.isError && <Badge variant="destructive">error</Badge>}
+            {step.isError && (
+              <Badge variant="destructive">
+                {data.withheld ? "output too large" : "error"}
+              </Badge>
+            )}
             {step.approvalGated && <Badge variant="outline">approval</Badge>}
             <DurationBar durationMs={step.durationMs} maxMs={maxMs} />
             <span>{formatMs(step.durationMs)}</span>
@@ -410,6 +430,7 @@ function ToolBody({
   const [raw, setRaw] = useState(false);
   return (
     <div>
+      <WithheldNote data={data} />
       {raw ? (
         <Mono>{rawJson}</Mono>
       ) : isDelegationTool(toolName) ? (

@@ -37,6 +37,11 @@ import {
 } from "~/gateway/codex-translate";
 import { bearerToken, verifyGatewayToken } from "~/gateway/token.server";
 import {
+  toolResultLimitTokens,
+  type WithheldToolResult,
+} from "~/gateway/tool-result-limit";
+import { recordWithheldToolResults } from "~/gateway/withheld-results.server";
+import {
   beginEvalModelCall,
   EVAL_MAX_OUTPUT_TOKENS_PER_CALL,
   EvalGrantError,
@@ -200,9 +205,15 @@ export async function action({ request }: ActionFunctionArgs) {
   }
 
   const dropped = new Set<string>();
+  const withheld: WithheldToolResult[] = [];
   const payload = buildResponsesPayload(body, parsed.slug, {
     onDropped: (type) => dropped.add(type),
+    toolResultLimitTokens: toolResultLimitTokens(
+      findCodexSpec(parsed.slug)?.contextWindow,
+    ),
+    onWithheld: (w) => withheld.push(w),
   });
+  await recordWithheldToolResults(orgId!, body.model as string, withheld);
   if (dropped.size > 0) {
     console.warn(
       `[gateway] dropped content parts with no Responses equivalent: ${[...dropped].join(", ")}`,

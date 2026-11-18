@@ -177,7 +177,10 @@ export async function listRunRows(input: {
       select
         count(*) filter (where s.type = 'model_call')::int as calls,
         count(*) filter (where s.type = 'tool_call')::int as tool_calls,
-        count(*) filter (where s.type = 'tool_call' and s.is_error)::int as tool_errors,
+        -- Withheld steps are stored as errors; they are not tool errors. The size test keeps the
+        -- payload read off ordinary results.
+        count(*) filter (where s.type = 'tool_call' and s.is_error
+          and not (coalesce(s.result_tokens, 0) >= 1000 and s.data ? 'withheld'))::int as tool_errors,
         count(*) filter (where s.type = 'model_call' and s.is_error)::int as call_errors,
         count(*) filter (where s.type = 'compaction')::int as compactions_requested,
         max(s.context_window)::int as context_window,
@@ -238,7 +241,7 @@ export async function toolRanking(input: {
       sum(s.result_tokens)::float8 as tokens,
       avg(s.result_tokens)::float8 as avg_tokens,
       max(s.result_tokens)::int as max_tokens,
-      count(*) filter (where s.is_error)::int as errors,
+      count(*) filter (where s.is_error and not (coalesce(s.result_tokens, 0) >= 1000 and s.data ? 'withheld'))::int as errors,
       count(*) filter (where s.result_tokens >= 1000 and s.data ? 'withheld')::int as withheld
     from runs r
     join run_steps s on s.run_id = r.id

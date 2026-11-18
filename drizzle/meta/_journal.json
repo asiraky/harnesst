@@ -344,6 +344,13 @@
       "when": 1794964918618,
       "tag": "0048_subagent_child_session",
       "breakpoints": true
+    },
+    {
+      "idx": 49,
+      "version": "7",
+      "when": 1794979427931,
+      "tag": "0049_withheld_tool_results",
+      "breakpoints": true
     }
   ]
 }
