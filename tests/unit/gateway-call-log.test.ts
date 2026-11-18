@@ -149,6 +149,35 @@ describe("estimateContextComposition", () => {
     );
   });
 
+  it("keeps per-tool totals for tools named after object members", () => {
+    const composition = estimateContextComposition({
+      model: "codex/abcdefghijkl/gpt-5.5",
+      messages: [
+        {
+          role: "assistant",
+          content: null,
+          tool_calls: [
+            {
+              id: "a",
+              type: "function",
+              function: { name: "constructor", arguments: "" },
+            },
+            {
+              id: "b",
+              type: "function",
+              function: { name: "__proto__", arguments: "" },
+            },
+          ],
+        },
+        { role: "tool", tool_call_id: "a", content: "abcd" },
+        { role: "tool", tool_call_id: "b", content: "abcdefgh" },
+      ],
+    });
+    expect(JSON.parse(JSON.stringify(composition.toolResultsByTool))).toEqual(
+      JSON.parse('{"constructor":1,"__proto__":2}'),
+    );
+  });
+
   it("counts text parts by their text and other parts by their encoded size", () => {
     const composition = estimateContextComposition({
       model: "codex/abcdefghijkl/gpt-5.5",
@@ -295,6 +324,17 @@ describe("parseUpstreamError", () => {
         }),
       ),
     ).toEqual({ code: "usage_limit_reached", message: "Limit hit" });
+    expect(
+      parseUpstreamError(
+        JSON.stringify({
+          error: {
+            type: "invalid_request_error",
+            code: "context_length_exceeded",
+            message: "Too long",
+          },
+        }),
+      ).code,
+    ).toBe("context_length_exceeded");
     expect(parseUpstreamError(JSON.stringify({ detail: "Bad" }))).toEqual({
       code: null,
       message: "Bad",

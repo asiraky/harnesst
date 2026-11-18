@@ -26,6 +26,7 @@ import {
   HARNESST_GATEWAY_FACTORY,
   HARNESST_MODEL_HELPER,
   OPENROUTER_FACTORY,
+  withoutCallHeadersInModelHelper,
 } from "~/eve/agentModule";
 import {
   PLATFORM_ROOT,
@@ -148,6 +149,39 @@ const SELECTED_CONTEXT_VALIDATION = `          if (!Number.isSafeInteger(selecte
           }
 `;
 
+// #416: every Codex step sends call-log labels. These fragments are the only difference from the
+// previous generation, which `withoutCallHeaders` reproduces so reset still recognizes its drafts.
+const CALL_HEADERS_FUNCTION = "// Labels for harnesst's gateway call log (Codex calls only): which agent, session, turn and step\n" +
+  "// made the call. Values are URI-encoded so any name survives as a header value.\n" +
+  "function harnesstCallHeaders(\n" +
+  "  agentName: string,\n" +
+  "  subagentPath: string | undefined,\n" +
+  "  event: unknown,\n" +
+  "  ctx: unknown,\n" +
+  "): Record<string, string> {\n" +
+  "  const headers: Record<string, string> = {};\n" +
+  "  const set = (name: string, value: unknown) => {\n" +
+  "    if ((typeof value === 'string' && value) || (typeof value === 'number' && Number.isFinite(value))) {\n" +
+  "      headers[name] = encodeURIComponent(String(value));\n" +
+  "    }\n" +
+  "  };\n" +
+  "  const data = (event as { data?: { turnId?: unknown; stepIndex?: unknown } } | null)?.data;\n" +
+  "  const session = (ctx as { session?: { id?: unknown } } | null)?.session;\n" +
+  "  set('x-harnesst-agent', agentName);\n" +
+  "  set('x-harnesst-subagent', subagentPath);\n" +
+  "  set('x-harnesst-session', session?.id);\n" +
+  "  set('x-harnesst-turn', data?.turnId);\n" +
+  "  set('x-harnesst-step', data?.stepIndex);\n" +
+  "  set('x-harnesst-project', process.env.HARNESST_PROJECT_ID);\n" +
+  "  return headers;\n" +
+  "}\n" +
+  "\n";
+const PRE_CALL_HEADERS_HANDLER_START = "      'step.started': async (_event, ctx) => {\n";
+const CALL_HEADERS_HANDLER_START =
+  "      'step.started': async (event, ctx) => {\n" +
+  "        const callHeaders = harnesstCallHeaders(agentName, subagentPath, event, ctx);\n";
+const CALL_HEADERS_ARG = ", callHeaders";
+
 const CONFIG_SECTION = `// ── Workspace model configuration (harnesst control plane) ────────────────────
 type HarnesstReasoningEffort = 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh';
 interface HarnesstModelConfig {
@@ -213,32 +247,7 @@ ${WORKSPACE_CONTEXT_VALIDATION}  const config: HarnesstModelConfig = {
   return config;
 }
 
-// Labels for harnesst's gateway call log (Codex calls only): which agent, session, turn and step
-// made the call. Values are URI-encoded so any name survives as a header value.
-function harnesstCallHeaders(
-  agentName: string,
-  subagentPath: string | undefined,
-  event: unknown,
-  ctx: unknown,
-): Record<string, string> {
-  const headers: Record<string, string> = {};
-  const set = (name: string, value: unknown) => {
-    if ((typeof value === 'string' && value) || (typeof value === 'number' && Number.isFinite(value))) {
-      headers[name] = encodeURIComponent(String(value));
-    }
-  };
-  const data = (event as { data?: { turnId?: unknown; stepIndex?: unknown } } | null)?.data;
-  const session = (ctx as { session?: { id?: unknown } } | null)?.session;
-  set('x-harnesst-agent', agentName);
-  set('x-harnesst-subagent', subagentPath);
-  set('x-harnesst-session', session?.id);
-  set('x-harnesst-turn', data?.turnId);
-  set('x-harnesst-step', data?.stepIndex);
-  set('x-harnesst-project', process.env.HARNESST_PROJECT_ID);
-  return headers;
-}
-
-/**
+${CALL_HEADERS_FUNCTION}/**
  * The model slot for the agent named \`agentName\`. A DECLARED SUBAGENT passes its parent agent's
  * name plus its own \`subagentPath\` (\`'researcher/fact-checker'\`, relative to the parent's agent
  * root): harnesst resolves that target's own selection when one is configured and otherwise
@@ -261,18 +270,16 @@ export function harnesstAgentModel(agentName: string, subagentPath?: string) {
       },
     }),
     events: {
-      'step.started': async (event, ctx) => {
-        const callHeaders = harnesstCallHeaders(agentName, subagentPath, event, ctx);
-        const selected = harnesstSelectedModel(ctx.messages);
+${CALL_HEADERS_HANDLER_START}        const selected = harnesstSelectedModel(ctx.messages);
         if (selected) {
 ${SELECTED_CONTEXT_VALIDATION}          return {
-            model: harnesstModel(selected.id, selected.effort, callHeaders),
+            model: harnesstModel(selected.id, selected.effort${CALL_HEADERS_ARG}),
             modelContextWindowTokens: selected.contextWindowTokens,
           };
         }
         const configured = await harnesstConfiguredModel(agentName, subagentPath);
         return {
-          model: harnesstModel(configured.model, configured.effort ?? undefined, callHeaders),
+          model: harnesstModel(configured.model, configured.effort ?? undefined${CALL_HEADERS_ARG}),
           modelContextWindowTokens: configured.contextWindowTokens ?? undefined,
         };
       },
@@ -286,11 +293,47 @@ export function orgModelModuleSource(): string {
   return `${MODULE_HEADER}${OPENROUTER_FACTORY}${HARNESST_GATEWAY_FACTORY}\n${HARNESST_MODEL_HELPER}\n${CONFIG_SECTION}`;
 }
 
-/** Exact prior generation, only to recognize and upgrade saved drafts from a failed reset. */
-export function preCompactionOrgModelModuleSource(): string {
-  return orgModelModuleSource()
+function withoutContextValidation(source: string): string {
+  return source
     .replace(WORKSPACE_CONTEXT_VALIDATION, "")
     .replace(SELECTED_CONTEXT_VALIDATION, "");
+}
+
+/** `source` with the #416 call-log labels reverted. */
+function withoutCallHeaders(source: string): string {
+  return withoutCallHeadersInModelHelper(source)
+    .replace(CALL_HEADERS_FUNCTION, "")
+    .replace(CALL_HEADERS_HANDLER_START, PRE_CALL_HEADERS_HANDLER_START)
+    .split(CALL_HEADERS_ARG + ")")
+    .join(")");
+}
+
+/** The generation before context validation (#397), to recognize saved drafts from a failed reset. */
+export function preCompactionOrgModelModuleSource(): string {
+  return withoutContextValidation(withoutCallHeaders(orgModelModuleSource()));
+}
+
+/**
+ * Every earlier generation reset may have left as a saved draft: before call-log labels (#416),
+ * and before context validation (#397).
+ */
+export function previousOrgModelModuleSources(): string[] {
+  return [
+    withoutCallHeaders(orgModelModuleSource()),
+    preCompactionOrgModelModuleSource(),
+  ];
+}
+
+/**
+ * What an image build uses in place of a generated module (`existing` starts with
+ * `ORG_MODEL_MODULE_MARKER`): the current generation, keeping the module's context validation
+ * choice. Validation (#397) arrives only through reset, which a deploy must not opt anyone into.
+ */
+export function upgradedOrgModelModuleSource(existing: string): string {
+  const current = orgModelModuleSource();
+  return existing.includes(WORKSPACE_CONTEXT_VALIDATION)
+    ? current
+    : withoutContextValidation(current);
 }
 
 /**

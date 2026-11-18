@@ -768,11 +768,22 @@ describe("generated model module upgrade (#416)", () => {
   it("builds an older generation of the module with the current one", async () => {
     const writes = await modelModuleWrites({
       "agent/agent.ts": "export default {};",
-      "harnesst/model.ts": `${ORG_MODEL_MODULE_MARKER} An older generation.\nexport {};\n`,
+      "harnesst/model.ts": `${orgModelModuleSource()}// an older generation\n`,
     });
     expect(writes.map(([, source]) => source)).toEqual([
       orgModelModuleSource(),
     ]);
+  });
+
+  it("keeps a module without context validation without it, since only reset opts into that", async () => {
+    const writes = await modelModuleWrites({
+      "agent/agent.ts": "export default {};",
+      "harnesst/model.ts": `${ORG_MODEL_MODULE_MARKER} A pre-validation generation.\nexport {};\n`,
+    });
+    expect(writes).toHaveLength(1);
+    const [, source] = writes[0];
+    expect(source).toContain("harnesstCallHeaders");
+    expect(source).not.toContain("has no known context window");
   });
 
   it("leaves a module without the generated header alone", async () => {

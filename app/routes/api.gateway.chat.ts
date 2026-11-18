@@ -56,10 +56,14 @@ import {
   planTypeFromAccessToken,
   upstreamRequestId,
   type CallAttempt,
+  type CallContext,
   type CallOutcome,
 } from "~/gateway/call-record";
 import { recordRateLimits, writeGatewayCall } from "~/gateway/call-log.server";
-import { estimateContextComposition } from "~/gateway/context-composition";
+import {
+  estimateContextComposition,
+  type ContextComposition,
+} from "~/gateway/context-composition";
 import { parseCodexRateLimits } from "~/gateway/rate-limits";
 
 function errorResponse(
@@ -205,28 +209,36 @@ export async function action({ request }: ActionFunctionArgs) {
     );
   }
   // The call log (issue #416): one row per upstream call, written after the call ends and never
-  // awaited on the response path. The composition estimate is deferred to that point too.
-  const callContext = () => ({
-    orgId: orgId!,
-    tokenKind: evalGrantId ? ("eval" as const) : ("gateway" as const),
-    identity,
-    connectionId: resolvedId,
-    accountId: access.accountId ?? null,
-    planType: planTypeFromAccessToken(access.accessToken),
-    model: body.model as string,
-    reasoningEffort: body.reasoning_effort ?? null,
-    streamed: wantsStreaming(body),
-    contextWindow: findCodexSpec(parsed.slug)?.contextWindow ?? null,
-    composition: estimateContextComposition(body),
-  });
+  // awaited. The row is built on a later tick so the composition estimate (which serializes the
+  // whole request body) stays off the response path; it is computed once per request.
+  let composition: ContextComposition | null = null;
   const logCall = (attempt: CallAttempt, outcome: CallOutcome) => {
-    try {
-      void writeGatewayCall(
-        buildGatewayCallRow(callContext(), attempt, outcome, Date.now()),
-      );
-    } catch (error) {
-      console.error("[gateway] failed to build the call log row", error);
-    }
+    const endedAt = Date.now();
+    // Snapshot what can change before the deferred write runs (a retry replaces `access`).
+    const grant = access;
+    setImmediate(() => {
+      try {
+        composition ??= estimateContextComposition(body);
+        const context: CallContext = {
+          orgId: orgId!,
+          tokenKind: evalGrantId ? "eval" : "gateway",
+          identity,
+          connectionId: resolvedId,
+          accountId: grant.accountId ?? null,
+          planType: planTypeFromAccessToken(grant.accessToken),
+          model: body.model as string,
+          reasoningEffort: body.reasoning_effort ?? null,
+          streamed: wantsStreaming(body),
+          contextWindow: findCodexSpec(parsed.slug)?.contextWindow ?? null,
+          composition,
+        };
+        void writeGatewayCall(
+          buildGatewayCallRow(context, attempt, outcome, endedAt),
+        );
+      } catch (error) {
+        console.error("[gateway] failed to build the call log row", error);
+      }
+    });
   };
   const failed = (message: string, code: string | null): CallOutcome => ({
     ...NO_OUTCOME,
@@ -292,7 +304,16 @@ export async function action({ request }: ActionFunctionArgs) {
           { rejectedVersion: access.credentialVersion },
         );
       } catch (error) {
-        if (!(error instanceof InvalidGrantError)) throw error;
+        if (!(error instanceof InvalidGrantError)) {
+          logCall(
+            attempt,
+            failed(
+              `Access token rejected and the refresh failed: ${error instanceof Error ? error.message : String(error)}`,
+              "token_refresh_failed",
+            ),
+          );
+          throw error;
+        }
       }
       if (renewed && renewed.accessToken !== access.accessToken) {
         await upstream.body?.cancel().catch(() => {});
@@ -355,13 +376,20 @@ export async function action({ request }: ActionFunctionArgs) {
     const translator = createChunkTranslator(model);
     const observer = createCallObserver(attempt.startedAt);
     const collected: ReturnType<typeof translator.translate> = [];
+    const decoder = new TextDecoder();
+    const reader = upstream.body.getReader();
     try {
-      const text = await upstream.text();
-      for (const record of parser.push(text)) {
-        observer.observe(record);
-        const chunks = translator.translate(record);
-        observer.emitted(chunks);
-        for (const chunk of chunks) collected.push(chunk);
+      // Read incrementally, not with text(), so the first token is timed when it arrives.
+      for (;;) {
+        const { done, value } = await reader.read();
+        const text = done ? decoder.decode() : decoder.decode(value, { stream: true });
+        for (const record of parser.push(text)) {
+          observer.observe(record);
+          const chunks = translator.translate(record);
+          observer.emitted(chunks);
+          for (const chunk of chunks) collected.push(chunk);
+        }
+        if (done) break;
       }
     } catch (error) {
       observer.fail(error);

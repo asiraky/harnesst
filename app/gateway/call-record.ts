@@ -41,7 +41,7 @@ function clip(text: string): string {
 }
 
 /**
- * The error code and message from a non-OK upstream body: `{ error: { type|code, message } }`
+ * The error code and message from a non-OK upstream body: `{ error: { code|type, message } }`
  * (a 429 says `usage_limit_reached` here), `{ detail }`, or plain text.
  */
 export function parseUpstreamError(text: string): {
@@ -56,9 +56,11 @@ export function parseUpstreamError(text: string): {
       body.error && typeof body.error === "object"
         ? (body.error as Record<string, unknown>)
         : null;
+    // The specific code wins over the broad type (`context_length_exceeded` over
+    // `invalid_request_error`); Codex's 429 carries `usage_limit_reached` only as the type.
     const code =
-      (typeof error?.type === "string" && error.type) ||
       (typeof error?.code === "string" && error.code) ||
+      (typeof error?.type === "string" && error.type) ||
       (typeof body.code === "string" && body.code) ||
       null;
     const message =

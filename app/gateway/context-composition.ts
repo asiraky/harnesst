@@ -49,7 +49,8 @@ export function estimateContextComposition(
   let system = 0;
   let messages = 0;
   let toolResults = 0;
-  const toolResultsByTool: Record<string, number> = {};
+  // A Map, not an object: a tool may be named `constructor` or `__proto__`.
+  const byTool = new Map<string, number>();
   const toolNameByCallId = new Map<string, string>();
 
   for (const msg of body.messages ?? []) {
@@ -62,7 +63,7 @@ export function estimateContextComposition(
       const name =
         (msg.tool_call_id && toolNameByCallId.get(msg.tool_call_id)) ||
         "unknown";
-      toolResultsByTool[name] = (toolResultsByTool[name] ?? 0) + tokens;
+      byTool.set(name, (byTool.get(name) ?? 0) + tokens);
     } else {
       let callTokens = 0;
       for (const call of msg.tool_calls ?? []) {
@@ -85,7 +86,7 @@ export function estimateContextComposition(
     tools,
     messages,
     toolResults,
-    toolResultsByTool,
+    toolResultsByTool: Object.fromEntries(byTool),
     total: instructions + system + tools + messages + toolResults,
   };
 }

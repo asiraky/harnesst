@@ -94,7 +94,11 @@ function storedToLimits(row: StoredRateLimits): CodexRateLimits {
   };
 }
 
-/** Store the latest headroom for a connection; add a sample when a value changed. */
+/**
+ * Store the latest headroom for a connection; add a sample when a value changed. Calls on one
+ * connection overlap (an org's agents share it), so the read and write happen under a row lock,
+ * and an observation older than the stored one is dropped rather than overwriting it.
+ */
 export async function recordRateLimits(input: {
   orgId: string;
   connectionId: string;
@@ -102,21 +106,23 @@ export async function recordRateLimits(input: {
   observedAt?: Date;
 }): Promise<void> {
   const observedAt = input.observedAt ?? new Date();
+  const values = columns(input.limits);
   try {
-    const [current] = await db
-      .select()
-      .from(codexRateLimits)
-      .where(eq(codexRateLimits.connectionId, input.connectionId))
-      .limit(1);
-    const values = columns(input.limits);
-    if (current && !rateLimitsChanged(storedToLimits(current), input.limits)) {
-      await db
-        .update(codexRateLimits)
-        .set({ observedAt })
-        .where(eq(codexRateLimits.connectionId, input.connectionId));
-      return;
-    }
     await db.transaction(async (tx) => {
+      const [current] = await tx
+        .select()
+        .from(codexRateLimits)
+        .where(eq(codexRateLimits.connectionId, input.connectionId))
+        .limit(1)
+        .for("update");
+      if (current && current.observedAt > observedAt) return;
+      if (current && !rateLimitsChanged(storedToLimits(current), input.limits)) {
+        await tx
+          .update(codexRateLimits)
+          .set({ observedAt })
+          .where(eq(codexRateLimits.connectionId, input.connectionId));
+        return;
+      }
       await tx
         .insert(codexRateLimits)
         .values({

@@ -91,6 +91,32 @@ function harnesstModelCallStart(model: string, effort?: string | null): string {
   return `harnesstModel('${model}'${effort ? `, '${effort}'` : ""}`;
 }
 
+// #416: `harnesstModel` takes optional call-log labels and sends them on Codex gateway calls. The
+// pre-#416 text of the two changed fragments is kept so the previous generation stays recognizable
+// (see `withoutCallHeadersInModelHelper`).
+const PRE_CALL_HEADERS_SIGNATURE =
+  "function harnesstModel(id: string, effort?: 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh') {\n";
+const CALL_HEADERS_SIGNATURE =
+  "// `callHeaders` label a Codex call for harnesst's gateway call log (agent, session, turn, step);\n" +
+  "// the gateway treats them as labels only, never as authority.\n" +
+  "function harnesstModel(id: string, effort?: 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh', callHeaders?: Record<string, string>) {\n";
+const PRE_CALL_HEADERS_CODEX_ROUTE =
+  "  if (provider === 'codex') return harnesstReasoningModel(harnesstGateway.chatModel(id), effort);\n";
+const CALL_HEADERS_CODEX_ROUTE =
+  "  if (provider === 'codex') {\n" +
+  "    const gateway = callHeaders\n" +
+  "      ? createOpenAICompatible({ name: 'harnesst', baseURL: process.env.HARNESST_MODEL_GATEWAY_URL ?? '', apiKey: process.env.HARNESST_MODEL_GATEWAY_TOKEN ?? '', headers: callHeaders })\n" +
+  "      : harnesstGateway;\n" +
+  "    return harnesstReasoningModel(gateway.chatModel(id), effort);\n" +
+  "  }\n";
+
+/** `source` with the #416 model-router changes reverted: the generation before call-log labels. */
+export function withoutCallHeadersInModelHelper(source: string): string {
+  return source
+    .replace(CALL_HEADERS_SIGNATURE, PRE_CALL_HEADERS_SIGNATURE)
+    .replace(CALL_HEADERS_CODEX_ROUTE, PRE_CALL_HEADERS_CODEX_ROUTE);
+}
+
 /**
  * The message-directive parser injected into `agent.ts` alongside the dynamic model wrapper.
  * Its regex must stay in sync with `~/models/model-directive` (the harnesst-side builder/stripper).
@@ -138,21 +164,12 @@ function harnesstSelectedModel(
 // connection credential. Codex OAuth alone uses harnesst's translating gateway. A bare id is an old
 // OpenRouter reference and remains runnable so repos created before the connection model can be
 // upgraded on their next model save.
-// \`callHeaders\` label a Codex call for harnesst's gateway call log (agent, session, turn, step);
-// the gateway treats them as labels only, never as authority.
-function harnesstModel(id: string, effort?: 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh', callHeaders?: Record<string, string>) {
-  const qualified = id.match(/^(anthropic|codex|openai|openrouter)\\/([a-z]{12})\\/(.+)$/);
+${CALL_HEADERS_SIGNATURE}  const qualified = id.match(/^(anthropic|codex|openai|openrouter)\\/([a-z]{12})\\/(.+)$/);
   if (!qualified) return harnesstReasoningModel(openrouter.chatModel(id), effort);
   const provider = qualified[1];
   const connectionId = qualified[2];
   const upstreamModelId = qualified[3];
-  if (provider === 'codex') {
-    const gateway = callHeaders
-      ? createOpenAICompatible({ name: 'harnesst', baseURL: process.env.HARNESST_MODEL_GATEWAY_URL ?? '', apiKey: process.env.HARNESST_MODEL_GATEWAY_TOKEN ?? '', headers: callHeaders })
-      : harnesstGateway;
-    return harnesstReasoningModel(gateway.chatModel(id), effort);
-  }
-  const envName =
+${CALL_HEADERS_CODEX_ROUTE}  const envName =
     'HARNESST_PROVIDER_' + provider.toUpperCase() + '_' + connectionId.toUpperCase() + '_API_KEY';
   const apiKey = process.env[envName];
   // \`eve build\` evaluates this module INSIDE \`docker build\`, where harnesst deliberately injects no
