@@ -2,7 +2,11 @@ import { describe, expect, it } from "vitest";
 
 import type { TurnResult } from "~/agent/talk.server";
 import { FIELD_CAP } from "~/observability/capture.server";
-import { externalRunId, turnToSteps } from "~/observability/record.server";
+import {
+  externalRunId,
+  runTotals,
+  turnToSteps,
+} from "~/observability/record.server";
 
 function result(over: Partial<TurnResult> = {}): TurnResult {
   return {
@@ -187,5 +191,228 @@ describe("turnToSteps", () => {
     const tool = steps.find((s) => s.type === "tool_call");
     expect(((tool?.data?.input as { command: string }).command).length).toBe(FIELD_CAP);
     expect(tool?.data?.truncated).toBe(true);
+  });
+});
+
+describe("turnToSteps usage, model and linkage (issue #417)", () => {
+  it("carries cache, cost, the join key and the resolved model on each model call", () => {
+    const steps = turnToSteps(
+      result({
+        modelId: "unconfigured",
+        modelSource: "fallback",
+        steps: [
+          {
+            type: "step.completed",
+            tokensIn: 5000,
+            tokensOut: 100,
+            cacheReadTokens: 4000,
+            cacheWriteTokens: 900,
+            costUsd: 0.02,
+            sequence: 1,
+            stepIndex: 0,
+            isError: false,
+          },
+          { type: "step.completed", tokensIn: 10, tokensOut: 1, stepIndex: 1, isError: false },
+        ],
+      }),
+      { model: { modelId: "anthropic/abc/claude-x", contextWindowTokens: 200000 } },
+    );
+    const calls = steps.filter((s) => s.type === "model_call");
+    expect(calls[0]).toMatchObject({
+      model: "anthropic/abc/claude-x",
+      contextWindow: 200000,
+      tokensInput: 5000,
+      tokensOutput: 100,
+      tokensCacheRead: 4000,
+      tokensCacheWrite: 900,
+      costUsd: 0.02,
+      eveSessionId: "sess_1",
+      turnId: "turn_1",
+      stepIndex: 0,
+    });
+    // A provider that reports no cache or cost leaves them unset rather than zero.
+    expect(calls[1].tokensCacheRead).toBeUndefined();
+    expect(calls[1].costUsd).toBeUndefined();
+    expect(calls[1].stepIndex).toBe(1);
+  });
+
+  it("never records the dynamic fallback id as the model", () => {
+    const steps = turnToSteps(
+      result({
+        modelId: "unconfigured",
+        modelSource: "fallback",
+        steps: [{ type: "step.completed", isError: false }],
+      }),
+    );
+    expect(steps[0].model).toBeUndefined();
+  });
+
+  it("places a compaction step before the model call it made room for", () => {
+    const steps = turnToSteps(
+      result({
+        reply: null,
+        steps: [
+          { type: "step.completed", isError: false },
+          { type: "step.completed", isError: false },
+        ],
+        messages: [{ afterStepIndex: 1, text: "halfway" }],
+        compactions: [
+          {
+            afterStepIndex: 1,
+            at: "2026-11-18T00:00:00.000Z",
+            sequence: 2,
+            usageInputTokens: 190000,
+            modelId: "m/compact",
+            completed: true,
+          },
+        ],
+      }),
+    );
+    expect(steps.map((s) => s.type)).toEqual([
+      "model_call",
+      "message",
+      "compaction",
+      "model_call",
+    ]);
+    expect(steps[2]).toMatchObject({
+      model: "m/compact",
+      startedAt: "2026-11-18T00:00:00.000Z",
+      turnId: "turn_1",
+      data: { usageInputTokens: 190000, sequence: 2, completed: true },
+    });
+  });
+
+  it("measures a tool result before capping it for storage", () => {
+    const big = "é".repeat(FIELD_CAP * 2);
+    const steps = turnToSteps(
+      result({
+        steps: [
+          {
+            type: "step.completed",
+            isError: false,
+            actions: [
+              { toolName: "bash", isError: false, callId: "c1", output: big },
+              { toolName: "read", isError: false, output: { text: "ok" } },
+              { toolName: "noop", isError: false },
+            ],
+          },
+        ],
+      }),
+    );
+    const [capped, small, none] = steps.filter((s) => s.type === "tool_call");
+    // Two UTF-8 bytes per character, four bytes per estimated token.
+    expect(capped).toMatchObject({
+      callId: "c1",
+      resultBytes: FIELD_CAP * 4,
+      resultTokens: FIELD_CAP,
+      resultCapped: true,
+    });
+    expect((capped.data?.output as string).length).toBe(FIELD_CAP);
+    expect(small).toMatchObject({
+      resultBytes: 13,
+      resultTokens: 4,
+      resultCapped: false,
+    });
+    expect(none.resultBytes).toBeUndefined();
+    expect(none.resultCapped).toBeUndefined();
+  });
+
+  it("links a subagent child session's steps to the subagent and its parent call", () => {
+    const steps = turnToSteps(
+      result({
+        reply: null,
+        subagent: {
+          name: "researcher",
+          parentCallId: "call_9",
+          parentSessionId: "sess_parent",
+          parentTurnId: "turn_0",
+        },
+        steps: [
+          {
+            type: "step.completed",
+            isError: false,
+            actions: [{ toolName: "web", isError: false }],
+          },
+        ],
+      }),
+    );
+    expect(steps.map((s) => [s.type, s.subagentName, s.parentCallId])).toEqual([
+      ["model_call", "researcher", "call_9"],
+      ["tool_call", "researcher", "call_9"],
+    ]);
+  });
+
+  it("leaves a top-level session's steps unlinked", () => {
+    const steps = turnToSteps(
+      result({ steps: [{ type: "step.completed", isError: false }] }),
+    );
+    expect(steps[0].subagentName).toBeUndefined();
+    expect(steps[0].parentCallId).toBeUndefined();
+  });
+});
+
+describe("runTotals", () => {
+  it("sums usage, counts compactions and takes the largest context", () => {
+    expect(
+      runTotals(
+        result({
+          steps: [
+            { type: "s", tokensIn: 1000, tokensOut: 10, cacheReadTokens: 800, costUsd: 0.01, isError: false },
+            { type: "s", tokensIn: 3000, tokensOut: 20, cacheReadTokens: 2500, costUsd: 0.02, isError: false },
+          ],
+          compactions: [
+            {
+              afterStepIndex: 1,
+              at: "2026-11-18T00:00:00.000Z",
+              sequence: 1,
+              usageInputTokens: 2500,
+              modelId: null,
+              completed: true,
+            },
+          ],
+        }),
+      ),
+    ).toEqual({
+      tokensInput: 4000,
+      tokensOutput: 30,
+      tokensCachedInput: 3300,
+      costUsd: 0.03,
+      compactionCount: 1,
+      peakContextTokens: 3000,
+    });
+  });
+
+  it("counts a compaction trigger above every step input as the peak", () => {
+    const totals = runTotals(
+      result({
+        steps: [{ type: "s", tokensIn: 100, isError: false }],
+        compactions: [
+          {
+            afterStepIndex: 1,
+            at: "2026-11-18T00:00:00.000Z",
+            sequence: 1,
+            usageInputTokens: 150000,
+            modelId: null,
+            completed: false,
+          },
+        ],
+      }),
+    );
+    expect(totals.peakContextTokens).toBe(150000);
+  });
+
+  it("leaves cost and cache unknown when no step reported them", () => {
+    expect(
+      runTotals(
+        result({
+          steps: [{ type: "s", tokensIn: 10, tokensOut: 2, isError: false }],
+          compactions: [],
+        }),
+      ),
+    ).toEqual({ tokensInput: 10, tokensOutput: 2, compactionCount: 0, peakContextTokens: 10 });
+  });
+
+  it("reports nothing for a run with no usage at all", () => {
+    expect(runTotals(result({ steps: [{ type: "s", isError: false }] }))).toEqual({});
   });
 });

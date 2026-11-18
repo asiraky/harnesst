@@ -442,6 +442,73 @@ describe("resumeTurnStream", () => {
   });
 });
 
+describe("drain usage and compaction (issue #417)", () => {
+  it("keeps step usage, the eve step key, tool call ids and compactions", async () => {
+    const at = "2026-11-18T00:00:00.000Z";
+    const e = (type: string, data: Record<string, unknown>) => ({ type, data, meta: { at } });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn<typeof fetch>().mockResolvedValueOnce(
+        streamResponse([
+          e("session.started", { runtime: { modelId: "dynamic:harnesst/unconfigured" } }),
+          e("message.received", { message: "go", turnId: "turn_2" }),
+          e("step.started", { turnId: "turn_2", sequence: 3, stepIndex: 0 }),
+          e("actions.requested", {
+            turnId: "turn_2",
+            sequence: 3,
+            actions: [{ toolName: "bash", input: { command: "ls" }, callId: "c7" }],
+          }),
+          e("step.completed", {
+            turnId: "turn_2",
+            sequence: 3,
+            stepIndex: 0,
+            usage: { inputTokens: 500, outputTokens: 5, cacheWriteTokens: 480 },
+          }),
+          e("compaction.requested", {
+            turnId: "turn_2",
+            sequence: 3,
+            modelId: "harnesst.chat/m/c",
+            usageInputTokens: 500,
+          }),
+          e("compaction.completed", { turnId: "turn_2", sequence: 3 }),
+          e("turn.completed", { turnId: "turn_2" }),
+        ]),
+      ),
+    );
+
+    let settled: TurnResult | null = null;
+    for await (const event of resumeTurnStream({
+      baseUrl: "https://agent.example.test",
+      sessionId: "sess_1",
+      turnId: "turn_2",
+      streamIndex: 0,
+    })) {
+      if (event.kind === "done") settled = event.result;
+    }
+
+    expect(settled?.modelSource).toBe("fallback");
+    expect(settled?.steps[0]).toMatchObject({
+      tokensIn: 500,
+      tokensOut: 5,
+      cacheWriteTokens: 480,
+      sequence: 3,
+      stepIndex: 0,
+    });
+    expect(settled?.steps[0].cacheReadTokens).toBeUndefined();
+    expect(settled?.steps[0].actions?.[0].callId).toBe("c7");
+    expect(settled?.compactions).toEqual([
+      {
+        afterStepIndex: 1,
+        at,
+        sequence: 3,
+        usageInputTokens: 500,
+        modelId: "m/c",
+        completed: true,
+      },
+    ]);
+  });
+});
+
 describe("structured connection recovery from runtime failures", () => {
   it.each(["connection_unavailable", "policy_refusal"])(
     "retains recovery context only for gateway connection failures (%s)",

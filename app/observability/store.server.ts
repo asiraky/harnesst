@@ -77,14 +77,29 @@ export async function resolveIngestToken(token: string): Promise<string | null> 
  *                      stream carries no reasoning text, so it never emits this).
  *   - `model_call`:  `{ message?, code?, details? }` — only populated on error (failure detail);
  *                      no request messages exist in the eve stream to capture.
+ *   - `compaction`:  `{ usageInputTokens, sequence, completed }` — a context compaction pass;
+ *                      `model` is the model that wrote the checkpoint.
  */
 export interface IngestStep {
   seq: number;
-  type: "model_call" | "tool_call" | "reasoning" | "message";
+  type: "model_call" | "tool_call" | "reasoning" | "message" | "compaction";
   model?: string;
   toolName?: string;
   tokensInput?: number;
   tokensOutput?: number;
+  tokensCacheRead?: number;
+  tokensCacheWrite?: number;
+  costUsd?: number;
+  contextWindow?: number;
+  eveSessionId?: string;
+  turnId?: string;
+  stepIndex?: number;
+  subagentName?: string;
+  parentCallId?: string;
+  callId?: string;
+  resultBytes?: number;
+  resultTokens?: number;
+  resultCapped?: boolean;
   durationMs?: number;
   isError?: boolean;
   approvalGated?: boolean;
@@ -100,6 +115,10 @@ export interface IngestPayload {
   status?: "running" | "completed" | "failed";
   tokensInput?: number;
   tokensOutput?: number;
+  tokensCachedInput?: number;
+  costUsd?: number;
+  compactionCount?: number;
+  peakContextTokens?: number;
   wallClockMs?: number;
   error?: string;
   startedAt?: string;
@@ -182,6 +201,10 @@ async function ingestRunWith(
       status: incomingStatus,
       tokensInput: p.tokensInput ?? null,
       tokensOutput: p.tokensOutput ?? null,
+      tokensCachedInput: p.tokensCachedInput ?? null,
+      costUsd: p.costUsd ?? null,
+      compactionCount: p.compactionCount ?? null,
+      peakContextTokens: p.peakContextTokens ?? null,
       wallClockMs: p.wallClockMs ?? null,
       error,
       metadata,
@@ -203,6 +226,10 @@ async function ingestRunWith(
         status: incomingStatus,
         tokensInput: p.tokensInput ?? null,
         tokensOutput: p.tokensOutput ?? null,
+        tokensCachedInput: p.tokensCachedInput ?? null,
+        costUsd: p.costUsd ?? null,
+        compactionCount: p.compactionCount ?? null,
+        peakContextTokens: p.peakContextTokens ?? null,
         wallClockMs: p.wallClockMs ?? null,
         error,
         finishedAt: p.finishedAt ? new Date(p.finishedAt) : null,
@@ -226,6 +253,19 @@ async function ingestRunWith(
         toolName: st.toolName ?? null,
         tokensInput: st.tokensInput ?? null,
         tokensOutput: st.tokensOutput ?? null,
+        tokensCacheRead: st.tokensCacheRead ?? null,
+        tokensCacheWrite: st.tokensCacheWrite ?? null,
+        costUsd: st.costUsd ?? null,
+        contextWindow: st.contextWindow ?? null,
+        eveSessionId: st.eveSessionId ?? null,
+        turnId: st.turnId ?? null,
+        stepIndex: st.stepIndex ?? null,
+        subagentName: st.subagentName ?? null,
+        parentCallId: st.parentCallId ?? null,
+        callId: st.callId ?? null,
+        resultBytes: st.resultBytes ?? null,
+        resultTokens: st.resultTokens ?? null,
+        resultCapped: st.resultCapped ?? null,
         durationMs: st.durationMs ?? null,
         isError: st.isError ?? false,
         approvalGated: st.approvalGated ?? false,

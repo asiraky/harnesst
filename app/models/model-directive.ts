@@ -156,7 +156,39 @@ export function effectiveModelId(
   runtimeModelId: string,
   sentMessage: string,
 ): string {
+  return turnModel(runtimeModelId, sentMessage).modelId;
+}
+
+/** Where a turn's model id came from. */
+export type TurnModelSource = "runtime" | "directive" | "fallback";
+
+/**
+ * `effectiveModelId` plus how it was decided. `fallback` means a dynamic agent with no directive:
+ * the id is the build-time fallback (`harnesst/unconfigured` for generated modules), never the
+ * model a step ran on, because the agent resolves that from harnesst's configuration per step.
+ */
+export function turnModel(
+  runtimeModelId: string,
+  sentMessage: string,
+): {
+  modelId: string;
+  source: TurnModelSource;
+  contextWindowTokens: number | null;
+} {
   const base = runtimeModelBase(runtimeModelId);
-  if (!base.dynamic) return base.id;
-  return parseModelDirective(sentMessage)?.id ?? base.id;
+  if (!base.dynamic)
+    return { modelId: base.id, source: "runtime", contextWindowTokens: null };
+  const directive = parseModelDirective(sentMessage);
+  if (directive)
+    return {
+      modelId: directive.id,
+      source: "directive",
+      contextWindowTokens: directive.contextWindowTokens ?? null,
+    };
+  return { modelId: base.id, source: "fallback", contextWindowTokens: null };
+}
+
+/** A runtime model id as eve formats it (`harnesst.chat/<ref>`), in harnesst's reference form. */
+export function normalizeRuntimeModelId(runtimeId: string): string {
+  return normalizeDynamicRuntimeId(runtimeId);
 }

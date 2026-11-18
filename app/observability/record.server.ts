@@ -15,7 +15,10 @@
  * pure `turnToSteps` mapper is exported separately so the shape is unit-testable without a DB.
  */
 import type { TurnResult } from "~/agent/talk.server";
+import { tokensForBytes, utf8Bytes } from "~/lib/token-estimate";
 import { capField, capString } from "~/observability/capture.server";
+import { chooseRunModel, type RunModel } from "~/observability/run-model";
+import { resolveRunModel } from "~/observability/run-model.server";
 import {
   ingestRun,
   ingestRunStart,
@@ -42,13 +45,34 @@ function messageData(
     : { role, text: capped };
 }
 
-/** Build a `tool_call` step's data: full input/output (capped) + summary/exitCode markers. */
-function toolData(action: {
+/** A tool output's size in UTF-8 bytes as the model saw it: the text itself, else its JSON. */
+export function outputBytes(output: unknown): number | null {
+  if (output === undefined) return null;
+  if (typeof output === "string") return utf8Bytes(output);
+  try {
+    const json = JSON.stringify(output);
+    return json === undefined ? null : utf8Bytes(json);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Build a `tool_call` step's data: full input/output (capped) + summary/exitCode markers, and the
+ * output's size measured before the cap.
+ */
+function toolCall(action: {
   input?: unknown;
   output?: unknown;
   summary?: string;
   exitCode?: number;
-}): Record<string, unknown> {
+}): {
+  data: Record<string, unknown>;
+  resultBytes?: number;
+  resultTokens?: number;
+  resultCapped?: boolean;
+} {
+  const bytes = outputBytes(action.output);
   const input = capField(action.input);
   const output = capField(action.output);
   const data: Record<string, unknown> = {};
@@ -57,7 +81,13 @@ function toolData(action: {
   if (action.summary != null) data.summary = action.summary;
   if (action.exitCode != null) data.exitCode = action.exitCode;
   if (input.truncated || output.truncated) data.truncated = true;
-  return data;
+  if (bytes === null) return { data };
+  return {
+    data,
+    resultBytes: bytes,
+    resultTokens: tokensForBytes(bytes),
+    resultCapped: output.truncated,
+  };
 }
 
 /**
@@ -66,15 +96,34 @@ function toolData(action: {
  *   - for each agent step, one `model_call` then one `tool_call` per action (full I/O), with
  *   - assistant `message` steps interleaved at their true position (via `messages`), or the
  *     joined `reply` as a trailing assistant message when no ordering info exists (legacy).
+ * A `compaction` step sits before the model call it made room for. Every model call carries eve's
+ * session, turn and step (the join to the gateway call log) and, in a subagent's child session,
+ * the subagent's name and the parent's call id.
  * All rich fields are size-capped (see capture.server.ts); redaction happens at ingest. Pure
  * (no DB) so it can be unit-tested. Seq is monotonic from 1.
+ *
+ * `model` is the run's resolved model (`./run-model`); without one, the turn's own id is used
+ * unless it is only the dynamic build-time fallback.
  */
 export function turnToSteps(
   result: TurnResult,
-  opts: { userMessage?: string | null } = {},
+  opts: {
+    userMessage?: string | null;
+    model?: RunModel;
+    eveSessionId?: string | null;
+  } = {},
 ): IngestStep[] {
   const steps: IngestStep[] = [];
   let seq = 1;
+  const model = opts.model ?? chooseRunModel(result, null);
+  const eveSessionId = result.sessionId ?? opts.eveSessionId ?? undefined;
+  const turnId = result.turnId ?? undefined;
+  const subagent = result.subagent
+    ? {
+        subagentName: result.subagent.name,
+        parentCallId: result.subagent.parentCallId,
+      }
+    : {};
 
   if (opts.userMessage && opts.userMessage.trim()) {
     steps.push({
@@ -104,14 +153,43 @@ export function turnToSteps(
     }
   };
 
+  const compactions = result.compactions ?? [];
+  const emitCompactionsAt = (stepCount: number) => {
+    for (const c of compactions) {
+      if (c.afterStepIndex !== stepCount) continue;
+      steps.push({
+        seq: seq++,
+        type: "compaction",
+        model: c.modelId ?? undefined,
+        startedAt: c.at,
+        eveSessionId,
+        turnId,
+        data: {
+          usageInputTokens: c.usageInputTokens,
+          sequence: c.sequence,
+          completed: c.completed,
+        },
+      });
+    }
+  };
+
   emitMessagesAt(0);
+  emitCompactionsAt(0);
   result.steps.forEach((step, i) => {
     steps.push({
       seq: seq++,
       type: "model_call",
-      model: result.modelId ?? undefined,
+      model: model.modelId ?? undefined,
+      contextWindow: model.contextWindowTokens ?? undefined,
       tokensInput: step.tokensIn,
       tokensOutput: step.tokensOut,
+      tokensCacheRead: step.cacheReadTokens,
+      tokensCacheWrite: step.cacheWriteTokens,
+      costUsd: step.costUsd,
+      eveSessionId,
+      turnId,
+      stepIndex: step.stepIndex,
+      ...subagent,
       durationMs: step.durationMs,
       isError: step.isError,
       data: step.isError
@@ -124,34 +202,67 @@ export function turnToSteps(
         type: "tool_call",
         toolName: action.toolName,
         isError: action.isError,
-        data: toolData(action),
+        callId: action.callId,
+        ...subagent,
+        ...toolCall(action),
       });
     }
     emitMessagesAt(i + 1);
+    emitCompactionsAt(i + 1);
   });
 
   return steps;
 }
 
-/** Summed input/output tokens across all steps (undefined when nothing reported). */
-function sumTokens(result: TurnResult): {
+export interface RunTotals {
   tokensInput?: number;
   tokensOutput?: number;
-} {
-  let input = 0;
-  let output = 0;
-  let seen = false;
+  tokensCachedInput?: number;
+  costUsd?: number;
+  compactionCount?: number;
+  peakContextTokens?: number;
+}
+
+function add(total: number | undefined, value: number | undefined) {
+  return value == null ? total : (total ?? 0) + value;
+}
+
+/**
+ * A run's totals over its model calls. Each total is absent when no step reported its field, so
+ * "unknown" never reads as zero. Input tokens include cached ones (the AI SDK's `inputTokens` is
+ * the whole prompt), which makes the largest input the peak context. A subagent's calls belong
+ * to its own child-session run, so they are not added here.
+ */
+export function runTotals(result: TurnResult): RunTotals {
+  let tokensInput: number | undefined;
+  let tokensOutput: number | undefined;
+  let tokensCachedInput: number | undefined;
+  let costUsd: number | undefined;
+  let peakContextTokens: number | undefined;
   for (const step of result.steps) {
-    if (step.tokensIn != null) {
-      input += step.tokensIn;
-      seen = true;
-    }
-    if (step.tokensOut != null) {
-      output += step.tokensOut;
-      seen = true;
-    }
+    tokensInput = add(tokensInput, step.tokensIn);
+    tokensOutput = add(tokensOutput, step.tokensOut);
+    tokensCachedInput = add(tokensCachedInput, step.cacheReadTokens);
+    costUsd = add(costUsd, step.costUsd);
+    if (step.tokensIn != null)
+      peakContextTokens = Math.max(peakContextTokens ?? 0, step.tokensIn);
   }
-  return seen ? { tokensInput: input, tokensOutput: output } : {};
+  // Compactions fire when context fills, so their trigger size is a context reading too.
+  for (const c of result.compactions ?? []) {
+    if (c.usageInputTokens != null)
+      peakContextTokens = Math.max(peakContextTokens ?? 0, c.usageInputTokens);
+  }
+  const totals: RunTotals = {};
+  // Input and output are written together, as before: a run reporting one reports both.
+  if (tokensInput != null || tokensOutput != null) {
+    totals.tokensInput = tokensInput ?? 0;
+    totals.tokensOutput = tokensOutput ?? 0;
+  }
+  if (tokensCachedInput != null) totals.tokensCachedInput = tokensCachedInput;
+  if (costUsd != null) totals.costUsd = costUsd;
+  if (result.compactions) totals.compactionCount = result.compactions.length;
+  if (peakContextTokens != null) totals.peakContextTokens = peakContextTokens;
+  return totals;
 }
 
 export interface TurnIds {
@@ -259,24 +370,38 @@ export async function recordTurnFinish(input: {
 }): Promise<void> {
   const finishedAt = input.finishedAt ?? new Date();
   const channel = input.channel ?? "playground";
+  const { result } = input;
+  const model = await resolveRunModel({
+    projectId: input.projectId,
+    releaseId: input.releaseId,
+    turn: result,
+    subagentName: result.subagent?.name ?? null,
+  });
+  const metadata = result.subagent
+    ? { ...input.metadata, subagent: result.subagent }
+    : input.metadata;
   const payload: IngestPayload = {
     externalRunId: input.externalRunId,
     deploymentId: input.deploymentId,
     releaseId: input.releaseId,
     channel,
-    status: input.result.ok ? "completed" : "failed",
-    error: input.result.error ?? undefined,
+    status: result.ok ? "completed" : "failed",
+    error: result.error ?? undefined,
     wallClockMs: input.wallClockMs,
     startedAt: input.startedAt.toISOString(),
     finishedAt: finishedAt.toISOString(),
-    metadata: runMetadata(input.userMessage, input.metadata),
+    metadata: runMetadata(input.userMessage, metadata),
     session: {
       externalSessionId: input.externalSessionId,
       trigger: channel,
       channel,
     },
-    ...sumTokens(input.result),
-    steps: turnToSteps(input.result, { userMessage: input.userMessage }),
+    ...runTotals(result),
+    steps: turnToSteps(result, {
+      userMessage: input.userMessage,
+      model,
+      eveSessionId: input.externalSessionId,
+    }),
   };
   await ingestRun(input.projectId, payload);
 }
