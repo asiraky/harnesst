@@ -10,8 +10,13 @@
  *     count reaches the stream.
  *   - `compaction.requested` / `compaction.completed`: `modelId`, `sequence`, and on the request
  *     `usageInputTokens`, the context size that triggered it.
- *   - A subagent runs as its own child session; that session's `session.started` carries
- *     `invocation: { kind: "subagent", name, parentCallId, parentSessionId, parentTurnId }`.
+ *   - A subagent runs as its own child session. The PARENT's stream says which call started it:
+ *     `subagent.called` carries `callId`, `childSessionId`, `name`, `remote`. The child's stream
+ *     carries no parent linkage on the eve versions harnesst deploys (0.22 to 0.29: their
+ *     `session.started` has only `runtime`), and the parent's stream does not relay the child's
+ *     steps (`subagent.event` is declared but never emitted). So a child run is linked to its
+ *     parent call at record time, from the parent's `subagent.called` (`./subagent-link.server`).
+ *     `readSubagentInvocation` covers an eve that does put `invocation` on `session.started`.
  */
 import { normalizeRuntimeModelId } from "~/models/model-directive";
 
@@ -124,7 +129,8 @@ export function applyCompactionEvent(
 
 /** The parent call a subagent child session was started for. */
 export interface SubagentInvocation {
-  name: string;
+  /** null when the parent's `subagent.called` carried no name. */
+  name: string | null;
   parentCallId: string;
   parentSessionId: string | null;
   parentTurnId: string | null;
@@ -147,4 +153,37 @@ export function readSubagentInvocation(
       typeof i.parentSessionId === "string" ? i.parentSessionId : null,
     parentTurnId: typeof i.parentTurnId === "string" ? i.parentTurnId : null,
   };
+}
+
+/** The child session a parent's subagent tool call started. */
+export interface SubagentCall {
+  callId: string;
+  /** The subagent's name; null when eve did not send one. */
+  name: string | null;
+  childSessionId: string;
+}
+
+function text(value: unknown): string | null {
+  return typeof value === "string" && value ? value : null;
+}
+
+/**
+ * The parent-side facts of a `subagent.called`, or null without a call or child session id.
+ * eve puts the subagent's (or remote agent's) name in `toolName` and the tool's name in `name`.
+ */
+export function readSubagentCall(
+  data: Record<string, unknown>,
+): SubagentCall | null {
+  const callId = text(data.callId);
+  const childSessionId = text(data.childSessionId);
+  if (!callId || !childSessionId) return null;
+  return { callId, name: text(data.toolName) ?? text(data.name), childSessionId };
+}
+
+/**
+ * The tool name of one `actions.requested` entry. A subagent or remote-agent call is a runtime
+ * action, which names its tool in `name` and has no `toolName`.
+ */
+export function actionToolName(action: Record<string, unknown>): string {
+  return text(action.toolName) ?? text(action.name) ?? "tool";
 }

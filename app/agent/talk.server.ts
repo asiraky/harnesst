@@ -48,9 +48,12 @@ import {
   type TurnModelSource,
 } from "~/models/model-directive";
 import {
+  actionToolName,
   applyCompactionEvent,
   readStepUsage,
+  readSubagentCall,
   stepKeyOf,
+  type SubagentCall,
   type SubagentInvocation,
   type TurnCompaction,
 } from "~/observability/turn-usage";
@@ -68,6 +71,8 @@ export interface TurnAction {
   input?: unknown;
   /** Raw tool output as eve returned it (`action.result`), full result payload. */
   output?: unknown;
+  /** Set when the call started a subagent: the child session it runs in (`subagent.called`). */
+  subagentCall?: SubagentCall;
 }
 
 export interface TurnStep {
@@ -1210,8 +1215,7 @@ async function* drainTurnStream(input: {
             for (const rawAction of list) {
               if (typeof rawAction !== "object" || rawAction === null) continue;
               const a = rawAction as Record<string, unknown>;
-              const toolName =
-                typeof a.toolName === "string" ? a.toolName : "tool";
+              const toolName = actionToolName(a);
               const summary = summarizeActionInput(a.input);
               // Keep the FULL input (not just the one-line summary) so the transcript can
               // render the real command/args; caps + redaction are applied at persist time.
@@ -1223,6 +1227,13 @@ async function* drainTurnStream(input: {
               yield { kind: "action", toolName, summary };
             }
             actionsBySeq.set(stepKey, seqActions);
+            break;
+          }
+          case "subagent.called": {
+            if (!ours) break;
+            const call = readSubagentCall(data);
+            const record = call ? actionByCallId.get(call.callId) : undefined;
+            if (call && record) record.subagentCall = call;
             break;
           }
           case "action.result": {

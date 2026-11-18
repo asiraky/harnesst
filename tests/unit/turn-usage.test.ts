@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  actionToolName,
   applyCompactionEvent,
   readStepUsage,
+  readSubagentCall,
   readSubagentInvocation,
   stepKeyOf,
   type TurnCompaction,
@@ -158,5 +160,36 @@ describe("stepKeyOf", () => {
   it("leaves out an index eve did not send instead of guessing one", () => {
     expect(stepKeyOf({ sequence: 2 })).toEqual({ sequence: 2 });
     expect(stepKeyOf({})).toEqual({});
+  });
+});
+
+describe("readSubagentCall", () => {
+  it("takes the subagent's name from toolName, where eve puts it", () => {
+    expect(
+      readSubagentCall({
+        callId: "c1",
+        childSessionId: "wrun_1",
+        name: "ask_researcher",
+        toolName: "researcher",
+      }),
+    ).toEqual({ callId: "c1", name: "researcher", childSessionId: "wrun_1" });
+  });
+
+  it("falls back to name, then to no name", () => {
+    expect(readSubagentCall({ callId: "c1", childSessionId: "w", name: "x" })?.name).toBe("x");
+    expect(readSubagentCall({ callId: "c1", childSessionId: "w" })?.name).toBeNull();
+  });
+
+  it("returns null without a call id or child session id", () => {
+    expect(readSubagentCall({ childSessionId: "w" })).toBeNull();
+    expect(readSubagentCall({ callId: "c1", childSessionId: "" })).toBeNull();
+  });
+});
+
+describe("actionToolName", () => {
+  it("uses toolName, else a runtime action's name, else a placeholder", () => {
+    expect(actionToolName({ toolName: "bash", name: "x" })).toBe("bash");
+    expect(actionToolName({ kind: "subagent-call", name: "researcher" })).toBe("researcher");
+    expect(actionToolName({})).toBe("tool");
   });
 });

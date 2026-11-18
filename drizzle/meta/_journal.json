@@ -337,6 +337,13 @@
       "when": 1794961667824,
       "tag": "0047_run_record_usage",
       "breakpoints": true
+    },
+    {
+      "idx": 48,
+      "version": "7",
+      "when": 1794964152332,
+      "tag": "0048_subagent_child_session",
+      "breakpoints": true
     }
   ]
 }

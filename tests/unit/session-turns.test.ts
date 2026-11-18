@@ -388,6 +388,39 @@ describe("foldSessionEvents usage, compaction and subagent linkage (issue #417)"
     expect(next.turns[0].result.subagent).toEqual(linked);
   });
 
+  it("keeps the child session a subagent call started on that call", () => {
+    const fold = foldSessionEvents(
+      indexed([
+        evt("message.received", { turnId: "turn_0", message: "delegate" }),
+        evt("actions.requested", {
+          turnId: "turn_0",
+          sequence: 1,
+          stepIndex: 0,
+          actions: [{ kind: "subagent-call", name: "writer", subagentName: "writer", callId: "c1" }],
+        }),
+        evt("subagent.called", {
+          turnId: "turn_0",
+          callId: "c1",
+          childSessionId: "wrun_child",
+          name: "writer",
+          toolName: "writer",
+        }),
+        // An unknown call id is ignored rather than inventing an action.
+        evt("subagent.called", { turnId: "turn_0", callId: "nope", childSessionId: "wrun_x" }),
+        evt("step.completed", { turnId: "turn_0", sequence: 1, stepIndex: 0 }),
+        evt("turn.completed", { turnId: "turn_0" }),
+      ]),
+    );
+    const actions = fold.turns[0].result.steps[0].actions ?? [];
+    expect(actions).toHaveLength(1);
+    expect(actions[0].toolName).toBe("writer");
+    expect(actions[0].subagentCall).toEqual({
+      callId: "c1",
+      name: "writer",
+      childSessionId: "wrun_child",
+    });
+  });
+
   it("marks a dynamic agent's undirected turn as the fallback model", () => {
     const fold = foldSessionEvents(
       indexed([

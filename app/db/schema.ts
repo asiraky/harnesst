@@ -772,6 +772,8 @@ export const runSteps = pgTable(
     parentCallId: text("parent_call_id"),
     /** A tool call's id (a subagent run's `parent_call_id` points here). */
     callId: text("call_id"),
+    /** On a tool call that started a subagent: the child session it ran in (`sessions.external_session_id`). */
+    childSessionId: text("child_session_id"),
     /** A tool call's output size before it was capped for storage. */
     resultBytes: integer("result_bytes"),
     resultTokens: integer("result_tokens"),
@@ -784,7 +786,12 @@ export const runSteps = pgTable(
       .default(sql`'{}'::jsonb`),
     startedAt: timestamp("started_at", { withTimezone: true }),
   },
-  (t) => [index("run_steps_run_seq_idx").on(t.runId, t.seq)],
+  (t) => [
+    index("run_steps_run_seq_idx").on(t.runId, t.seq),
+    index("run_steps_child_session_idx")
+      .on(t.childSessionId)
+      .where(sql`${t.childSessionId} is not null`),
+  ],
 );
 
 /**

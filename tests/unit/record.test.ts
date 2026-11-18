@@ -5,6 +5,7 @@ import { FIELD_CAP } from "~/observability/capture.server";
 import {
   externalRunId,
   runTotals,
+  subagentCallsOf,
   turnToSteps,
 } from "~/observability/record.server";
 
@@ -339,6 +340,51 @@ describe("turnToSteps usage, model and linkage (issue #417)", () => {
     expect(steps.map((s) => [s.type, s.subagentName, s.parentCallId])).toEqual([
       ["model_call", "researcher", "call_9"],
       ["tool_call", "researcher", "call_9"],
+    ]);
+  });
+
+  it("records on a parent's tool call the child session its subagent ran in", () => {
+    const parent = result({
+      reply: null,
+      steps: [
+        {
+          type: "step.completed",
+          isError: false,
+          actions: [
+            {
+              toolName: "researcher",
+              callId: "c1",
+              isError: false,
+              subagentCall: { callId: "c1", name: "researcher", childSessionId: "wrun_child" },
+            },
+            { toolName: "bash", callId: "c2", isError: false },
+          ],
+        },
+        {
+          type: "step.completed",
+          isError: false,
+          actions: [
+            {
+              toolName: "remote",
+              callId: "c3",
+              isError: false,
+              subagentCall: { callId: "c3", name: null, childSessionId: "wrun_remote" },
+            },
+          ],
+        },
+      ],
+    });
+    const calls = turnToSteps(parent).filter((s) => s.type === "tool_call");
+    expect(calls.map((s) => [s.callId, s.childSessionId, s.data?.subagentName])).toEqual([
+      ["c1", "wrun_child", "researcher"],
+      ["c2", undefined, undefined],
+      ["c3", "wrun_remote", undefined],
+    ]);
+    // The parent's own steps are not a subagent's.
+    expect(calls[0].subagentName).toBeUndefined();
+    expect(subagentCallsOf(parent).map((c) => c.childSessionId)).toEqual([
+      "wrun_child",
+      "wrun_remote",
     ]);
   });
 
