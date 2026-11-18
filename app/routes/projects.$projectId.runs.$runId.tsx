@@ -151,9 +151,14 @@ export default function RunTranscriptRoute({
         title={run.externalRunId ?? run.id}
         description="A readable, chat-shaped transcript of the run."
         actions={
-          <Button variant="outline" asChild>
-            <Link to={`${ctx}/runs`}>← Runs</Link>
-          </Button>
+          <div className="flex gap-2">
+            <Button variant="outline" asChild>
+              <Link to={`/usage/repos/${project.id}/runs/${run.id}`}>Usage trace</Link>
+            </Button>
+            <Button variant="outline" asChild>
+              <Link to={`${ctx}/runs`}>← Runs</Link>
+            </Button>
+          </div>
         }
       />
 
