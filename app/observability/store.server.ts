@@ -22,6 +22,7 @@ import {
 } from "~/db/schema";
 import { redactSecrets } from "~/observability/capture.server";
 import { toolRepeats } from "~/usage/warnings";
+import { intColumn } from "./int-column";
 
 type IngestDb = Pick<typeof db, "delete" | "insert" | "select" | "update">;
 
@@ -190,6 +191,15 @@ async function ingestRunWith(
     (redactSecrets(p.metadata ?? {}) as Record<string, unknown>) ?? {};
 
   const incomingStatus = p.status ?? "running";
+  const totals = {
+    tokensInput: intColumn(p.tokensInput),
+    tokensOutput: intColumn(p.tokensOutput),
+    tokensCachedInput: intColumn(p.tokensCachedInput),
+    costUsd: p.costUsd ?? null,
+    compactionCount: intColumn(p.compactionCount),
+    peakContextTokens: intColumn(p.peakContextTokens),
+    wallClockMs: intColumn(p.wallClockMs),
+  };
   const [run] = await client
     .insert(runs)
     .values({
@@ -201,13 +211,7 @@ async function ingestRunWith(
       externalRunId: p.externalRunId,
       channel: p.channel ?? null,
       status: incomingStatus,
-      tokensInput: p.tokensInput ?? null,
-      tokensOutput: p.tokensOutput ?? null,
-      tokensCachedInput: p.tokensCachedInput ?? null,
-      costUsd: p.costUsd ?? null,
-      compactionCount: p.compactionCount ?? null,
-      peakContextTokens: p.peakContextTokens ?? null,
-      wallClockMs: p.wallClockMs ?? null,
+      ...totals,
       error,
       metadata,
       ...(p.startedAt ? { startedAt: new Date(p.startedAt) } : {}),
@@ -226,13 +230,7 @@ async function ingestRunWith(
         deploymentId: p.deploymentId ?? null,
         releaseId: p.releaseId ?? null,
         status: incomingStatus,
-        tokensInput: p.tokensInput ?? null,
-        tokensOutput: p.tokensOutput ?? null,
-        tokensCachedInput: p.tokensCachedInput ?? null,
-        costUsd: p.costUsd ?? null,
-        compactionCount: p.compactionCount ?? null,
-        peakContextTokens: p.peakContextTokens ?? null,
-        wallClockMs: p.wallClockMs ?? null,
+        ...totals,
         error,
         // Merged, not replaced: a finish's keys (e.g. the stale sweep's `settledBy`) land on the
         // row, and keys written after ingest (`toolRepeats`) survive a replayed start.
@@ -251,27 +249,27 @@ async function ingestRunWith(
     await client.delete(runSteps).where(eq(runSteps.runId, run.id));
     const stepRows = p.steps.map((st) => ({
         runId: run.id,
-        seq: st.seq,
+        seq: intColumn(st.seq) ?? st.seq,
         type: st.type,
         model: st.model ?? null,
         toolName: st.toolName ?? null,
-        tokensInput: st.tokensInput ?? null,
-        tokensOutput: st.tokensOutput ?? null,
-        tokensCacheRead: st.tokensCacheRead ?? null,
-        tokensCacheWrite: st.tokensCacheWrite ?? null,
+        tokensInput: intColumn(st.tokensInput),
+        tokensOutput: intColumn(st.tokensOutput),
+        tokensCacheRead: intColumn(st.tokensCacheRead),
+        tokensCacheWrite: intColumn(st.tokensCacheWrite),
         costUsd: st.costUsd ?? null,
-        contextWindow: st.contextWindow ?? null,
+        contextWindow: intColumn(st.contextWindow),
         eveSessionId: st.eveSessionId ?? null,
         turnId: st.turnId ?? null,
-        stepIndex: st.stepIndex ?? null,
+        stepIndex: intColumn(st.stepIndex),
         subagentName: st.subagentName ?? null,
         parentCallId: st.parentCallId ?? null,
         callId: st.callId ?? null,
         childSessionId: st.childSessionId ?? null,
-        resultBytes: st.resultBytes ?? null,
-        resultTokens: st.resultTokens ?? null,
+        resultBytes: intColumn(st.resultBytes),
+        resultTokens: intColumn(st.resultTokens),
         resultCapped: st.resultCapped ?? null,
-        durationMs: st.durationMs ?? null,
+        durationMs: intColumn(st.durationMs),
         isError: st.isError ?? false,
         approvalGated: st.approvalGated ?? false,
         // Redact obvious credentials for BOTH producers (playground + BYO) at this chokepoint.
