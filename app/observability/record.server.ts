@@ -243,7 +243,8 @@ const SUBAGENT_CHANNEL = "subagent";
  *   - `name`: the child knows its parent call (the hook forwarded it) but not the subagent's
  *     name, which the parent's tool call carries;
  *   - `child`: a subagent-channel turn that knows no parent (an agent image built before the
- *     hook forwarded one) looks for the parent call that recorded its session.
+ *     hook forwarded one), or knows its parent call but not the parent's session, looks for the
+ *     parent call that recorded its session.
  * Other turns are not subagent children, so they pay for no lookup.
  */
 export function parentLookupFor(
@@ -254,16 +255,14 @@ export function parentLookupFor(
   | { kind: "child" }
   | null {
   const parent = result.subagent;
-  if (parent) {
-    return !parent.name && parent.parentSessionId
-      ? {
-          kind: "name",
-          parentSessionId: parent.parentSessionId,
-          parentCallId: parent.parentCallId,
-        }
-      : null;
-  }
-  return channel === SUBAGENT_CHANNEL ? { kind: "child" } : null;
+  if (parent?.name) return null;
+  if (parent?.parentSessionId)
+    return {
+      kind: "name",
+      parentSessionId: parent.parentSessionId,
+      parentCallId: parent.parentCallId,
+    };
+  return parent || channel === SUBAGENT_CHANNEL ? { kind: "child" } : null;
 }
 
 export interface RunTotals {
@@ -441,7 +440,14 @@ export async function recordTurnFinish(input: {
       result.sessionId ?? input.externalSessionId,
       input.startedAt,
     );
-    if (found) result = { ...result, subagent: found };
+    // eve starts one child session per call, so the call found is the one the child names.
+    if (found)
+      result = {
+        ...result,
+        subagent: result.subagent
+          ? { ...result.subagent, name: found.name }
+          : found,
+      };
   }
   const model = await resolveRunModel({
     projectId: input.projectId,

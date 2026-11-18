@@ -490,9 +490,14 @@ describe("parentLookupFor", () => {
     expect(parentLookupFor(result(), "subagent")).toEqual({ kind: "child" });
   });
 
-  it("looks nothing up for a linked child, a parent without a session, or a top-level turn", () => {
+  it("looks for the parent call by session when the child knows its parent call but not its session", () => {
+    expect(parentLookupFor(result({ subagent: { ...parent, parentSessionId: null } }), "subagent")).toEqual({
+      kind: "child",
+    });
+  });
+
+  it("looks nothing up for a linked child or a top-level turn", () => {
     expect(parentLookupFor(result({ subagent: { ...parent, name: "writer" } }), "subagent")).toBeNull();
-    expect(parentLookupFor(result({ subagent: { ...parent, parentSessionId: null } }), "subagent")).toBeNull();
     expect(parentLookupFor(result(), "cron")).toBeNull();
   });
 });

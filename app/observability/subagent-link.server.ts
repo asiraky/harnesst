@@ -52,6 +52,11 @@ export async function parentCallName(
 
 /** How far before a child run its parent turn may have started. */
 const PARENT_LOOKBACK_MS = 24 * 60 * 60 * 1000;
+/**
+ * Slack past the child's start: a parent recorded in-process is timed by the control plane's
+ * clock, a pushed child by its agent container's.
+ */
+const CLOCK_SKEW_MS = 5 * 60 * 1000;
 
 /**
  * The parent tool call that recorded this child session, for a child whose own report names no
@@ -75,7 +80,10 @@ export async function parentCallForChild(
             runs.startedAt,
             new Date(childStartedAt.getTime() - PARENT_LOOKBACK_MS),
           ),
-          lte(runs.startedAt, childStartedAt),
+          lte(
+            runs.startedAt,
+            new Date(childStartedAt.getTime() + CLOCK_SKEW_MS),
+          ),
           eq(runSteps.type, "tool_call"),
           eq(runSteps.childSessionId, childSessionId),
         ),
