@@ -19,6 +19,7 @@ import { data, type ActionFunctionArgs } from "react-router";
 import {
   defaultPushIngestDeps,
   ingestPushedTurn,
+  normalizePushedParent,
   normalizePushedEvents,
   MAX_PUSHED_BODY_BYTES,
 } from "~/observability/push-ingest.server";
@@ -87,6 +88,7 @@ export async function action({ request }: ActionFunctionArgs) {
       channelKind: typeof body.channelKind === "string" ? body.channelKind : null,
       modelId: typeof body.modelId === "string" ? body.modelId : null,
       agentName: typeof body.agentName === "string" ? body.agentName : null,
+      parent: normalizePushedParent(body.parent),
       final: body.final === true,
       truncated: body.truncated === true,
       events,

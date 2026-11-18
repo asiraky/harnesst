@@ -60,9 +60,31 @@ export interface PushedTurn {
   channelKind?: string | null;
   modelId?: string | null;
   agentName?: string | null;
+  /** A subagent's child session: the parent tool call it serves (`ctx.session.parent`). */
+  parent?: PushedParent | null;
   final?: boolean;
   truncated?: boolean;
   events: PushedEvent[];
+}
+
+/** The parent call a pushed child session reports. Labels only: the project is the token's. */
+export interface PushedParent {
+  callId: string;
+  sessionId: string | null;
+  turnId: string | null;
+}
+
+function label(value: unknown): string | null {
+  return typeof value === "string" && value && value.length <= 256 ? value : null;
+}
+
+/** Validate the hook's `parent`; anything without a call id is no parent. */
+export function normalizePushedParent(value: unknown): PushedParent | null {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
+  const v = value as Record<string, unknown>;
+  const callId = label(v.callId);
+  if (!callId) return null;
+  return { callId, sessionId: label(v.sessionId), turnId: label(v.turnId) };
 }
 
 export interface PushIngestDeps {
@@ -159,7 +181,19 @@ export async function ingestPushedTurn(
     meta: event.meta,
     streamIndex: i + 1,
   }));
-  const fold = foldSessionEvents(indexed, { modelId: input.modelId ?? null });
+  // The subagent's name is not in the child's context; the record reads it off the parent's call.
+  const subagent = input.parent
+    ? {
+        name: null,
+        parentCallId: input.parent.callId,
+        parentSessionId: input.parent.sessionId,
+        parentTurnId: input.parent.turnId,
+      }
+    : null;
+  const fold = foldSessionEvents(indexed, {
+    modelId: input.modelId ?? null,
+    subagent,
+  });
   const turn = fold.turns.find((t) => t.turnId === input.turnId);
   if (!turn) {
     // The buffer did not actually contain the turn the hook claimed. Nothing to write, and

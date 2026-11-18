@@ -5,6 +5,7 @@ import { FIELD_CAP } from "~/observability/capture.server";
 import {
   externalRunId,
   runTotals,
+  subagentCallsOf,
   turnToSteps,
 } from "~/observability/record.server";
 
@@ -340,6 +341,55 @@ describe("turnToSteps usage, model and linkage (issue #417)", () => {
       ["model_call", "researcher", "call_9"],
       ["tool_call", "researcher", "call_9"],
     ]);
+  });
+
+  it("records on a parent's tool call the child session its subagent ran in", () => {
+    const parent = result({
+      reply: null,
+      steps: [
+        {
+          type: "step.completed",
+          isError: false,
+          actions: [
+            {
+              toolName: "researcher",
+              callId: "c1",
+              isError: false,
+              subagentCall: { callId: "c1", name: "researcher", childSessionId: "wrun_child" },
+            },
+            { toolName: "bash", callId: "c2", isError: false },
+          ],
+        },
+        {
+          type: "step.completed",
+          isError: false,
+          actions: [
+            {
+              toolName: "remote",
+              callId: "c3",
+              isError: false,
+              subagentCall: { callId: "c3", name: null, childSessionId: "wrun_remote" },
+            },
+            {
+              toolName: "ask_writer",
+              callId: "c4",
+              isError: false,
+              subagentCall: { callId: "c4", name: "writer", childSessionId: null },
+            },
+          ],
+        },
+      ],
+    });
+    const calls = turnToSteps(parent).filter((s) => s.type === "tool_call");
+    expect(calls.map((s) => [s.callId, s.childSessionId, s.data?.subagentName])).toEqual([
+      ["c1", "wrun_child", "researcher"],
+      ["c2", undefined, undefined],
+      ["c3", "wrun_remote", undefined],
+      ["c4", undefined, "writer"],
+    ]);
+    // The parent's own steps are not a subagent's.
+    expect(calls[0].subagentName).toBeUndefined();
+    expect(subagentCallsOf(parent).map((c) => c.callId)).toEqual(["c1", "c3", "c4"]);
   });
 
   it("leaves a top-level session's steps unlinked", () => {

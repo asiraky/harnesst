@@ -14,6 +14,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import {
   ingestPushedTurn,
   normalizePushedEvents,
+  normalizePushedParent,
   type PushIngestDeps,
   type PushedEvent,
 } from "~/observability/push-ingest.server";
@@ -154,6 +155,28 @@ describe("ingestPushedTurn", () => {
       eveTrigger: "channel:github",
       source: "push",
       eveAgentName: "deputy",
+    });
+  });
+
+  it("links a subagent child turn to the parent call the hook reported", async () => {
+    const deploymentId = await seedDeployment();
+    const deps = makeDeps();
+    await ingestPushedTurn(
+      {
+        deploymentId,
+        sessionId: "wrun_child",
+        turnId: "turn_0",
+        channelKind: "subagent",
+        parent: { callId: "c1", sessionId: "wrun_parent", turnId: "turn_4" },
+        events: settledTurn(),
+      },
+      deps,
+    );
+    expect(deps.finishes[0].result.subagent).toEqual({
+      name: null,
+      parentCallId: "c1",
+      parentSessionId: "wrun_parent",
+      parentTurnId: "turn_4",
     });
   });
 
@@ -377,5 +400,22 @@ describe("normalizePushedEvents", () => {
         Array.from({ length: 2_501 }, () => ({ type: "step.started", data: {} })),
       ),
     ).toBeNull();
+  });
+});
+
+describe("normalizePushedParent", () => {
+  it("keeps a parent with a call id, dropping malformed labels", () => {
+    expect(normalizePushedParent({ callId: "c1", sessionId: "w", turnId: 4 })).toEqual({
+      callId: "c1",
+      sessionId: "w",
+      turnId: null,
+    });
+    expect(normalizePushedParent({ callId: "c1", sessionId: "x".repeat(300) })?.sessionId).toBeNull();
+  });
+
+  it("is no parent without a call id", () => {
+    expect(normalizePushedParent({ sessionId: "w" })).toBeNull();
+    expect(normalizePushedParent(null)).toBeNull();
+    expect(normalizePushedParent(["c1"])).toBeNull();
   });
 });

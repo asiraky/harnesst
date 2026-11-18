@@ -15,6 +15,7 @@ import {
 } from "drizzle-orm";
 
 import { inputRequestsOf } from "~/agent/talk.server";
+import { actionToolName } from "~/observability/turn-usage";
 import { normalizeTurnError } from "~/chat/stream-error";
 import { loadUploadIndex } from "~/chat/attachments.server";
 import { ReasoningAccumulator } from "~/chat/reasoning";
@@ -2253,8 +2254,7 @@ export function projectEventsToEntries(
         for (const rawAction of actions) {
           if (typeof rawAction !== "object" || rawAction === null) continue;
           const action = rawAction as Record<string, unknown>;
-          const toolName =
-            typeof action.toolName === "string" ? action.toolName : "tool";
+          const toolName = actionToolName(action);
           const summary = summarizeActionInput(action.input);
           const record: TurnAction = { toolName, summary, input: action.input };
           seqActions.push(record);

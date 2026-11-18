@@ -370,4 +370,24 @@ describe("harnesst-runs hook template", () => {
       "turn.started",
     ]);
   });
+
+  it("forwards a subagent child session's parent call, and none for a top-level session", async () => {
+    const h = evalHook(ENV, okFetch);
+    const child = ctx({
+      session: {
+        id: "wrun_child",
+        turn: { id: "turn_0", sequence: 0 },
+        parent: { callId: "c1", sessionId: "wrun_parent", rootSessionId: "wrun_parent", turn: { id: "turn_4", sequence: 4 } },
+      },
+      channel: { kind: "subagent" },
+    });
+    await h.hook.events["*"](evt("turn.started", { turnId: "turn_0" }), child);
+    await h.hook.events["*"](evt("turn.started", { turnId: "turn_0" }), ctx());
+    await h.settle();
+
+    expect(h.posts.map((p) => p.body.parent)).toEqual([
+      { callId: "c1", sessionId: "wrun_parent", turnId: "turn_4" },
+      null,
+    ]);
+  });
 });

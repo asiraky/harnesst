@@ -19,8 +19,11 @@ import { inputRequestsOf } from "~/agent/talk.server";
 import type { ChatInputRequest } from "~/chat/types";
 import { turnModel } from "~/models/model-directive";
 import {
+  actionToolName,
   applyCompactionEvent,
   readStepUsage,
+  applySubagentCalled,
+  readSubagentAction,
   readSubagentInvocation,
   stepKeyOf,
   type SubagentInvocation,
@@ -316,17 +319,28 @@ export function foldSessionEvents(
         for (const rawAction of list) {
           if (typeof rawAction !== "object" || rawAction === null) continue;
           const a = rawAction as Record<string, unknown>;
-          const toolName = typeof a.toolName === "string" ? a.toolName : "tool";
+          const toolName = actionToolName(a);
           const record: TurnAction = {
             toolName,
             summary: summarizeActionInput(a.input),
             input: a.input,
           };
           if (typeof a.callId === "string") record.callId = a.callId;
+          const subagentCall = readSubagentAction(a);
+          if (subagentCall) record.subagentCall = subagentCall;
           seqActions.push(record);
           if (typeof a.callId === "string") turn.actionByCallId.set(a.callId, record);
         }
         turn.actionsBySeq.set(stepKey, seqActions);
+        break;
+      }
+      case "subagent.called": {
+        if (!turnId) break;
+        const callId = typeof data.callId === "string" ? data.callId : null;
+        const record = callId
+          ? ensureTurn(turnId, evt.streamIndex, at).actionByCallId.get(callId)
+          : undefined;
+        if (record) record.subagentCall = applySubagentCalled(record.subagentCall, data);
         break;
       }
       case "action.result": {

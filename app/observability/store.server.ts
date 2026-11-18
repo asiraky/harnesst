@@ -97,6 +97,7 @@ export interface IngestStep {
   subagentName?: string;
   parentCallId?: string;
   callId?: string;
+  childSessionId?: string;
   resultBytes?: number;
   resultTokens?: number;
   resultCapped?: boolean;
@@ -263,6 +264,7 @@ async function ingestRunWith(
         subagentName: st.subagentName ?? null,
         parentCallId: st.parentCallId ?? null,
         callId: st.callId ?? null,
+        childSessionId: st.childSessionId ?? null,
         resultBytes: st.resultBytes ?? null,
         resultTokens: st.resultTokens ?? null,
         resultCapped: st.resultCapped ?? null,

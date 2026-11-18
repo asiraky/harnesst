@@ -509,6 +509,61 @@ describe("drain usage and compaction (issue #417)", () => {
   });
 });
 
+describe("subagent calls on the live drain (issue #417)", () => {
+  it("names a subagent call from its runtime action and keeps the child session it started", async () => {
+    const at = "2026-11-18T00:00:00.000Z";
+    const e = (type: string, data: Record<string, unknown>) => ({ type, data, meta: { at } });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn<typeof fetch>().mockResolvedValueOnce(
+        streamResponse([
+          e("session.started", { runtime: { modelId: "m/x" } }),
+          e("message.received", { message: "go", turnId: "turn_0" }),
+          e("step.started", { turnId: "turn_0", sequence: 1, stepIndex: 0 }),
+          e("actions.requested", {
+            turnId: "turn_0",
+            sequence: 1,
+            actions: [
+              { kind: "subagent-call", name: "ask_researcher", subagentName: "researcher", callId: "c1", input: {} },
+              { toolName: "bash", input: { command: "ls" }, callId: "c2" },
+            ],
+          }),
+          e("subagent.called", {
+            turnId: "turn_0",
+            callId: "c1",
+            childSessionId: "wrun_child",
+            name: "ask_researcher",
+            toolName: "researcher",
+          }),
+          // Another turn's call with the same id must not attach here.
+          e("subagent.called", { turnId: "turn_9", callId: "c2", childSessionId: "wrun_other" }),
+          e("step.completed", { turnId: "turn_0", sequence: 1, stepIndex: 0 }),
+          e("turn.completed", { turnId: "turn_0" }),
+        ]),
+      ),
+    );
+
+    let settled: TurnResult | null = null;
+    for await (const event of resumeTurnStream({
+      baseUrl: "https://agent.example.test",
+      sessionId: "sess_1",
+      turnId: "turn_0",
+      streamIndex: 0,
+    })) {
+      if (event.kind === "done") settled = event.result;
+    }
+
+    const [subagent, bash] = settled?.steps[0].actions ?? [];
+    expect(subagent.toolName).toBe("ask_researcher");
+    expect(subagent.subagentCall).toEqual({
+      callId: "c1",
+      name: "researcher",
+      childSessionId: "wrun_child",
+    });
+    expect(bash.subagentCall).toBeUndefined();
+  });
+});
+
 describe("model of a follow-up turn (issue #417)", () => {
   it("takes the sent directive when the stream starts past session.started", async () => {
     const at = new Date(Date.now() + 1000).toISOString();

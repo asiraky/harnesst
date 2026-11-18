@@ -20,6 +20,11 @@ import { capField, capString } from "~/observability/capture.server";
 import { chooseRunModel, type RunModel } from "~/observability/run-model";
 import { resolveRunModel } from "~/observability/run-model.server";
 import {
+  linkChildRuns,
+  parentCallName,
+} from "~/observability/subagent-link.server";
+import type { SubagentCall } from "~/observability/turn-usage";
+import {
   ingestRun,
   ingestRunStart,
   type IngestPayload,
@@ -66,8 +71,10 @@ function toolCall(action: {
   output?: unknown;
   summary?: string;
   exitCode?: number;
+  subagentCall?: SubagentCall;
 }): {
   data: Record<string, unknown>;
+  childSessionId?: string;
   resultBytes?: number;
   resultTokens?: number;
   resultCapped?: boolean;
@@ -81,9 +88,14 @@ function toolCall(action: {
   if (action.summary != null) data.summary = action.summary;
   if (action.exitCode != null) data.exitCode = action.exitCode;
   if (input.truncated || output.truncated) data.truncated = true;
-  if (bytes === null) return { data };
+  const child = action.subagentCall?.childSessionId
+    ? { childSessionId: action.subagentCall.childSessionId }
+    : {};
+  if (action.subagentCall?.name) data.subagentName = action.subagentCall.name;
+  if (bytes === null) return { data, ...child };
   return {
     data,
+    ...child,
     resultBytes: bytes,
     resultTokens: tokensForBytes(bytes),
     resultCapped: output.truncated,
@@ -98,7 +110,8 @@ function toolCall(action: {
  *     joined `reply` as a trailing assistant message when no ordering info exists (legacy).
  * A `compaction` step sits before the model call it made room for. Every model call carries eve's
  * session, turn and step (the join to the gateway call log) and, in a subagent's child session,
- * the subagent's name and the parent's call id.
+ * the subagent's name and the parent's call id. A tool call that started a subagent carries its
+ * name and, when the stream said, the child session it ran in.
  * All rich fields are size-capped (see capture.server.ts); redaction happens at ingest. Pure
  * (no DB) so it can be unit-tested. Seq is monotonic from 1.
  *
@@ -120,7 +133,7 @@ export function turnToSteps(
   const turnId = result.turnId ?? undefined;
   const subagent = result.subagent
     ? {
-        subagentName: result.subagent.name,
+        subagentName: result.subagent.name ?? undefined,
         parentCallId: result.subagent.parentCallId,
       }
     : {};
@@ -212,6 +225,13 @@ export function turnToSteps(
   });
 
   return steps;
+}
+
+/** The subagent calls a turn made, each with the child session it started. */
+export function subagentCallsOf(result: TurnResult): SubagentCall[] {
+  return result.steps.flatMap((step) =>
+    (step.actions ?? []).flatMap((a) => (a.subagentCall ? [a.subagentCall] : [])),
+  );
 }
 
 export interface RunTotals {
@@ -372,7 +392,18 @@ export async function recordTurnFinish(input: {
 }): Promise<void> {
   const finishedAt = input.finishedAt ?? new Date();
   const channel = input.channel ?? "playground";
-  const { result } = input;
+  // A pushed child knows its parent call but not the subagent's name: the parent's tool call
+  // has it when the parent was recorded first (`./subagent-link.server`).
+  let result = input.result;
+  const parent = result.subagent;
+  if (parent && !parent.name && parent.parentSessionId) {
+    const name = await parentCallName(
+      input.projectId,
+      parent.parentSessionId,
+      parent.parentCallId,
+    );
+    if (name) result = { ...result, subagent: { ...parent, name } };
+  }
   const model = await resolveRunModel({
     projectId: input.projectId,
     releaseId: input.releaseId,
@@ -403,4 +434,8 @@ export async function recordTurnFinish(input: {
     }),
   };
   await ingestRun(input.projectId, payload);
+  // A child recorded before this parent turn gets its link now.
+  const calls = subagentCallsOf(result);
+  if (calls.length > 0)
+    await linkChildRuns(input.projectId, calls, input.startedAt);
 }

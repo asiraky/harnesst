@@ -48,9 +48,13 @@ import {
   type TurnModelSource,
 } from "~/models/model-directive";
 import {
+  actionToolName,
   applyCompactionEvent,
   readStepUsage,
+  applySubagentCalled,
+  readSubagentAction,
   stepKeyOf,
+  type SubagentCall,
   type SubagentInvocation,
   type TurnCompaction,
 } from "~/observability/turn-usage";
@@ -68,6 +72,8 @@ export interface TurnAction {
   input?: unknown;
   /** Raw tool output as eve returned it (`action.result`), full result payload. */
   output?: unknown;
+  /** Set when the call started a subagent: its name and, once known, the child session. */
+  subagentCall?: SubagentCall;
 }
 
 export interface TurnStep {
@@ -1210,19 +1216,28 @@ async function* drainTurnStream(input: {
             for (const rawAction of list) {
               if (typeof rawAction !== "object" || rawAction === null) continue;
               const a = rawAction as Record<string, unknown>;
-              const toolName =
-                typeof a.toolName === "string" ? a.toolName : "tool";
+              const toolName = actionToolName(a);
               const summary = summarizeActionInput(a.input);
               // Keep the FULL input (not just the one-line summary) so the transcript can
               // render the real command/args; caps + redaction are applied at persist time.
               const record: TurnAction = { toolName, summary, input: a.input };
               if (typeof a.callId === "string") record.callId = a.callId;
+              const subagentCall = readSubagentAction(a);
+              if (subagentCall) record.subagentCall = subagentCall;
               seqActions.push(record);
               if (typeof a.callId === "string")
                 actionByCallId.set(a.callId, record);
               yield { kind: "action", toolName, summary };
             }
             actionsBySeq.set(stepKey, seqActions);
+            break;
+          }
+          case "subagent.called": {
+            if (!ours) break;
+            const callId = typeof data.callId === "string" ? data.callId : null;
+            const record = callId ? actionByCallId.get(callId) : undefined;
+            if (record)
+              record.subagentCall = applySubagentCalled(record.subagentCall, data);
             break;
           }
           case "action.result": {

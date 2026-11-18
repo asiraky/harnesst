@@ -388,6 +388,40 @@ describe("foldSessionEvents usage, compaction and subagent linkage (issue #417)"
     expect(next.turns[0].result.subagent).toEqual(linked);
   });
 
+  it("keeps the child session a subagent call started on that call", () => {
+    const fold = foldSessionEvents(
+      indexed([
+        evt("message.received", { turnId: "turn_0", message: "delegate" }),
+        evt("actions.requested", {
+          turnId: "turn_0",
+          sequence: 1,
+          stepIndex: 0,
+          actions: [
+            { kind: "subagent-call", name: "ask_writer", subagentName: "writer", callId: "c1" },
+            { kind: "subagent-call", name: "ask_writer", subagentName: "writer", callId: "c2" },
+          ],
+        }),
+        evt("subagent.called", {
+          turnId: "turn_0",
+          callId: "c1",
+          childSessionId: "wrun_child",
+          name: "ask_writer",
+          toolName: "writer",
+        }),
+        // An unknown call id is ignored rather than inventing an action.
+        evt("subagent.called", { turnId: "turn_0", callId: "nope", childSessionId: "wrun_x" }),
+        evt("step.completed", { turnId: "turn_0", sequence: 1, stepIndex: 0 }),
+        evt("turn.completed", { turnId: "turn_0" }),
+      ]),
+    );
+    const actions = fold.turns[0].result.steps[0].actions ?? [];
+    expect(actions.map((a) => [a.toolName, a.subagentCall])).toEqual([
+      ["ask_writer", { callId: "c1", name: "writer", childSessionId: "wrun_child" }],
+      // A push never carries subagent.called (hooks do not see it): the name still comes through.
+      ["ask_writer", { callId: "c2", name: "writer", childSessionId: null }],
+    ]);
+  });
+
   it("marks a dynamic agent's undirected turn as the fallback model", () => {
     const fold = foldSessionEvents(
       indexed([
