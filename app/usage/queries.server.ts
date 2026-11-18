@@ -22,6 +22,7 @@ import {
 } from "~/db/schema";
 import type { BurnHour, RunAggregate } from "./rollup";
 import type { TraceGatewayRow, TraceStepRow, WithheldMark } from "./trace";
+import { parseToolRepeats, type RunSignal, type StepSignal } from "./warnings";
 
 type Row = Record<string, unknown>;
 
@@ -341,11 +342,15 @@ export interface ConnectionTotals {
   calls: number;
   input: number | null;
   cached: number | null;
+  /** Input and calls on rows that report cached tokens: the base for a cache hit rate. */
+  cacheInput: number | null;
+  cacheCalls: number;
   output: number | null;
   reasoning: number | null;
   rateLimited: number;
   errors: number;
   lastAt: string | null;
+  lastRateLimitedAt: string | null;
   planType: string | null;
 }
 
@@ -353,10 +358,13 @@ export async function connectionTotals(orgId: string, since: Date): Promise<Conn
   const result = await rows<Row>(sql`
     select connection_id, count(*)::int as calls,
       sum(input_tokens)::float8 as input, sum(cached_input_tokens)::float8 as cached,
+      sum(input_tokens) filter (where cached_input_tokens is not null)::float8 as cache_input,
+      count(*) filter (where cached_input_tokens is not null)::int as cache_calls,
       sum(output_tokens)::float8 as output, sum(reasoning_tokens)::float8 as reasoning,
       count(*) filter (where http_status = 429)::int as limited,
       count(*) filter (where http_status >= 400 and http_status <> 429)::int as errors,
       max(started_at) as last_at,
+      max(started_at) filter (where http_status = 429) as last_limited_at,
       (array_agg(plan_type order by started_at desc) filter (where plan_type is not null))[1] as plan_type
     from gateway_calls
     where org_id = ${orgId} and started_at >= ${ts(since)}
@@ -367,11 +375,14 @@ export async function connectionTotals(orgId: string, since: Date): Promise<Conn
     calls: n0(r.calls),
     input: n(r.input),
     cached: n(r.cached),
+    cacheInput: n(r.cache_input),
+    cacheCalls: n0(r.cache_calls),
     output: n(r.output),
     reasoning: n(r.reasoning),
     rateLimited: n0(r.limited),
     errors: n0(r.errors),
     lastAt: iso(r.last_at),
+    lastRateLimitedAt: iso(r.last_limited_at),
     planType: str(r.plan_type),
   }));
 }
@@ -698,4 +709,134 @@ export async function projectNames(orgId: string, ids: string[]) {
     .from(projects)
     .where(and(eq(projects.orgId, orgId), inArray(projects.id, ids)));
   return new Map(list.map((p) => [p.id, p.name]));
+}
+
+// ---------------------------------------------------------------------------------------------
+// Warning signals (issue #419)
+// ---------------------------------------------------------------------------------------------
+
+/** The most recent runs a warning scan looks at, so a busy window stays bounded. */
+export const WARNING_RUN_LIMIT = 1000;
+
+/**
+ * What the warning rules read, for the runs in scope: per-run context, sweep and repeat fields,
+ * and step groups (compactions per turn, tool errors per tool and kind, withheld results per
+ * tool). Payloads are read only for compaction rows, tool errors and large results.
+ */
+export async function warningSignals(input: {
+  projectIds: string[];
+  since: Date;
+  agentId?: string;
+  runId?: string;
+}): Promise<{ runs: RunSignal[]; steps: StepSignal[] }> {
+  if (input.projectIds.length === 0) return { runs: [], steps: [] };
+  const scope = sql`r.project_id in (${idList(input.projectIds)})
+    ${input.runId ? sql`and r.id = ${input.runId}` : sql`and r.started_at >= ${ts(input.since)}`}
+    ${input.agentId ? sql`and r.agent_id = ${input.agentId}` : sql``}`;
+  const picked = sql`picked as materialized (
+    select r.id, r.project_id, r.agent_id, r.started_at, r.finished_at, r.peak_context_tokens,
+      r.metadata->>'settledBy' as settled_by, r.metadata->'toolRepeats' as repeats
+    from runs r where ${scope}
+    order by r.started_at desc
+    limit ${WARNING_RUN_LIMIT}
+  )`;
+  const [runRows, stepRows] = await Promise.all([
+    rows<Row>(sql`
+      with ${picked}
+      select p.*, st.median_ctx, st.context_window, st.calls
+      from picked p
+      left join lateral (
+        select (percentile_cont(0.5) within group (order by s.tokens_input))::float8 as median_ctx,
+          max(s.context_window)::int as context_window, count(*)::int as calls
+        from run_steps s where s.run_id = p.id and s.type = 'model_call'
+      ) st on true
+    `),
+    rows<Row>(sql`
+      with ${picked}
+      select p.id as run_id, p.project_id, p.agent_id, p.started_at, g.*
+      from picked p
+      join lateral (
+        select
+          case when s.type = 'compaction' then 'compaction'
+            when s.result_tokens >= 1000 and s.data ? 'withheld' then 'withheld'
+            else 'tool_error' end as kind,
+          case when s.type = 'compaction' then coalesce(s.turn_id, '')
+            else coalesce(s.tool_name, '(unnamed)') end as grp,
+          case when s.type = 'tool_call' and not (s.result_tokens >= 1000 and s.data ? 'withheld')
+            then coalesce('exit ' || (s.data->>'exitCode'), 'error') end as error_kind,
+          count(*)::int as n,
+          count(*) filter (where s.type = 'compaction' and s.data->>'completed' = 'true')::int as completed,
+          min(s.seq)::int as first_seq,
+          max(s.result_tokens)::int as max_tokens,
+          -- Only withheld rows (large results already matched above) have their payload read here.
+          max(case when s.result_tokens >= 1000 and s.data ? 'withheld'
+              and jsonb_typeof(s.data->'withheld'->'limitTokens') = 'number'
+            then (s.data->'withheld'->>'limitTokens')::float8 end) as limit_tokens
+        from run_steps s
+        where s.run_id = p.id
+          and (s.type = 'compaction'
+            or (s.type = 'tool_call' and (s.is_error or (s.result_tokens >= 1000 and s.data ? 'withheld'))))
+        group by 1, 2, 3
+      ) g on true
+    `),
+  ]);
+  return {
+    runs: runRows.map((r) => ({
+      runId: String(r.id),
+      projectId: String(r.project_id),
+      agentId: str(r.agent_id),
+      startedAt: iso(r.started_at)!,
+      finishedAt: iso(r.finished_at),
+      settledBy: str(r.settled_by),
+      medianContext: n(r.median_ctx),
+      window: n(r.context_window),
+      peakContext: n(r.peak_context_tokens),
+      calls: n0(r.calls),
+      repeats: parseToolRepeats(r.repeats),
+    })),
+    steps: stepRows.map((r) => ({
+      runId: String(r.run_id),
+      projectId: String(r.project_id),
+      agentId: str(r.agent_id),
+      startedAt: iso(r.started_at)!,
+      kind: String(r.kind) as StepSignal["kind"],
+      group: String(r.grp),
+      errorKind: str(r.error_kind),
+      count: n0(r.n),
+      completed: n0(r.completed),
+      firstSeq: n0(r.first_seq),
+      maxTokens: n(r.max_tokens),
+      limitTokens: n(r.limit_tokens),
+    })),
+  };
+}
+
+/**
+ * Evidence for a few steps (each warning's worst case): a short input and error excerpt, and the
+ * model call that made the step. Scoped to runs the caller already authorised.
+ */
+export async function stepEvidence(items: { runId: string; seq: number }[]) {
+  const out = new Map<string, { callSeq: number | null; inputPreview: string | null; message: string | null }>();
+  if (items.length === 0) return out;
+  const pairs = sql.join(items.map((i) => sql`(${i.runId}, ${i.seq}::int)`), sql`, `);
+  const result = await rows<Row>(sql`
+    select s.run_id, s.seq,
+      left((s.data->'input')::text, 300) as input_preview,
+      left(coalesce(
+        s.data->'output'->>'stderr', s.data->>'error', s.data->'output'->>'error',
+        case when jsonb_typeof(s.data->'output') = 'string' then s.data->>'output' end
+      ), 300) as message,
+      (select max(m.seq) from run_steps m
+        where m.run_id = s.run_id and m.type = 'model_call' and m.seq < s.seq) as call_seq
+    from run_steps s
+    where (s.run_id, s.seq) in (${pairs})
+  `);
+  for (const r of result) {
+    out.set(`${r.run_id}:${r.seq}`, {
+      callSeq: n(r.call_seq),
+      inputPreview: str(r.input_preview),
+      message: str(r.message),
+    });
+  }
+  return out;
 }

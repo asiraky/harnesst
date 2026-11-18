@@ -23,6 +23,7 @@ import {
 } from "~/components/usage";
 import { Badge } from "~/components/ui/badge";
 import { noindexMeta } from "~/lib/seo";
+import { WarningsPanel } from "~/components/usage-warnings";
 import { resolveUsageViewer } from "~/usage/access.server";
 import { formatPercent, parseWindowDays, planWindowLabel, ratio, windowSince } from "~/usage/format";
 import {
@@ -35,6 +36,7 @@ import {
   rateLimitedCalls,
 } from "~/usage/queries.server";
 import { attribute, burnBy, hourlySeries, type BurnShare } from "~/usage/rollup";
+import { loadWarnings } from "~/usage/warnings.server";
 import type { Route } from "./+types/usage.connections.$connectionId";
 
 export const loader = (args: LoaderFunctionArgs) =>
@@ -57,13 +59,14 @@ export const loader = (args: LoaderFunctionArgs) =>
       };
       if (connection.provider !== "codex") return { ...base, codex: null };
 
-      const [burn, samples, limited, totals, headroom, names] = await Promise.all([
+      const [burn, samples, limited, totals, headroom, names, warnings] = await Promise.all([
         connectionBurn(viewer.orgId, connection.id, since),
         headroomSamples(viewer.orgId, connection.id, since),
         rateLimitedCalls(viewer.orgId, connection.id, since),
         connectionTotals(viewer.orgId, since),
         latestHeadroom(viewer.orgId),
         projectNames(viewer.orgId, [...viewer.visible]),
+        loadWarnings({ orgId: viewer.orgId, projects: [], since, connections: connection.id }),
       ]);
       const byRepo = burnBy(burn, "project", viewer.visible, names);
       const byAgent = burnBy(burn, "agent", viewer.visible, names);
@@ -80,6 +83,7 @@ export const loader = (args: LoaderFunctionArgs) =>
       return {
         ...base,
         codex: {
+          warnings,
           totals: totals.find((t) => t.connectionId === connection.id) ?? null,
           headroom: headroom.get(connection.id) ?? null,
           samples,
@@ -196,7 +200,8 @@ export default function ConnectionUsage({ loaderData }: Route.ComponentProps) {
 
   const t = codex.totals;
   const h = codex.headroom;
-  const cacheHit = ratio(t?.cached, t?.input);
+  // Over calls that report cached tokens, so calls without the field don't drag the rate down.
+  const cacheHit = ratio(t?.cached, t?.cacheInput);
   return (
     <AppShell>
       <UsageCrumbs items={crumbs} days={days} />
@@ -213,11 +218,13 @@ export default function ConnectionUsage({ loaderData }: Route.ComponentProps) {
       <TileGrid>
         <StatTile label="Calls" value={(t?.calls ?? 0).toLocaleString()} sub={t?.lastAt ? <>last <LocalizedDateTime value={t.lastAt} options={{ month: "short", day: "numeric", hour: "numeric", minute: "numeric" }} /></> : undefined} />
         <StatTile label="Input" value={<Tokens value={t?.input ?? null} />} sub={<>output <Tokens value={t?.output ?? null} short /></>} />
-        <StatTile label="Cache hit" value={<Pct value={cacheHit} />} tone={cacheHit != null && cacheHit < 0.2 && (t?.calls ?? 0) >= 50 ? "warn" : null} />
+        <StatTile label="Cache hit" value={<Pct value={cacheHit} />} tone={cacheHit != null && cacheHit < 0.2 && (t?.cacheCalls ?? 0) >= 50 ? "warn" : null} />
         <StatTile label="Reasoning" value={<Tokens value={t?.reasoning ?? null} />} />
         <StatTile label="429s" value={t?.rateLimited ?? 0} tone={t?.rateLimited ? "crit" : null} />
         <StatTile label="Other errors" value={t?.errors ?? 0} tone={t?.errors ? "warn" : null} />
       </TileGrid>
+
+      <WarningsPanel warnings={codex.warnings} days={days} title="Warnings on this connection" emptyText="No warnings on this connection." />
 
       <Panel title="Plan headroom and burn, one time axis" icon={<Activity className="size-4" aria-hidden />} aside="Bars by repository · agent, hourly (UTC)">
         <ConnectionChart since={since} until={now} samples={codex.samples} series={codex.series} labels={codex.labels} limited={codex.limitedHours} />

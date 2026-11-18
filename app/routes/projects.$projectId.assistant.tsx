@@ -256,6 +256,11 @@ export const loader = (args: LoaderFunctionArgs) =>
         }
       }
 
+      // Usage-warning handoff (#419): "Send to assistant" opens here with ?draft=<message> the
+      // owner already reviewed. It only seeds the composer; nothing is sent until they press send.
+      const draft = args.url.searchParams.get("draft");
+      if (!fixPrefill && draft) fixPrefill = draft.slice(0, 6000);
+
       return {
         project,
         fixPrefill,
@@ -366,14 +371,15 @@ export default function Assistant({ loaderData }: Route.ComponentProps) {
   const NewSessionForm = newSessionFetcher.Form;
   const ProvisionForm = provisionFetcher.Form;
 
-  // The ?fix= handoff is one-shot: once the composer is seeded from the loader, strip the
+  // The ?fix= and ?draft= handoffs are one-shot: once the composer is seeded from the loader, strip the
   // param so a reload (or sending the message) doesn't re-fill it. The textarea is
   // uncontrolled, so its seeded text survives the revalidation this triggers.
   const [searchParams, setSearchParams] = useSearchParams();
   useEffect(() => {
-    if (!searchParams.has("fix")) return;
+    if (!searchParams.has("fix") && !searchParams.has("draft")) return;
     const params = new URLSearchParams(searchParams);
     params.delete("fix");
+    params.delete("draft");
     setSearchParams(params, { replace: true, preventScrollReset: true });
   }, [searchParams, setSearchParams]);
 

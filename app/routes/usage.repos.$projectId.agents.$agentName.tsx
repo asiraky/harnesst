@@ -20,6 +20,7 @@ import {
   usageHref,
 } from "~/components/usage";
 import { RunTable } from "~/components/usage-run-table";
+import { WarningsPanel } from "~/components/usage-warnings";
 import { Button } from "~/components/ui/button";
 import { listAllAgents } from "~/db/queries.server";
 import { noindexMeta } from "~/lib/seo";
@@ -39,6 +40,7 @@ import {
   toolRanking,
 } from "~/usage/queries.server";
 import { addTotals, emptyTotals } from "~/usage/rollup";
+import { loadWarnings } from "~/usage/warnings.server";
 import type { Route } from "./+types/usage.repos.$projectId.agents.$agentName";
 
 /** The most runs the page loads for its chart and table. */
@@ -57,11 +59,12 @@ export const loader = (args: LoaderFunctionArgs) =>
       const now = new Date();
       const since = windowSince(days, now);
       const scope = { projectId: project.id, agentId: agent.id, since };
-      const [aggs, runRows, tools, subagents] = await Promise.all([
+      const [aggs, runRows, tools, subagents, warnings] = await Promise.all([
         runAggregates({ projectIds: [project.id], since, agentId: agent.id }),
         listRunRows({ projectIds: [project.id], since, agentId: agent.id, limit: RUN_LIMIT + 1 }),
         toolRanking(scope),
         subagentUsage(scope),
+        loadWarnings({ orgId: project.orgId, projects: [project], since, agentId: agent.id }),
       ]);
       return {
         days,
@@ -75,6 +78,7 @@ export const loader = (args: LoaderFunctionArgs) =>
         truncated: runRows.length > RUN_LIMIT,
         tools,
         subagents,
+        warnings,
       };
     },
     { ensureSignedIn: true },
@@ -87,7 +91,7 @@ export function meta({ loaderData: data }: Route.MetaArgs) {
 type SortKey = "recent" | "input" | "calls" | "peak" | "compactions";
 
 export default function AgentUsage({ loaderData }: Route.ComponentProps) {
-  const { days, since, now, project, agent, totals, window, runs, truncated, tools, subagents } = loaderData;
+  const { days, since, now, project, agent, totals, window, runs, truncated, tools, subagents, warnings } = loaderData;
   const [status, setStatus] = useState<"all" | "failed" | "completed" | "running">("all");
   const [sort, setSort] = useState<SortKey>("recent");
   const [shown, setShown] = useState(25);
@@ -136,6 +140,8 @@ export default function AgentUsage({ loaderData }: Route.ComponentProps) {
         />
         <StatTile label="Compactions" value={totals.compactions ?? <NotAvailable />} sub={`${totals.compactedRuns} runs affected`} tone={totals.compactedRuns ? "warn" : null} />
       </TileGrid>
+
+      <WarningsPanel warnings={warnings} days={days} title={`Warnings for ${agent.name}`} max={4} emptyText={null} />
 
       <Panel
         title="Per run, on one time axis"

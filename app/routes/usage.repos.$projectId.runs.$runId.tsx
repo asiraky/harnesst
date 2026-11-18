@@ -26,6 +26,8 @@ import { Button } from "~/components/ui/button";
 import { listAgents } from "~/db/queries.server";
 import { contextPath } from "~/lib/paths";
 import { noindexMeta } from "~/lib/seo";
+import { WarningsPanel } from "~/components/usage-warnings";
+import { loadWarnings } from "~/usage/warnings.server";
 import { formatMs } from "~/lib/time";
 import { requireProject } from "~/project/guard.server";
 import {
@@ -43,6 +45,7 @@ import {
   traceGatewayRows,
   traceSteps,
 } from "~/usage/queries.server";
+import { REPEAT_THRESHOLD, type Occurrence } from "~/usage/warnings";
 import { buildTrace, groupTurns, traceItems, type TraceCall, type TraceItem } from "~/usage/trace";
 import type { Route } from "./+types/usage.repos.$projectId.runs.$runId";
 
@@ -64,6 +67,30 @@ export const loader = (args: LoaderFunctionArgs) =>
         listConnections(project.orgId),
       ]);
       const trace = buildTrace(steps, gateway);
+      // Repeats from the trace cover runs ingested before repeats were stored at ingest.
+      const repeatOccurrences: Occurrence[] = trace.repeats
+        .filter((r) => r.count >= REPEAT_THRESHOLD)
+        .slice(0, 5)
+        .map((r) => ({
+          rule: "repeated_call",
+          severity: "warn",
+          projectId: project.id,
+          agentId: run.agentId,
+          connectionId: null,
+          runId: run.id,
+          callSeq: null,
+          stepSeq: r.firstSeq,
+          at: run.startedAt.toISOString(),
+          group: r.toolName ?? "(unnamed)",
+          evidence: { tool: r.toolName ?? "(unnamed)", count: r.count },
+        }));
+      const warnings = await loadWarnings({
+        orgId: project.orgId,
+        projects: [project],
+        since: run.startedAt,
+        runId: run.id,
+        overrideOccurrences: (occ) => [...occ.filter((o) => o.rule !== "repeated_call"), ...repeatOccurrences],
+      });
       const agentName = run.agentId ? (names.get(run.agentId)?.name ?? null) : null;
       return {
         days,
@@ -78,7 +105,7 @@ export const loader = (args: LoaderFunctionArgs) =>
         calls: trace.calls,
         compactions: trace.compactions,
         metrics: trace.metrics,
-        repeats: trace.repeats,
+        warnings,
         children: Object.fromEntries(children),
         connections: connections
           .filter((c) => trace.metrics.connectionIds.includes(c.id))
@@ -101,7 +128,7 @@ export default function RunTrace({ loaderData }: Route.ComponentProps) {
 }
 
 function RunTraceBody({ loaderData }: Pick<Route.ComponentProps, "loaderData">) {
-  const { days, project, agentName, agentInRoster, run, calls, compactions, metrics, repeats, children, connections } = loaderData;
+  const { days, project, agentName, agentInRoster, run, calls, compactions, metrics, warnings, children, connections } = loaderData;
   const [mode, setMode] = useState<"order" | "time">("order");
   const [range, setRange] = useState<[number, number]>([1, Math.max(1, calls.length)]);
   const [statusFilter, setStatusFilter] = useState<"all" | "problems">("all");
@@ -199,15 +226,7 @@ function RunTraceBody({ loaderData }: Pick<Route.ComponentProps, "loaderData">) 
           <AlertDescription className="whitespace-pre-wrap">{run.error}</AlertDescription>
         </Alert>
       )}
-      {repeats.some((r) => r.count >= 3) && (
-        <Alert className="mt-4">
-          <AlertTriangle className="size-4" />
-          <AlertTitle>Repeated identical tool calls</AlertTitle>
-          <AlertDescription>
-            {repeats.filter((r) => r.count >= 3).slice(0, 3).map((r) => `${r.toolName ?? "tool"} ×${r.count}`).join(" · ")}
-          </AlertDescription>
-        </Alert>
-      )}
+      <WarningsPanel warnings={warnings} days={days} title="Warnings in this run" compact emptyText={null} />
 
       <Panel
         title="Context per call"
