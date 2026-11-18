@@ -10,13 +10,17 @@
  *     count reaches the stream.
  *   - `compaction.requested` / `compaction.completed`: `modelId`, `sequence`, and on the request
  *     `usageInputTokens`, the context size that triggered it.
- *   - A subagent runs as its own child session. The PARENT's stream says which call started it:
- *     `subagent.called` carries `callId`, `childSessionId`, `name`, `remote`. The child's stream
- *     carries no parent linkage on the eve versions harnesst deploys (0.22 to 0.29: their
- *     `session.started` has only `runtime`), and the parent's stream does not relay the child's
- *     steps (`subagent.event` is declared but never emitted). So a child run is linked to its
- *     parent call at record time, from the parent's `subagent.called` (`./subagent-link.server`).
- *     `readSubagentInvocation` covers an eve that does put `invocation` on `session.started`.
+ *   - A subagent runs as its own child session, started by a runtime action on the parent:
+ *     `actions.requested` lists it as `{ kind: "subagent-call", callId, name, subagentName }`
+ *     (`remote-agent-call` with `remoteAgentName` for a remote agent), with no `toolName`. The
+ *     parent's stream then emits `subagent.called` with `callId` and `childSessionId`. eve
+ *     starts a new child session per call. Hooks never see `subagent.called` (eve writes it
+ *     straight to the stream), so it reaches only harnesst's own drains.
+ *   - The child's stream names no parent on the eve versions harnesst deploys (0.22 to 0.29:
+ *     `session.started` carries only `runtime`; `subagent.event` is declared but never sent).
+ *     The child's hook context does: `ctx.session.parent = { callId, sessionId, turn }`, which
+ *     the run hook forwards. `readSubagentInvocation` covers an eve that does put `invocation`
+ *     on `session.started`.
  */
 import { normalizeRuntimeModelId } from "~/models/model-directive";
 
@@ -155,29 +159,50 @@ export function readSubagentInvocation(
   };
 }
 
-/** The child session a parent's subagent tool call started. */
+/** A parent's tool call that started a subagent. */
 export interface SubagentCall {
   callId: string;
-  /** The subagent's name; null when eve did not send one. */
+  /** The subagent's (or remote agent's) name; null when eve did not send one. */
   name: string | null;
-  childSessionId: string;
+  /** The child session it runs in, once `subagent.called` said so. */
+  childSessionId: string | null;
 }
 
 function text(value: unknown): string | null {
   return typeof value === "string" && value ? value : null;
 }
 
-/**
- * The parent-side facts of a `subagent.called`, or null without a call or child session id.
- * eve puts the subagent's (or remote agent's) name in `toolName` and the tool's name in `name`.
- */
-export function readSubagentCall(
-  data: Record<string, unknown>,
+/** The subagent call an `actions.requested` entry starts, or null for an ordinary tool call. */
+export function readSubagentAction(
+  action: Record<string, unknown>,
 ): SubagentCall | null {
+  const callId = text(action.callId);
+  if (!callId) return null;
+  if (action.kind === "subagent-call")
+    return { callId, name: text(action.subagentName), childSessionId: null };
+  if (action.kind === "remote-agent-call")
+    return { callId, name: text(action.remoteAgentName), childSessionId: null };
+  return null;
+}
+
+/**
+ * Fold a `subagent.called` into the call it reports on: the child session, and the name when the
+ * action had none. eve puts the subagent's (or remote agent's) name in `toolName` here and the
+ * tool's name in `name`. Returns the call unchanged without a call or child session id.
+ */
+export function applySubagentCalled(
+  current: SubagentCall | undefined,
+  data: Record<string, unknown>,
+): SubagentCall | undefined {
   const callId = text(data.callId);
   const childSessionId = text(data.childSessionId);
-  if (!callId || !childSessionId) return null;
-  return { callId, name: text(data.toolName) ?? text(data.name), childSessionId };
+  if (!callId || !childSessionId) return current;
+  if (current && current.callId !== callId) return current;
+  return {
+    callId,
+    name: current?.name ?? text(data.toolName) ?? text(data.name),
+    childSessionId,
+  };
 }
 
 /**

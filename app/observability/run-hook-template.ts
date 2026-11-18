@@ -156,6 +156,16 @@ function evict(sessionId, keepKey) {
   }
 }
 
+function parentOf(session) {
+  var parent = session && session.parent ? session.parent : null;
+  if (!parent || typeof parent.callId !== "string" || !parent.callId) return null;
+  return {
+    callId: parent.callId,
+    sessionId: typeof parent.sessionId === "string" ? parent.sessionId : null,
+    turnId: parent.turn && typeof parent.turn.id === "string" ? parent.turn.id : null,
+  };
+}
+
 function post(target, body) {
   return fetch(target.url, {
     method: "POST",
@@ -254,6 +264,9 @@ export default defineHook({
           channelKind: channelKind,
           modelId: models.get(sessionId) || null,
           agentName: ctx && ctx.agent && typeof ctx.agent.name === "string" ? ctx.agent.name : null,
+          // A subagent's child session: the parent tool call it serves. Its own stream never
+          // says, and the parent's \`subagent.called\` never reaches a hook.
+          parent: parentOf(session),
           final: isFinal,
           truncated: buffer.truncated,
           // The COMPLETE list for this turn, resent whole on every flush. A tail-only batch would

@@ -1,2 +1,1 @@
-ALTER TABLE "run_steps" ADD COLUMN "child_session_id" text;--> statement-breakpoint
-CREATE INDEX "run_steps_child_session_idx" ON "run_steps" USING btree ("child_session_id") WHERE "run_steps"."child_session_id" is not null;
+ALTER TABLE "run_steps" ADD COLUMN "child_session_id" text;

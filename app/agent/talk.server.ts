@@ -51,7 +51,8 @@ import {
   actionToolName,
   applyCompactionEvent,
   readStepUsage,
-  readSubagentCall,
+  applySubagentCalled,
+  readSubagentAction,
   stepKeyOf,
   type SubagentCall,
   type SubagentInvocation,
@@ -71,7 +72,7 @@ export interface TurnAction {
   input?: unknown;
   /** Raw tool output as eve returned it (`action.result`), full result payload. */
   output?: unknown;
-  /** Set when the call started a subagent: the child session it runs in (`subagent.called`). */
+  /** Set when the call started a subagent: its name and, once known, the child session. */
   subagentCall?: SubagentCall;
 }
 
@@ -1221,6 +1222,8 @@ async function* drainTurnStream(input: {
               // render the real command/args; caps + redaction are applied at persist time.
               const record: TurnAction = { toolName, summary, input: a.input };
               if (typeof a.callId === "string") record.callId = a.callId;
+              const subagentCall = readSubagentAction(a);
+              if (subagentCall) record.subagentCall = subagentCall;
               seqActions.push(record);
               if (typeof a.callId === "string")
                 actionByCallId.set(a.callId, record);
@@ -1231,9 +1234,10 @@ async function* drainTurnStream(input: {
           }
           case "subagent.called": {
             if (!ours) break;
-            const call = readSubagentCall(data);
-            const record = call ? actionByCallId.get(call.callId) : undefined;
-            if (call && record) record.subagentCall = call;
+            const callId = typeof data.callId === "string" ? data.callId : null;
+            const record = callId ? actionByCallId.get(callId) : undefined;
+            if (record)
+              record.subagentCall = applySubagentCalled(record.subagentCall, data);
             break;
           }
           case "action.result": {

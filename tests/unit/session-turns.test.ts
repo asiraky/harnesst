@@ -396,13 +396,16 @@ describe("foldSessionEvents usage, compaction and subagent linkage (issue #417)"
           turnId: "turn_0",
           sequence: 1,
           stepIndex: 0,
-          actions: [{ kind: "subagent-call", name: "writer", subagentName: "writer", callId: "c1" }],
+          actions: [
+            { kind: "subagent-call", name: "ask_writer", subagentName: "writer", callId: "c1" },
+            { kind: "subagent-call", name: "ask_writer", subagentName: "writer", callId: "c2" },
+          ],
         }),
         evt("subagent.called", {
           turnId: "turn_0",
           callId: "c1",
           childSessionId: "wrun_child",
-          name: "writer",
+          name: "ask_writer",
           toolName: "writer",
         }),
         // An unknown call id is ignored rather than inventing an action.
@@ -412,13 +415,11 @@ describe("foldSessionEvents usage, compaction and subagent linkage (issue #417)"
       ]),
     );
     const actions = fold.turns[0].result.steps[0].actions ?? [];
-    expect(actions).toHaveLength(1);
-    expect(actions[0].toolName).toBe("writer");
-    expect(actions[0].subagentCall).toEqual({
-      callId: "c1",
-      name: "writer",
-      childSessionId: "wrun_child",
-    });
+    expect(actions.map((a) => [a.toolName, a.subagentCall])).toEqual([
+      ["ask_writer", { callId: "c1", name: "writer", childSessionId: "wrun_child" }],
+      // A push never carries subagent.called (hooks do not see it): the name still comes through.
+      ["ask_writer", { callId: "c2", name: "writer", childSessionId: null }],
+    ]);
   });
 
   it("marks a dynamic agent's undirected turn as the fallback model", () => {

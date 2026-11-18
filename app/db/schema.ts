@@ -786,12 +786,7 @@ export const runSteps = pgTable(
       .default(sql`'{}'::jsonb`),
     startedAt: timestamp("started_at", { withTimezone: true }),
   },
-  (t) => [
-    index("run_steps_run_seq_idx").on(t.runId, t.seq),
-    index("run_steps_child_session_idx")
-      .on(t.childSessionId)
-      .where(sql`${t.childSessionId} is not null`),
-  ],
+  (t) => [index("run_steps_run_seq_idx").on(t.runId, t.seq)],
 );
 
 /**

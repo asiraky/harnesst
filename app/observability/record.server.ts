@@ -20,8 +20,8 @@ import { capField, capString } from "~/observability/capture.server";
 import { chooseRunModel, type RunModel } from "~/observability/run-model";
 import { resolveRunModel } from "~/observability/run-model.server";
 import {
-  findParentCall,
   linkChildRuns,
+  parentCallName,
 } from "~/observability/subagent-link.server";
 import type { SubagentCall } from "~/observability/turn-usage";
 import {
@@ -88,7 +88,7 @@ function toolCall(action: {
   if (action.summary != null) data.summary = action.summary;
   if (action.exitCode != null) data.exitCode = action.exitCode;
   if (input.truncated || output.truncated) data.truncated = true;
-  const child = action.subagentCall
+  const child = action.subagentCall?.childSessionId
     ? { childSessionId: action.subagentCall.childSessionId }
     : {};
   if (action.subagentCall?.name) data.subagentName = action.subagentCall.name;
@@ -110,8 +110,8 @@ function toolCall(action: {
  *     joined `reply` as a trailing assistant message when no ordering info exists (legacy).
  * A `compaction` step sits before the model call it made room for. Every model call carries eve's
  * session, turn and step (the join to the gateway call log) and, in a subagent's child session,
- * the subagent's name and the parent's call id. A tool call that started a subagent carries the
- * child session it ran in.
+ * the subagent's name and the parent's call id. A tool call that started a subagent carries its
+ * name and, when the stream said, the child session it ran in.
  * All rich fields are size-capped (see capture.server.ts); redaction happens at ingest. Pure
  * (no DB) so it can be unit-tested. Seq is monotonic from 1.
  *
@@ -392,17 +392,18 @@ export async function recordTurnFinish(input: {
 }): Promise<void> {
   const finishedAt = input.finishedAt ?? new Date();
   const channel = input.channel ?? "playground";
-  // A subagent's child session names no parent on its own stream: take the link from the
-  // parent's tool call when the parent was recorded first (`./subagent-link.server`).
-  const parent =
-    input.result.subagent ??
-    (await findParentCall(
+  // A pushed child knows its parent call but not the subagent's name: the parent's tool call
+  // has it when the parent was recorded first (`./subagent-link.server`).
+  let result = input.result;
+  const parent = result.subagent;
+  if (parent && !parent.name && parent.parentSessionId) {
+    const name = await parentCallName(
       input.projectId,
-      input.result.sessionId ?? input.externalSessionId,
-    ));
-  const result: TurnResult = parent
-    ? { ...input.result, subagent: parent }
-    : input.result;
+      parent.parentSessionId,
+      parent.parentCallId,
+    );
+    if (name) result = { ...result, subagent: { ...parent, name } };
+  }
   const model = await resolveRunModel({
     projectId: input.projectId,
     releaseId: input.releaseId,
@@ -435,5 +436,6 @@ export async function recordTurnFinish(input: {
   await ingestRun(input.projectId, payload);
   // A child recorded before this parent turn gets its link now.
   const calls = subagentCallsOf(result);
-  if (calls.length > 0) await linkChildRuns(input.projectId, calls);
+  if (calls.length > 0)
+    await linkChildRuns(input.projectId, calls, input.startedAt);
 }

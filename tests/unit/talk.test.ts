@@ -524,7 +524,7 @@ describe("subagent calls on the live drain (issue #417)", () => {
             turnId: "turn_0",
             sequence: 1,
             actions: [
-              { kind: "subagent-call", name: "researcher", subagentName: "researcher", callId: "c1", input: {} },
+              { kind: "subagent-call", name: "ask_researcher", subagentName: "researcher", callId: "c1", input: {} },
               { toolName: "bash", input: { command: "ls" }, callId: "c2" },
             ],
           }),
@@ -532,7 +532,7 @@ describe("subagent calls on the live drain (issue #417)", () => {
             turnId: "turn_0",
             callId: "c1",
             childSessionId: "wrun_child",
-            name: "researcher",
+            name: "ask_researcher",
             toolName: "researcher",
           }),
           // Another turn's call with the same id must not attach here.
@@ -554,7 +554,7 @@ describe("subagent calls on the live drain (issue #417)", () => {
     }
 
     const [subagent, bash] = settled?.steps[0].actions ?? [];
-    expect(subagent.toolName).toBe("researcher");
+    expect(subagent.toolName).toBe("ask_researcher");
     expect(subagent.subagentCall).toEqual({
       callId: "c1",
       name: "researcher",

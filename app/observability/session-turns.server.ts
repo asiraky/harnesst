@@ -22,7 +22,8 @@ import {
   actionToolName,
   applyCompactionEvent,
   readStepUsage,
-  readSubagentCall,
+  applySubagentCalled,
+  readSubagentAction,
   readSubagentInvocation,
   stepKeyOf,
   type SubagentInvocation,
@@ -325,6 +326,8 @@ export function foldSessionEvents(
             input: a.input,
           };
           if (typeof a.callId === "string") record.callId = a.callId;
+          const subagentCall = readSubagentAction(a);
+          if (subagentCall) record.subagentCall = subagentCall;
           seqActions.push(record);
           if (typeof a.callId === "string") turn.actionByCallId.set(a.callId, record);
         }
@@ -333,11 +336,11 @@ export function foldSessionEvents(
       }
       case "subagent.called": {
         if (!turnId) break;
-        const call = readSubagentCall(data);
-        const record = call
-          ? ensureTurn(turnId, evt.streamIndex, at).actionByCallId.get(call.callId)
+        const callId = typeof data.callId === "string" ? data.callId : null;
+        const record = callId
+          ? ensureTurn(turnId, evt.streamIndex, at).actionByCallId.get(callId)
           : undefined;
-        if (call && record) record.subagentCall = call;
+        if (record) record.subagentCall = applySubagentCalled(record.subagentCall, data);
         break;
       }
       case "action.result": {

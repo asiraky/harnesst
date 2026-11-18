@@ -1,5 +1,5 @@
 {
-  "id": "5874cdbe-a6e2-42bb-9980-9c7a07fe2d48",
+  "id": "8d4817ab-2f4f-499d-bb58-32c709bc8a4a",
   "prevId": "c4e64525-fad6-41db-90a6-b4ed292b0101",
   "version": "7",
   "dialect": "postgresql",
@@ -5918,22 +5918,6 @@
             }
           ],
           "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "run_steps_child_session_idx": {
-          "name": "run_steps_child_session_idx",
-          "columns": [
-            {
-              "expression": "child_session_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "where": "\"run_steps\".\"child_session_id\" is not null",
           "concurrently": false,
           "method": "btree",
           "with": {}

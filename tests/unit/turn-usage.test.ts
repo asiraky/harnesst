@@ -4,7 +4,8 @@ import {
   actionToolName,
   applyCompactionEvent,
   readStepUsage,
-  readSubagentCall,
+  applySubagentCalled,
+  readSubagentAction,
   readSubagentInvocation,
   stepKeyOf,
   type TurnCompaction,
@@ -163,26 +164,42 @@ describe("stepKeyOf", () => {
   });
 });
 
-describe("readSubagentCall", () => {
-  it("takes the subagent's name from toolName, where eve puts it", () => {
+describe("readSubagentAction", () => {
+  it("reads a subagent or remote-agent call off its runtime action", () => {
     expect(
-      readSubagentCall({
-        callId: "c1",
-        childSessionId: "wrun_1",
-        name: "ask_researcher",
-        toolName: "researcher",
-      }),
+      readSubagentAction({ kind: "subagent-call", callId: "c1", name: "ask", subagentName: "researcher" }),
+    ).toEqual({ callId: "c1", name: "researcher", childSessionId: null });
+    expect(
+      readSubagentAction({ kind: "remote-agent-call", callId: "c2", name: "ask", remoteAgentName: "billing" }),
+    ).toEqual({ callId: "c2", name: "billing", childSessionId: null });
+  });
+
+  it("returns null for an ordinary tool call or a call without an id", () => {
+    expect(readSubagentAction({ toolName: "bash", callId: "c1" })).toBeNull();
+    expect(readSubagentAction({ kind: "subagent-call", subagentName: "x" })).toBeNull();
+  });
+});
+
+describe("applySubagentCalled", () => {
+  const action = { callId: "c1", name: "researcher", childSessionId: null };
+
+  it("adds the child session and keeps the action's name", () => {
+    expect(
+      applySubagentCalled(action, { callId: "c1", childSessionId: "wrun_1", name: "ask", toolName: "other" }),
     ).toEqual({ callId: "c1", name: "researcher", childSessionId: "wrun_1" });
   });
 
-  it("falls back to name, then to no name", () => {
-    expect(readSubagentCall({ callId: "c1", childSessionId: "w", name: "x" })?.name).toBe("x");
-    expect(readSubagentCall({ callId: "c1", childSessionId: "w" })?.name).toBeNull();
+  it("takes the name from toolName, where eve puts it, when the action had none", () => {
+    expect(
+      applySubagentCalled(undefined, { callId: "c1", childSessionId: "w", name: "ask", toolName: "researcher" }),
+    ).toEqual({ callId: "c1", name: "researcher", childSessionId: "w" });
+    expect(applySubagentCalled(undefined, { callId: "c1", childSessionId: "w", name: "ask" })?.name).toBe("ask");
   });
 
-  it("returns null without a call id or child session id", () => {
-    expect(readSubagentCall({ childSessionId: "w" })).toBeNull();
-    expect(readSubagentCall({ callId: "c1", childSessionId: "" })).toBeNull();
+  it("leaves the call alone without a child session, or for another call id", () => {
+    expect(applySubagentCalled(action, { callId: "c1" })).toBe(action);
+    expect(applySubagentCalled(action, { callId: "c9", childSessionId: "w" })).toBe(action);
+    expect(applySubagentCalled(undefined, { callId: "c1", childSessionId: "" })).toBeUndefined();
   });
 });
 

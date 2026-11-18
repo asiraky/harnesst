@@ -370,6 +370,12 @@ describe("turnToSteps usage, model and linkage (issue #417)", () => {
               isError: false,
               subagentCall: { callId: "c3", name: null, childSessionId: "wrun_remote" },
             },
+            {
+              toolName: "ask_writer",
+              callId: "c4",
+              isError: false,
+              subagentCall: { callId: "c4", name: "writer", childSessionId: null },
+            },
           ],
         },
       ],
@@ -379,13 +385,11 @@ describe("turnToSteps usage, model and linkage (issue #417)", () => {
       ["c1", "wrun_child", "researcher"],
       ["c2", undefined, undefined],
       ["c3", "wrun_remote", undefined],
+      ["c4", undefined, "writer"],
     ]);
     // The parent's own steps are not a subagent's.
     expect(calls[0].subagentName).toBeUndefined();
-    expect(subagentCallsOf(parent).map((c) => c.childSessionId)).toEqual([
-      "wrun_child",
-      "wrun_remote",
-    ]);
+    expect(subagentCallsOf(parent).map((c) => c.callId)).toEqual(["c1", "c3", "c4"]);
   });
 
   it("leaves a top-level session's steps unlinked", () => {
