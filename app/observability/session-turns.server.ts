@@ -22,6 +22,7 @@ import {
   applyCompactionEvent,
   readStepUsage,
   readSubagentInvocation,
+  stepKeyOf,
   type SubagentInvocation,
   type TurnCompaction,
 } from "~/observability/turn-usage";
@@ -375,8 +376,7 @@ export function foldSessionEvents(
           name: stringField(data, "name") ?? undefined,
           durationMs: started != null ? Math.max(0, atMs - started) : undefined,
           ...usage,
-          sequence,
-          stepIndex,
+          ...stepKeyOf(data),
           isError: type === "step.failed",
           code: failure?.code,
           message: failure?.message,

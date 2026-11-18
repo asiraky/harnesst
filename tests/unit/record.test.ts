@@ -399,6 +399,8 @@ describe("runTotals", () => {
       }),
     );
     expect(totals.peakContextTokens).toBe(150000);
+    // The pass never completed: it stays on its step but is not counted.
+    expect(totals.compactionCount).toBe(0);
   });
 
   it("leaves cost and cache unknown when no step reported them", () => {

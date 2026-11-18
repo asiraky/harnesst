@@ -4,6 +4,7 @@ import {
   applyCompactionEvent,
   readStepUsage,
   readSubagentInvocation,
+  stepKeyOf,
   type TurnCompaction,
 } from "~/observability/turn-usage";
 
@@ -146,5 +147,16 @@ describe("readSubagentInvocation", () => {
     expect(
       readSubagentInvocation({ invocation: { kind: "subagent", name: "x" } }),
     ).toBeNull();
+  });
+});
+
+describe("stepKeyOf", () => {
+  it("keeps the turn number and step index eve sent", () => {
+    expect(stepKeyOf({ sequence: 2, stepIndex: 0 })).toEqual({ sequence: 2, stepIndex: 0 });
+  });
+
+  it("leaves out an index eve did not send instead of guessing one", () => {
+    expect(stepKeyOf({ sequence: 2 })).toEqual({ sequence: 2 });
+    expect(stepKeyOf({})).toEqual({});
   });
 });

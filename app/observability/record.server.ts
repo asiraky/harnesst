@@ -260,7 +260,9 @@ export function runTotals(result: TurnResult): RunTotals {
   }
   if (tokensCachedInput != null) totals.tokensCachedInput = tokensCachedInput;
   if (costUsd != null) totals.costUsd = costUsd;
-  if (result.compactions) totals.compactionCount = result.compactions.length;
+  // A pass that never completed is still on its step; only finished ones count.
+  if (result.compactions)
+    totals.compactionCount = result.compactions.filter((c) => c.completed).length;
   if (peakContextTokens != null) totals.peakContextTokens = peakContextTokens;
   return totals;
 }
@@ -377,9 +379,6 @@ export async function recordTurnFinish(input: {
     turn: result,
     subagentName: result.subagent?.name ?? null,
   });
-  const metadata = result.subagent
-    ? { ...input.metadata, subagent: result.subagent }
-    : input.metadata;
   const payload: IngestPayload = {
     externalRunId: input.externalRunId,
     deploymentId: input.deploymentId,
@@ -390,7 +389,7 @@ export async function recordTurnFinish(input: {
     wallClockMs: input.wallClockMs,
     startedAt: input.startedAt.toISOString(),
     finishedAt: finishedAt.toISOString(),
-    metadata: runMetadata(input.userMessage, metadata),
+    metadata: runMetadata(input.userMessage, input.metadata),
     session: {
       externalSessionId: input.externalSessionId,
       trigger: channel,

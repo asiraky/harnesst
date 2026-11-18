@@ -47,6 +47,20 @@ export function readStepUsage(usage: unknown): StepUsage {
   return out;
 }
 
+/**
+ * eve's turn number and step index off a step event, each only when eve sent it: they join a step
+ * to its gateway call-log row, so a guessed value would join the wrong row.
+ */
+export function stepKeyOf(data: Record<string, unknown>): {
+  sequence?: number;
+  stepIndex?: number;
+} {
+  const out: { sequence?: number; stepIndex?: number } = {};
+  if (typeof data.sequence === "number") out.sequence = data.sequence;
+  if (typeof data.stepIndex === "number") out.stepIndex = data.stepIndex;
+  return out;
+}
+
 /** One compaction pass inside a turn. */
 export interface TurnCompaction {
   /** How many model steps of the turn had completed when it was requested. */

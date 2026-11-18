@@ -42,10 +42,15 @@ import {
   SESSION_WORKSPACE_ID_HEADER,
   SESSION_WORKSPACE_ROUTE,
 } from "~/deploy/session-workspace-channel";
-import { turnModel, type TurnModelSource } from "~/models/model-directive";
+import {
+  parseModelDirective,
+  turnModel,
+  type TurnModelSource,
+} from "~/models/model-directive";
 import {
   applyCompactionEvent,
   readStepUsage,
+  stepKeyOf,
   type SubagentInvocation,
   type TurnCompaction,
 } from "~/observability/turn-usage";
@@ -1298,8 +1303,7 @@ async function* drainTurnStream(input: {
               durationMs:
                 started != null ? Math.max(0, at - started) : undefined,
               ...usage,
-              sequence,
-              stepIndex,
+              ...stepKeyOf(data),
               isError: type === "step.failed",
               code: failure?.code,
               message: failure?.message,
@@ -1431,6 +1435,21 @@ async function* drainTurnStream(input: {
     modelSource,
     contextWindowTokens,
   });
+  // A follow-up turn's stream starts past `session.started`, so the runtime id was never seen.
+  // The directive harnesst sent with this message is still the model the agent ran on. Result
+  // only: the carry stays unresolved so a later slice that does see `session.started` decides.
+  let resultModel = { modelId, modelSource, contextWindowTokens };
+  if (modelId === null) {
+    const directive = parseModelDirective(
+      input.matchMessage ?? input.modelText ?? "",
+    );
+    if (directive)
+      resultModel = {
+        modelId: directive.id,
+        modelSource: "directive",
+        contextWindowTokens: directive.contextWindowTokens ?? null,
+      };
+  }
   const normalized = normalizeReply(reply);
   yield {
     kind: "done",
@@ -1443,9 +1462,7 @@ async function* drainTurnStream(input: {
       reply: normalized.reply,
       replyIsStructured: normalized.replyIsStructured,
       inputRequests,
-      modelId,
-      modelSource,
-      contextWindowTokens,
+      ...resultModel,
       compactions,
       turnId: ourTurnId,
       steps,

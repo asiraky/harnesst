@@ -509,6 +509,48 @@ describe("drain usage and compaction (issue #417)", () => {
   });
 });
 
+describe("model of a follow-up turn (issue #417)", () => {
+  it("takes the sent directive when the stream starts past session.started", async () => {
+    const at = new Date(Date.now() + 1000).toISOString();
+    const message =
+      "<!-- harnesst:model openai/abc/gpt-x ctx=400000 -->\n<!-- harnesst:sig " +
+      "a".repeat(64) +
+      " -->\n\nnext";
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn<typeof fetch>()
+        .mockResolvedValueOnce(
+          new Response(JSON.stringify({}), {
+            status: 202,
+            headers: { "content-type": "application/json", "x-eve-session-id": "sess_1" },
+          }),
+        )
+        .mockResolvedValueOnce(
+          streamResponse([
+            { type: "message.received", data: { message, turnId: "turn_4" }, meta: { at } },
+            { type: "turn.completed", data: { turnId: "turn_4" }, meta: { at } },
+          ]),
+        ),
+    );
+
+    const result = await sendTurn({
+      baseUrl: "https://agent.example.test",
+      message,
+      sessionId: "sess_1",
+      continuationToken: "tok_1",
+      streamIndex: 40,
+    });
+
+    expect(result).toMatchObject({
+      turnId: "turn_4",
+      modelId: "openai/abc/gpt-x",
+      modelSource: "directive",
+      contextWindowTokens: 400000,
+    });
+  });
+});
+
 describe("structured connection recovery from runtime failures", () => {
   it.each(["connection_unavailable", "policy_refusal"])(
     "retains recovery context only for gateway connection failures (%s)",
