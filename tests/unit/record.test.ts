@@ -433,15 +433,28 @@ describe("runTotals", () => {
     });
   });
 
-  it("counts a compaction trigger above every step input as the peak", () => {
+  it("takes the peak from model calls, not eve's fractional compaction estimate", () => {
+    // The lost prod run: eve's compaction.requested reported usageInputTokens 288661.5 (its own
+    // estimate, above the 272k window), which became peak_context_tokens and failed the insert.
     const totals = runTotals(
       result({
-        steps: [{ type: "s", tokensIn: 100, isError: false }],
+        steps: [
+          { type: "s", tokensIn: 268_900, isError: false },
+          { type: "s", tokensIn: 141_200, isError: false },
+        ],
         compactions: [
           {
             afterStepIndex: 1,
             at: "2026-11-18T00:00:00.000Z",
             sequence: 1,
+            usageInputTokens: 288661.5,
+            modelId: null,
+            completed: true,
+          },
+          {
+            afterStepIndex: 2,
+            at: "2026-11-18T00:01:00.000Z",
+            sequence: 2,
             usageInputTokens: 150000,
             modelId: null,
             completed: false,
@@ -449,9 +462,21 @@ describe("runTotals", () => {
         ],
       }),
     );
-    expect(totals.peakContextTokens).toBe(150000);
-    // The pass never completed: it stays on its step but is not counted.
-    expect(totals.compactionCount).toBe(0);
+    expect(totals.peakContextTokens).toBe(268_900);
+    // The second pass never completed: it stays on its step but is not counted.
+    expect(totals.compactionCount).toBe(1);
+  });
+
+  it("has no peak when only a compaction reported a size", () => {
+    const totals = runTotals(
+      result({
+        steps: [{ type: "s", isError: false }],
+        compactions: [
+          { afterStepIndex: 1, at: "2026-11-18T00:00:00.000Z", sequence: 1, usageInputTokens: 1000.25, modelId: null, completed: true },
+        ],
+      }),
+    );
+    expect(totals.peakContextTokens).toBeUndefined();
   });
 
   it("leaves cost and cache unknown when no step reported them", () => {

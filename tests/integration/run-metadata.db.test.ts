@@ -33,10 +33,15 @@ describe.runIf(LIVE)("run metadata against real Postgres", () => {
         externalRunId,
         status: "failed",
         metadata: { settledBy: "stale-run-sweep" },
+        // A fractional or oversized reading is rounded or dropped, never fails the insert.
+        peakContextTokens: 288661.5,
+        wallClockMs: 3_369_109.4,
+        tokensInput: 3_000_000_000,
         finishedAt: new Date().toISOString(),
         steps: [call(1), call(2), call(3)],
       });
       const read = async () => (await db.select().from(runs).where(eq(runs.externalRunId, externalRunId)))[0];
+      expect(await read()).toMatchObject({ peakContextTokens: 288662, wallClockMs: 3_369_109, tokensInput: 2_147_483_647 });
       expect((await read()).metadata).toMatchObject({
         input: "hello",
         settledBy: "stale-run-sweep",

@@ -298,11 +298,9 @@ export function runTotals(result: TurnResult): RunTotals {
     if (step.tokensIn != null)
       peakContextTokens = Math.max(peakContextTokens ?? 0, step.tokensIn);
   }
-  // Compactions fire when context fills, so their trigger size is a context reading too.
-  for (const c of result.compactions ?? []) {
-    if (c.usageInputTokens != null)
-      peakContextTokens = Math.max(peakContextTokens ?? 0, c.usageInputTokens);
-  }
+  // Only provider-reported call inputs count. A compaction's `usageInputTokens` is eve's own
+  // estimate of the prompt (fractional, and it can exceed the model's window), so it stays on the
+  // compaction step and never sets the peak.
   const totals: RunTotals = {};
   // Input and output are written together, as before: a run reporting one reports both.
   if (tokensInput != null || tokensOutput != null) {
