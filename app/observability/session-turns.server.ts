@@ -17,7 +17,15 @@
 import type { RawEveEvent, TurnAction, TurnStep, TurnResult } from "~/agent/talk.server";
 import { inputRequestsOf } from "~/agent/talk.server";
 import type { ChatInputRequest } from "~/chat/types";
-import { effectiveModelId } from "~/models/model-directive";
+import { turnModel } from "~/models/model-directive";
+import {
+  applyCompactionEvent,
+  readStepUsage,
+  readSubagentInvocation,
+  stepKeyOf,
+  type SubagentInvocation,
+  type TurnCompaction,
+} from "~/observability/turn-usage";
 
 /** A replayed durable-stream event with its absolute stream position (for cursor math). */
 export interface IndexedEveEvent extends RawEveEvent {
@@ -41,6 +49,8 @@ export interface FoldedTurn {
 export interface FoldedSession {
   /** Raw runtime model id from session.started (or carried in from a prior drain). */
   modelId: string | null;
+  /** The parent call when the session is a subagent's child session (carried like `modelId`). */
+  subagent: SubagentInvocation | null;
   turns: FoldedTurn[];
   /**
    * Cursor to persist: the end of consumed events when every turn settled, else one before the
@@ -185,6 +195,7 @@ interface TurnState {
   finishedAt: Date | null;
   settled: boolean;
   steps: TurnStep[];
+  compactions: TurnCompaction[];
   messages: { afterStepIndex: number; text: string }[];
   completedMessages: string[];
   inputRequests: ChatInputRequest[];
@@ -206,6 +217,7 @@ function newTurn(turnId: string, streamIndex: number, at: Date): TurnState {
     finishedAt: null,
     settled: false,
     steps: [],
+    compactions: [],
     messages: [],
     completedMessages: [],
     inputRequests: [],
@@ -224,9 +236,10 @@ function newTurn(turnId: string, streamIndex: number, at: Date): TurnState {
  */
 export function foldSessionEvents(
   events: IndexedEveEvent[],
-  opts: { modelId?: string | null } = {},
+  opts: { modelId?: string | null; subagent?: SubagentInvocation | null } = {},
 ): FoldedSession {
   let modelId: string | null = opts.modelId ?? null;
+  let subagent: SubagentInvocation | null = opts.subagent ?? null;
   const order: string[] = [];
   const turns = new Map<string, TurnState>();
   let lastTurnId: string | null = null;
@@ -265,6 +278,14 @@ export function foldSessionEvents(
       case "session.started": {
         const runtime = data.runtime as Record<string, unknown> | undefined;
         if (runtime && typeof runtime.modelId === "string") modelId = runtime.modelId;
+        subagent = readSubagentInvocation(data) ?? subagent;
+        break;
+      }
+      case "compaction.requested":
+      case "compaction.completed": {
+        if (!turnId) break;
+        const turn = ensureTurn(turnId, evt.streamIndex, at);
+        applyCompactionEvent(turn.compactions, type, data, at, turn.steps.length);
         break;
       }
       case "turn.started": {
@@ -301,6 +322,7 @@ export function foldSessionEvents(
             summary: summarizeActionInput(a.input),
             input: a.input,
           };
+          if (typeof a.callId === "string") record.callId = a.callId;
           seqActions.push(record);
           if (typeof a.callId === "string") turn.actionByCallId.set(a.callId, record);
         }
@@ -343,7 +365,7 @@ export function foldSessionEvents(
       case "step.failed": {
         if (!turnId) break;
         const turn = ensureTurn(turnId, evt.streamIndex, at);
-        const usage = data.usage as Record<string, unknown> | undefined;
+        const usage = readStepUsage(data.usage);
         const started = turn.stepStarts.get(stepKey);
         const failure = type === "step.failed" ? failureOf(data, "The agent step failed.") : null;
         if (failure) turn.lastStepFailure = failure.text;
@@ -353,10 +375,8 @@ export function foldSessionEvents(
           type,
           name: stringField(data, "name") ?? undefined,
           durationMs: started != null ? Math.max(0, atMs - started) : undefined,
-          tokensIn:
-            usage && typeof usage.inputTokens === "number" ? usage.inputTokens : undefined,
-          tokensOut:
-            usage && typeof usage.outputTokens === "number" ? usage.outputTokens : undefined,
+          ...usage,
+          ...stepKeyOf(data),
           isError: type === "step.failed",
           code: failure?.code,
           message: failure?.message,
@@ -431,7 +451,7 @@ export function foldSessionEvents(
       turn.error = turn.lastStepFailure;
     }
     const startedAt = turn.startedAt ?? turn.firstEventAt;
-    const turnModelId = modelId ? effectiveModelId(modelId, turn.userMessage ?? "") : null;
+    const model = modelId ? turnModel(modelId, turn.userMessage ?? "") : null;
     const normalized = normalizeReply(turn.reply);
     const result: TurnResult = {
       ok: turn.settled && turn.error === null,
@@ -441,7 +461,11 @@ export function foldSessionEvents(
       reply: normalized.reply,
       replyIsStructured: normalized.replyIsStructured,
       inputRequests: turn.inputRequests,
-      modelId: turnModelId,
+      modelId: model?.modelId ?? null,
+      modelSource: model?.source ?? null,
+      contextWindowTokens: model?.contextWindowTokens ?? null,
+      compactions: turn.compactions,
+      subagent,
       turnId: turn.turnId,
       steps: turn.steps,
       messages: turn.messages,
@@ -460,7 +484,7 @@ export function foldSessionEvents(
   });
 
   const nextStreamIndex = computeNextStreamIndex(events, folded);
-  return { modelId, turns: folded, nextStreamIndex };
+  return { modelId, subagent, turns: folded, nextStreamIndex };
 }
 
 /**

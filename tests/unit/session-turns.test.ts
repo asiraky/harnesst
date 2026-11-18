@@ -269,3 +269,142 @@ describe("channelForTrigger", () => {
     expect(channelForTrigger(undefined)).toBeNull();
   });
 });
+
+describe("foldSessionEvents usage, compaction and subagent linkage (issue #417)", () => {
+  it("keeps each step's usage, eve step key and tool call id", () => {
+    const fold = foldSessionEvents(
+      indexed([
+        evt("session.started", { runtime: { modelId: "m/x" } }),
+        evt("message.received", { turnId: "turn_0", message: "go" }),
+        evt("step.started", { turnId: "turn_0", sequence: 1, stepIndex: 0 }),
+        evt("actions.requested", {
+          turnId: "turn_0",
+          sequence: 1,
+          actions: [{ toolName: "bash", input: { command: "ls" }, callId: "c1" }],
+        }),
+        evt("action.result", {
+          turnId: "turn_0",
+          status: "completed",
+          result: { callId: "c1", output: "ok" },
+        }),
+        evt("step.completed", {
+          turnId: "turn_0",
+          sequence: 1,
+          stepIndex: 0,
+          usage: { inputTokens: 900, outputTokens: 9, cacheReadTokens: 700, costUsd: 0.004 },
+        }),
+        evt("step.started", { turnId: "turn_0", sequence: 1, stepIndex: 1 }),
+        evt("step.completed", {
+          turnId: "turn_0",
+          sequence: 1,
+          stepIndex: 1,
+          usage: { inputTokens: 950, outputTokens: 3 },
+        }),
+        evt("turn.completed", { turnId: "turn_0" }),
+      ]),
+    );
+    const [first, second] = fold.turns[0].result.steps;
+    expect(first).toMatchObject({
+      tokensIn: 900,
+      tokensOut: 9,
+      cacheReadTokens: 700,
+      costUsd: 0.004,
+      sequence: 1,
+      stepIndex: 0,
+    });
+    expect(first.actions?.[0].callId).toBe("c1");
+    expect(second).toMatchObject({ tokensIn: 950, tokensOut: 3, stepIndex: 1 });
+    expect(second.cacheReadTokens).toBeUndefined();
+    expect(second.costUsd).toBeUndefined();
+  });
+
+  it("folds compaction events into the turn at the step they preceded", () => {
+    const fold = foldSessionEvents(
+      indexed([
+        evt("message.received", { turnId: "turn_0", message: "go" }),
+        evt("step.started", { turnId: "turn_0", sequence: 1, stepIndex: 0 }),
+        evt("step.completed", { turnId: "turn_0", sequence: 1, stepIndex: 0 }),
+        evt(
+          "compaction.requested",
+          { turnId: "turn_0", sequence: 1, modelId: "harnesst.chat/m/c", usageInputTokens: 170000 },
+          "2026-11-18T00:00:00.000Z",
+        ),
+        evt("compaction.completed", { turnId: "turn_0", sequence: 1, modelId: "harnesst.chat/m/c" }),
+        evt("step.started", { turnId: "turn_0", sequence: 1, stepIndex: 1 }),
+        evt("step.completed", { turnId: "turn_0", sequence: 1, stepIndex: 1 }),
+        evt("turn.completed", { turnId: "turn_0" }),
+      ]),
+    );
+    const result = fold.turns[0].result;
+    expect(result.compactions).toEqual([
+      {
+        afterStepIndex: 1,
+        at: "2026-11-18T00:00:00.000Z",
+        sequence: 1,
+        usageInputTokens: 170000,
+        modelId: "m/c",
+        completed: true,
+      },
+    ]);
+    expect(turnToSteps(result).map((s) => s.type)).toEqual([
+      "model_call",
+      "compaction",
+      "model_call",
+    ]);
+  });
+
+  it("links a subagent child session's turns to the parent call, carried across drains", () => {
+    const invocation = {
+      kind: "subagent",
+      name: "researcher",
+      parentCallId: "call_9",
+      parentSessionId: "sess_parent",
+      parentTurnId: "turn_3",
+    };
+    const first = foldSessionEvents(
+      indexed([
+        evt("session.started", { runtime: { modelId: "m/x" }, invocation }),
+        evt("message.received", { turnId: "turn_0", message: "look it up" }),
+        evt("turn.completed", { turnId: "turn_0" }),
+      ]),
+    );
+    const linked = {
+      name: "researcher",
+      parentCallId: "call_9",
+      parentSessionId: "sess_parent",
+      parentTurnId: "turn_3",
+    };
+    expect(first.subagent).toEqual(linked);
+    expect(first.turns[0].result.subagent).toEqual(linked);
+
+    // A later drain no longer sees session.started; the linkage rides in with the cursor.
+    const next = foldSessionEvents(
+      indexed([
+        evt("message.received", { turnId: "turn_1", message: "and again" }),
+        evt("turn.completed", { turnId: "turn_1" }),
+      ]),
+      { modelId: first.modelId, subagent: first.subagent },
+    );
+    expect(next.turns[0].result.subagent).toEqual(linked);
+  });
+
+  it("marks a dynamic agent's undirected turn as the fallback model", () => {
+    const fold = foldSessionEvents(
+      indexed([
+        evt("session.started", { runtime: { modelId: "dynamic:harnesst/unconfigured" } }),
+        evt("message.received", { turnId: "turn_0", message: "hi" }),
+        evt("message.received", {
+          turnId: "turn_1",
+          message: "<!-- harnesst:model openai/abc/gpt-x ctx=400000 -->\nhi",
+        }),
+        evt("turn.completed", { turnId: "turn_0" }),
+        evt("turn.completed", { turnId: "turn_1" }),
+      ]),
+    );
+    expect(fold.turns.map((t) => t.result.modelSource)).toEqual(["fallback", "directive"]);
+    expect(fold.turns[1].result).toMatchObject({
+      modelId: "openai/abc/gpt-x",
+      contextWindowTokens: 400000,
+    });
+  });
+});

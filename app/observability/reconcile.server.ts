@@ -24,6 +24,7 @@ import {
   runs,
 } from "~/db/schema";
 import type { RawEveEvent } from "~/agent/talk.server";
+import type { SubagentInvocation } from "~/observability/turn-usage";
 import {
   externalRunId,
   recordTurnFinish,
@@ -575,6 +576,7 @@ export async function reconcileDeploymentSessions(
 
     const fold = foldSessionEvents(events, {
       modelId: (cursor?.state?.modelId as string | undefined) ?? null,
+      subagent: (cursor?.state?.subagent as SubagentInvocation | undefined) ?? null,
     });
     const firstDrain = cursor === null;
 
@@ -634,7 +636,7 @@ export async function reconcileDeploymentSessions(
     await deps.saveCursor(target.projectId, session.sessionId, {
       // Never move the cursor backwards (a partial re-read must not lose settled progress).
       streamIndex: Math.max(startIndex, fold.nextStreamIndex),
-      state: { modelId: fold.modelId },
+      state: { modelId: fold.modelId, subagent: fold.subagent },
       lastActivityAt: new Date(session.updatedAt),
     });
   }

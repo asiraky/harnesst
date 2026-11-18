@@ -10,6 +10,7 @@ import {
   effectiveModelId,
   parseModelDirective,
   stripModelDirective,
+  turnModel,
 } from "~/models/model-directive";
 
 describe("buildModelDirective", () => {
@@ -170,5 +171,34 @@ describe("effectiveModelId", () => {
     expect(
       effectiveModelId("dynamic:harnesst.chat/codex/abcdefghijkl/gpt-5.5", "hi"),
     ).toBe("codex/abcdefghijkl/gpt-5.5");
+  });
+});
+
+describe("turnModel", () => {
+  it("marks a static agent's id as the runtime's", () => {
+    expect(
+      turnModel("anthropic/claude-sonnet-5", "<!-- harnesst:model openai/gpt-5.1 -->\n\nhi"),
+    ).toEqual({
+      modelId: "anthropic/claude-sonnet-5",
+      source: "runtime",
+      contextWindowTokens: null,
+    });
+  });
+
+  it("takes a dynamic agent's model and window from the directive", () => {
+    expect(
+      turnModel(
+        "dynamic:harnesst/unconfigured",
+        "<!-- harnesst:model openai/gpt-5.1 ctx=400000 -->\n\nhi",
+      ),
+    ).toEqual({ modelId: "openai/gpt-5.1", source: "directive", contextWindowTokens: 400000 });
+  });
+
+  it("marks a dynamic agent without a directive as the fallback", () => {
+    expect(turnModel("dynamic:harnesst/unconfigured", "hi")).toEqual({
+      modelId: "unconfigured",
+      source: "fallback",
+      contextWindowTokens: null,
+    });
   });
 });

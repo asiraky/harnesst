@@ -685,6 +685,13 @@ export const runs = pgTable(
     status: text("status").notNull().default("running"),
     tokensInput: integer("tokens_input"),
     tokensOutput: integer("tokens_output"),
+    /** Input tokens served from the provider's prompt cache, summed over the run's model calls. */
+    tokensCachedInput: integer("tokens_cached_input"),
+    /** Summed provider cost; null when no step reported one (only Vercel AI Gateway does). */
+    costUsd: doublePrecision("cost_usd"),
+    compactionCount: integer("compaction_count"),
+    /** Largest input of any model call in the run: the fullest the context got. */
+    peakContextTokens: integer("peak_context_tokens"),
     wallClockMs: integer("wall_clock_ms"),
     error: text("error"),
     metadata: jsonb("metadata")
@@ -745,12 +752,30 @@ export const runSteps = pgTable(
       .notNull()
       .references(() => runs.id, { onDelete: "cascade" }),
     seq: integer("seq").notNull(),
-    // model_call | tool_call | reasoning | message
+    // model_call | tool_call | reasoning | message | compaction
     type: text("type").notNull(),
     model: text("model"),
     toolName: text("tool_name"),
     tokensInput: integer("tokens_input"),
     tokensOutput: integer("tokens_output"),
+    tokensCacheRead: integer("tokens_cache_read"),
+    tokensCacheWrite: integer("tokens_cache_write"),
+    costUsd: doublePrecision("cost_usd"),
+    /** The model's context window, so a model call's input reads as a share of it. */
+    contextWindow: integer("context_window"),
+    /** eve's session, turn and step: the join key to a `gateway_calls` row. */
+    eveSessionId: text("eve_session_id"),
+    turnId: text("turn_id"),
+    stepIndex: integer("step_index"),
+    /** Set on a subagent child session's steps: which subagent, and the parent's tool call. */
+    subagentName: text("subagent_name"),
+    parentCallId: text("parent_call_id"),
+    /** A tool call's id (a subagent run's `parent_call_id` points here). */
+    callId: text("call_id"),
+    /** A tool call's output size before it was capped for storage. */
+    resultBytes: integer("result_bytes"),
+    resultTokens: integer("result_tokens"),
+    resultCapped: boolean("result_capped"),
     durationMs: integer("duration_ms"),
     isError: boolean("is_error").notNull().default(false),
     approvalGated: boolean("approval_gated").notNull().default(false),

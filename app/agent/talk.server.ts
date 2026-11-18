@@ -42,11 +42,24 @@ import {
   SESSION_WORKSPACE_ID_HEADER,
   SESSION_WORKSPACE_ROUTE,
 } from "~/deploy/session-workspace-channel";
-import { effectiveModelId } from "~/models/model-directive";
+import {
+  parseModelDirective,
+  turnModel,
+  type TurnModelSource,
+} from "~/models/model-directive";
+import {
+  applyCompactionEvent,
+  readStepUsage,
+  stepKeyOf,
+  type SubagentInvocation,
+  type TurnCompaction,
+} from "~/observability/turn-usage";
 
 /** One action (tool call) inside a step, correlated request → result. */
 export interface TurnAction {
   toolName: string;
+  /** eve's call id; a subagent child session names it as its parent call. */
+  callId?: string;
   summary?: string;
   /** Process exit code when the tool's output carried one (bash-style tools). */
   exitCode?: number;
@@ -63,6 +76,15 @@ export interface TurnStep {
   durationMs?: number;
   tokensIn?: number;
   tokensOut?: number;
+  /** Input tokens served from the provider's prompt cache. */
+  cacheReadTokens?: number;
+  /** Input tokens written to the provider's prompt cache. */
+  cacheWriteTokens?: number;
+  /** Provider-reported cost (Vercel AI Gateway only). */
+  costUsd?: number;
+  /** eve's turn number and step within it: with the turn id, the key to the gateway call log. */
+  sequence?: number;
+  stepIndex?: number;
   isError: boolean;
   code?: string;
   message?: string;
@@ -90,6 +112,17 @@ export interface TurnResult {
   inputRequests: ChatInputRequest[];
   /** Model that served the turn (from session.started runtime metadata). */
   modelId: string | null;
+  /**
+   * How `modelId` was decided. `fallback` marks a dynamic agent's build-time fallback, which no
+   * step ran on: the real model is whatever harnesst's configuration resolved per step.
+   */
+  modelSource?: TurnModelSource | null;
+  /** The context window the turn's model directive carried. */
+  contextWindowTokens?: number | null;
+  /** Compaction passes during the turn, in order. */
+  compactions?: TurnCompaction[];
+  /** Set when the session is a subagent's child session: the parent call it serves. */
+  subagent?: SubagentInvocation | null;
   /** eve's per-session turn id (turn_0, turn_1, …); the run's external id component. */
   turnId: string | null;
   steps: TurnStep[];
@@ -748,6 +781,9 @@ interface DrainCarry {
   lastStepFailure: string | null;
   errorModelId: string | null;
   modelId: string | null;
+  modelSource: TurnModelSource | null;
+  contextWindowTokens: number | null;
+  compactions: TurnCompaction[];
   stepStarts: Map<string, number>;
   actionsBySeq: Map<string, TurnAction[]>;
   actionByCallId: Map<string, TurnAction>;
@@ -767,6 +803,9 @@ function newDrainCarry(): DrainCarry {
     lastStepFailure: null,
     errorModelId: null,
     modelId: null,
+    modelSource: null,
+    contextWindowTokens: null,
+    compactions: [],
     stepStarts: new Map(),
     actionsBySeq: new Map(),
     actionByCallId: new Map(),
@@ -988,6 +1027,9 @@ async function* drainTurnStream(input: {
   let lastStepFailure = carry.lastStepFailure;
   let errorModelId = carry.errorModelId;
   let modelId = carry.modelId;
+  let modelSource = carry.modelSource;
+  let contextWindowTokens = carry.contextWindowTokens;
+  const compactions = carry.compactions;
   let ourTurnId: string | null = input.initialTurnId;
   let turnAnnounced = false;
   // #267: set when the turn's outcome is unknown because the transport gave out — see
@@ -1129,10 +1171,13 @@ async function* drainTurnStream(input: {
             if (runtime && typeof runtime.modelId === "string") {
               // Dynamic-model agents report `dynamic:<fallback id>` — resolve to the model that
               // actually serves this turn (the sent message's directive, else the fallback).
-              modelId = effectiveModelId(
+              const model = turnModel(
                 runtime.modelId,
                 input.matchMessage ?? input.modelText ?? "",
               );
+              modelId = model.modelId;
+              modelSource = model.source;
+              contextWindowTokens = model.contextWindowTokens;
               yield { kind: "model", modelId };
             }
             break;
@@ -1171,6 +1216,7 @@ async function* drainTurnStream(input: {
               // Keep the FULL input (not just the one-line summary) so the transcript can
               // render the real command/args; caps + redaction are applied at persist time.
               const record: TurnAction = { toolName, summary, input: a.input };
+              if (typeof a.callId === "string") record.callId = a.callId;
               seqActions.push(record);
               if (typeof a.callId === "string")
                 actionByCallId.set(a.callId, record);
@@ -1225,10 +1271,21 @@ async function* drainTurnStream(input: {
               }
             }
             break;
+          case "compaction.requested":
+          case "compaction.completed":
+            if (ours)
+              applyCompactionEvent(
+                compactions,
+                type,
+                data,
+                new Date(at),
+                steps.length,
+              );
+            break;
           case "step.completed":
           case "step.failed": {
             if (!ours) break;
-            const usage = data.usage as Record<string, unknown> | undefined;
+            const usage = readStepUsage(data.usage);
             const started = stepStarts.get(stepKey);
             const failure =
               type === "step.failed"
@@ -1245,14 +1302,8 @@ async function* drainTurnStream(input: {
               name: stringField(data, "name") ?? undefined,
               durationMs:
                 started != null ? Math.max(0, at - started) : undefined,
-              tokensIn:
-                usage && typeof usage.inputTokens === "number"
-                  ? usage.inputTokens
-                  : undefined,
-              tokensOut:
-                usage && typeof usage.outputTokens === "number"
-                  ? usage.outputTokens
-                  : undefined,
+              ...usage,
+              ...stepKeyOf(data),
               isError: type === "step.failed",
               code: failure?.code,
               message: failure?.message,
@@ -1381,7 +1432,24 @@ async function* drainTurnStream(input: {
     lastStepFailure,
     errorModelId,
     modelId,
+    modelSource,
+    contextWindowTokens,
   });
+  // A follow-up turn's stream starts past `session.started`, so the runtime id was never seen.
+  // The directive harnesst sent with this message is still the model the agent ran on. Result
+  // only: the carry stays unresolved so a later slice that does see `session.started` decides.
+  let resultModel = { modelId, modelSource, contextWindowTokens };
+  if (modelId === null) {
+    const directive = parseModelDirective(
+      input.matchMessage ?? input.modelText ?? "",
+    );
+    if (directive)
+      resultModel = {
+        modelId: directive.id,
+        modelSource: "directive",
+        contextWindowTokens: directive.contextWindowTokens ?? null,
+      };
+  }
   const normalized = normalizeReply(reply);
   yield {
     kind: "done",
@@ -1394,7 +1462,8 @@ async function* drainTurnStream(input: {
       reply: normalized.reply,
       replyIsStructured: normalized.replyIsStructured,
       inputRequests,
-      modelId,
+      ...resultModel,
+      compactions,
       turnId: ourTurnId,
       steps,
       messages,
