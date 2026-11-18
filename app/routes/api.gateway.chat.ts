@@ -35,6 +35,7 @@ import {
   wantsStreaming,
   type ChatCompletionsBody,
 } from "~/gateway/codex-translate";
+import { codexSessionId } from "~/gateway/codex-session";
 import { bearerToken, verifyGatewayToken } from "~/gateway/token.server";
 import {
   toolResultLimitTokens,
@@ -214,6 +215,10 @@ export async function action({ request }: ActionFunctionArgs) {
     onWithheld: (w) => withheld.push(w),
   });
   await recordWithheldToolResults(orgId!, body.model as string, withheld);
+  // One id per eve session, sent as the session header and the prompt cache key so a session's
+  // calls share Codex's prompt cache. A retry reuses it.
+  const upstreamSessionId = codexSessionId(orgId!, identity.sessionId);
+  payload.prompt_cache_key = upstreamSessionId;
   if (dropped.size > 0) {
     console.warn(
       `[gateway] dropped content parts with no Responses equivalent: ${[...dropped].join(", ")}`,
@@ -262,7 +267,9 @@ export async function action({ request }: ActionFunctionArgs) {
       authorization: `Bearer ${grant.accessToken}`,
       "content-type": "application/json",
       "OpenAI-Beta": "responses=experimental",
-      session_id: crypto.randomUUID(),
+      // The Codex CLI's current header name, and the older one it replaced.
+      "session-id": upstreamSessionId,
+      session_id: upstreamSessionId,
     };
     if (grant.accountId) headers["ChatGPT-Account-ID"] = grant.accountId;
     const attempt: CallAttempt = {
