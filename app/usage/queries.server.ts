@@ -117,8 +117,11 @@ export interface RunRow {
   projectId: string;
   agentId: string | null;
   externalRunId: string | null;
+  deploymentId: string | null;
   status: string;
   channel: string | null;
+  /** The first 300 characters of the run's error. */
+  error: string | null;
   startedAt: string;
   finishedAt: string | null;
   input: number | null;
@@ -146,12 +149,14 @@ export async function listRunRows(input: {
   projectIds: string[];
   since: Date;
   agentId?: string;
+  status?: string;
   limit: number;
   offset?: number;
   orderBy?: "recent" | "input";
 }): Promise<RunRow[]> {
   if (input.projectIds.length === 0) return [];
   const agentFilter = input.agentId ? sql`and r.agent_id = ${input.agentId}` : sql``;
+  const statusFilter = input.status ? sql`and r.status = ${input.status}` : sql``;
   const order =
     input.orderBy === "input"
       ? sql`r.tokens_input desc nulls last, r.started_at desc`
@@ -163,10 +168,12 @@ export async function listRunRows(input: {
       where r.project_id in (${idList(input.projectIds)})
         and r.started_at >= ${ts(input.since)}
         ${agentFilter}
+        ${statusFilter}
       order by ${order}
       limit ${input.limit} offset ${input.offset ?? 0}
     )
-    select r.id, r.project_id, r.agent_id, r.external_run_id, r.status, r.channel,
+    select r.id, r.project_id, r.agent_id, r.external_run_id, r.deployment_id, r.status, r.channel,
+      left(r.error, 300) as error,
       r.started_at, r.finished_at, r.tokens_input, r.tokens_cached_input, r.tokens_output,
       r.cost_usd, r.peak_context_tokens, r.compaction_count, r.wall_clock_ms,
       r.metadata->>'settledBy' as settled_by,
@@ -195,8 +202,10 @@ export async function listRunRows(input: {
     projectId: String(r.project_id),
     agentId: str(r.agent_id),
     externalRunId: str(r.external_run_id),
+    deploymentId: str(r.deployment_id),
     status: String(r.status),
     channel: str(r.channel),
+    error: str(r.error),
     startedAt: iso(r.started_at)!,
     finishedAt: iso(r.finished_at),
     input: n(r.tokens_input),
@@ -812,6 +821,60 @@ export async function warningSignals(input: {
       limitTokens: n(r.limit_tokens),
     })),
   };
+}
+
+/**
+ * What filled one run's context, for a warning's draft: its largest tool results, and the tool
+ * calls just before each of its first compactions. Each with a short input excerpt; payloads are
+ * read only for the rows returned. The caller has already authorised the run.
+ */
+export async function runToolEvidence(
+  runId: string,
+  opts: { largest?: number; compactions?: number; before?: number } = {},
+) {
+  const tool = (r: Row) => ({
+    seq: n0(r.seq),
+    tool: str(r.tool_name),
+    tokens: n(r.result_tokens),
+    input: str(r.input_preview),
+  });
+  const [largest, before] = await Promise.all([
+    rows<Row>(sql`
+      select seq, tool_name, result_tokens, left((data->'input')::text, 300) as input_preview
+      from run_steps
+      where run_id = ${runId} and type = 'tool_call' and result_tokens > 0
+      order by result_tokens desc, seq
+      limit ${opts.largest ?? 5}
+    `),
+    rows<Row>(sql`
+      select c.seq as compaction_seq, c.at_tokens, t.seq, t.tool_name, t.result_tokens,
+        left((t.data->'input')::text, 300) as input_preview
+      from (
+        select seq,
+          case when jsonb_typeof(data->'usageInputTokens') = 'number'
+            then (data->>'usageInputTokens')::float8 end as at_tokens
+        from run_steps
+        where run_id = ${runId} and type = 'compaction'
+        order by seq
+        limit ${opts.compactions ?? 4}
+      ) c
+      left join lateral (
+        select seq, tool_name, result_tokens, data from run_steps
+        where run_id = ${runId} and type = 'tool_call' and seq < c.seq
+        order by seq desc
+        limit ${opts.before ?? 2}
+      ) t on true
+      order by c.seq, t.seq
+    `),
+  ]);
+  const compactions: { seq: number; atTokens: number | null; tools: ReturnType<typeof tool>[] }[] = [];
+  for (const r of before) {
+    const seq = n0(r.compaction_seq);
+    let c = compactions.find((x) => x.seq === seq);
+    if (!c) compactions.push((c = { seq, atTokens: n(r.at_tokens), tools: [] }));
+    if (r.seq != null) c.tools.push(tool(r));
+  }
+  return { largest: largest.map(tool), compactions };
 }
 
 /**

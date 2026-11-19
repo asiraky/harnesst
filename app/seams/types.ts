@@ -168,6 +168,11 @@ export interface DeployTarget {
    */
   auxEndpoint?(deploymentId: string): Promise<string | null>;
   /**
+   * The last `lines` lines of an instance's container logs (stderr then stdout), unredacted:
+   * callers must scrub secrets before showing them. Optional: targets with no log access omit it.
+   */
+  logsTail?(deploymentId: string, lines: number): Promise<string>;
+  /**
    * List the durable eve sessions in an environment's Workflow world — the channel-run
    * reconciler's discovery surface (issue #119). Reads the world's `workflow.workflow_runs`
    * table directly (there is no eve HTTP endpoint that lists sessions), projecting eve's

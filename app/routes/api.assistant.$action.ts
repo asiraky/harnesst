@@ -9,9 +9,11 @@
  * Under the coding-agent model the write/read/list/dependency/scaffold/run-checks actions are gone
  * (the model edits a real git checkout with bash; the control plane mirrors it to a PR). What's left
  * is control-plane KNOWLEDGE (`project-context`, `catalog`, the boot `bundle`), marketplace
- * `install`, credential-safe `run-eval`, plus `read-token` — the narrowed, single-repo
- * `contents:read` installation token the sidecar uses to clone/fetch. The read token is scoped to
- * one repo and is NEVER a write credential; the `edna_` token never leaves the instance.
+ * `install`, credential-safe `run-eval`, the read-only debugging reads (`runs`, `run-trace`,
+ * `usage`, `deployments`: issue #432, always for the token's own project), plus `read-token` — the
+ * narrowed, single-repo `contents:read` installation token the sidecar uses to clone/fetch. The
+ * read token is scoped to one repo and is NEVER a write credential; the `edna_` token never leaves
+ * the instance.
  */
 import {
   data,
@@ -27,6 +29,13 @@ import {
   resolveAssistantContext,
   type AuthoringDeps,
 } from "~/assistant/authoring.server";
+import {
+  defaultDebugDeps,
+  deploymentsAction,
+  listRunsAction,
+  runTraceAction,
+  usageAction,
+} from "~/assistant/debug.server";
 import { installMarketplaceTemplate } from "~/assistant/install.server";
 import { runAssistantEval } from "~/assistant/eval-runner.server";
 import { bearerToken, verifyAssistantToken } from "~/assistant/token.server";
@@ -81,6 +90,14 @@ export async function action({ request, params }: ActionFunctionArgs) {
       return Response.json(await installMarketplaceTemplate(project, body));
     case "run-eval":
       return Response.json(await runAssistantEval(ctx, body));
+    case "runs":
+      return Response.json(await listRunsAction(ctx, body, defaultDebugDeps()));
+    case "run-trace":
+      return Response.json(await runTraceAction(ctx, body, defaultDebugDeps()));
+    case "usage":
+      return Response.json(await usageAction(ctx, body, defaultDebugDeps()));
+    case "deployments":
+      return Response.json(await deploymentsAction(ctx, body, defaultDebugDeps()));
     case "read-token": {
       // A short-lived installation token narrowed to THIS repo, contents:read only — the sidecar's
       // credential to clone/fetch the conversation checkout. Never a write credential; the sidecar

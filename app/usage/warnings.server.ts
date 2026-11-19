@@ -3,12 +3,14 @@
  * agent or one run), plus connection warnings for workspace admins. Callers pass repository ids
  * they have already authorised and decide whether the viewer is an admin.
  */
+import { redactText } from "~/observability/capture.server";
 import { planWindowLabel } from "./format";
 import {
   agentNames,
   connectionTotals,
   latestHeadroom,
   listConnections,
+  runToolEvidence,
   stepEvidence,
   warningSignals,
 } from "./queries.server";
@@ -18,11 +20,16 @@ import {
   groupWarnings,
   runOccurrences,
   warningLink,
+  withRunEvidence,
   type ConnectionSignal,
   type Occurrence,
   type Warning,
+  type WarningRule,
   type WarningText,
 } from "./warnings";
+
+/** Warnings about a full context, whose draft names what filled it. */
+const CONTEXT_RULES = new Set<WarningRule>(["compaction", "context_high", "withheld"]);
 
 export interface ShownWarning extends Warning, WarningText {
   link: string | null;
@@ -81,11 +88,35 @@ export async function loadWarnings(input: {
   const warnings = groupWarnings(occurrences);
 
   // Evidence (input and error excerpts, the call that made the step) for each worst case only.
-  const evidence = await stepEvidence(
-    warnings
-      .filter((w) => w.worst.runId && w.worst.stepSeq != null)
-      .map((w) => ({ runId: w.worst.runId!, seq: w.worst.stepSeq! })),
-  );
+  // For context warnings, also what filled the worst run's context (inputs redacted here: the
+  // draft is shown and sent as text).
+  const contextRuns = [
+    ...new Set(
+      warnings
+        .filter((w) => !w.platform && w.worst.runId && CONTEXT_RULES.has(w.rule))
+        .map((w) => w.worst.runId!),
+    ),
+  ];
+  const [evidence, runEvidence] = await Promise.all([
+    stepEvidence(
+      warnings
+        .filter((w) => w.worst.runId && w.worst.stepSeq != null)
+        .map((w) => ({ runId: w.worst.runId!, seq: w.worst.stepSeq! })),
+    ),
+    Promise.all(
+      contextRuns.map(async (id) => {
+        const found = await runToolEvidence(id);
+        const scrub = <T extends { input: string | null }>(t: T): T => ({ ...t, input: t.input && redactText(t.input) });
+        return [
+          id,
+          {
+            largest: found.largest.map(scrub),
+            compactions: found.compactions.map((c) => ({ ...c, tools: c.tools.map(scrub) })),
+          },
+        ] as const;
+      }),
+    ).then((list) => new Map(list)),
+  ]);
   const projectName = new Map(input.projects.map((p) => [p.id, p.name]));
   const connLabel = new Map(conns.map((c) => [c.id, c.label]));
 
@@ -102,7 +133,8 @@ export async function loadWarnings(input: {
           },
         }
       : w.worst;
-    const full: Warning = { ...w, worst };
+    const filled = CONTEXT_RULES.has(w.rule) && w.worst.runId ? runEvidence.get(w.worst.runId) : undefined;
+    const full: Warning = { ...w, worst: filled ? withRunEvidence(w.rule, worst, filled) : worst };
     const n = {
       agentName: w.agentId ? (names.get(w.agentId)?.name ?? null) : null,
       projectName: w.projectId ? (projectName.get(w.projectId) ?? null) : null,

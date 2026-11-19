@@ -69,6 +69,18 @@ export interface Evidence {
   /** A short excerpt of the tool input and the error, filled in for the warning's worst case. */
   inputPreview?: string | null;
   message?: string | null;
+  /** The worst run's largest tool results, filled in for context warnings. */
+  largestResults?: ToolCallEvidence[];
+  /** The tool calls just before each of the worst run's first compactions. */
+  beforeCompactions?: { seq: number; atTokens: number | null; tools: ToolCallEvidence[] }[];
+}
+
+/** One tool call named in a draft: which step, which tool, how big its result was, its input. */
+export interface ToolCallEvidence {
+  seq: number;
+  tool: string | null;
+  tokens: number | null;
+  input: string | null;
 }
 
 export interface Occurrence {
@@ -400,6 +412,25 @@ export function groupWarnings(occurrences: Occurrence[]): Warning[] {
   return out.sort((a, b) => rank(a) - rank(b) || Date.parse(b.lastSeen) - Date.parse(a.lastSeen));
 }
 
+/**
+ * A context warning's occurrence with what filled its run's context: the largest tool results,
+ * and for a compaction warning the tool calls just before each compaction.
+ */
+export function withRunEvidence(
+  rule: WarningRule,
+  worst: Occurrence,
+  run: { largest: ToolCallEvidence[]; compactions: NonNullable<Evidence["beforeCompactions"]> },
+): Occurrence {
+  return {
+    ...worst,
+    evidence: {
+      ...worst.evidence,
+      largestResults: run.largest.length ? run.largest : undefined,
+      beforeCompactions: rule === "compaction" && run.compactions.length ? run.compactions : undefined,
+    },
+  };
+}
+
 /** Where a warning's evidence lives: the call that made the step, else the run. */
 export function warningLink(w: Pick<Warning, "projectId" | "worst">): string | null {
   const { projectId, worst } = w;
@@ -491,6 +522,14 @@ export function describeWarning(w: Warning, names: WarningNames): WarningText {
   return { title, summary, fix, draft: draftFor(w, { title, summary, fix }, names) };
 }
 
+/** Input excerpts in a draft stay short: the draft travels in a URL (see `fitDraft`). */
+const DRAFT_INPUT_CHARS = 100;
+
+function toolCallLine(t: ToolCallEvidence): string {
+  const input = t.input ? (t.input.length > DRAFT_INPUT_CHARS ? `${t.input.slice(0, DRAFT_INPUT_CHARS)}…` : t.input) : null;
+  return `step ${t.seq} ${t.tool ?? "(unnamed)"}${t.tokens != null ? `, ~${t.tokens.toLocaleString("en-US")} tokens` : ""}${input ? `, input ${input}` : ""}`;
+}
+
 function evidenceLines(w: Warning, names: WarningNames): string[] {
   const e = w.worst.evidence;
   const L: string[] = [];
@@ -506,6 +545,18 @@ function evidenceLines(w: Warning, names: WarningNames): string[] {
   if (e.count && w.rule !== "compaction") L.push(`- Count in that run: ${e.count}`);
   if (e.requested) L.push(`- Compactions: ${e.count} in one turn; ${e.requested} requested, ${e.completed} completed in the run`);
   if (w.rule === "context_high") L.push(`- Median context ${formatTokens(e.median)} of ${formatTokens(e.window)}, peak ${formatTokens(e.peak)}`);
+  if (e.largestResults?.length) {
+    L.push("- Largest tool results in that run:");
+    for (const t of e.largestResults) L.push(`  - ${toolCallLine(t)}`);
+  }
+  if (e.beforeCompactions?.length) {
+    L.push("- Tool calls just before each compaction:");
+    for (const c of e.beforeCompactions) {
+      const at = c.atTokens ? ` at ${formatTokens(c.atTokens)} context` : "";
+      const tools = c.tools.length ? c.tools.map(toolCallLine).join("; ") : "no tool calls before it";
+      L.push(`  - compaction (step ${c.seq})${at}: ${tools}`);
+    }
+  }
   if (e.hitRate != null) L.push(`- Cache hit rate ${formatPercent(e.hitRate)} over ${plural(e.calls ?? 0, "call")}`);
   if (e.pct != null) L.push(`- ${e.planWindow} window at ${Math.round(e.pct)}%`);
   if (e.rateLimited) L.push(`- ${e.rateLimited} × 429 out of ${e.calls} calls`);
@@ -529,7 +580,7 @@ function draftFor(w: Warning, t: Omit<WarningText, "draft">, names: WarningNames
     "",
     w.platform
       ? "This is a harnesst platform change, not an agent change."
-      : "Please look at the run, confirm the cause, and propose the change to the instructions or tools. Show me the diff before deploying.",
+      : `Please look at the run${w.worst.runId ? ` (read it with harnesst_run_trace, run ${w.worst.runId})` : ""}, confirm the cause, and propose the change to the instructions or tools. Show me the diff before deploying.`,
   ];
   return lines.join("\n");
 }

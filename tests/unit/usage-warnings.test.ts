@@ -17,6 +17,7 @@ import {
   stableJson,
   toolRepeats,
   warningLink,
+  withRunEvidence,
   type ConnectionSignal,
   type Occurrence,
   type RunSignal,
@@ -293,6 +294,46 @@ describe("describeWarning", () => {
     expect(t.title).toBe("Codex Pro: 3 × HTTP 429");
     expect(t.draft.startsWith("Platform issue (critical):")).toBe(true);
     expect(t.draft).not.toContain("- Link:");
+  });
+
+  const sheetsGet = {
+    seq: 41,
+    tool: "google-sheets__spreadsheets_values_get",
+    tokens: 135_000,
+    input: `{"range":"'Run history'!A:P","spreadsheetId":"${"x".repeat(200)}"}`,
+  };
+  const filled = {
+    largest: [sheetsGet, { seq: 7, tool: "bash", tokens: 2_100, input: null }],
+    compactions: [
+      { seq: 43, atTokens: 180_000, tools: [sheetsGet] },
+      { seq: 90, atTokens: null, tools: [] },
+    ],
+  };
+  const compaction = (): Occurrence =>
+    occ({ rule: "compaction", severity: "critical", group: "compaction", evidence: { count: 2, requested: 2, completed: 2 } });
+
+  it("names what filled the context of a compaction warning's run", () => {
+    const [w] = groupWarnings([withRunEvidence("compaction", compaction(), filled)]);
+    const draft = describeWarning(w, names).draft;
+    expect(draft).toContain("- Largest tool results in that run:");
+    expect(draft).toContain(`step 41 google-sheets__spreadsheets_values_get, ~135,000 tokens, input {"range":"'Run history'!A:P"`);
+    expect(draft).toContain("step 7 bash, ~2,100 tokens");
+    // Long inputs are cut, so one huge argument can't crowd out the rest of the draft.
+    expect(draft).not.toContain("x".repeat(150));
+    expect(draft).toContain("- Tool calls just before each compaction:");
+    expect(draft).toMatch(/compaction \(step 43\) at .+ context: step 41 google-sheets__spreadsheets_values_get/);
+    expect(draft).toContain("compaction (step 90): no tool calls before it");
+  });
+
+  it("lists compactions only for compaction warnings, and adds nothing when the run has no tool results", () => {
+    const high = withRunEvidence("context_high", occ({ rule: "context_high", group: "context_high", evidence: {} }), filled);
+    expect(high.evidence.largestResults).toHaveLength(2);
+    expect(high.evidence.beforeCompactions).toBeUndefined();
+
+    const empty = withRunEvidence("compaction", compaction(), { largest: [], compactions: [] });
+    const draft = describeWarning(groupWarnings([empty])[0], names).draft;
+    expect(draft).not.toContain("Largest tool results");
+    expect(draft).not.toContain("just before each compaction");
   });
 
   it("falls back when names are unknown", () => {
