@@ -89,6 +89,8 @@ const str = (v: unknown) => (typeof v === "string" ? v.trim() : "");
 const INPUT_CHARS = 200;
 const ERROR_CHARS = 240;
 const CHUNK_CHARS = 16_000;
+/** Tool names are free text from the agent; bound them so one can't blow the response budget. */
+const TOOL_CHARS = 120;
 
 /** Redact, then cut: cutting first could leave half a secret the patterns no longer match. */
 const excerpt = (text: string | null | undefined, max: number) =>
@@ -263,7 +265,7 @@ export async function runTraceAction(ctx: AssistantContext, body: Body, deps: De
     return {
       seq: s.seq,
       kind: "tool",
-      tool: s.toolName,
+      tool: cut(s.toolName, TOOL_CHARS),
       input: excerpt(e?.inputPreview ?? s.summary, INPUT_CHARS),
       resultTokens: s.resultTokens,
       error: s.isError && !s.withheld ? excerpt(e?.message, ERROR_CHARS) || "error" : null,
@@ -301,11 +303,11 @@ export async function runTraceAction(ctx: AssistantContext, body: Body, deps: De
     },
     largestToolResults: largest.map((s) => ({
       seq: s.seq,
-      tool: s.toolName,
+      tool: cut(s.toolName, TOOL_CHARS),
       resultTokens: s.resultTokens,
       input: excerpt(ev(s.seq)?.inputPreview ?? s.summary, INPUT_CHARS),
     })),
-    repeatedCalls: trace.repeats.slice(0, 5).map((r) => ({ tool: r.toolName, count: r.count, firstSeq: r.firstSeq })),
+    repeatedCalls: trace.repeats.slice(0, 5).map((r) => ({ tool: cut(r.toolName, TOOL_CHARS), count: r.count, firstSeq: r.firstSeq })),
     subagentRuns: [...children.values()].slice(0, 20),
     only,
     totalSteps: ordered.length,
@@ -333,23 +335,23 @@ async function stepOutput(runId: string, body: Body, deps: DebugDeps): Promise<R
   }
   const asText = (v: unknown) =>
     v == null ? "" : typeof v === "string" ? v : (JSON.stringify(v) ?? "");
-  const output = redactText(asText(payload.output));
+  const part = body.part === "input" ? "input" : "output";
+  const text = redactText(asText(part === "input" ? payload.input : payload.output));
   const offset = intParam(body.chunkOffset, 0, 0, Number.MAX_SAFE_INTEGER);
-  const input = offset === 0 ? cut(redactText(asText(payload.input)), 2000) : undefined;
-  return fitChunk(output, offset, CHUNK_CHARS, (chunk, nextOffset) => ({
+  return fitChunk(text, offset, CHUNK_CHARS, (chunk, nextOffset) => ({
     ok: true,
     runId,
     seq,
-    tool: payload.toolName,
-    ...(input !== undefined ? { input } : {}),
+    tool: cut(payload.toolName, TOOL_CHARS),
+    part,
     isError: payload.isError,
     withheld: payload.withheld,
     resultTokens: payload.resultTokens,
     /** The stored copy was cut at ingest (fields over 16KB, steps over 64KB). */
     storedTruncated: payload.truncated || payload.capped,
-    totalChars: output.length,
-    chunkOffset: Math.min(offset, output.length),
-    output: chunk,
+    totalChars: text.length,
+    chunkOffset: Math.min(offset, text.length),
+    [part]: chunk,
     nextChunkOffset: nextOffset,
   }));
 }
@@ -394,9 +396,10 @@ export async function usageAction(ctx: AssistantContext, body: Body, deps: Debug
         peakContext: a.peakContext,
         compactions: a.compactions,
         compactedRuns: a.compactedRuns,
-        withheldResults: tools.reduce((n, t) => n + t.withheld, 0),
+        /** Summed over the top 25 tools by result tokens; withheld results are large, so they rank. */
+        withheldResultsInTopTools: tools.reduce((n, t) => n + t.withheld, 0),
         topToolsByTokens: tools.slice(0, 8).map((t) => ({
-          tool: t.toolName,
+          tool: cut(t.toolName, TOOL_CHARS),
           calls: t.calls,
           resultTokens: t.tokens,
           maxResultTokens: t.maxTokens,
@@ -465,16 +468,40 @@ export async function deploymentsAction(ctx: AssistantContext, body: Body, deps:
     return i < 0 ? STATUS_ORDER.length : i;
   };
   rows.sort((a, b) => rank(a.d.status) - rank(b.d.status) || b.d.createdAt.getTime() - a.d.createdAt.getTime());
-  const deployments = rows.slice(0, 40).map(({ d, env }) => ({
-    id: d.id,
-    agent: name.get(env.agentId) ?? null,
-    environment: env.name,
-    status: d.status,
-    version: d.version,
-    gitSha: d.gitSha.slice(0, 12),
-    createdAt: d.createdAt.toISOString(),
-    error: excerpt(d.errorDetail, ERROR_CHARS),
-  }));
+  // Known secret values per environment, or null when they couldn't be loaded. Error details and
+  // logs can hold raw container output, so they're only shown when the values could be masked.
+  const secretsByEnv = new Map<string, Promise<string[] | null>>();
+  const secretsFor = (env: (typeof rows)[number]["env"]) => {
+    let p = secretsByEnv.get(env.id);
+    if (!p) {
+      p = deps
+        .secretValues({ projectId: project.id, agentId: env.agentId, environmentId: env.id })
+        .catch(() => null);
+      secretsByEnv.set(env.id, p);
+    }
+    return p;
+  };
+  const deployments = await Promise.all(
+    rows.slice(0, 40).map(async ({ d, env }) => {
+      let error: string | null = null;
+      if (d.errorDetail) {
+        const secrets = await secretsFor(env);
+        error = secrets
+          ? cut(scrubLogs(d.errorDetail, secrets), ERROR_CHARS)
+          : "[hidden: couldn't load this environment's secrets to mask them]";
+      }
+      return {
+        id: d.id,
+        agent: name.get(env.agentId) ?? null,
+        environment: env.name,
+        status: d.status,
+        version: d.version,
+        gitSha: d.gitSha.slice(0, 12),
+        createdAt: d.createdAt.toISOString(),
+        error,
+      };
+    }),
+  );
 
   let logs: Record<string, unknown> | undefined;
   const wanted = str(body.logs);
@@ -485,17 +512,16 @@ export async function deploymentsAction(ctx: AssistantContext, body: Body, deps:
       logs = { deploymentId: wanted, available: false, reason: "This harnesst host's deploy target has no container log access." };
     } else {
       const lines = intParam(body.lines, 100, 1, 300);
-      const [raw, secrets] = await Promise.all([
-        deps.logsTail(wanted, lines),
-        deps
-          .secretValues({ projectId: project.id, agentId: hit.env.agentId, environmentId: hit.env.id })
-          .catch(() => []),
-      ]);
-      const text = scrubLogs(raw, secrets);
-      // Keep the tail: the newest lines are the ones that explain a failure.
-      let kept = text;
-      while (byteSize(kept) > LOG_BYTES) kept = `…${kept.slice(Math.ceil(kept.length / 4))}`;
-      logs = { deploymentId: wanted, available: true, lines, truncated: kept !== text, text: kept };
+      const secrets = await secretsFor(hit.env);
+      if (!secrets) {
+        logs = { deploymentId: wanted, available: false, reason: "Couldn't load this environment's secrets to mask them out of the logs." };
+      } else {
+        const text = scrubLogs(await deps.logsTail(wanted, lines), secrets);
+        // Keep the tail: the newest lines are the ones that explain a failure.
+        let kept = text;
+        while (byteSize(kept) > LOG_BYTES) kept = `…${kept.slice(Math.ceil(kept.length / 4))}`;
+        logs = { deploymentId: wanted, available: true, lines, truncated: kept !== text, text: kept };
+      }
     }
   }
 

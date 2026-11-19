@@ -29,13 +29,17 @@ export default defineTool({
       .int()
       .min(0)
       .optional()
-      .describe("A tool step's seq: return that step's full input and output instead of the trace."),
+      .describe("A tool step's seq: return that step's full stored output (or input, with part) in chunks instead of the trace."),
     chunkOffset: z
       .number()
       .int()
       .min(0)
       .optional()
       .describe("With step: nextChunkOffset from the previous chunk."),
+    part: z
+      .enum(["output", "input"])
+      .optional()
+      .describe('With step: which side to read, default "output". Both page with chunkOffset.'),
   }),
   async execute(input) {
     return harnesstCall("run-trace", input);

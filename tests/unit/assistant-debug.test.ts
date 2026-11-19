@@ -74,7 +74,7 @@ function step(over: Partial<TraceStepRow> & { seq: number; type: string }): Trac
 
 type RunFixture = { id: string; projectId: string; steps: TraceStepRow[]; inputs?: Record<number, string>; outputs?: Record<number, unknown> };
 
-function harness(opts: { runs?: RunFixture[]; store?: FakeStore; listRunRows?: RunRow[]; logs?: string; secrets?: string[] } = {}) {
+function harness(opts: { runs?: RunFixture[]; store?: FakeStore; listRunRows?: RunRow[]; logs?: string; secrets?: string[]; secretsFail?: boolean } = {}) {
   const runs = opts.runs ?? [];
   const calls = { getRunRow: [] as string[][], traceSteps: [] as string[], logsTail: [] as string[] };
   const deps: DebugDeps = {
@@ -144,7 +144,10 @@ function harness(opts: { runs?: RunFixture[]; store?: FakeStore; listRunRows?: R
       calls.logsTail.push(id);
       return opts.logs ?? "";
     },
-    secretValues: async () => opts.secrets ?? [],
+    secretValues: async () => {
+      if (opts.secretsFail) throw new Error("secrets store down");
+      return opts.secrets ?? [];
+    },
     now: () => new Date("2026-11-19T12:00:00Z"),
   };
   return { deps, calls };
@@ -301,7 +304,14 @@ describe("run-trace step output", () => {
     }
     expect(text).toBe(redactText(JSON.stringify(big)));
     expect(text).not.toContain("ya29.secretvalue");
-    expect(first!.input).not.toContain("hunter22");
+  });
+
+  it("returns the full redacted input in chunks with part=input", async () => {
+    const { deps } = harness({ runs });
+    const res = await runTraceAction(ctx, { run: "r", step: 2, part: "input" }, deps);
+    expect(res.input).toBe(redactText(JSON.stringify({ range: "A:P", password: "hunter22" })));
+    expect(res.input).not.toContain("hunter22");
+    expect(res.output).toBeUndefined();
   });
 
   it("refuses a step that is not a tool call", async () => {
@@ -380,6 +390,15 @@ describe("deployments", () => {
     expect((res.deployments as { id: string }[]).map((d) => d.id)).toEqual([mine]);
   });
 
+  it("withholds logs when the environment's secrets can't be loaded to mask them", async () => {
+    const { store, mine } = await seeded();
+    const { deps, calls } = harness({ store, logs: "SHEETS_KEY plainsecretvalue", secretsFail: true });
+    const res = await deploymentsAction(ctx, { logs: mine }, deps);
+    expect(res.logs).toMatchObject({ available: false });
+    expect(JSON.stringify(res)).not.toContain("plainsecretvalue");
+    expect(calls.logsTail).toEqual([]);
+  });
+
   it("refuses logs for another project's deployment without reading them", async () => {
     const { store, theirs } = await seeded();
     const { deps, calls } = harness({ store, logs: "boom" });
@@ -430,6 +449,13 @@ describe("redactText", () => {
   it("masks fields inside JSON held in a JSON string", () => {
     expect(redactText(`{"body":"{\\"client_secret\\":\\"s3cr3t\\",\\"n\\":1}"}`)).toBe(
       `{"body":"{\\"client_secret\\":\\"[redacted]\\",\\"n\\":1}"}`,
+    );
+  });
+
+  it("masks quoted env assignments and connection URI passwords", () => {
+    expect(redactText(`export API_KEY="plainsecretvalue"`)).toBe(`export API_KEY="[redacted]"`);
+    expect(redactText("DATABASE_URL=postgres://harnesst:plainsecretvalue@db:5432/world")).toBe(
+      "DATABASE_URL=postgres://harnesst:[redacted]@db:5432/world",
     );
   });
 

@@ -142,7 +142,9 @@ const SECRET_ESCAPED_FIELD_RE = new RegExp(
 );
 /** The same in a query string or env line: `password=...`, `API_KEY=...`. */
 const SECRET_ASSIGN_RE =
-  /\b([A-Za-z0-9_]*(?:password|passwd|secret|token|api[-_]?key|apikey)=)[^\s&"',;]{4,}/gi;
+  /\b([A-Za-z0-9_]*(?:password|passwd|secret|token|api[-_]?key|apikey)=)(["']?)[^\s&"',;]{4,}\2/gi;
+/** The password in a connection URI: `postgres://user:pass@host`. */
+const URI_CREDENTIAL_RE = /\b([a-z][a-z0-9+.-]*:\/\/[^\s:/@]+:)[^\s@/]+@/gi;
 
 /**
  * Mask secrets in text that is serialized JSON, an excerpt of it, or a log line: the credential
@@ -154,5 +156,6 @@ export function redactText(value: string): string {
   return redactString(value)
     .replace(SECRET_JSON_FIELD_RE, (_m, head: string, close: string) => `${head}"[redacted]${close}`)
     .replace(SECRET_ESCAPED_FIELD_RE, (_m, head: string, close: string) => `${head}\\"[redacted]${close}`)
-    .replace(SECRET_ASSIGN_RE, "$1[redacted]");
+    .replace(SECRET_ASSIGN_RE, "$1$2[redacted]$2")
+    .replace(URI_CREDENTIAL_RE, "$1[redacted]@");
 }
