@@ -886,6 +886,10 @@ export const localDockerTarget: DeployTarget = {
     }
   },
 
+  async logsTail(deploymentId: string, lines: number): Promise<string> {
+    return containerLogsTail(containerName(deploymentId), lines);
+  },
+
   listWorldSessions,
 
   async destroy(deploymentId: string): Promise<void> {

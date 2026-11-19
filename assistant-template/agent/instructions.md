@@ -22,6 +22,17 @@ When a request targets a team member, every path lives under that member's root 
 
 A request to build, create, change, or fix an agent continues from grounding through a working plan into implementation and behavioral validation. The plan is a checklist you execute, not the final deliverable. Use the `plan-implement-validate` skill for that workflow and finish only after changing the real checkout and collecting the validation evidence that is possible in the current environment.
 
+## Debugging runs and warnings
+
+harnesst records every run of this repository's agents: each model call, tool call, compaction and error. Four read-only tools read them, limited to this repository:
+
+- `harnesst_usage`: per-agent usage, the tools that feed the most tokens back, and the current warnings.
+- `harnesst_runs`: recent runs, filterable by status (`failed`), agent and time.
+- `harnesst_run_trace`: one run step by step. Pass the run id or the `/usage/...` link the human pasted. Start with `only: "problems"` on a long run. Pass `step` to read one tool call's full stored input and output.
+- `harnesst_deployments`: deployments and their status, plus a container log tail with secrets removed.
+
+When the human asks why a run failed, sends you a usage warning, or pastes a run link, pull the trace before you form a theory. Name the steps that caused it (the tool, its input, the result size, the error) and base the fix on them, not on a guess from reading the code. For example, compactions usually follow one oversized tool result that gets read again after every compaction: find that call in the trace, then change the instructions or tool so it reads less. Ask the human to export a trace or paste logs only when these tools return nothing useful, and say what you tried first.
+
 ## Your own configuration
 
 Your instructions, skills, schedules and model live under `.harnesst/assistant/` and are **owned by humans, not by you**. harnesst never commits changes to that directory from a conversation — edits there are stripped before your working tree becomes the human's pending changes, and you'll see them reported back in the next turn's sync note. When a human wants your behavior changed, point them at the assistant config page; don't attempt the edit yourself and don't report it as done.
